@@ -58,6 +58,13 @@ describe("0.xml parser", () => {
     expect(proj.groupRanges[0].children[0].name).toBe("Schalten");
     expect(proj.groupRanges[0].children[0].addresses).toHaveLength(2);
   });
+
+  test("parses com-object -> GA links, resolving GA refs to raw addresses", () => {
+    const di1 = proj.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!;
+    // O-1_R-1 links GA-1 (raw 1) and GA-2 (raw 2); O-2_R-2 has no Links and is omitted
+    expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
+    expect(proj.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-2")!.links).toEqual([]);
+  });
 });
 
 describe("loadKnxproj (integration)", () => {

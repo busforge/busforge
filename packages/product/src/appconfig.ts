@@ -52,6 +52,7 @@ export interface ModuleInstance { id: string; refId: string; args: { refId: stri
 
 export interface AppConfig {
   id: string;
+  mask: string;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -136,6 +137,7 @@ export function parseAppConfig(xml: string): AppConfig {
 
   return {
     id: appAttrs.Id,
+    mask: appAttrs.MaskVersion ?? "",
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules,

@@ -18,6 +18,11 @@ export interface DeviceParams { deviceId: string; values: DeviceParam[]; }
 export interface ModuleInstanceData { id: string; refId: string; args: DeviceParam[]; }
 export interface DeviceModules { deviceId: string; instances: ModuleInstanceData[]; }
 
+// A device's com-object -> group-address links (from 0.xml). comObjRefId is the
+// instance ComObjectInstanceRef RefId (prefix-stripped, as ETS stores it).
+export interface DeviceLink { comObjRefId: string; gaRaws: number[]; }
+export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
+
 export interface TopologyLine {
   address: number;
   name: string;
@@ -58,4 +63,5 @@ export interface Project {
   groupAddresses: GroupAddress[]; // flat, for counts and search
   deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
   deviceModules: DeviceModules[]; // per-device module instances from 0.xml
+  deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
 }

@@ -7,7 +7,12 @@
           <Area Id="P-TEST-0_A-1" Address="1">
             <Line Id="P-TEST-0_L-1" Address="1">
               <Segment Id="P-TEST-0_S-1" Number="0">
-                <DeviceInstance Id="P-TEST-0_DI-1" Address="10" Name="Switch Actuator" ProductRefId="M-0048_H-1_P-1" Hardware2ProgramRefId="M-0048_H-1_HP-1" />
+                <DeviceInstance Id="P-TEST-0_DI-1" Address="10" Name="Switch Actuator" ProductRefId="M-0048_H-1_P-1" Hardware2ProgramRefId="M-0048_H-1_HP-1">
+                  <ComObjectInstanceRefs>
+                    <ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" />
+                    <ComObjectInstanceRef RefId="O-2_R-2" />
+                  </ComObjectInstanceRefs>
+                </DeviceInstance>
                 <DeviceInstance Id="P-TEST-0_DI-2" Address="11" Name="Dimmer" ProductRefId="M-0083_H-2_P-2" Hardware2ProgramRefId="M-0083_H-2_HP-2" />
               </Segment>
             </Line>

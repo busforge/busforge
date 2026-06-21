@@ -3,13 +3,13 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { loadKnxproj, readAppProgram } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, type AppConfig } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile } from "./db/deviceparams.ts";
-import { flashDeviceParameters } from "./flash.ts";
+import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile } from "./db/deviceparams.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses } from "./flash.ts";
 
 export interface AppState {
   db: Database;
@@ -118,6 +118,43 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       return deviceConfig(state, id, deviceId, body.lang);
     }
 
+    // /api/projects/:id/devices/:deviceId/links  -> re-point a com-object to a GA
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "links" && req.method === "PUT") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const body = (await req.json()) as { comObjRefId?: string; gaRaws?: number[]; lang?: string };
+      if (!body.comObjRefId || !Array.isArray(body.gaRaws)) return err("comObjRefId and gaRaws required");
+      const app = loadApp(state, id, deviceId);
+      if (!app) return err("device not found", 404);
+      // Accept the full (view) ref id or the stored stripped key.
+      const key = body.comObjRefId.startsWith(`${app.id}_`) ? body.comObjRefId.slice(app.id.length + 1) : body.comObjRefId;
+      setDeviceLink(db, id, deviceId, key, body.gaRaws.map(Number));
+      return deviceConfig(state, id, deviceId, body.lang);
+    }
+
+    // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      if (state.flashing) return err("a flash is already in progress", 409);
+      const dev = getDeviceForFlash(db, id, deviceId);
+      if (!dev) return err("device not found", 404);
+      const iface = getInterface(db, id);
+      if (!iface?.interfaceIp) return err("set an interface IP first");
+      const resolved = resolveDeviceLinks(state, id, deviceId);
+      if (!resolved) return err("application program not found in project", 404);
+      state.flashing = true;
+      try {
+        if (bus.activeProjectId) await bus.disconnect();
+        const result = await flashDeviceGroupAddresses({
+          projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
+          interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
+          dryRun: url.searchParams.get("dry") === "1",
+        });
+        return json(result);
+      } finally {
+        state.flashing = false;
+      }
+    }
+
     // /api/projects/:id/devices/:deviceId/flash?dry=1  -> program the parameter segment
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
@@ -172,24 +209,57 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   }
 }
 
-// Build a device's configuration view: locate its application program in the
-// stored .knxproj (plaintext, no password), parse it, and apply the device's
-// stored parameter values.
-function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string): Response {
-  const { db } = state;
-  const appRef = getDeviceAppRef(db, projectId, deviceId);
-  if (!appRef) return err("device not found", 404);
-  const sourceFile = getSourceFile(db, projectId);
-  if (!sourceFile) return err("project not found", 404);
-
+// Load and cache a device's parsed application program from the stored .knxproj.
+function loadApp(state: AppState, projectId: string, deviceId: string): AppConfig | null {
+  const appRef = getDeviceAppRef(state.db, projectId, deviceId);
+  if (!appRef) return null;
+  const sourceFile = getSourceFile(state.db, projectId);
+  if (!sourceFile) return null;
   const cacheKey = `${sourceFile}::${appRef}`;
   let app = state.appCache.get(cacheKey);
   if (!app) {
     const xml = readAppProgram(readFileSync(sourceFile), appRef);
-    if (!xml) return err("application program not found in project", 404);
+    if (!xml) return null;
     app = parseAppConfig(xml);
     state.appCache.set(cacheKey, app);
   }
+  return app;
+}
+
+// Build a device's configuration view and overlay each com-object's stored GA link.
+function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string): Response {
+  const { db } = state;
+  if (!getDeviceForFlash(db, projectId, deviceId)) return err("device not found", 404);
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return err("application program not found in project", 404);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
+  const links = getDeviceLinks(db, projectId, deviceId);
+  for (const b of view.blocks) for (const it of b.items) {
+    if (it.kind === "comObject") it.comObject.gaRaw = links.get(it.comObject.refId.slice(app.id.length + 1))?.[0] ?? null;
+  }
   return json(view);
+}
+
+// Resolve a device's stored links to (comObjNum -> GAs) for flashing the group
+// tables. Com-object numbers come from the (module-resolved) config view.
+function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string): { mask: string; links: ComObjectLink[] } | null {
+  const { db } = state;
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return null;
+  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
+  const numByRef = new Map<string, number>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
+  // Resolve com-object numbers for EVERY stored link: from the view (covers
+  // module-resolved numbers), else directly from the app (covers com-objects
+  // hidden by the current parameter values). Never drop a link silently, or the
+  // flashed association table would lose that GA assignment.
+  const links: ComObjectLink[] = [];
+  for (const [refId, gaRaws] of getDeviceLinks(db, projectId, deviceId)) {
+    const full = `${app.id}_${refId}`;
+    const direct = app.comObjects.get(app.comObjectRefs.get(full)?.refId ?? "")?.number;
+    const num = numByRef.get(full) ?? direct;
+    if (num === undefined) throw new Error(`cannot resolve com-object ${refId} for flashing; refusing to avoid dropping its group address`);
+    links.push({ comObjNum: num, gaRaws });
+  }
+  return { mask: app.mask, links };
 }

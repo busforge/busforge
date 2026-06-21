@@ -16,6 +16,7 @@ export interface CfgParamView {
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean };
+  gaRaw?: number | null;
 }
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }
@@ -64,6 +65,12 @@ export const api = {
 
   flashDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
+  flashDeviceGa: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash-ga${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
+  setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[]): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/links`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang: "de-DE" }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   busStatus: (id: string): Promise<BusState> => fetch(`/api/projects/${id}/bus/status`).then((r) => jsonOrThrow<BusState>(r)),
   busConnect: (id: string): Promise<{ status: BusStatus }> => fetch(`/api/projects/${id}/bus/connect`, { method: "POST" }).then((r) => jsonOrThrow<{ status: BusStatus }>(r)),

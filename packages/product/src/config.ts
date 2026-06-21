@@ -25,6 +25,7 @@ export interface CfgParamView {
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags;
+  gaRaw?: number | null; // current GA link, filled in by the server from stored links
 }
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }

@@ -20,6 +20,7 @@ export function insertProject(db: Database, id: string, project: Project, source
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
   const insModules = db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES (?, ?, ?)");
+  const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
     const rangeId = Number(insRange.run(id, parentId, node.name, node.rangeStart, node.rangeEnd).lastInsertRowid);
@@ -33,6 +34,7 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) insParam.run(id, dp.deviceId, v.refId, v.value);
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
+    for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw));
   })();
 }
 

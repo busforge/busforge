@@ -7,7 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink } from "../src/db/deviceparams.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -78,6 +78,16 @@ describe("projects", () => {
       { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
     ]);
     expect(getDeviceModules(db, "p1", "ghost")).toEqual([]);
+  });
+
+  test("device links round-trip and re-point replaces", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    // seeded from the fixture: DI-1 O-1_R-1 -> [1, 2]
+    expect(getDeviceLinks(db, "p1", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2]);
+    // re-point replaces the link (slot order preserved)
+    setDeviceLink(db, "p1", "P-TEST-0_DI-1", "O-1_R-1", [9]);
+    expect(getDeviceLinks(db, "p1", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([9]);
   });
 
   test("interface update", () => {

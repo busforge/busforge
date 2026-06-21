@@ -29,8 +29,31 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
   const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
+  const gaIdToRaw = new Map<string, number>();
+  buildGaIdMap(doc, gaIdToRaw);
+  const deviceLinks = devices.map((d) => ({ deviceId: d.id, links: parseDeviceLinks(doc, d.id, gaIdToRaw) }));
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules };
+  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks };
+}
+
+// Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so
+// com-object links ("Links=GA-189 GA-190") can be resolved.
+function buildGaIdMap(node: any, out: Map<string, number>) {
+  if (node == null || typeof node !== "object") return;
+  for (const g of arr<any>(node.GroupAddress)) out.set(String(g.Id).split("_").pop()!, Number(g.Address));
+  for (const k of Object.keys(node)) buildGaIdMap(node[k], out);
+}
+
+// A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs).
+function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, number>) {
+  const dev = findDeviceInstance(doc, deviceId);
+  const out: { comObjRefId: string; gaRaws: number[] }[] = [];
+  for (const c of arr<any>(dev?.ComObjectInstanceRefs?.ComObjectInstanceRef)) {
+    if (!c.Links) continue;
+    const gaRaws = String(c.Links).split(/\s+/).map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
+    if (gaRaws.length) out.push({ comObjRefId: String(c.RefId), gaRaws });
+  }
+  return out;
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).

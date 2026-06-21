@@ -80,6 +80,19 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id)
   );
   `,
+  // Group-address links: a device's com-object -> GA assignments, seeded from
+  // 0.xml and edited in the UI, used to rebuild the address/association tables.
+  `
+  CREATE TABLE device_links (
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id      TEXT NOT NULL,
+    com_obj_ref_id TEXT NOT NULL,
+    slot           INTEGER NOT NULL,
+    ga_raw         INTEGER NOT NULL,
+    PRIMARY KEY (project_id, device_id, com_obj_ref_id, slot)
+  );
+  CREATE INDEX idx_links_device ON device_links(project_id, device_id);
+  `,
 ];
 
 function migrate(db: Database): void {

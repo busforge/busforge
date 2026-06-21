@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { ChevronLeft, Cpu, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, Cpu, Loader2, Network } from "lucide-react";
 import { toast } from "sonner";
-import { api, type CfgParamView, type Device, type DeviceConfigView } from "../api.ts";
+import { api, type CfgParamView, type Device, type GroupRangeNode, type Project, type DeviceConfigView } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,16 +9,23 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FlashDialog } from "./FlashDialog.tsx";
+import { GaCombobox, type GaOption } from "./GaCombobox.tsx";
 import { cn } from "@/lib/utils";
 
 const LANG = "de-DE"; // falls back to the manufacturer default when unavailable
 
-export function DeviceConfig({ projectId, device, onBack }: { projectId: string; device: Device; onBack: () => void }) {
+function flattenGas(ranges: GroupRangeNode[], out: GaOption[]) {
+  for (const r of ranges) { for (const g of r.addresses) out.push({ raw: g.raw, address: g.address, name: g.name }); flattenGas(r.children, out); }
+}
+
+export function DeviceConfig({ projectId, project, device, onBack }: { projectId: string; project: Project; device: Device; onBack: () => void }) {
+  const gaOptions = useMemo(() => { const o: GaOption[] = []; flattenGas(project.groupRanges, o); return o; }, [project]);
   const [view, setView] = useState<DeviceConfigView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flashOpen, setFlashOpen] = useState(false);
+  const [flashGaOpen, setFlashGaOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -37,6 +44,13 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
     finally { setSaving(false); }
   }
 
+  async function relink(comObjRefId: string, gaRaw: number) {
+    setSaving(true);
+    try { setView(await api.setDeviceLink(projectId, device.id, comObjRefId, [gaRaw])); }
+    catch (e) { toast.error("Could not change link", { description: (e as Error).message }); }
+    finally { setSaving(false); }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -48,12 +62,16 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
           <div className="font-mono text-xs text-primary">{device.ia}</div>
         </div>
         {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-        <Button variant="outline" size="sm" className="ml-auto" onClick={() => setFlashOpen(true)} data-testid="program-device">
+        <Button variant="outline" size="sm" className="ml-auto" onClick={() => setFlashGaOpen(true)} data-testid="program-ga">
+          <Network className="size-4" /> Program GAs
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setFlashOpen(true)} data-testid="program-device">
           <Cpu className="size-4" /> Program device
         </Button>
       </div>
 
-      <FlashDialog open={flashOpen} onOpenChange={setFlashOpen} projectId={projectId} device={device} />
+      <FlashDialog open={flashOpen} onOpenChange={setFlashOpen} projectId={projectId} device={device} target="params" />
+      <FlashDialog open={flashGaOpen} onOpenChange={setFlashGaOpen} projectId={projectId} device={device} target="ga" />
 
       {loading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading configuration…</div>}
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
@@ -82,8 +100,10 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
                     <span className="w-7 shrink-0 font-mono text-xs text-muted-foreground">#{co.number}</span>
                     <span className="min-w-0 flex-1 truncate"><span className="text-muted-foreground">{co.functionText}</span>{co.functionText && co.name ? " · " : ""}{co.name}</span>
                     {co.dpt && <Badge variant="outline" className="font-mono text-[10px]">{co.dpt}</Badge>}
-                    <span className="font-mono text-[10px] text-muted-foreground">{co.objectSize}</span>
                     {flags && <Badge variant="secondary" className="font-mono text-[10px]">{flags}</Badge>}
+                    {co.gaRaw != null
+                      ? <div className="w-44 shrink-0"><GaCombobox options={gaOptions} value={co.gaRaw} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
+                      : <span className="w-44 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{co.objectSize}</span>}
                   </div>
                 );
               }

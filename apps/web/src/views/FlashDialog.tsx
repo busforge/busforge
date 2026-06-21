@@ -10,11 +10,12 @@ import { Button } from "@/components/ui/button";
 // Program a device's parameter segment. Previews the change with a dry-run
 // before writing, then flashes and reports the verified result. Only the
 // parameter segment (LSM4) is written; a backup is taken server-side.
-export function FlashDialog({ open, onOpenChange, projectId, device }: {
+export function FlashDialog({ open, onOpenChange, projectId, device, target }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   projectId: string;
   device: Device;
+  target: "params" | "ga";
 }) {
   const [dry, setDry] = useState<FlashResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -23,20 +24,24 @@ export function FlashDialog({ open, onOpenChange, projectId, device }: {
   const [error, setError] = useState<string | null>(null);
   const busyRef = useRef(false); // guards against a same-tick double click
 
+  const run = (dryRun: boolean) => (target === "ga" ? api.flashDeviceGa : api.flashDevice)(projectId, device.id, dryRun);
+  const what = target === "ga" ? "group addresses" : "parameters";
+  const segment = target === "ga" ? "address and association tables" : "parameter segment (LSM4)";
+
   useEffect(() => {
     if (!open) return;
     setDry(null); setDone(null); setError(null); setChecking(true);
-    api.flashDevice(projectId, device.id, true)
+    run(true)
       .then(setDry)
       .catch((e) => setError((e as Error).message))
       .finally(() => setChecking(false));
-  }, [open, projectId, device.id]);
+  }, [open, projectId, device.id, target]);
 
   async function flash() {
     if (busyRef.current) return;
     busyRef.current = true;
     setFlashing(true); setError(null);
-    try { setDone(await api.flashDevice(projectId, device.id, false)); }
+    try { setDone(await run(false)); }
     catch (e) { setError((e as Error).message); }
     finally { setFlashing(false); busyRef.current = false; }
   }
@@ -47,10 +52,11 @@ export function FlashDialog({ open, onOpenChange, projectId, device }: {
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle className="flex items-center gap-2"><Cpu className="size-4 text-primary" /> Program {device.name || device.ia}</AlertDialogTitle>
+          <AlertDialogTitle className="flex items-center gap-2"><Cpu className="size-4 text-primary" /> Program {what} on {device.name || device.ia}</AlertDialogTitle>
           <AlertDialogDescription>
-            Writes the parameter segment (LSM4) to <span className="font-mono">{device.ia}</span> over the bus. The
-            addressing and group tables are not touched. A backup is taken first and the result is read back and verified.
+            Writes the {segment} to <span className="font-mono">{device.ia}</span> over the bus.
+            {target === "ga" ? " The com-object flags are read from the device and kept unchanged." : " The addressing and group tables are not touched."}
+            {" "}A backup is taken first and the result is read back and verified.
           </AlertDialogDescription>
         </AlertDialogHeader>
 

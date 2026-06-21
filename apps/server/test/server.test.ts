@@ -219,4 +219,14 @@ describe("device configuration", () => {
     const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
     expect(res!.status).toBe(409);
   });
+
+  test("flash-ga guards: unknown device 404, no interface 400, concurrent 409", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    expect((await handleApi(req(`/api/projects/${projectId}/devices/ghost/flash-ga`, { method: "POST" }), state))!.status).toBe(404);
+    const r2 = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state);
+    expect(r2!.status).toBe(400);
+    state.flashing = true;
+    expect((await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!.status).toBe(409);
+  });
 });

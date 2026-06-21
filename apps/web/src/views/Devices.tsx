@@ -18,7 +18,7 @@ export function DevicesView({ project }: { project: Project }) {
     return project.devices.filter((d) => `${d.ia} ${d.name} ${manuf(d.manufacturer)}`.toLowerCase().includes(needle));
   }, [project, q]);
 
-  if (selected) return <DeviceConfig projectId={project.id} device={selected} onBack={() => setSelected(null)} />;
+  if (selected) return <DeviceConfig projectId={project.id} project={project} device={selected} onBack={() => setSelected(null)} />;
 
   return (
     <div className="space-y-4">
