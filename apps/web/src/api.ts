@@ -23,6 +23,7 @@ export type CfgItem =
   | { kind: "comObject"; comObject: CfgComObjView };
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
+export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
@@ -60,6 +61,9 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/params`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId, value, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  flashDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
 
   busStatus: (id: string): Promise<BusState> => fetch(`/api/projects/${id}/bus/status`).then((r) => jsonOrThrow<BusState>(r)),
   busConnect: (id: string): Promise<{ status: BusStatus }> => fetch(`/api/projects/${id}/bus/connect`, { method: "POST" }).then((r) => jsonOrThrow<{ status: BusStatus }>(r)),

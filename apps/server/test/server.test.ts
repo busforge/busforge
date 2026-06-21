@@ -196,4 +196,27 @@ describe("device configuration", () => {
     const res = await handleApi(req(`/api/projects/${projectId}/devices/ghost/config`), state);
     expect(res!.status).toBe(404);
   });
+
+  test("flash guards: unknown device -> 404, no interface -> 400", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    // unknown device
+    const r1 = await handleApi(req(`/api/projects/${projectId}/devices/ghost/flash`, { method: "POST" }), state);
+    expect(r1!.status).toBe(404);
+    // known device but no interface set -> refuses before any bus access
+    const r2 = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
+    expect(r2!.status).toBe(400);
+    expect(((await r2!.json()) as any).error).toMatch(/interface/i);
+  });
+
+  test("flash refuses a second concurrent flash (409)", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/interface`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ interfaceIp: "203.0.113.11", port: 3671 }),
+    }), state);
+    state.flashing = true; // simulate a flash in progress; the guard fires before any bus access
+    const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
+    expect(res!.status).toBe(409);
+  });
 });

@@ -28,6 +28,12 @@ export function getDeviceAppRef(db: Database, projectId: string, deviceId: strin
   return r?.appRef ?? null;
 }
 
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string } | null;
+  return r ?? null;
+}
+
 export function getSourceFile(db: Database, projectId: string): string | null {
   const r = db.query("SELECT source_file AS sourceFile FROM projects WHERE id = ?").get(projectId) as { sourceFile: string } | null;
   return r?.sourceFile ?? null;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Loader2 } from "lucide-react";
+import { ChevronLeft, Cpu, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type CfgParamView, type Device, type DeviceConfigView } from "../api.ts";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FlashDialog } from "./FlashDialog.tsx";
 import { cn } from "@/lib/utils";
 
 const LANG = "de-DE"; // falls back to the manufacturer default when unavailable
@@ -17,6 +18,7 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [flashOpen, setFlashOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -46,7 +48,12 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
           <div className="font-mono text-xs text-primary">{device.ia}</div>
         </div>
         {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+        <Button variant="outline" size="sm" className="ml-auto" onClick={() => setFlashOpen(true)} data-testid="program-device">
+          <Cpu className="size-4" /> Program device
+        </Button>
       </div>
+
+      <FlashDialog open={flashOpen} onOpenChange={setFlashOpen} projectId={projectId} device={device} />
 
       {loading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading configuration…</div>}
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}

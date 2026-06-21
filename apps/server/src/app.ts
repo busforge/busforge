@@ -8,13 +8,15 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceAppRef, getSourceFile } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile } from "./db/deviceparams.ts";
+import { flashDeviceParameters } from "./flash.ts";
 
 export interface AppState {
   db: Database;
   bus: Bus;
   dataDir: string;
   now: () => number;
+  flashing: boolean; // one flash at a time; writing two segments at once would corrupt the load procedure
   // Parsed application programs cached per (sourceFile, appRef); immutable once a
   // project is imported, so this never needs invalidation within a run.
   appCache: Map<string, AppConfig>;
@@ -30,7 +32,7 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   // Persistent writer: every telegram of the active project is stored, whether
   // or not a monitor WebSocket is open.
   bus.subscribe((t) => { if (bus.activeProjectId) insertTelegram(db, bus.activeProjectId, t); });
-  return { db, bus, dataDir, now: opts?.now ?? (() => Date.now()), appCache: new Map() };
+  return { db, bus, dataDir, now: opts?.now ?? (() => Date.now()), appCache: new Map(), flashing: false };
 }
 
 const json = (data: unknown, status = 200) =>
@@ -114,6 +116,34 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!body.paramRefId || body.value === undefined) return err("paramRefId and value required");
       setDeviceParam(db, id, deviceId, body.paramRefId, String(body.value));
       return deviceConfig(state, id, deviceId, body.lang);
+    }
+
+    // /api/projects/:id/devices/:deviceId/flash?dry=1  -> program the parameter segment
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      // Only one flash (dry or real) at a time: concurrent segment writes would
+      // corrupt the load procedure on the device.
+      if (state.flashing) return err("a flash is already in progress", 409);
+      const dev = getDeviceForFlash(db, id, deviceId);
+      if (!dev) return err("device not found", 404);
+      const iface = getInterface(db, id);
+      if (!iface?.interfaceIp) return err("set an interface IP first");
+      const sourceFile = getSourceFile(db, id);
+      if (!sourceFile) return err("project not found", 404);
+      state.flashing = true;
+      try {
+        // Free the bus so the flash holds the only connection-oriented link.
+        if (bus.activeProjectId) await bus.disconnect();
+        const result = await flashDeviceParameters({
+          projectId: id, deviceId, ia: dev.ia, appRef: dev.appRef, sourceFile,
+          interfaceIp: iface.interfaceIp, port: iface.port,
+          params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
+          dryRun: url.searchParams.get("dry") === "1",
+        });
+        return json(result);
+      } finally {
+        state.flashing = false;
+      }
     }
 
     // /api/projects/:id/bus/{connect,disconnect,status}
