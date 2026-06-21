@@ -1,0 +1,14 @@
+{
+  "name": "@busforge/server",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@busforge/knx": "*",
+    "@busforge/project": "*"
+  }
+}

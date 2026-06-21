@@ -10,5 +10,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "verbatimModuleSyntax": true
-  }
+  },
+  "exclude": ["node_modules", "apps/web", "reference"]
 }

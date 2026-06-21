@@ -8,6 +8,11 @@ node_modules/
 *.knxproj
 *.knxprod
 *.knxkeys
+# except small synthetic test fixtures (no proprietary data)
+!packages/**/test/fixtures/*.knxproj
+
+# server runtime state
+apps/server/data/
 
 # local device backups / scratch
 *.bin
@@ -20,3 +25,4 @@ reference/
 
 # local session state
 .remember
+*.tsbuildinfo

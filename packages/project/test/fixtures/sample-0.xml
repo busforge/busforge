@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23" CreatedBy="ETS6">
+  <Project Id="P-TEST">
+    <Installations>
+      <Installation Name="Demo">
+        <Topology>
+          <Area Id="P-TEST-0_A-1" Address="1">
+            <Line Id="P-TEST-0_L-1" Address="1">
+              <Segment Id="P-TEST-0_S-1" Number="0">
+                <DeviceInstance Id="P-TEST-0_DI-1" Address="10" Name="Switch Actuator" ProductRefId="M-0048_H-1_P-1" Hardware2ProgramRefId="M-0048_H-1_HP-1" />
+                <DeviceInstance Id="P-TEST-0_DI-2" Address="11" Name="Dimmer" ProductRefId="M-0083_H-2_P-2" Hardware2ProgramRefId="M-0083_H-2_HP-2" />
+              </Segment>
+            </Line>
+          </Area>
+        </Topology>
+        <GroupAddresses>
+          <GroupRanges>
+            <GroupRange Id="P-TEST-0_GR-1" RangeStart="1" RangeEnd="2047" Name="Licht">
+              <GroupRange Id="P-TEST-0_GR-2" RangeStart="1" RangeEnd="255" Name="Schalten">
+                <GroupAddress Id="P-TEST-0_GA-1" Address="1" Name="Kitchen On/Off" DatapointType="DPST-1-1" />
+                <GroupAddress Id="P-TEST-0_GA-2" Address="2" Name="Living Room On/Off" DatapointType="DPST-1-1" />
+              </GroupRange>
+            </GroupRange>
+          </GroupRanges>
+        </GroupAddresses>
+      </Installation>
+    </Installations>
+  </Project>
+</KNX>

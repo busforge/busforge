@@ -4,7 +4,13 @@
   "type": "module",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "knx": "bun run packages/knx/src/cli.ts"
+    "knx": "bun run packages/knx/src/cli.ts",
+    "dev:server": "bun run --cwd apps/server dev",
+    "dev:web": "bun run --cwd apps/web dev",
+    "test": "bun test packages apps/server",
+    "typecheck": "tsc --noEmit",
+    "build:web": "bun run --cwd apps/web build",
+    "check": "bun run typecheck && bun run test && bun run build:web"
   },
   "devDependencies": {
     "bun-types": "^1.3.14"
