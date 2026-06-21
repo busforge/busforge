@@ -1,0 +1,22 @@
+# build output
+**/bin/
+**/obj/
+**/dist/
+node_modules/
+
+# user-supplied, never commit (proprietary project + manufacturer data)
+*.knxproj
+*.knxprod
+*.knxkeys
+
+# local device backups / scratch
+*.bin
+
+# os
+.DS_Store
+
+# reference-only C# spike (kept locally, never in git)
+reference/
+
+# local session state
+.remember

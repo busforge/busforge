@@ -1,0 +1,6 @@
+{
+  "name": "ets-rewrite",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "type": "module"
+}
