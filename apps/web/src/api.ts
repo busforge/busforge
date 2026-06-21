@@ -26,7 +26,7 @@ export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
 
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
-export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; name?: string | null; }
+export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; }
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));

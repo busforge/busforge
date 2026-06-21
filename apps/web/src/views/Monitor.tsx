@@ -1,9 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
-import { api, type BusStatus, type Telegram } from "../api.ts";
+import { decodeDpt } from "@busforge/knx/dpt";
+import { api, type BusStatus, type GroupRangeNode, type Project, type Telegram } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+
+interface GaInfo { name: string; dpt: string; }
+function indexGas(ranges: GroupRangeNode[], into: Map<number, GaInfo>) {
+  for (const r of ranges) {
+    for (const g of r.addresses) into.set(g.raw, { name: g.name, dpt: g.dpt });
+    indexGas(r.children, into);
+  }
+}
 
 const kindStyle: Record<string, string> = {
   GroupValueWrite: "border-primary/40 bg-primary/10 text-primary",
@@ -20,7 +29,8 @@ function KindChip({ kind }: { kind: string }) {
   );
 }
 
-export function MonitorView({ projectId, status }: { projectId: string; status: BusStatus }) {
+export function MonitorView({ projectId, status, project }: { projectId: string; status: BusStatus; project: Project }) {
+  const gaIndex = useMemo(() => { const m = new Map<number, GaInfo>(); indexGas(project.groupRanges, m); return m; }, [project]);
   const [rows, setRows] = useState<Telegram[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(paused);
@@ -50,7 +60,7 @@ export function MonitorView({ projectId, status }: { projectId: string; status: 
     if (!paused) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [rows, paused]);
 
-  const hasNames = rows.some((r) => r.name);
+  const hasNames = rows.some((t) => gaIndex.has(t.dstRaw));
 
   return (
     <div className="space-y-3">
@@ -82,34 +92,42 @@ export function MonitorView({ projectId, status }: { projectId: string; status: 
               </tr>
             </thead>
             <tbody className="font-mono">
-              {rows.map((t, i) => (
-                <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
-                  <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{time(t.ts)}</td>
-                  <td className="px-3 py-1.5">{t.src}</td>
-                  <td className="px-3 py-1.5 text-primary">{t.dst}</td>
-                  {hasNames && <td className="px-3 py-1.5 font-sans text-muted-foreground">{t.name ?? ""}</td>}
-                  <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
-                  <td className="px-3 py-1.5 text-foreground">0x{t.raw}</td>
-                </tr>
-              ))}
+              {rows.map((t, i) => {
+                const ga = gaIndex.get(t.dstRaw);
+                const value = decodeDpt(t.raw, ga?.dpt);
+                return (
+                  <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
+                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{time(t.ts)}</td>
+                    <td className="px-3 py-1.5">{t.src}</td>
+                    <td className="px-3 py-1.5 text-primary">{t.dst}</td>
+                    {hasNames && <td className="max-w-48 truncate px-3 py-1.5 font-sans text-muted-foreground">{ga?.name ?? ""}</td>}
+                    <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
+                    <td className="px-3 py-1.5 text-foreground" title={`0x${t.raw}`}>{value}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
           {/* Cards on mobile. */}
           <div className="divide-y divide-border/40 sm:hidden">
-            {rows.map((t, i) => (
-              <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-primary">{t.dst}</span>
-                    <KindChip kind={t.kind} />
+            {rows.map((t, i) => {
+              const ga = gaIndex.get(t.dstRaw);
+              const value = decodeDpt(t.raw, ga?.dpt);
+              return (
+                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm text-primary">{t.dst}</span>
+                      <KindChip kind={t.kind} />
+                    </div>
+                    {ga?.name && <div className="truncate text-xs">{ga.name}</div>}
+                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · from {t.src}</div>
                   </div>
-                  {t.name && <div className="truncate text-xs">{t.name}</div>}
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · from {t.src}</div>
+                  <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>
                 </div>
-                <span className="shrink-0 font-mono text-xs text-foreground">0x{t.raw}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {rows.length === 0 && (

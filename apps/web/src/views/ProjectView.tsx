@@ -52,7 +52,7 @@ export function ProjectView({ project, status, onStatus, onBack }: {
       <main className="flex-1 px-4 py-6 sm:px-6">
         <TabsContent value="devices"><DevicesView project={project} /></TabsContent>
         <TabsContent value="groups"><GroupAddressesView project={project} /></TabsContent>
-        <TabsContent value="monitor"><MonitorView projectId={project.id} status={status} /></TabsContent>
+        <TabsContent value="monitor"><MonitorView projectId={project.id} status={status} project={project} /></TabsContent>
         <TabsContent value="interface"><InterfaceView project={project} status={status} onStatus={onStatus} /></TabsContent>
       </main>
     </Tabs>

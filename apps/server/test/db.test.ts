@@ -99,17 +99,15 @@ describe("projects", () => {
 });
 
 describe("telegrams", () => {
-  test("recent returns oldest-first and joins the GA name", () => {
+  test("recent returns oldest-first with formatted dst", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    // GA 0/0/1 (raw 1) is "Kitchen On/Off" in the fixture.
     insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x81]), 10));
     insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 2, Buffer.from([0x00, 0x81]), 20));
-    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 999, Buffer.from([0x00, 0x81]), 30)); // unknown GA
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 3, Buffer.from([0x00, 0x81]), 30));
     const recent = recentTelegrams(db, "p1", 10);
     expect(recent.map((t) => t.ts)).toEqual([10, 20, 30]); // oldest first
-    expect(recent[0]).toMatchObject({ dst: "0/0/1", name: "Kitchen On/Off" });
-    expect(recent[2].name).toBeNull();
+    expect(recent[0]).toMatchObject({ dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite" });
   });
 
   test("recent is scoped per project and honors the limit", () => {
