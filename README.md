@@ -1,13 +1,17 @@
 # Busforge
 
 **An open commissioning tool for KNX installations.** Cross-platform,
-self-hostable alternative to KNX ETS. The goal: import a project, render device configuration from manufacturer data,
-and **program ("download") real KNX devices** over IP. Self-hostable as a single
-Docker container (think: deploy it on your NAS). TypeScript on Bun, React frontend.
+self-hostable alternative to KNX ETS. Import a project, browse the installation,
+watch the bus with decoded values, edit a device's configuration, and
+**program ("download") real KNX devices** over IP, all from a web UI.
+Self-hostable as a single Docker container (think: deploy it on your NAS).
+TypeScript on Bun, React frontend.
 
-This repo validates the hard, risky core: with our own code, can we read a device,
-reconstruct byte-for-byte what ETS flashed, and program real changes that take
-effect on the bus? **Yes, verified on live hardware.**
+The hard, risky core is proven: with our own code we read a device, reconstruct
+byte-for-byte what ETS flashed, and program real parameter and group-address
+changes that take effect on the bus, **verified on live hardware, from the UI,
+with backup and read-back verification.** See [`docs/ui.md`](docs/ui.md) for the
+current architecture and features.
 
 ---
 
@@ -21,8 +25,11 @@ effect on the bus? **Yes, verified on live hardware.**
 | Read-back: reconstruct a device's loaded tables, **byte-match** vs. the project | ✅ |
 | Flash a device (full load procedure, TS on Bun) | ✅ verified on the bus |
 | Functional change proven on the bus (group address + a device setting) | ✅ |
-| Parameter engine: build the parameter image, **byte-match** vs. device | ✅ (base; conditions/unions next) |
-| Web app (Bun server + REST/WebSocket + React UI) | ⬜ next |
+| Parameter engine: full dynamic UI (conditions, unions, modules/channels, i18n) | ✅ |
+| Web app: multi-project, persistence, devices, group addresses, bus monitor | ✅ |
+| Bus monitor with DPT-decoded values + GA names | ✅ |
+| Device configuration UI (edit + persist parameters) | ✅ |
+| Program parameters and group addresses from the UI (backup + verify + revert) | ✅ verified on the bus |
 | KNX Secure | ⬜ |
 
 All ✅ items are **verified against a real KNX installation** (a live, multi
@@ -47,17 +54,21 @@ reverted. The device autonomously changed its behaviour after we wrote the setti
 
 ```
 packages/
-  knx/          the KNX engine (own MIT implementation)
-    src/frame.ts        KNXnet/IP + cEMI + TPCI/APCI byte handling
-    src/connection.ts   KnxIpTunnel: tunnelling + acks + retransmission
-    src/device.ts       KnxDevice: connection-oriented read/write/flash
-    src/cli.ts          read a device descriptor + group table
+  knx/          KNX transport (own MIT implementation)
+    frame/connection/device.ts  KNXnet/IP, tunnel, connection-oriented device
+    flash.ts                     the load procedures (parameter + group tables)
+    dpt.ts                       browser-safe DPT value decoder
+  project/      .knxproj loader: dependency-free ZIP + WinZip-AES + 0.xml parser
+  product/      application-program engine
+    appconfig/config.ts          the dynamic parameter UI (visibility, modules)
+    image.ts / grouptables.ts    build the bytes to flash (params / GA tables)
 apps/
-  server/       Bun server (REST + WebSocket), serves the web app   (planned)
-  web/          React / Vite frontend                                (planned)
+  server/       Bun server: handleApi router, SQLite (db/), Bus, flash
+  web/          React / Vite / shadcn frontend (the "Precision Instrument" theme)
 docs/
-  plan.md       scope, v1 cut, build sequence, deferred items
+  ui.md         current architecture and features (start here)
   findings.md   the protocol knowledge: formats, load procedure, gotchas
+  *-plan.md     per-iteration design notes
 ```
 
 The genuinely hard part of this project was the protocol **discovery** (the subtle
@@ -69,17 +80,21 @@ valuable artifact here.
 
 ## Run it
 
-Requirements: [Bun](https://bun.sh), a reachable KNXnet/IP interface, and a device
-whose `.knxprod` data you legally have (it ships inside your `.knxproj`).
+Requirements: [Bun](https://bun.sh), and (for the bus features) a reachable
+KNXnet/IP interface and your own `.knxproj`.
 
 ```bash
-bun run packages/knx/src/cli.ts <interface-ip> <device-ia>
-# e.g. bun run packages/knx/src/cli.ts 198.51.100.10 1.1.x
+bun install
+bun run dev:server     # Bun API on :3000
+bun run dev:web        # Vite UI, proxies /api  (or: bun run build:web && bun run apps/server/src/index.ts)
+bun run check          # typecheck + tests + web build
 ```
 
-**Writing to a device follows a real load procedure that unloads tables first;
-always back up first and keep a recovery path.** See the safety notes in
-`docs/findings.md`.
+Open the web app, import a `.knxproj`, set the interface, and go. **Writing to a
+device follows a real load procedure that unloads tables first; Busforge backs up
+the segment, only writes on a confirmed change, and reads it back to verify, but
+keep a recovery path.** See the safety notes in `docs/findings.md` and the flash
+safety model in [`docs/ui.md`](docs/ui.md).
 
 ---
 
@@ -101,8 +116,7 @@ always back up first and keep a recovery path.** See the safety notes in
   legitimate. We do not use the KNX trademark or claim certification.
 
 ## Next steps
-1. Port the proven flash / load procedure into `packages/knx`.
-2. Dynamic parameter engine: build the parameter image from changed values
-   (conditions, unions, channels).
-3. Bun server (REST + WebSocket) + React frontend; single Docker container.
-4. KNX Secure.
+1. Full group-address link management (add/remove links, multiple GAs per
+   com-object, create new GAs).
+2. KNX Secure.
+3. Config display completeness (DPT-9 float / text / binary value editors).
