@@ -3,6 +3,8 @@ import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, AP
 
 // Connection-oriented KNX management on top of the tunnel: T_Connect, numbered
 // requests with T_ACK + retransmission, ACK-the-response-before-the-next-request.
+// Reads are verified on real hardware; writes/flash are ported from the proven
+// reference and the load procedure documented in docs/findings.md.
 export class KnxDevice {
   private dst: number;
   private seq = 0;
@@ -43,17 +45,16 @@ export class KnxDevice {
     throw new Error("no reliable response (device not answering)");
   }
 
+  // ---- reads (verified on hardware) ----
   async deviceDescriptor(): Promise<string> {
     const r = await this.request((s) => apdu(s, APCI.DEVICE_DESCRIPTOR_READ), true);
     return "MV-" + r!.data.toString("hex").toUpperCase();
   }
-
   async propRead(obj: number, pid: number, start = 1, count = 1): Promise<Buffer> {
     const tail = Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
-
   async memRead(addr: number, len: number, chunk = 12): Promise<Buffer> {
     const out: Buffer[] = [];
     for (let pos = addr; pos < addr + len; ) {
@@ -65,10 +66,35 @@ export class KnxDevice {
     }
     return Buffer.concat(out);
   }
-
-  // table base address for an interface object (PID 7), big-endian
   async tableAddr(obj: number): Promise<number> {
     const b = await this.propRead(obj, 7);
     let a = 0; for (const x of b) a = (a << 8) | x; return a;
+  }
+
+  // ---- writes (ported from the proven reference; load procedure in flash.ts) ----
+  async propWrite(obj: number, pid: number, data: Buffer, start = 1, count = 1): Promise<Buffer> {
+    const tail = Buffer.concat([Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]), data]);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_WRITE, tail), true);
+    return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
+  }
+  async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean } = {}): Promise<void> {
+    const chunk = opts.chunk ?? 12;
+    for (let pos = 0; pos < data.length; ) {
+      const n = Math.min(chunk, data.length - pos);
+      const slice = data.subarray(pos, pos + n);
+      const a = addr + pos;
+      const tail = Buffer.concat([Buffer.from([(a >> 8) & 0xff, a & 0xff]), slice]);
+      await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), false); // T_ACK only
+      pos += n;
+    }
+    if (opts.verify ?? true) {
+      const back = await this.memRead(addr, data.length);
+      if (!back.equals(data)) throw new Error(`memWrite verify mismatch @0x${addr.toString(16)}`);
+    }
+  }
+  async restart(): Promise<void> {
+    // device reboots; no reliable KNX ack expected, fire once
+    try { await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART))); } catch {}
+    this.seq = (this.seq + 1) & 0x0f;
   }
 }

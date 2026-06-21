@@ -1,7 +1,7 @@
-# ets-rewrite
+# Busforge
 
-Proof of concept toward an **open-source, cross-platform alternative to KNX ETS**.
-The goal: import a project, render device configuration from manufacturer data,
+**An open commissioning tool for KNX installations.** Cross-platform,
+self-hostable alternative to KNX ETS. The goal: import a project, render device configuration from manufacturer data,
 and **program ("download") real KNX devices** over IP. Self-hostable as a single
 Docker container (think: deploy it on your NAS). TypeScript on Bun, React frontend.
 
@@ -56,6 +56,7 @@ apps/
   server/       Bun server (REST + WebSocket), serves the web app   (planned)
   web/          React / Vite frontend                                (planned)
 docs/
+  plan.md       scope, v1 cut, build sequence, deferred items
   findings.md   the protocol knowledge: formats, load procedure, gotchas
 ```
 

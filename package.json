@@ -1,6 +1,12 @@
 {
-  "name": "ets-rewrite",
+  "name": "busforge",
   "private": true,
+  "type": "module",
   "workspaces": ["packages/*", "apps/*"],
-  "type": "module"
+  "scripts": {
+    "knx": "bun run packages/knx/src/cli.ts"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.14"
+  }
 }
