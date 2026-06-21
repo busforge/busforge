@@ -70,6 +70,16 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id, param_ref_id)
   );
   `,
+  // Iteration 3 phase 2: a device's module instances (resolved arg values),
+  // stored as JSON since they are read whole to expand the configuration.
+  `
+  CREATE TABLE device_modules (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id  TEXT NOT NULL,
+    instances  TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id)
+  );
+  `,
 ];
 
 function migrate(db: Database): void {

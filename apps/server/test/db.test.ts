@@ -7,6 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
+import { getDeviceModules } from "../src/db/deviceparams.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -57,6 +58,26 @@ describe("projects", () => {
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
     expect(listProjects(db)).toMatchObject([{ id: "p1", name: "Demo", deviceCount: 2, gaCount: 2 }]);
     expect(getProject(db, "ghost")).toBeNull();
+  });
+
+  test("seeds and reads a device's module instances", () => {
+    const xml0 = `<?xml version="1.0" encoding="utf-8"?>
+      <KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><Installations><Installation><Topology>
+        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
+          <ModuleInstances>
+            <ModuleInstance Id="MD-1_M-1_MI-1" RefId="MD-1_M-1"><Arguments>
+              <Argument RefId="MD-1_A-1" Value="A" /><Argument RefId="MD-1_A-2" Value="10" />
+            </Arguments></ModuleInstance>
+          </ModuleInstances>
+        </DeviceInstance></Line></Area>
+      </Topology></Installation></Installations></Project></KNX>`;
+    const proj = parseProject(xml0, undefined, "x");
+    const db = fresh();
+    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    expect(getDeviceModules(db, "p1", "DI-9")).toEqual([
+      { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
+    ]);
+    expect(getDeviceModules(db, "p1", "ghost")).toEqual([]);
   });
 
   test("interface update", () => {

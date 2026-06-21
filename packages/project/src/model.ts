@@ -13,6 +13,11 @@ export interface Device {
 export interface DeviceParam { refId: string; value: string; }
 export interface DeviceParams { deviceId: string; values: DeviceParam[]; }
 
+// A device's module instances (from 0.xml), pinning each instance's resolved
+// argument values, used to expand channel/module configuration.
+export interface ModuleInstanceData { id: string; refId: string; args: DeviceParam[]; }
+export interface DeviceModules { deviceId: string; instances: ModuleInstanceData[]; }
+
 export interface TopologyLine {
   address: number;
   name: string;
@@ -52,4 +57,5 @@ export interface Project {
   groupRanges: GroupRangeNode[];
   groupAddresses: GroupAddress[]; // flat, for counts and search
   deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
+  deviceModules: DeviceModules[]; // per-device module instances from 0.xml
 }

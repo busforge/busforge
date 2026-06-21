@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-3" ApplicationNumber="3" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Access App" DefaultLanguage="en-US">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-3_PT-Num" Name="Num"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
+              <ParameterType Id="M-TEST_A-3_PT-Txt" Name="Txt"><TypeText SizeInBit="80" /></ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="M-TEST_A-3_P-1" Name="Visible" ParameterType="M-TEST_A-3_PT-Num" Text="Visible" Value="1"><Memory CodeSegment="M-TEST_A-3_RS-4" Offset="0" BitOffset="0" /></Parameter>
+              <Parameter Id="M-TEST_A-3_P-2" Name="Hidden" ParameterType="M-TEST_A-3_PT-Num" Text="Hidden" Value="2" Access="None"><Memory CodeSegment="M-TEST_A-3_RS-4" Offset="1" BitOffset="0" /></Parameter>
+              <Parameter Id="M-TEST_A-3_P-3" Name="Info" ParameterType="M-TEST_A-3_PT-Num" Text="Info" Value="3" Access="Read"><Memory CodeSegment="M-TEST_A-3_RS-4" Offset="2" BitOffset="0" /></Parameter>
+              <Parameter Id="M-TEST_A-3_P-4" Name="Label" ParameterType="M-TEST_A-3_PT-Txt" Text="Line one&amp;#xA;keep&amp;#x110000;end" Value="x"><Memory CodeSegment="M-TEST_A-3_RS-4" Offset="3" BitOffset="0" /></Parameter>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-TEST_A-3_P-1_R-1" RefId="M-TEST_A-3_P-1" />
+              <ParameterRef Id="M-TEST_A-3_P-2_R-2" RefId="M-TEST_A-3_P-2" />
+              <ParameterRef Id="M-TEST_A-3_P-3_R-3" RefId="M-TEST_A-3_P-3" />
+              <ParameterRef Id="M-TEST_A-3_P-4_R-4" RefId="M-TEST_A-3_P-4" />
+            </ParameterRefs>
+            <ComObjectTable /><ComObjectRefs />
+          </Static>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-TEST_A-3_PB-1" Name="main" Text="Main">
+                <ParameterRefRef RefId="M-TEST_A-3_P-1_R-1" />
+                <ParameterRefRef RefId="M-TEST_A-3_P-2_R-2" />
+                <ParameterRefRef RefId="M-TEST_A-3_P-3_R-3" />
+                <ParameterRefRef RefId="M-TEST_A-3_P-4_R-4" />
+              </ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

@@ -11,7 +11,7 @@ export interface Project { id: string; name: string; interface: ProjectInterface
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
-  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string;
+  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; readOnly?: boolean;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;

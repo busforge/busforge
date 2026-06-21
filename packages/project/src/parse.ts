@@ -28,8 +28,9 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
+  const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams };
+  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules };
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).
@@ -40,6 +41,16 @@ function parseDeviceParams(doc: any, deviceId: string): { refId: string; value: 
     if (r.Value !== undefined) out.push({ refId: String(r.RefId), value: String(r.Value) });
   }
   return out;
+}
+
+// Collect a device's module instances with their resolved argument values.
+function parseDeviceModules(doc: any, deviceId: string) {
+  const dev = findDeviceInstance(doc, deviceId);
+  return arr<any>(dev?.ModuleInstances?.ModuleInstance).map((mi) => ({
+    id: String(mi.Id),
+    refId: String(mi.RefId),
+    args: arr<any>(mi.Arguments?.Argument).filter((a) => a.Value !== undefined).map((a) => ({ refId: String(a.RefId), value: String(a.Value) })),
+  }));
 }
 
 function findDeviceInstance(node: any, id: string): any {

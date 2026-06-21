@@ -50,13 +50,13 @@ export function DeviceConfig({ projectId, device, onBack }: { projectId: string;
 
       {loading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading configuration…</div>}
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-      {view?.hasModules && (
+      {view && !loading && view.blocks.length === 0 && !error && (
         <Card><CardContent className="text-sm text-muted-foreground">
-          This is a channel/module based device. Module configuration arrives in a later iteration.
+          No editable parameters for this device.
         </CardContent></Card>
       )}
 
-      {view && !view.hasModules && view.blocks.map((block) => (
+      {view && view.blocks.map((block) => (
         <Card key={block.id}>
           <CardContent className="space-y-1 py-4">
             <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{block.name}</h3>
@@ -98,7 +98,7 @@ function ParamRow({ param, onChange }: { param: CfgParamView; onChange: (value: 
       <span className="min-w-0 flex-1 text-sm">{param.name}</span>
       <div className="flex w-56 shrink-0 items-center gap-2">
         {param.control === "enum" && (
-          <Select value={param.value} onValueChange={onChange}>
+          <Select value={param.value} onValueChange={onChange} disabled={param.readOnly}>
             <SelectTrigger className="w-full" data-testid={`param-${param.refId}`}><SelectValue /></SelectTrigger>
             <SelectContent>
               {param.options?.map((o) => <SelectItem key={o.value} value={String(o.value)}>{o.text}</SelectItem>)}
@@ -107,14 +107,14 @@ function ParamRow({ param, onChange }: { param: CfgParamView; onChange: (value: 
         )}
         {param.control === "number" && (
           <Input
-            type="number" value={local} min={param.min} max={param.max}
+            type="number" value={local} min={param.min} max={param.max} readOnly={param.readOnly}
             onChange={(e) => setLocal(e.target.value)}
-            onBlur={() => local !== param.value && onChange(local)}
+            onBlur={() => !param.readOnly && local !== param.value && onChange(local)}
             className="font-mono" data-testid={`param-${param.refId}`}
           />
         )}
         {param.control === "text" && (
-          <Input value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
+          <Input value={local} readOnly={param.readOnly} onChange={(e) => setLocal(e.target.value)} onBlur={() => !param.readOnly && local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
         )}
         {param.control === "unsupported" && <span className="font-mono text-xs text-muted-foreground">{param.value}</span>}
         {param.suffix && <span className="shrink-0 text-xs text-muted-foreground">{param.suffix}</span>}

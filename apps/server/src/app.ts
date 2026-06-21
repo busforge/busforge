@@ -8,7 +8,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceAppRef, getSourceFile } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceAppRef, getSourceFile } from "./db/deviceparams.ts";
 
 export interface AppState {
   db: Database;
@@ -160,7 +160,6 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
     app = parseAppConfig(xml);
     state.appCache.set(cacheKey, app);
   }
-  if (app.hasModules) return json({ blocks: [], hasModules: true });
-  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang);
+  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
   return json(view);
 }

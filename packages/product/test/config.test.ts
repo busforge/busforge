@@ -6,6 +6,8 @@ import { buildDeviceConfig, matchTest, type CfgParamView, type CfgItem } from ".
 
 const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "utf8");
 const app = parseAppConfig(xml);
+const moduleApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8"));
+const accessApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-access-app.xml"), "utf8"));
 
 const params = (v: { blocks: { items: CfgItem[] }[] }) =>
   v.blocks.flatMap((b) => b.items).filter((i): i is { kind: "param"; param: CfgParamView } => i.kind === "param");
@@ -85,6 +87,58 @@ describe("buildDeviceConfig visibility", () => {
     const co = comObjs(v)[0] as { comObject: any };
     expect(co.comObject).toMatchObject({ number: 0, functionText: "On/Off", dpt: "DPST-1-1" });
     expect(co.comObject.flags).toEqual({ read: false, write: true, comm: true, transmit: true, update: false });
+  });
+});
+
+describe("module instantiation", () => {
+  test("parses module defs and detects modules", () => {
+    expect(moduleApp.hasModules).toBe(true);
+    expect(moduleApp.moduleDefs.size).toBe(1);
+    // the module def's static was merged into the shared maps
+    expect(moduleApp.params.has("M-TEST_A-2_MD-1_P-1")).toBe(true);
+    expect(moduleApp.comObjects.has("M-TEST_A-2_MD-1_O-1")).toBe(true);
+  });
+
+  test("expands each device module instance with rewritten ids, substituted text, and based numbering", () => {
+    const instances = [
+      { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
+      { id: "MD-1_M-1_MI-2", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "B" }, { refId: "MD-1_A-2", value: "20" }] },
+    ];
+    const v = buildDeviceConfig(moduleApp, new Map(), undefined, instances);
+    // one block per instance, with {{ChNo}} substituted
+    expect(v.blocks.map((b) => b.name)).toEqual(["Channel A", "Channel B"]);
+    // param ids are rewritten to the instance-scoped form
+    const ps = params(v);
+    expect(ps.map((p) => p.param.refId)).toEqual(["M-TEST_A-2_MD-1_M-1_MI-1_P-1_R-1", "M-TEST_A-2_MD-1_M-1_MI-2_P-1_R-1"]);
+    expect(ps.map((p) => p.param.name)).toEqual(["Channel A enable", "Channel B enable"]);
+    // com-object numbers use the instance's resolved base (0 + ObjBase)
+    const cos = comObjs(v).map((i) => (i as any).comObject);
+    expect(cos.map((c: any) => c.number)).toEqual([10, 20]);
+    expect(cos.map((c: any) => c.name)).toEqual(["Ch A switch", "Ch B switch"]);
+  });
+
+  test("instance parameter edits target the rewritten id", () => {
+    const instances = [{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] }];
+    const overrides = new Map([["M-TEST_A-2_MD-1_M-1_MI-1_P-1_R-1", "1"]]);
+    const v = buildDeviceConfig(moduleApp, overrides, undefined, instances);
+    expect(params(v)[0].param.value).toBe("1");
+  });
+});
+
+describe("access and text decoding", () => {
+  const v = buildDeviceConfig(accessApp, new Map());
+  const ps = params(v);
+
+  test("Access=None is hidden, Access=Read is read-only, others editable", () => {
+    // Hidden (Access=None) is omitted; Visible, Info, Label remain.
+    expect(ps.map((p) => p.param.refId)).toEqual(["M-TEST_A-3_P-1_R-1", "M-TEST_A-3_P-3_R-3", "M-TEST_A-3_P-4_R-4"]);
+    expect(ps[0].param.readOnly).toBeFalsy(); // Visible (ReadWrite)
+    expect(ps[1].param.readOnly).toBe(true);  // Info (Access=Read)
+  });
+
+  test("valid numeric entities decode; out-of-range ones are left intact (no throw)", () => {
+    // "Line one&#xA;keep&#x110000;end" -> newline decoded, U+110000 left as-is
+    expect(ps[2].param.name).toBe("Line one\nkeep&#x110000;end");
   });
 });
 

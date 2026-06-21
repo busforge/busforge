@@ -18,12 +18,12 @@ export interface CfgType {
   min?: number;
   max?: number;
 }
-export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; hasMemory: boolean; }
-export interface CfgParamRef { id: string; paramId: string; value?: string; }
+export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
+export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
-  objectSize: string; dpt: string; flags: ComObjFlags; textParamRefId?: string;
+  objectSize: string; dpt: string; flags: ComObjFlags; textParamRefId?: string; baseNumber?: string;
 }
 export interface CfgComObjectRef {
   id: string; refId: string; text?: string; functionText?: string; objectSize?: string;
@@ -31,7 +31,7 @@ export interface CfgComObjectRef {
 }
 
 export type DynNode =
-  | { kind: "block"; id: string; name: string; text: string; children: DynNode[] }
+  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; children: DynNode[] }
   | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "paramRef"; refId: string }
@@ -42,6 +42,13 @@ export type DynNode =
 export interface DynWhen { test?: string; isDefault: boolean; children: DynNode[] }
 
 export type Translations = Map<string, Map<string, Map<string, string>>>; // lang -> elemId -> attr -> text
+
+export interface ModuleArg { id: string; name: string; type: string; }
+export interface ModuleDefModel { id: string; args: ModuleArg[]; dynamic: DynNode[]; }
+
+// A device's module instances (from 0.xml), pinning each instance's resolved
+// argument values. id/refId are prefix-stripped as ETS stores them.
+export interface ModuleInstance { id: string; refId: string; args: { refId: string; value: string }[]; }
 
 export interface AppConfig {
   id: string;
@@ -54,6 +61,7 @@ export interface AppConfig {
   comObjectRefs: Map<string, CfgComObjectRef>;
   translations: Translations;
   dynamic: DynNode[];
+  moduleDefs: Map<string, ModuleDefModel>;
   hasModules: boolean;
 }
 
@@ -92,6 +100,29 @@ export function parseAppConfig(xml: string): AppConfig {
   const comObjects = parseComObjects(staticKids);
   const comObjectRefs = parseComObjectRefs(staticKids);
 
+  // Module definitions: merge each def's Static (its ids are globally unique,
+  // prefixed with the MD id) into the shared maps, and keep its Arguments +
+  // Dynamic tree for instantiation.
+  const moduleDefs = new Map<string, ModuleDefModel>();
+  const defsContainer = firstByTag(appKids, "ModuleDefs");
+  const merge = <V,>(target: Map<string, V>, src: Map<string, V>) => { for (const [k, v] of src) target.set(k, v); };
+  for (const md of defsContainer ? childrenByTag(kidsOf(defsContainer), "ModuleDef") : []) {
+    const mdId = attrsOf(md).Id;
+    const mdKids = kidsOf(md);
+    const mdStatic = firstByTag(mdKids, "Static");
+    const mdStaticKids = mdStatic ? kidsOf(mdStatic) : [];
+    merge(types, parseTypes(mdStaticKids));
+    merge(params, parseParams(mdStaticKids).params);
+    merge(refs, parseRefs(mdStaticKids));
+    merge(comObjects, parseComObjects(mdStaticKids));
+    merge(comObjectRefs, parseComObjectRefs(mdStaticKids));
+    const args: ModuleArg[] = childrenByTag(firstByTag(mdKids, "Arguments") ? kidsOf(firstByTag(mdKids, "Arguments")!) : [], "Argument")
+      .map((a) => { const aa = attrsOf(a); return { id: aa.Id, name: aa.Name ?? "", type: aa.Type ?? "Numeric" }; });
+    const mdDynamic = firstByTag(mdKids, "Dynamic");
+    const dyn = mdDynamic ? kidsOf(mdDynamic).map(parseDyn).filter(Boolean) as DynNode[] : [];
+    moduleDefs.set(mdId, { id: mdId, args, dynamic: dyn });
+  }
+
   // Languages may sit inside ApplicationProgram or as a sibling after it, so
   // search the whole document.
   const langsNode = deepFirst(root, "Languages");
@@ -101,13 +132,13 @@ export function parseAppConfig(xml: string): AppConfig {
 
   const dynamicNode = firstByTag(appKids, "Dynamic");
   const dynamic = dynamicNode ? kidsOf(dynamicNode).map(parseDyn).filter(Boolean) as DynNode[] : [];
-  const hasModules = !!deepFirst(appKids, "Module") || !!firstByTag(staticKids, "ModuleDefs");
+  const hasModules = moduleDefs.size > 0;
 
   return {
     id: appAttrs.Id,
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, translations, dynamic, hasModules,
+    types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules,
   };
 }
 
@@ -150,7 +181,7 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   const add = (pa: ONode) => {
     const a = attrsOf(pa);
     const hasMemory = !!firstByTag(kidsOf(pa), "Memory");
-    params.set(a.Id, { id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, hasMemory });
+    params.set(a.Id, { id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access, hasMemory });
   };
   for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa);
   // Union children are parameters too (overlapping memory); include them.
@@ -165,14 +196,15 @@ function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
   const container = firstByTag(staticKids, "ParameterRefs");
   for (const r of container ? childrenByTag(kidsOf(container), "ParameterRef") : []) {
     const a = attrsOf(r);
-    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value });
+    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access });
   }
   return refs;
 }
 
 function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
   const out = new Map<string, CfgComObject>();
-  const container = firstByTag(staticKids, "ComObjectTable");
+  // Top-level apps use <ComObjectTable>; module defs use <ComObjects>.
+  const container = firstByTag(staticKids, "ComObjectTable") ?? firstByTag(staticKids, "ComObjects");
   for (const c of container ? childrenByTag(kidsOf(container), "ComObject") : []) {
     const a = attrsOf(c);
     out.set(a.Id, {
@@ -180,6 +212,7 @@ function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
       functionText: a.FunctionText ?? "", objectSize: a.ObjectSize ?? "", dpt: a.DatapointType ?? "",
       flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag) },
       textParamRefId: a.TextParameterRefId,
+      baseNumber: a.BaseNumber,
     });
   }
   return out;
@@ -233,7 +266,7 @@ function parseDyn(n: ONode): DynNode | null {
     case "Channel":
       return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
-      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterSeparator":
       return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
     case "ParameterRefRef":

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { ModuleInstance } from "@busforge/product";
 
 // A device's stored parameter values (ParameterRef id -> value), seeded from the
 // project at import and updated by the configuration UI.
@@ -15,6 +16,12 @@ export function setDeviceParam(db: Database, projectId: string, deviceId: string
 
 // The application program ref for a device (to locate its app XML), and the
 // project's stored source-file path.
+export function getDeviceModules(db: Database, projectId: string, deviceId: string): ModuleInstance[] {
+  const r = db.query("SELECT instances FROM device_modules WHERE project_id = ? AND device_id = ?")
+    .get(projectId, deviceId) as { instances: string } | null;
+  return r ? (JSON.parse(r.instances) as ModuleInstance[]) : [];
+}
+
 export function getDeviceAppRef(db: Database, projectId: string, deviceId: string): string | null {
   const r = db.query("SELECT app_ref AS appRef FROM devices WHERE project_id = ? AND instance_id = ?")
     .get(projectId, deviceId) as { appRef: string } | null;

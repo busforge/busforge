@@ -1,9 +1,15 @@
-import type { AppConfig, ComObjFlags, DynNode, DynWhen } from "./appconfig.ts";
+import type { AppConfig, ComObjFlags, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 
-// The device-configuration engine: given an application program and a device's
-// parameter values, produce the visible, grouped, localized parameter tree plus
-// the device's communication objects. Pure and re-runnable on every edit so
-// conditional visibility updates live. Module instantiation is Phase 2.
+// The device-configuration engine: given an application program, a device's
+// parameter values, and its module instances, produce the visible, grouped,
+// localized parameter tree plus the device's com-objects. Pure and re-runnable
+// on every edit so conditional visibility updates live.
+//
+// Module instances are expanded via a per-instance "scope" that rewrites the
+// module-def ids to the device's flattened instance ids (…_MD-x_M-k_MI-n_…),
+// substitutes text arguments ({{ChNo}}, {{ObjName}}), and supplies the resolved
+// numeric base for com-object numbering. ETS pins the resolved argument values
+// in the device's 0.xml, so no allocator computation is needed here.
 
 export interface CfgParamView {
   refId: string;
@@ -14,6 +20,7 @@ export interface CfgParamView {
   min?: number;
   max?: number;
   suffix?: string;
+  readOnly?: boolean;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -25,6 +32,13 @@ export type CfgItem =
   | { kind: "comObject"; comObject: CfgComObjView };
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
+
+interface Scope {
+  rewrite: (id: string) => string;     // module-def id -> device instance id (identity at top level)
+  textArgs: Map<string, string>;       // arg name -> value, for {{name}} substitution
+  argValue: (argId: string) => number; // resolved numeric arg, for com-object base numbering
+}
+const TOP: Scope = { rewrite: (id) => id, textArgs: new Map(), argValue: () => 0 };
 
 // `test` grammar: space-separated tokens, OR-combined. A token is a bare integer
 // (equality) or one of <N, >N, <=N, >=N, !=N. Compares the raw integer value.
@@ -43,35 +57,54 @@ export function matchTest(test: string, v: number): boolean {
   return false;
 }
 
-export function buildDeviceConfig(app: AppConfig, overrides: Map<string, string>, lang?: string): DeviceConfigView {
+export function buildDeviceConfig(
+  app: AppConfig,
+  overrides: Map<string, string>,
+  lang?: string,
+  moduleInstances: ModuleInstance[] = [],
+): DeviceConfigView {
   const language = lang ?? app.defaultLanguage;
   const env = new Map(overrides); // working values; Assign mutates this
 
-  const resolve = (refId: string): string | undefined => {
-    if (env.has(refId)) return env.get(refId);
-    const ref = app.refs.get(refId);
+  // Effective value: device instance value (keyed by the rewritten instance id)
+  // else the module-def ref default else the parameter default.
+  const resolve = (defRefId: string, scope: Scope): string | undefined => {
+    const instId = scope.rewrite(defRefId);
+    if (env.has(instId)) return env.get(instId);
+    const ref = app.refs.get(defRefId);
     return ref?.value ?? (ref ? app.params.get(ref.paramId)?.value : undefined);
   };
+  // Some manufacturer texts carry escaped numeric entities (e.g. "&#xA;" for a
+  // layout newline); decode them so labels read cleanly.
+  const codePoint = (m: string, n: number): string => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m);
+  const decode = (s: string): string =>
+    s.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => codePoint(m, parseInt(h, 16)))
+      .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)));
   const tr = (elemId: string | undefined, attr: string, base: string): string => {
-    if (!elemId || language === app.defaultLanguage) return base;
-    return app.translations.get(language)?.get(elemId)?.get(attr) ?? base;
+    const t = !elemId || language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base;
+    return decode(t);
   };
+  const subst = (text: string, scope: Scope): string =>
+    text.replace(/\{\{([^}]+)\}\}/g, (m, k) => scope.textArgs.get(k) ?? m);
 
-  const selectWhen = (paramRefId: string, whens: DynWhen[]): DynWhen | undefined => {
-    const v = Number(resolve(paramRefId) ?? 0);
+  const selectWhen = (defParamRefId: string, whens: DynWhen[], scope: Scope): DynWhen | undefined => {
+    const v = Number(resolve(defParamRefId, scope) ?? 0);
     for (const w of whens) if (!w.isDefault && w.test !== undefined && matchTest(w.test, v)) return w;
     return whens.find((w) => w.isDefault);
   };
 
-  const buildParam = (refId: string): CfgItem | null => {
-    const ref = app.refs.get(refId);
+  const buildParam = (defRefId: string, scope: Scope): CfgItem | null => {
+    const ref = app.refs.get(defRefId);
     if (!ref) return null;
     const param = app.params.get(ref.paramId);
     if (!param) return null;
+    // Access "None" parameters are internal/hidden in ETS; skip them.
+    const access = ref.access ?? param.access ?? "ReadWrite";
+    if (access === "None") return null;
     const type = app.types.get(param.typeId);
-    const value = resolve(refId) ?? "";
-    const name = tr(param.id, "Text", param.text) || tr(refId, "Text", param.text);
-    const suffix = param.suffix ? tr(param.id, "SuffixText", param.suffix) : undefined;
+    const value = resolve(defRefId, scope) ?? "";
+    const name = subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope);
+    const suffix = param.suffix ? subst(tr(param.id, "SuffixText", param.suffix), scope) : undefined;
 
     let control: CfgParamView["control"] = "unsupported";
     let options: CfgParamView["options"];
@@ -81,24 +114,27 @@ export function buildDeviceConfig(app: AppConfig, overrides: Map<string, string>
     } else if (type?.base === "Number") control = "number";
     else if (type?.base === "Text") control = "text";
 
-    return { kind: "param", param: { refId, name, control, value, options, min: type?.min, max: type?.max, suffix } };
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read" } };
   };
 
-  const buildComObj = (refId: string): CfgItem | null => {
-    const ref = app.comObjectRefs.get(refId);
-    const obj = ref ? app.comObjects.get(ref.refId) : app.comObjects.get(refId);
+  const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {
+    const ref = app.comObjectRefs.get(defRefId);
+    const obj = ref ? app.comObjects.get(ref.refId) : app.comObjects.get(defRefId);
     if (!obj) return null;
     const pick = (r: string | undefined, o: string) => (r !== undefined ? r : o);
     const textParamRefId = ref?.textParamRefId ?? obj.textParamRefId;
-    const subst = (s: string) => (textParamRefId ? s.replace(/\{\{0\}\}/g, resolve(textParamRefId) ?? "") : s);
+    const fill = (s: string) => {
+      const out = subst(s, scope);
+      return textParamRefId ? out.replace(/\{\{0\}\}/g, resolve(textParamRefId, scope) ?? "") : out;
+    };
     const elem = ref?.id ?? obj.id;
     return {
       kind: "comObject",
       comObject: {
-        refId,
-        number: obj.number,
-        name: subst(tr(elem, "Text", pick(ref?.text, obj.text)) || obj.name),
-        functionText: subst(tr(elem, "FunctionText", pick(ref?.functionText, obj.functionText))),
+        refId: scope.rewrite(defRefId),
+        number: obj.number + (obj.baseNumber ? scope.argValue(obj.baseNumber) : 0),
+        name: fill(tr(elem, "Text", pick(ref?.text, obj.text)) || obj.name),
+        functionText: fill(tr(elem, "FunctionText", pick(ref?.functionText, obj.functionText))),
         objectSize: pick(ref?.objectSize, obj.objectSize),
         dpt: pick(ref?.dpt, obj.dpt),
         flags: { ...obj.flags, ...ref?.flags },
@@ -106,43 +142,70 @@ export function buildDeviceConfig(app: AppConfig, overrides: Map<string, string>
     };
   };
 
+  // Build the per-instance scope: rewrite def ids -> instance ids, collect text
+  // and numeric arguments from the instance's pinned values.
+  const makeScope = (moduleNodeRefId: string, def: ModuleDefModel, inst: ModuleInstance): Scope => {
+    const instFullId = `${app.id}_${inst.id}`;
+    const textArgs = new Map<string, string>();
+    const argMap = new Map<string, number>();
+    for (const a of inst.args) {
+      const fullArgId = `${app.id}_${a.refId}`;
+      const defArg = def.args.find((d) => d.id === fullArgId);
+      if (defArg) textArgs.set(defArg.name, a.value); // any arg can appear in {{name}} text
+      argMap.set(fullArgId, Number(a.value));         // numeric base for com-object numbering (NaN for text args, unused)
+    }
+    return {
+      // Match on the id boundary ("_") so MD-1 never wrongly captures MD-10's ids.
+      rewrite: (id) => (id.startsWith(`${moduleNodeRefId}_`) ? instFullId + id.slice(moduleNodeRefId.length) : id),
+      textArgs,
+      argValue: (argId) => argMap.get(argId) ?? 0,
+    };
+  };
+  const instancesFor = (moduleNodeId: string) => moduleInstances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
+
   // Walk a node sequence in order, appending items to the current block. Active
-  // choose branches inline their items; Assign mutates env for later chooses.
-  const collect = (nodes: DynNode[], items: CfgItem[]) => {
+  // choose branches inline their items; Assign mutates env; Module nodes expand
+  // each device instance with its own scope.
+  const collect = (nodes: DynNode[], items: CfgItem[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "separator": items.push({ kind: "separator", text: tr(n.id, "Text", n.text), uiHint: n.uiHint }); break;
-        case "paramRef": { const it = buildParam(n.refId); if (it) items.push(it); break; }
-        case "comObjRef": { const it = buildComObj(n.refId); if (it) items.push(it); break; }
-        case "assign": env.set(n.target, n.value ?? (n.source ? resolve(n.source) ?? "" : "")); break;
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens); if (w) collect(w.children, items); break; }
-        case "container": collect(n.children, items); break;
-        case "block": break;  // nested blocks handled as their own sections (see walkBlocks)
-        case "module": break; // Phase 2
+        case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint }); break;
+        case "paramRef": { const it = buildParam(n.refId, scope); if (it) items.push(it); break; }
+        case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
+        case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
+        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) collect(w.children, items, scope); break; }
+        case "container": collect(n.children, items, scope); break;
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
+        case "block": break; // nested blocks become their own sections (walkBlocks)
       }
     }
   };
 
-  // Emit a UI section per ParameterBlock, descending through containers and
-  // active choose branches to find them in document order.
+  // Emit a UI section per ParameterBlock, descending through containers, active
+  // choose branches, and module instances in document order.
   const blocks: CfgBlock[] = [];
-  const walkBlocks = (nodes: DynNode[]) => {
+  const walkBlocks = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
           const items: CfgItem[] = [];
-          collect(n.children, items);
-          if (items.length) blocks.push({ id: n.id, name: tr(n.id, "Text", n.text) || n.name, items });
-          walkBlocks(n.children); // surface any nested ParameterBlocks too
+          collect(n.children, items, scope);
+          if (items.length) {
+            let name = subst(tr(n.id, "Text", n.text) || n.name, scope);
+            if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
+            blocks.push({ id: scope.rewrite(n.id), name, items });
+          }
+          walkBlocks(n.children, scope);
           break;
         }
-        case "container": walkBlocks(n.children); break;
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens); if (w) walkBlocks(w.children); break; }
+        case "container": walkBlocks(n.children, scope); break;
+        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) walkBlocks(w.children, scope); break; }
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walkBlocks(def.dynamic, makeScope(n.refId, def, inst)); break; }
         default: break;
       }
     }
   };
-  walkBlocks(app.dynamic);
+  walkBlocks(app.dynamic, TOP);
 
   return { blocks, hasModules: app.hasModules };
 }

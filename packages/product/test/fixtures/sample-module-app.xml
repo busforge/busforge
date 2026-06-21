@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-2" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Module App" DefaultLanguage="en-US">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-2_PT-OnOff" Name="OnOff">
+                <TypeRestriction Base="Value" SizeInBit="8">
+                  <Enumeration Text="Off" Value="0" Id="M-TEST_A-2_PT-OnOff_EN-0" />
+                  <Enumeration Text="On" Value="1" Id="M-TEST_A-2_PT-OnOff_EN-1" />
+                </TypeRestriction>
+              </ParameterType>
+            </ParameterTypes>
+            <Parameters />
+            <ParameterRefs />
+            <ComObjectTable />
+            <ComObjectRefs />
+          </Static>
+          <ModuleDefs>
+            <ModuleDef Id="M-TEST_A-2_MD-1" Name="ChannelDef">
+              <Arguments>
+                <Argument Id="M-TEST_A-2_MD-1_A-1" Name="ChNo" Type="Text" />
+                <Argument Id="M-TEST_A-2_MD-1_A-2" Name="ObjBase" Allocates="2" />
+              </Arguments>
+              <Static>
+                <Parameters>
+                  <Parameter Id="M-TEST_A-2_MD-1_P-1" Name="En" ParameterType="M-TEST_A-2_PT-OnOff" Text="Channel {{ChNo}} enable" Value="0">
+                    <Memory CodeSegment="M-TEST_A-2_RS-4" Offset="0" BitOffset="0" BaseOffset="M-TEST_A-2_MD-1_A-2" />
+                  </Parameter>
+                </Parameters>
+                <ParameterRefs>
+                  <ParameterRef Id="M-TEST_A-2_MD-1_P-1_R-1" RefId="M-TEST_A-2_MD-1_P-1" />
+                </ParameterRefs>
+                <ComObjects>
+                  <ComObject Id="M-TEST_A-2_MD-1_O-1" Number="0" Name="Sw" Text="Ch {{ChNo}} switch" FunctionText="On/Off" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" BaseNumber="M-TEST_A-2_MD-1_A-2" />
+                </ComObjects>
+                <ComObjectRefs>
+                  <ComObjectRef Id="M-TEST_A-2_MD-1_O-1_R-1" RefId="M-TEST_A-2_MD-1_O-1" />
+                </ComObjectRefs>
+              </Static>
+              <Dynamic>
+                <ParameterBlock Id="M-TEST_A-2_MD-1_PB-1" Name="ch" Text="Channel {{ChNo}}">
+                  <ParameterRefRef RefId="M-TEST_A-2_MD-1_P-1_R-1" />
+                  <ComObjectRefRef RefId="M-TEST_A-2_MD-1_O-1_R-1" />
+                </ParameterBlock>
+              </Dynamic>
+            </ModuleDef>
+          </ModuleDefs>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <Channel Id="M-TEST_A-2_CH-1" Name="ch" Text="Channels" Number="1">
+                <Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />
+              </Channel>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>
