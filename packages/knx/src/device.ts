@@ -13,12 +13,12 @@ export class KnxDevice {
 
   constructor(private tun: KnxIpTunnel, ia: string) {
     this.dst = iaToNum(ia);
-    tun.onCemi = (src, tpdu) => this.onCemi(src, tpdu);
+    tun.onCemi = (src, dst, tpdu, isGroup) => this.onCemi(src, dst, tpdu, isGroup);
   }
   private get me() { return this.tun.assignedIa; }
 
-  private onCemi(src: number, tpdu: Buffer) {
-    if (src !== this.dst) return;
+  private onCemi(src: number, _dst: number, tpdu: Buffer, isGroup: boolean) {
+    if (isGroup || src !== this.dst) return;
     const p = parseApdu(tpdu);
     if (p.control) { if (p.seq === this.seq) this.ackResolve?.(); return; }
     // numbered data response: send our KNX T_ACK first, then hand it to the waiter

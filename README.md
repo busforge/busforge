@@ -19,7 +19,7 @@ effect on the bus? **Yes, verified on live hardware.**
 | Connection-oriented management: read device descriptor / memory / properties | ✅ |
 | Decrypt `.knxproj` (ETS6 AES) + parse topology / devices / group addresses | ✅ |
 | Read-back: reconstruct a device's loaded tables, **byte-match** vs. the project | ✅ |
-| Flash a device (full load procedure) | ✅ proven, port to TS in progress |
+| Flash a device (full load procedure, TS on Bun) | ✅ verified on the bus |
 | Functional change proven on the bus (group address + a device setting) | ✅ |
 | Dynamic parameter engine (build the parameter image from changed values) | ⬜ next |
 | Web app (Bun server + REST/WebSocket + React UI) | ⬜ next |

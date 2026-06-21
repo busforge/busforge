@@ -63,3 +63,11 @@ export function parseApdu(tpdu: Buffer): ParsedApdu {
 
 export const localIpFor = (ip: string, port = KNXPORT) =>
   new Promise<string>((res) => { const s = dgram.createSocket("udp4"); s.connect(port, ip, () => { const a = s.address().address; s.close(); res(a); }); });
+
+// --- group address (multicast) ---
+export const gaToNum = (s: string) => { const [m, mid, sub] = s.split("/").map(Number); return (m << 11) | (mid << 8) | sub; };
+export function cemiLDataGroup(src: number, ga: number, tpdu: Buffer): Buffer {
+  const head = Buffer.from([0x11, 0x00, 0xbc, 0xe0, (src >> 8) & 0xff, src & 0xff, (ga >> 8) & 0xff, ga & 0xff, tpdu.length - 1]);
+  return Buffer.concat([head, tpdu]);
+}
+export const groupValueRead = () => Buffer.from([0x00, 0x00]); // unnumbered, APCI GroupValueRead

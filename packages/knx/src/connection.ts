@@ -13,7 +13,7 @@ export class KnxIpTunnel {
   assignedIa = 0;
   private txSeq = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
-  onCemi: ((src: number, tpdu: Buffer) => void) | null = null;
+  onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
 
   constructor(private ifaceIp: string, private port = KNXPORT) {}
 
@@ -56,10 +56,12 @@ export class KnxIpTunnel {
       const cemi = body.subarray(4);
       const addIL = cemi[1];
       const off = 2 + addIL;
+      const isGroup = (cemi[off + 1] & 0x80) !== 0;
       const src = cemi.readUInt16BE(off + 2);
+      const dst = cemi.readUInt16BE(off + 4);
       const len = cemi[off + 6];
       const tpdu = cemi.subarray(off + 7, off + 7 + len + 1);
-      this.onCemi?.(src, tpdu);
+      this.onCemi?.(src, dst, tpdu, isGroup);
     }
   }
 
