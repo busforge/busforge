@@ -1,23 +1,28 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { createState, handleApi } from "./app.ts";
+import { pruneTelegrams } from "./db/telegrams.ts";
 import type { ServerWebSocket } from "bun";
 
 const state = createState();
 const PORT = Number(process.env.PORT ?? 3000);
 const DIST = join(import.meta.dir, "..", "..", "web", "dist");
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-// Per-connection state: the unsubscribe handle for this socket's listener.
-type WsData = { unsub?: () => void };
+// Per-connection state: which project this monitor is for, plus its unsubscribe.
+type WsData = { projectId: string; unsub?: () => void };
+
+const monitorMatch = (path: string) => /^\/api\/projects\/([^/]+)\/bus\/monitor$/.exec(path);
 
 const server = Bun.serve<WsData>({
   port: PORT,
   async fetch(req, server) {
     const url = new URL(req.url);
 
-    // Bus monitor WebSocket: live group telegrams.
-    if (url.pathname === "/api/bus/monitor") {
-      if (server.upgrade(req, { data: {} })) return undefined;
+    // Project-scoped bus monitor WebSocket: backlog + live group telegrams.
+    const m = monitorMatch(url.pathname);
+    if (m) {
+      if (server.upgrade(req, { data: { projectId: decodeURIComponent(m[1]) } })) return undefined;
       return new Response("expected websocket", { status: 426 });
     }
 
@@ -35,10 +40,12 @@ const server = Bun.serve<WsData>({
   },
   websocket: {
     open(ws: ServerWebSocket<WsData>) {
-      // Send the recent backlog first, then stream live telegrams. Both run in
-      // this synchronous handler, so no telegram slips in between (no reorder).
-      for (const t of state.bus.recent()) ws.send(JSON.stringify(t));
-      ws.data.unsub = state.bus.subscribe((t) => ws.send(JSON.stringify(t)));
+      const { projectId } = ws.data;
+      // Live telegrams for this project only. History is loaded separately over
+      // REST (GET /api/projects/:id/telegrams), so it shows even when offline.
+      ws.data.unsub = state.bus.subscribe((t) => {
+        if (state.bus.activeProjectId === projectId) ws.send(JSON.stringify(t));
+      });
     },
     close(ws: ServerWebSocket<WsData>) {
       ws.data.unsub?.();
@@ -46,5 +53,10 @@ const server = Bun.serve<WsData>({
     message() { /* monitor is receive-only */ },
   },
 });
+
+// Telegram retention: prune on startup and hourly.
+const prune = () => pruneTelegrams(state.db, Date.now() - RETENTION_MS);
+prune();
+setInterval(prune, 60 * 60 * 1000);
 
 console.log(`Busforge server on http://localhost:${server.port}`);

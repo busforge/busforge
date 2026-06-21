@@ -1,24 +1,20 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import type { ProjectData } from "../api.ts";
+import type { Project } from "../api.ts";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState } from "./Empty.tsx";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
 
-export function DevicesView({ project }: { project: ProjectData | null }) {
+export function DevicesView({ project }: { project: Project }) {
   const [q, setQ] = useState("");
   const devices = useMemo(() => {
-    if (!project) return [];
     const needle = q.trim().toLowerCase();
     if (!needle) return project.devices;
     return project.devices.filter((d) => `${d.ia} ${d.name} ${manuf(d.manufacturer)}`.toLowerCase().includes(needle));
   }, [project, q]);
-
-  if (!project) return <EmptyState>No project imported yet.</EmptyState>;
 
   return (
     <div className="space-y-4">

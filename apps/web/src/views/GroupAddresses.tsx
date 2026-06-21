@@ -1,12 +1,11 @@
 import { useState } from "react";
 import { ChevronRight, Search } from "lucide-react";
-import type { GroupRangeNode, ProjectData } from "../api.ts";
+import type { GroupRangeNode, Project } from "../api.ts";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { EmptyState } from "./Empty.tsx";
 
 function RangeBlock({ node, depth, filter }: { node: GroupRangeNode; depth: number; filter: string }) {
   const [open, setOpen] = useState(depth < 1);
@@ -48,11 +47,9 @@ function hasMatch(node: GroupRangeNode, filter: string): boolean {
   return node.addresses.some((g) => `${g.address} ${g.name} ${g.dpt}`.toLowerCase().includes(filter)) || node.children.some((c) => hasMatch(c, filter));
 }
 
-export function GroupAddressesView({ project }: { project: ProjectData | null }) {
+export function GroupAddressesView({ project }: { project: Project }) {
   const [q, setQ] = useState("");
   const filter = q.trim().toLowerCase();
-
-  if (!project) return <EmptyState>No project imported yet.</EmptyState>;
 
   return (
     <div className="space-y-4">

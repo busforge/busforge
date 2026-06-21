@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
-import type { BusStatus, Telegram } from "../api.ts";
+import { api, type BusStatus, type Telegram } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { EmptyState } from "./Empty.tsx";
 
 const kindStyle: Record<string, string> = {
   GroupValueWrite: "border-primary/40 bg-primary/10 text-primary",
@@ -21,36 +20,44 @@ function KindChip({ kind }: { kind: string }) {
   );
 }
 
-export function MonitorView({ status }: { status: BusStatus }) {
+export function MonitorView({ projectId, status }: { projectId: string; status: BusStatus }) {
   const [rows, setRows] = useState<Telegram[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Load the recorded history (works offline too).
+  useEffect(() => {
+    let live = true;
+    api.telegrams(projectId, 500).then((h) => { if (live) setRows(h); }).catch(() => {});
+    return () => { live = false; };
+  }, [projectId]);
+
+  // Stream live telegrams while connected.
   useEffect(() => {
     if (status !== "connected") return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/api/bus/monitor`);
+    const ws = new WebSocket(`${proto}://${location.host}/api/projects/${projectId}/bus/monitor`);
     ws.onmessage = (ev) => {
       if (pausedRef.current) return;
-      const t = JSON.parse(ev.data) as Telegram;
-      setRows((prev) => [...prev.slice(-499), t]);
+      setRows((prev) => [...prev.slice(-499), JSON.parse(ev.data) as Telegram]);
     };
     return () => ws.close();
-  }, [status]);
+  }, [projectId, status]);
 
   useEffect(() => {
     if (!paused) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [rows, paused]);
 
-  if (status !== "connected") return <EmptyState>Connect to the bus in Settings to watch live telegrams.</EmptyState>;
+  const hasNames = rows.some((r) => r.name);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <span className="font-mono text-xs text-muted-foreground">
           {rows.length} telegrams {paused && <span className="text-primary">· paused</span>}
+          {status !== "connected" && <span className="text-muted-foreground"> · offline (history)</span>}
         </span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setPaused((p) => !p)} data-testid="monitor-pause">
@@ -69,6 +76,7 @@ export function MonitorView({ status }: { status: BusStatus }) {
                 <th className="px-3 py-2 font-medium">Time</th>
                 <th className="px-3 py-2 font-medium">Source</th>
                 <th className="px-3 py-2 font-medium">Dest</th>
+                {hasNames && <th className="px-3 py-2 font-medium">Name</th>}
                 <th className="px-3 py-2 font-medium">Kind</th>
                 <th className="px-3 py-2 font-medium">Value</th>
               </tr>
@@ -79,6 +87,7 @@ export function MonitorView({ status }: { status: BusStatus }) {
                   <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{time(t.ts)}</td>
                   <td className="px-3 py-1.5">{t.src}</td>
                   <td className="px-3 py-1.5 text-primary">{t.dst}</td>
+                  {hasNames && <td className="px-3 py-1.5 font-sans text-muted-foreground">{t.name ?? ""}</td>}
                   <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
                   <td className="px-3 py-1.5 text-foreground">0x{t.raw}</td>
                 </tr>
@@ -95,6 +104,7 @@ export function MonitorView({ status }: { status: BusStatus }) {
                     <span className="font-mono text-sm text-primary">{t.dst}</span>
                     <KindChip kind={t.kind} />
                   </div>
+                  {t.name && <div className="truncate text-xs">{t.name}</div>}
                   <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · from {t.src}</div>
                 </div>
                 <span className="shrink-0 font-mono text-xs text-foreground">0x{t.raw}</span>
@@ -103,7 +113,9 @@ export function MonitorView({ status }: { status: BusStatus }) {
           </div>
 
           {rows.length === 0 && (
-            <div className="px-3 py-8 text-center font-mono text-xs text-muted-foreground">Waiting for bus traffic…</div>
+            <div className="px-3 py-10 text-center font-mono text-xs text-muted-foreground">
+              {status === "connected" ? "Waiting for bus traffic…" : "No telegrams recorded yet. Connect in Interface to capture live traffic."}
+            </div>
           )}
           <div ref={bottomRef} />
         </div>

@@ -1,30 +1,26 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, Network, Plug, PlugZap } from "lucide-react";
 import { toast } from "sonner";
-import { api, type BusStatus } from "../api.ts";
+import { api, type BusStatus, type Project } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/StatusBadge.tsx";
 
-export function SettingsView({ status, onStatus }: { status: BusStatus; onStatus: (s: BusStatus) => void }) {
-  const [ip, setIp] = useState("");
-  const [port, setPort] = useState("3671");
+export function InterfaceView({ project, status, onStatus }: { project: Project; status: BusStatus; onStatus: (s: BusStatus) => void }) {
+  const [ip, setIp] = useState(project.interface.interfaceIp);
+  const [port, setPort] = useState(String(project.interface.port));
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    api.getSettings().then((s) => { setIp(s.interfaceIp); setPort(String(s.port)); }).catch(() => {});
-  }, []);
-
   async function save() {
-    const s = await api.saveSettings({ interfaceIp: ip, port: Number(port) });
+    const s = await api.saveInterface(project.id, { interfaceIp: ip, port: Number(port) });
     setIp(s.interfaceIp); setPort(String(s.port));
     return s;
   }
 
   async function saveOnly() {
-    try { await save(); toast.success("Settings saved"); }
+    try { await save(); toast.success("Interface saved"); }
     catch (e) { toast.error("Save failed", { description: (e as Error).message }); }
   }
 
@@ -32,19 +28,19 @@ export function SettingsView({ status, onStatus }: { status: BusStatus; onStatus
     setBusy(true);
     try {
       if (status === "connected") {
-        const res = await api.busDisconnect();
+        const res = await api.busDisconnect(project.id);
         onStatus(res.status);
         toast.message("Disconnected from the bus");
       } else {
         await save();
         onStatus("connecting");
-        const res = await api.busConnect();
+        const res = await api.busConnect(project.id);
         onStatus(res.status);
         toast.success("Connected to the bus");
       }
     } catch (e) {
       toast.error("Connection failed", { description: (e as Error).message });
-      onStatus((await api.busStatus().catch(() => ({ status: "disconnected" as BusStatus }))).status);
+      onStatus((await api.busStatus(project.id).catch(() => ({ status: "disconnected" as BusStatus }))).status);
     } finally {
       setBusy(false);
     }
