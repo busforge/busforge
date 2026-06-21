@@ -195,3 +195,24 @@ management works at all on a busy live bus:
   treat it with more care.
 - Prefer testing write procedures against **KNX Virtual** or a quiet bus before
   live hardware.
+
+## 8. The parameter image
+
+Parameters live in the LSM4 segment (a `RelativeSegment` with `LoadStateMachine=4`)
+which ships a base64 default `Data`. Each `<Parameter>` has
+`<Memory CodeSegment Offset BitOffset>`; its size comes from the `ParameterType`
+`SizeInBit`. Build the image from the segment default, then write each parameter's
+effective value at its offset (big-endian for >= 8 bit, a bit field at `BitOffset`
+for sub-byte).
+
+**Value precedence (verified by byte-match against a real device):** the device
+instance value (from the project `0.xml` `ParameterInstanceRef`) if set, otherwise
+the `Parameter`'s own `Value`. The `ParameterRef.Value` is a planning/UI-layer
+default and is NOT the image source (a device showed the parameter default `10`,
+not the ref value `1280`).
+
+**Verified:** built the full 212-byte parameter image for a real device from
+project + product data; byte-identical to the segment loaded on the device.
+Unions / conditional visibility (choosing the active parameter per offset) were not
+needed for this device; that is the remaining dynamic-engine work for devices that
+use them.
