@@ -1,20 +1,24 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import type { Project } from "../api.ts";
+import type { Device, Project } from "../api.ts";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DeviceConfig } from "./DeviceConfig.tsx";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
 
 export function DevicesView({ project }: { project: Project }) {
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<Device | null>(null);
   const devices = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return project.devices;
     return project.devices.filter((d) => `${d.ia} ${d.name} ${manuf(d.manufacturer)}`.toLowerCase().includes(needle));
   }, [project, q]);
+
+  if (selected) return <DeviceConfig projectId={project.id} device={selected} onBack={() => setSelected(null)} />;
 
   return (
     <div className="space-y-4">
@@ -39,7 +43,7 @@ export function DevicesView({ project }: { project: Project }) {
           </TableHeader>
           <TableBody>
             {devices.map((d) => (
-              <TableRow key={d.ia}>
+              <TableRow key={d.ia} className="cursor-pointer" onClick={() => setSelected(d)} data-testid={`device-${d.ia}`}>
                 <TableCell className="font-mono text-primary">{d.ia}</TableCell>
                 <TableCell className="font-medium">{d.name || <span className="text-muted-foreground">(unnamed)</span>}</TableCell>
                 <TableCell><Badge variant="outline" className="font-mono">{manuf(d.manufacturer)}</Badge></TableCell>
@@ -53,7 +57,7 @@ export function DevicesView({ project }: { project: Project }) {
       {/* Cards on mobile. */}
       <div className="space-y-2 sm:hidden">
         {devices.map((d) => (
-          <Card key={d.ia} className="gap-2 p-3">
+          <Card key={d.ia} className="gap-2 p-3 cursor-pointer" onClick={() => setSelected(d)}>
             <div className="flex items-center justify-between">
               <span className="font-mono text-primary">{d.ia}</span>
               <Badge variant="outline" className="font-mono text-[10px]">{manuf(d.manufacturer)}</Badge>

@@ -15,9 +15,10 @@ export interface StoredProject {
 // Persist a freshly parsed project (rows only; the caller stores the source file).
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, ia, name, product_ref, app_ref, manufacturer) VALUES (?, ?, ?, ?, ?, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
+  const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
     const rangeId = Number(insRange.run(id, parentId, node.name, node.rangeStart, node.rangeEnd).lastInsertRowid);
@@ -27,8 +28,9 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile);
-    for (const d of project.devices) insDevice.run(id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer);
+    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer);
     for (const r of project.groupRanges) insertRange(r, null);
+    for (const dp of project.deviceParams) for (const v of dp.values) insParam.run(id, dp.deviceId, v.refId, v.value);
   })();
 }
 
@@ -47,7 +49,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
     | { id: string; name: string; ip: string; port: number } | null;
   if (!p) return null;
 
-  const devices = db.query("SELECT ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
+  const devices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
 
   const rangeRows = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id").all(id) as
     { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];

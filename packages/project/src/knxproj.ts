@@ -51,4 +51,21 @@ function textOf(files: Map<string, Buffer>, suffix: string): string {
   return t;
 }
 
+// Hardware2ProgramRefId -> ApplicationProgram id.
+// "M-0048_H-4930240-2_HP-493B-21-B471" -> "M-0048_A-493B-21-B471".
+export function appProgramId(appRef: string): string {
+  const manufacturer = appRef.split("_")[0];
+  const hp = appRef.split("_HP-")[1];
+  return hp ? `${manufacturer}_A-${hp}` : appRef;
+}
+
+// Read a manufacturer application program XML from the outer zip. These sit
+// plaintext in the outer archive, so no password is needed.
+export function readAppProgram(bytes: Buffer, appRef: string): string | null {
+  const id = appProgramId(appRef);
+  const outer = readZip(bytes);
+  const key = [...outer.keys()].find((n) => n.endsWith(`${id}.xml`));
+  return key ? new TextDecoder("utf-8").decode(outer.get(key)!) : null;
+}
+
 export { deriveWinzipPassword };

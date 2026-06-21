@@ -16,6 +16,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@busforge/knx": "*",
+        "@busforge/product": "*",
         "@busforge/project": "*",
       },
     },

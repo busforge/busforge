@@ -56,6 +56,20 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_telegrams_project_ts ON telegrams(project_id, ts);
   `,
+  // Iteration 3: the device's 0.xml DeviceInstance Id (added as an ALTER so
+  // databases from earlier iterations migrate in place), plus per-device
+  // parameter values (seeded from the project, edited in the configuration UI).
+  `
+  ALTER TABLE devices ADD COLUMN instance_id TEXT NOT NULL DEFAULT '';
+
+  CREATE TABLE device_parameters (
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL,
+    param_ref_id TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id, param_ref_id)
+  );
+  `,
 ];
 
 function migrate(db: Database): void {

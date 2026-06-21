@@ -6,9 +6,9 @@ import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 
-const encFixture = readFileSync(
-  join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-encrypted.knxproj"),
-);
+const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
+const encFixture = readFileSync(join(fixtures, "sample-encrypted.knxproj"));
+const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
 
 describe("telegram decoding", () => {
   test("GroupValueWrite with a 1-bit value", () => {
@@ -129,5 +129,71 @@ describe("API (project resources)", () => {
 
   test("non-api path returns null (falls through to static)", async () => {
     expect(await handleApi(req("/index.html"), freshState())).toBeNull();
+  });
+});
+
+describe("device configuration", () => {
+  const tmps: string[] = [];
+  function freshState(): AppState {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-cfg-"));
+    tmps.push(dir);
+    return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1 });
+  }
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+  const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
+
+  async function importConfig(state: AppState) {
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    const imp = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
+    const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
+    return { projectId: imp.id, deviceId: proj.devices[0].id };
+  }
+  const paramNames = (v: any) => v.blocks.flatMap((b: any) => b.items).filter((i: any) => i.kind === "param").map((i: any) => `${i.param.name}=${i.param.value}`);
+  const comObjCount = (v: any) => v.blocks.flatMap((b: any) => b.items).filter((i: any) => i.kind === "comObject").length;
+
+  test("device carries its instance id and app ref", async () => {
+    const state = freshState();
+    const imp = (await (async () => { const f = new FormData(); f.set("file", new File([cfgFixture], "x.knxproj")); f.set("password", "tester12"); return (await (await handleApi(req("/api/projects/import", { method: "POST", body: f }), state))!.json()) as any; })());
+    const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
+    expect(proj.devices[0]).toMatchObject({ id: "P-CFG-0_DI-1", ia: "1.1.10", appRef: "M-TEST_H-1_HP-1" });
+  });
+
+  test("config reflects the seeded value and conditional visibility", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    // seeded Mode=0 -> default branch -> Label, no com-object
+    const v0 = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(paramNames(v0)).toEqual(["Mode=0", "Label=hello"]);
+    expect(comObjCount(v0)).toBe(0);
+  });
+
+  test("editing a parameter persists and recomputes visibility", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    const put = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/params`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId: "M-TEST_A-1_P-1_R-1", value: "1" }),
+    }), state);
+    const v1 = (await put!.json()) as any;
+    expect(paramNames(v1)).toEqual(["Mode=1", "Level=42"]);
+    expect(comObjCount(v1)).toBe(1);
+    // persisted: a fresh GET shows the same
+    const again = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(paramNames(again)).toEqual(["Mode=1", "Level=42"]);
+  });
+
+  test("German localization via ?lang", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    const v = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config?lang=de-DE`), state))!.json()) as any;
+    expect(paramNames(v)[0]).toBe("Modus=0");
+  });
+
+  test("unknown device -> 404", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    const res = await handleApi(req(`/api/projects/${projectId}/devices/ghost/config`), state);
+    expect(res!.status).toBe(404);
   });
 });

@@ -1,12 +1,17 @@
 // The parsed view-model of a .knxproj, shared by the loader and the server API.
 
 export interface Device {
+  id: string;           // the 0.xml DeviceInstance Id, e.g. "P-07C7-0_DI-1"
   ia: string;           // "1.2.50"
   name: string;
   productRef: string;   // M-0048_H-...-P-...
   appRef: string;       // Hardware2ProgramRefId
   manufacturer: number; // from the M-XXXX prefix
 }
+
+// A device's stored parameter values, keyed by the application ParameterRef id.
+export interface DeviceParam { refId: string; value: string; }
+export interface DeviceParams { deviceId: string; values: DeviceParam[]; }
 
 export interface TopologyLine {
   address: number;
@@ -46,4 +51,5 @@ export interface Project {
   devices: Device[];
   groupRanges: GroupRangeNode[];
   groupAddresses: GroupAddress[]; // flat, for counts and search
+  deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
 }

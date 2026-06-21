@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@busforge/knx": "*",
+    "@busforge/product": "*",
     "@busforge/project": "*"
   }
 }

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Test App" DefaultLanguage="en-US">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-1_PT-Mode" Name="Mode">
+                <TypeRestriction Base="Value" SizeInBit="8">
+                  <Enumeration Text="Off" Value="0" Id="M-TEST_A-1_PT-Mode_EN-0" />
+                  <Enumeration Text="On" Value="1" Id="M-TEST_A-1_PT-Mode_EN-1" />
+                </TypeRestriction>
+              </ParameterType>
+              <ParameterType Id="M-TEST_A-1_PT-Num" Name="Num">
+                <TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" />
+              </ParameterType>
+              <ParameterType Id="M-TEST_A-1_PT-Txt" Name="Txt">
+                <TypeText SizeInBit="80" />
+              </ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="M-TEST_A-1_P-1" Name="Mode" ParameterType="M-TEST_A-1_PT-Mode" Text="Mode" Value="1">
+                <Memory CodeSegment="M-TEST_A-1_RS-4" Offset="0" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-1_P-2" Name="Level" ParameterType="M-TEST_A-1_PT-Num" Text="Level" Value="42" SuffixText="%">
+                <Memory CodeSegment="M-TEST_A-1_RS-4" Offset="1" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-1_P-3" Name="Label" ParameterType="M-TEST_A-1_PT-Txt" Text="Label" Value="hello">
+                <Memory CodeSegment="M-TEST_A-1_RS-4" Offset="2" BitOffset="0" />
+              </Parameter>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-TEST_A-1_P-1_R-1" RefId="M-TEST_A-1_P-1" />
+              <ParameterRef Id="M-TEST_A-1_P-2_R-2" RefId="M-TEST_A-1_P-2" />
+              <ParameterRef Id="M-TEST_A-1_P-3_R-3" RefId="M-TEST_A-1_P-3" />
+            </ParameterRefs>
+            <ComObjectTable>
+              <ComObject Id="M-TEST_A-1_O-1" Number="0" Name="Switch" Text="Switch object" FunctionText="On/Off" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" />
+            </ComObjectTable>
+            <ComObjectRefs>
+              <ComObjectRef Id="M-TEST_A-1_O-1_R-1" RefId="M-TEST_A-1_O-1" />
+            </ComObjectRefs>
+          </Static>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-TEST_A-1_PB-1" Name="main" Text="Main">
+                <ParameterSeparator Id="M-TEST_A-1_PS-1" Text="Settings" UIHint="Headline" />
+                <ParameterRefRef RefId="M-TEST_A-1_P-1_R-1" />
+                <choose ParamRefId="M-TEST_A-1_P-1_R-1">
+                  <when test="1">
+                    <ParameterRefRef RefId="M-TEST_A-1_P-2_R-2" />
+                    <ComObjectRefRef RefId="M-TEST_A-1_O-1_R-1" />
+                  </when>
+                  <when default="true">
+                    <ParameterRefRef RefId="M-TEST_A-1_P-3_R-3" />
+                  </when>
+                </choose>
+              </ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+  <Languages>
+    <Language Identifier="de-DE">
+      <TranslationUnit RefId="M-TEST_A-1">
+        <TranslationElement RefId="M-TEST_A-1_P-1">
+          <Translation AttributeName="Text" Text="Modus" />
+        </TranslationElement>
+        <TranslationElement RefId="M-TEST_A-1_PT-Mode_EN-1">
+          <Translation AttributeName="Text" Text="Ein" />
+        </TranslationElement>
+      </TranslationUnit>
+    </Language>
+  </Languages>
+</KNX>

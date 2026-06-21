@@ -1,0 +1,257 @@
+import { XMLParser } from "fast-xml-parser";
+
+// Parse a KNX ApplicationProgram for the configuration UI: parameter types with
+// their enumerations and ranges, parameters and refs, communication objects, the
+// dynamic visibility tree, and translations. Separate from application.ts (which
+// serves the proven memory-image path) so that stays untouched.
+//
+// The dynamic tree's child order is semantically significant (first-matching
+// `when`, default fallback, sequence of items), so we parse order-preserving.
+
+export interface EnumOption { value: number; text: string; id: string; }
+export interface CfgType {
+  id: string;
+  base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Other";
+  sizeInBit: number;
+  signed: boolean;
+  enums: EnumOption[];
+  min?: number;
+  max?: number;
+}
+export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; hasMemory: boolean; }
+export interface CfgParamRef { id: string; paramId: string; value?: string; }
+export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; }
+export interface CfgComObject {
+  id: string; number: number; name: string; text: string; functionText: string;
+  objectSize: string; dpt: string; flags: ComObjFlags; textParamRefId?: string;
+}
+export interface CfgComObjectRef {
+  id: string; refId: string; text?: string; functionText?: string; objectSize?: string;
+  dpt?: string; flags: Partial<ComObjFlags>; textParamRefId?: string;
+}
+
+export type DynNode =
+  | { kind: "block"; id: string; name: string; text: string; children: DynNode[] }
+  | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
+  | { kind: "separator"; id: string; text: string; uiHint: string }
+  | { kind: "paramRef"; refId: string }
+  | { kind: "comObjRef"; refId: string }
+  | { kind: "choose"; paramRefId: string; whens: DynWhen[] }
+  | { kind: "assign"; target: string; source?: string; value?: string }
+  | { kind: "module"; refId: string; id: string };
+export interface DynWhen { test?: string; isDefault: boolean; children: DynNode[] }
+
+export type Translations = Map<string, Map<string, Map<string, string>>>; // lang -> elemId -> attr -> text
+
+export interface AppConfig {
+  id: string;
+  defaultLanguage: string;
+  languages: string[];
+  types: Map<string, CfgType>;
+  params: Map<string, CfgParam>;
+  refs: Map<string, CfgParamRef>;
+  comObjects: Map<string, CfgComObject>;
+  comObjectRefs: Map<string, CfgComObjectRef>;
+  translations: Translations;
+  dynamic: DynNode[];
+  hasModules: boolean;
+}
+
+// --- order-preserving node helpers (fast-xml-parser preserveOrder shape) ---
+type ONode = Record<string, any>;
+const tagOf = (n: ONode): string => Object.keys(n).find((k) => k !== ":@")!;
+const attrsOf = (n: ONode): Record<string, string> => n[":@"] ?? {};
+const kidsOf = (n: ONode): ONode[] => (Array.isArray(n[tagOf(n)]) ? n[tagOf(n)] : []);
+const childrenByTag = (nodes: ONode[], tag: string): ONode[] => nodes.filter((n) => tagOf(n) === tag);
+const firstByTag = (nodes: ONode[], tag: string): ONode | undefined => nodes.find((n) => tagOf(n) === tag);
+function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
+  for (const n of nodes) {
+    if (tagOf(n) === tag) return n;
+    const r = deepFirst(kidsOf(n), tag);
+    if (r) return r;
+  }
+  return undefined;
+}
+
+const num = (s: string | undefined): number | undefined => (s === undefined ? undefined : Number(s));
+const bool = (s: string | undefined): boolean => s === "Enabled" || s === "true";
+
+export function parseAppConfig(xml: string): AppConfig {
+  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
+  const root = p.parse(xml) as ONode[];
+  const app = deepFirst(root, "ApplicationProgram");
+  if (!app) throw new Error("no ApplicationProgram");
+  const appAttrs = attrsOf(app);
+  const appKids = kidsOf(app);
+  const staticNode = firstByTag(appKids, "Static");
+  const staticKids = staticNode ? kidsOf(staticNode) : [];
+
+  const types = parseTypes(staticKids);
+  const { params } = parseParams(staticKids);
+  const refs = parseRefs(staticKids);
+  const comObjects = parseComObjects(staticKids);
+  const comObjectRefs = parseComObjectRefs(staticKids);
+
+  // Languages may sit inside ApplicationProgram or as a sibling after it, so
+  // search the whole document.
+  const langsNode = deepFirst(root, "Languages");
+  const langNodes = langsNode ? childrenByTag(kidsOf(langsNode), "Language") : [];
+  const translations = parseTranslations(langNodes);
+  const languages = langNodes.map((l) => attrsOf(l).Identifier);
+
+  const dynamicNode = firstByTag(appKids, "Dynamic");
+  const dynamic = dynamicNode ? kidsOf(dynamicNode).map(parseDyn).filter(Boolean) as DynNode[] : [];
+  const hasModules = !!deepFirst(appKids, "Module") || !!firstByTag(staticKids, "ModuleDefs");
+
+  return {
+    id: appAttrs.Id,
+    defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
+    languages,
+    types, params, refs, comObjects, comObjectRefs, translations, dynamic, hasModules,
+  };
+}
+
+function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
+  const out = new Map<string, CfgType>();
+  const container = firstByTag(staticKids, "ParameterTypes");
+  for (const t of container ? childrenByTag(kidsOf(container), "ParameterType") : []) {
+    const id = attrsOf(t).Id;
+    const inner = kidsOf(t)[0];
+    if (!inner) { out.set(id, { id, base: "Other", sizeInBit: 0, signed: false, enums: [] }); continue; }
+    const ia = attrsOf(inner);
+    const tag = tagOf(inner);
+    let base: CfgType["base"] = "Other";
+    let enums: EnumOption[] = [];
+    if (tag === "TypeRestriction") {
+      base = ia.Base === "BinaryValue" ? "BinaryValue" : "Value";
+      enums = childrenByTag(kidsOf(inner), "Enumeration").map((e) => {
+        const ea = attrsOf(e);
+        return { value: Number(ea.Value), text: ea.Text ?? "", id: ea.Id };
+      });
+    } else if (tag === "TypeNumber") base = "Number";
+    else if (tag === "TypeFloat") base = "Float";
+    else if (tag === "TypeText") base = "Text";
+    else if (tag === "TypeColor") base = "Color";
+    out.set(id, {
+      id, base,
+      sizeInBit: Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
+      signed: String(ia.Type ?? "").toLowerCase().includes("signed"),
+      enums,
+      min: num(ia.minInclusive),
+      max: num(ia.maxInclusive),
+    });
+  }
+  return out;
+}
+
+function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
+  const params = new Map<string, CfgParam>();
+  const container = firstByTag(staticKids, "Parameters");
+  const add = (pa: ONode) => {
+    const a = attrsOf(pa);
+    const hasMemory = !!firstByTag(kidsOf(pa), "Memory");
+    params.set(a.Id, { id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, hasMemory });
+  };
+  for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa);
+  // Union children are parameters too (overlapping memory); include them.
+  for (const u of container ? childrenByTag(kidsOf(container), "Union") : []) {
+    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa);
+  }
+  return { params };
+}
+
+function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
+  const refs = new Map<string, CfgParamRef>();
+  const container = firstByTag(staticKids, "ParameterRefs");
+  for (const r of container ? childrenByTag(kidsOf(container), "ParameterRef") : []) {
+    const a = attrsOf(r);
+    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value });
+  }
+  return refs;
+}
+
+function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
+  const out = new Map<string, CfgComObject>();
+  const container = firstByTag(staticKids, "ComObjectTable");
+  for (const c of container ? childrenByTag(kidsOf(container), "ComObject") : []) {
+    const a = attrsOf(c);
+    out.set(a.Id, {
+      id: a.Id, number: Number(a.Number ?? 0), name: a.Name ?? "", text: a.Text ?? "",
+      functionText: a.FunctionText ?? "", objectSize: a.ObjectSize ?? "", dpt: a.DatapointType ?? "",
+      flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag) },
+      textParamRefId: a.TextParameterRefId,
+    });
+  }
+  return out;
+}
+
+function parseComObjectRefs(staticKids: ONode[]): Map<string, CfgComObjectRef> {
+  const out = new Map<string, CfgComObjectRef>();
+  const container = firstByTag(staticKids, "ComObjectRefs");
+  for (const c of container ? childrenByTag(kidsOf(container), "ComObjectRef") : []) {
+    const a = attrsOf(c);
+    const flags: Partial<ComObjFlags> = {};
+    if (a.ReadFlag) flags.read = bool(a.ReadFlag);
+    if (a.WriteFlag) flags.write = bool(a.WriteFlag);
+    if (a.CommunicationFlag) flags.comm = bool(a.CommunicationFlag);
+    if (a.TransmitFlag) flags.transmit = bool(a.TransmitFlag);
+    if (a.UpdateFlag) flags.update = bool(a.UpdateFlag);
+    out.set(a.Id, {
+      id: a.Id, refId: a.RefId, text: a.Text, functionText: a.FunctionText,
+      objectSize: a.ObjectSize, dpt: a.DatapointType, flags, textParamRefId: a.TextParameterRefId,
+    });
+  }
+  return out;
+}
+
+function parseTranslations(langNodes: ONode[]): Translations {
+  const out: Translations = new Map();
+  for (const lang of langNodes) {
+    const id = attrsOf(lang).Identifier;
+    const elemMap = new Map<string, Map<string, string>>();
+    for (const unit of childrenByTag(kidsOf(lang), "TranslationUnit")) {
+      for (const el of childrenByTag(kidsOf(unit), "TranslationElement")) {
+        const refId = attrsOf(el).RefId;
+        const attrMap = new Map<string, string>();
+        for (const tr of childrenByTag(kidsOf(el), "Translation")) {
+          const ta = attrsOf(tr);
+          attrMap.set(ta.AttributeName, ta.Text ?? "");
+        }
+        elemMap.set(refId, attrMap);
+      }
+    }
+    out.set(id, elemMap);
+  }
+  return out;
+}
+
+function parseDyn(n: ONode): DynNode | null {
+  const tag = tagOf(n);
+  const a = attrsOf(n);
+  switch (tag) {
+    case "ChannelIndependentBlock":
+    case "Channel":
+      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+    case "ParameterBlock":
+      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+    case "ParameterSeparator":
+      return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
+    case "ParameterRefRef":
+      return { kind: "paramRef", refId: a.RefId };
+    case "ComObjectRefRef":
+      return { kind: "comObjRef", refId: a.RefId };
+    case "Assign":
+      return { kind: "assign", target: a.TargetParamRefRef, source: a.SourceParamRefRef, value: a.Value };
+    case "Module":
+      return { kind: "module", refId: a.RefId, id: a.Id ?? "" };
+    case "choose": {
+      const whens: DynWhen[] = childrenByTag(kidsOf(n), "when").map((w) => {
+        const wa = attrsOf(w);
+        return { test: wa.test, isDefault: wa.default === "true", children: kidsOf(w).map(parseDyn).filter(Boolean) as DynNode[] };
+      });
+      return { kind: "choose", paramRefId: a.ParamRefId, whens };
+    }
+    default:
+      return null;
+  }
+}

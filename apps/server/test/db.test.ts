@@ -1,6 +1,8 @@
 import { test, expect, describe } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
@@ -17,6 +19,23 @@ describe("schema/migrations", () => {
     const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
     expect(v).toBeGreaterThan(0);
     expect(() => db.query("SELECT * FROM telegrams").all()).not.toThrow();
+  });
+
+  test("migrates an iteration-2 database in place (adds instance_id + device_parameters)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-mig-"));
+    const path = join(dir, "old.db");
+    // Simulate an iteration-2 DB: devices without instance_id, at user_version 1.
+    const old = new Database(path, { create: true });
+    old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY);
+      CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL);
+      PRAGMA user_version = 1;`);
+    old.close();
+
+    const db = openDb(path); // should run the new migration: ALTER + device_parameters
+    expect(() => db.query("SELECT instance_id FROM devices").all()).not.toThrow();
+    expect(() => db.query("SELECT * FROM device_parameters").all()).not.toThrow();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

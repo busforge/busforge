@@ -27,8 +27,26 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const topology = parseTopology(installation?.Topology);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
+  const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses };
+  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams };
+}
+
+// Collect a device's stored parameter values (ParameterRef id -> value).
+function parseDeviceParams(doc: any, deviceId: string): { refId: string; value: string }[] {
+  const dev = findDeviceInstance(doc, deviceId);
+  const out: { refId: string; value: string }[] = [];
+  for (const r of arr<any>(dev?.ParameterInstanceRefs?.ParameterInstanceRef)) {
+    if (r.Value !== undefined) out.push({ refId: String(r.RefId), value: String(r.Value) });
+  }
+  return out;
+}
+
+function findDeviceInstance(node: any, id: string): any {
+  if (node == null || typeof node !== "object") return undefined;
+  for (const d of arr<any>(node.DeviceInstance)) if (d.Id === id) return d;
+  for (const k of Object.keys(node)) { const r = findDeviceInstance(node[k], id); if (r) return r; }
+  return undefined;
 }
 
 function parseName(projectXml: string | undefined, installation: any, fallbackName: string): string {
@@ -48,6 +66,7 @@ function parseTopology(topo: any): Topology {
       // Devices may sit directly under Line or under a Segment (ETS6).
       const devNodes = [...arr<any>(line.DeviceInstance), ...arr<any>(line.Segment).flatMap((s: any) => arr<any>(s.DeviceInstance))];
       const devices: Device[] = devNodes.map((d) => ({
+        id: String(d.Id ?? ""),
         ia: `${Number(area.Address)}.${Number(line.Address)}.${Number(d.Address)}`,
         name: String(d.Name ?? ""),
         productRef: String(d.ProductRefId ?? ""),

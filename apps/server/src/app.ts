@@ -1,18 +1,23 @@
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { loadKnxproj } from "@busforge/project";
+import { loadKnxproj, readAppProgram } from "@busforge/project";
+import { parseAppConfig, buildDeviceConfig, type AppConfig } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
+import { getDeviceParams, setDeviceParam, getDeviceAppRef, getSourceFile } from "./db/deviceparams.ts";
 
 export interface AppState {
   db: Database;
   bus: Bus;
   dataDir: string;
   now: () => number;
+  // Parsed application programs cached per (sourceFile, appRef); immutable once a
+  // project is imported, so this never needs invalidation within a run.
+  appCache: Map<string, AppConfig>;
 }
 
 const DEFAULT_DATA_DIR = join(import.meta.dir, "..", "data");
@@ -25,7 +30,7 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   // Persistent writer: every telegram of the active project is stored, whether
   // or not a monitor WebSocket is open.
   bus.subscribe((t) => { if (bus.activeProjectId) insertTelegram(db, bus.activeProjectId, t); });
-  return { db, bus, dataDir, now: opts?.now ?? (() => Date.now()) };
+  return { db, bus, dataDir, now: opts?.now ?? (() => Date.now()), appCache: new Map() };
 }
 
 const json = (data: unknown, status = 200) =>
@@ -98,6 +103,19 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       return json(recentTelegrams(db, id, limit));
     }
 
+    // /api/projects/:id/devices/:deviceId/config?lang=
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {
+      return deviceConfig(state, id, decodeURIComponent(seg[4]), url.searchParams.get("lang") ?? undefined);
+    }
+    // /api/projects/:id/devices/:deviceId/params
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "params" && req.method === "PUT") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const body = (await req.json()) as { paramRefId?: string; value?: string; lang?: string };
+      if (!body.paramRefId || body.value === undefined) return err("paramRefId and value required");
+      setDeviceParam(db, id, deviceId, body.paramRefId, String(body.value));
+      return deviceConfig(state, id, deviceId, body.lang);
+    }
+
     // /api/projects/:id/bus/{connect,disconnect,status}
     if (seg.length === 5 && seg[3] === "bus") {
       if (seg[4] === "status" && req.method === "GET") {
@@ -122,4 +140,27 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   } catch (e) {
     return err((e as Error).message, 400);
   }
+}
+
+// Build a device's configuration view: locate its application program in the
+// stored .knxproj (plaintext, no password), parse it, and apply the device's
+// stored parameter values.
+function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string): Response {
+  const { db } = state;
+  const appRef = getDeviceAppRef(db, projectId, deviceId);
+  if (!appRef) return err("device not found", 404);
+  const sourceFile = getSourceFile(db, projectId);
+  if (!sourceFile) return err("project not found", 404);
+
+  const cacheKey = `${sourceFile}::${appRef}`;
+  let app = state.appCache.get(cacheKey);
+  if (!app) {
+    const xml = readAppProgram(readFileSync(sourceFile), appRef);
+    if (!xml) return err("application program not found in project", 404);
+    app = parseAppConfig(xml);
+    state.appCache.set(cacheKey, app);
+  }
+  if (app.hasModules) return json({ blocks: [], hasModules: true });
+  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang);
+  return json(view);
 }
