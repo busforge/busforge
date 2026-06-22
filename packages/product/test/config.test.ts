@@ -158,6 +158,14 @@ describe("localization", () => {
     expect(params(v)[0].param.name).toBe("Modus");
   });
 
+  test("a block with no Text takes its (translated) heading from the referenced parameter", () => {
+    // PB-2 has a ParamRefId (-> P-1 "Mode"/"Modus") and no Text of its own.
+    const block = (v: ReturnType<typeof buildDeviceConfig>) =>
+      v.blocks.find((b) => b.items.some((i) => i.kind === "separator" && i.text === "ref-block-marker"));
+    expect(block(buildDeviceConfig(app, new Map(), "en"))?.name).toBe("Mode"); // base text
+    expect(block(buildDeviceConfig(app, new Map(), "de"))?.name).toBe("Modus"); // translation
+  });
+
   test("resolveLanguage matches exact, then prefix, then falls back to default", () => {
     expect(resolveLanguage(app, "de-DE")).toBe("de-DE"); // exact
     expect(resolveLanguage(app, "de")).toBe("de-DE"); // primary subtag

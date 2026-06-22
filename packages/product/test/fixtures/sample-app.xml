@@ -57,6 +57,9 @@
                   </when>
                 </choose>
               </ParameterBlock>
+              <ParameterBlock Id="M-TEST_A-1_PB-2" Name="concept-internal" ParamRefId="M-TEST_A-1_P-1_R-1">
+                <ParameterSeparator Id="M-TEST_A-1_PS-2" Text="ref-block-marker" UIHint="" />
+              </ParameterBlock>
             </ChannelIndependentBlock>
           </Dynamic>
         </ApplicationProgram>

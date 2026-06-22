@@ -31,7 +31,7 @@ export interface CfgComObjectRef {
 }
 
 export type DynNode =
-  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; children: DynNode[] }
+  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; children: DynNode[] }
   | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "paramRef"; refId: string }
@@ -268,7 +268,7 @@ function parseDyn(n: ONode): DynNode | null {
     case "Channel":
       return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
-      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterSeparator":
       return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
     case "ParameterRefRef":

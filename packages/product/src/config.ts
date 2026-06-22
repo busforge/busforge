@@ -202,6 +202,21 @@ export function buildDeviceConfig(
     }
   };
 
+  // A ParameterBlock heading comes from its own (translatable) Text, or, when it
+  // has none, from a referenced parameter's text (a common manufacturer pattern,
+  // e.g. Theben push-buttons); only then fall back to the language-independent Name.
+  const blockTitle = (n: Extract<DynNode, { kind: "block" }>, scope: Scope): string => {
+    const own = tr(n.id, "Text", n.text);
+    if (own) return subst(own, scope);
+    const ref = n.paramRefId ? app.refs.get(n.paramRefId) : undefined;
+    const param = ref ? app.params.get(ref.paramId) : undefined;
+    if (param) {
+      const t = tr(param.id, "Text", param.text) || tr(n.paramRefId!, "Text", param.text);
+      if (t) return subst(t, scope);
+    }
+    return subst(n.name, scope);
+  };
+
   // Emit a UI section per ParameterBlock, descending through containers, active
   // choose branches, and module instances in document order.
   const blocks: CfgBlock[] = [];
@@ -212,7 +227,7 @@ export function buildDeviceConfig(
           const items: CfgItem[] = [];
           collect(n.children, items, scope);
           if (items.length) {
-            let name = subst(tr(n.id, "Text", n.text) || n.name, scope);
+            let name = blockTitle(n, scope);
             if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
             blocks.push({ id: scope.rewrite(n.id), name, items });
           }
