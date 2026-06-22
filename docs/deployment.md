@@ -38,7 +38,7 @@ The workflow lives in [`.forgejo/workflows/ci.yml`](../.forgejo/workflows/ci.yml
 |-----|--------|------|------|
 | `check` | `hetzner` | every PR and push | `bun install --frozen-lockfile` then `bun run check` (typecheck, tests, web build). This is the gate. |
 | `build` | `hetzner` | push to `main` | Builds the image from the root `Dockerfile`, pushes `:main-<sha>` and `:latest`, links the package to the repo. |
-| `deploy` | `nas` | push to `main`, after `build` | Copies `docker-compose.yml` to `/srv/busforge`, pulls `:latest`, restarts, waits for the healthcheck, prunes old images. The NAS runner executes Docker locally, so there is no SSH hop. |
+| `deploy` | `nas` | push to `main`, after `build` | Runs `docker compose` from the checked-out workspace (project `busforge`), pulls `:latest`, restarts, waits for the healthcheck, prunes old images. The NAS runner executes Docker locally, so there is no SSH hop. |
 | `version` | `hetzner` | push to `main`, after a successful deploy | Computes the next semver from commit messages, tags `v<x.y.z>`, re-tags the image `:v<x.y.z>`, and creates a Forgejo Release with the changelog. Skips if nothing changed since the last tag. |
 
 ### Versioning
@@ -71,9 +71,10 @@ The SQLite database and uploaded `.knxproj` / `.knxkeys` files live under
 `/app/apps/server/data` inside the container, bind-mounted to
 `/srv/busforge/data` on the NAS. That keeps the data on the
 backed-up data array alongside the other apps (rather than in Docker's internal
-volume store), and it survives image updates and restarts. **Nothing proprietary
-is baked into the image** (see `.dockerignore`); user data only ever lands on the
-host at runtime.
+volume store), and it survives image updates and restarts. The Docker daemon
+(root) creates that directory on first run, so the NAS runner does not need write
+access under `/srv`. **Nothing proprietary is baked into the image**
+(see `.dockerignore`); user data only ever lands on the host at runtime.
 
 ### Bus access (KNXnet/IP)
 
@@ -99,13 +100,13 @@ Pushing the version tag uses the automatic Actions token from `actions/checkout`
 ## Manual operations
 
 ```bash
-# Trigger the whole pipeline by hand (Forgejo UI → Actions → Run workflow),
-# or locally inspect the running container on the NAS:
-cd /srv/busforge
-docker compose ps
-docker compose logs -f busforge
+# Trigger the whole pipeline by hand: Forgejo UI → Actions → Run workflow.
 
-# Roll back to a specific version:
-docker pull ghcr.io/busforge/busforge:v0.1.0
-# then pin that tag in docker-compose.yml and `docker compose up -d`.
+# Inspect the running container on the NAS (the deploy uses project `busforge`):
+docker compose -p busforge ps
+docker logs -f busforge
+
+# Roll back to a specific version: pin the tag in docker-compose.yml, then from
+# a checkout of the repo on the NAS:
+#   docker compose -p busforge -f docker-compose.yml up -d
 ```
