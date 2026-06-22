@@ -21,11 +21,13 @@ export interface CfgParamView {
   max?: number;
   suffix?: string;
   readOnly?: boolean;
+  changed?: boolean; // differs from the programmed baseline; filled in by the server
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags;
   gaRaw?: number | null; // current GA link, filled in by the server from stored links
+  changed?: boolean; // GA link differs from the programmed baseline; filled in by the server
 }
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }

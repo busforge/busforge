@@ -114,6 +114,63 @@ export function getProjectChanges(db: Database, projectId: string): Map<string, 
   return out;
 }
 
+// Which of a single device's rows differ from the programmed baseline, so the
+// config view can flag the exact edited parameters and com-objects. Param keys
+// are the stored full ref ids; link keys are the stored (stripped) com-object
+// ref ids, matching how the config view overlays them.
+export interface DeviceChangedKeys { params: Set<string>; links: Set<string>; }
+export function getDeviceChangedKeys(db: Database, projectId: string, deviceId: string): DeviceChangedKeys {
+  // Symmetric difference of (param, value) rows: a param edited from its default
+  // has no baseline row, so a plain JOIN would miss it (see getProjectChanges).
+  const paramRows = db.query(`
+    SELECT param_ref_id FROM (
+      SELECT param_ref_id, value FROM device_parameters WHERE project_id = ? AND device_id = ?
+      EXCEPT
+      SELECT param_ref_id, value FROM device_param_base WHERE project_id = ? AND device_id = ?
+    )
+    UNION
+    SELECT param_ref_id FROM (
+      SELECT param_ref_id, value FROM device_param_base WHERE project_id = ? AND device_id = ?
+      EXCEPT
+      SELECT param_ref_id, value FROM device_parameters WHERE project_id = ? AND device_id = ?
+    )
+  `).all(projectId, deviceId, projectId, deviceId, projectId, deviceId, projectId, deviceId) as { param_ref_id: string }[];
+
+  const linkRows = db.query(`
+    SELECT com_obj_ref_id FROM (
+      SELECT com_obj_ref_id, slot, ga_raw FROM device_links WHERE project_id = ? AND device_id = ?
+      EXCEPT
+      SELECT com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?
+    )
+    UNION
+    SELECT com_obj_ref_id FROM (
+      SELECT com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?
+      EXCEPT
+      SELECT com_obj_ref_id, slot, ga_raw FROM device_links WHERE project_id = ? AND device_id = ?
+    )
+  `).all(projectId, deviceId, projectId, deviceId, projectId, deviceId, projectId, deviceId) as { com_obj_ref_id: string }[];
+
+  return {
+    params: new Set(paramRows.map((r) => r.param_ref_id)),
+    links: new Set(linkRows.map((r) => r.com_obj_ref_id)),
+  };
+}
+
+// Discard a device's unprogrammed edits: restore the live params/links from the
+// programmed baseline. Inverse of resetParamBase/resetLinkBase.
+export function revertDevice(db: Database, projectId: string, deviceId: string): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_parameters WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    db.prepare(`INSERT INTO device_parameters (project_id, device_id, param_ref_id, value)
+      SELECT project_id, device_id, param_ref_id, value FROM device_param_base WHERE project_id = ? AND device_id = ?`)
+      .run(projectId, deviceId);
+    db.prepare("DELETE FROM device_links WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    db.prepare(`INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw)
+      SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?`)
+      .run(projectId, deviceId);
+  })();
+}
+
 // Mark a device's parameters as programmed (baseline := current live values).
 export function resetParamBase(db: Database, projectId: string, deviceId: string): void {
   db.transaction(() => {

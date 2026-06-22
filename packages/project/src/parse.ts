@@ -106,6 +106,7 @@ function parseTopology(topo: any): Topology {
         productRef: String(d.ProductRefId ?? ""),
         appRef: String(d.Hardware2ProgramRefId ?? ""),
         manufacturer: manufacturerOf(String(d.ProductRefId ?? "")),
+        comment: [d.Comment, d.Description].map((x) => String(x ?? "").trim()).filter(Boolean).join(" "),
       }));
       return { address: Number(line.Address), name: String(line.Name ?? ""), devices };
     });

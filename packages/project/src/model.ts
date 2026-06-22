@@ -7,6 +7,7 @@ export interface Device {
   productRef: string;   // M-0048_H-...-P-...
   appRef: string;       // Hardware2ProgramRefId
   manufacturer: number; // from the M-XXXX prefix
+  comment: string;      // ETS "Beschreibung" (Comment/Description), for search
 }
 
 // A device's stored parameter values, keyed by the application ParameterRef id.

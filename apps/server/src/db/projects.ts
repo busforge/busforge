@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode } from "@busforge/project";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 
-export type DeviceWithChanges = Device & { changes: DeviceChanges };
+// searchText is a server-built, lowercased blob (comment + user-entered text
+// parameter values like channel/actuator names) so the device list can search
+// deeper than the visible name/address.
+export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; importedAt: number; }
 export interface ProjectInterface { interfaceIp: string; port: number; }
@@ -18,7 +21,7 @@ export interface StoredProject {
 // Persist a freshly parsed project (rows only; the caller stores the source file).
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -35,7 +38,7 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile);
-    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer);
+    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
@@ -58,9 +61,25 @@ export function getProject(db: Database, id: string): StoredProject | null {
     | { id: string; name: string; ip: string; port: number } | null;
   if (!p) return null;
 
-  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
   const changes = getProjectChanges(db, id);
-  const devices: DeviceWithChanges[] = baseDevices.map((d) => ({ ...d, changes: changes.get(d.id) ?? { params: 0, links: 0 } }));
+
+  // Per-device deep-search text: the user-entered text parameter values (channel
+  // and actuator names) plus the device comment. Numeric/enum values (stored as
+  // bare integers) are skipped so a search for "1" doesn't match everything.
+  const paramText = new Map<string, Set<string>>();
+  const paramRows = db.query("SELECT device_id AS deviceId, value FROM device_parameters WHERE project_id = ?").all(id) as { deviceId: string; value: string }[];
+  for (const r of paramRows) {
+    if (!/[a-z]/i.test(r.value)) continue;
+    const set = paramText.get(r.deviceId) ?? new Set<string>();
+    set.add(r.value);
+    paramText.set(r.deviceId, set);
+  }
+  const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
+    ...d,
+    changes: changes.get(d.id) ?? { params: 0, links: 0 },
+    searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
+  }));
 
   const rangeRows = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id").all(id) as
     { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];

@@ -8,7 +8,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses } from "./flash.ts";
 
 export interface AppState {
@@ -131,6 +131,15 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       return deviceConfig(state, id, deviceId, body.lang);
     }
 
+    // /api/projects/:id/devices/:deviceId/revert  -> discard unprogrammed edits
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      if (!getDeviceForFlash(db, id, deviceId)) return err("device not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { lang?: string };
+      revertDevice(db, id, deviceId);
+      return deviceConfig(state, id, deviceId, body.lang);
+    }
+
     // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
@@ -238,8 +247,15 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   if (!app) return err("application program not found in project", 404);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
   const links = getDeviceLinks(db, projectId, deviceId);
+  const changed = getDeviceChangedKeys(db, projectId, deviceId);
   for (const b of view.blocks) for (const it of b.items) {
-    if (it.kind === "comObject") it.comObject.gaRaw = links.get(it.comObject.refId.slice(app.id.length + 1))?.[0] ?? null;
+    if (it.kind === "param") {
+      it.param.changed = changed.params.has(it.param.refId);
+    } else if (it.kind === "comObject") {
+      const key = it.comObject.refId.slice(app.id.length + 1);
+      it.comObject.gaRaw = links.get(key)?.[0] ?? null;
+      it.comObject.changed = changed.links.has(key);
+    }
   }
   return json(view);
 }

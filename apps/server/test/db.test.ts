@@ -7,7 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -140,6 +140,48 @@ describe("projects", () => {
 
     resetLinkBase(db, "p1", dev);
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+  });
+
+  test("flags the exact edited rows", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    expect(getDeviceChangedKeys(db, "p1", dev)).toMatchObject({ params: new Set(), links: new Set() });
+
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7"); // edited from default
+    setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);          // re-pointed link
+    const changed = getDeviceChangedKeys(db, "p1", dev);
+    expect(changed.params.has("M-X_A-1_P-9_R-1")).toBe(true);
+    expect(changed.links.has("O-1_R-1")).toBe(true);
+    expect(changed.params.size).toBe(1);
+    expect(changed.links.size).toBe(1);
+  });
+
+  test("revert restores params and links to the baseline", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1"; // baseline link O-1_R-1 -> [1, 2]
+    const baseLinks = getDeviceLinks(db, "p1", dev).get("O-1_R-1");
+
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
+    expect(getProjectChanges(db, "p1").get(dev)).toBeDefined();
+
+    revertDevice(db, "p1", dev);
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+    expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false); // edited-from-default row removed
+    expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual(baseLinks);    // link set restored
+  });
+
+  test("device searchText indexes text params, skips numbers", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-50_R-1", "Wohnzimmer Heizung");
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-51_R-1", "600");
+    const d = getProject(db, "p1")!.devices.find((x) => x.id === dev)!;
+    expect(d.searchText).toContain("wohnzimmer heizung"); // user-entered channel name
+    expect(d.searchText).not.toContain("600");            // bare numeric value skipped
   });
 
   test("interface update", () => {

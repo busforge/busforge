@@ -116,6 +116,11 @@ const MIGRATIONS: string[] = [
   INSERT INTO device_param_base SELECT * FROM device_parameters;
   INSERT INTO device_link_base SELECT * FROM device_links;
   `,
+  // The device's ETS "Beschreibung" (Comment/Description), to make it
+  // searchable in the device list. Populated on (re-)import.
+  `
+  ALTER TABLE devices ADD COLUMN comment TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 function migrate(db: Database): void {
