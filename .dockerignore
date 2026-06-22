@@ -1,0 +1,22 @@
+# Build context hygiene: only ship source the image actually needs.
+node_modules
+**/node_modules
+**/dist
+**/bin
+**/obj
+
+.git
+.forgejo
+.remember
+reference
+docs
+
+# Runtime state and proprietary user data must never enter an image layer.
+apps/server/data
+*.knxproj
+*.knxprod
+*.knxkeys
+*.bin
+
+.DS_Store
+*.tsbuildinfo

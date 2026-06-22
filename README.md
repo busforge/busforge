@@ -68,6 +68,7 @@ apps/
 docs/
   ui.md         current architecture and features (start here)
   findings.md   the protocol knowledge: formats, load procedure, gotchas
+  deployment.md CI/CD pipeline and NAS deployment
   *-plan.md     per-iteration design notes
 ```
 
@@ -95,6 +96,17 @@ device follows a real load procedure that unloads tables first; Busforge backs u
 the segment, only writes on a confirmed change, and reads it back to verify, but
 keep a recovery path.** See the safety notes in `docs/findings.md` and the flash
 safety model in [`docs/ui.md`](docs/ui.md).
+
+### Docker / deployment
+
+```bash
+docker build -t busforge .
+docker run -p 3000:3000 -v busforge-data:/app/apps/server/data busforge
+```
+
+Pushing to `main` builds the image into the Forgejo container registry and
+deploys it to the NAS (reachable at `busforge.internal` / `busforge.lan.example.org`).
+See [`docs/deployment.md`](docs/deployment.md) for the pipeline and runtime model.
 
 ---
 

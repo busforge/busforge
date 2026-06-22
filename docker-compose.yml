@@ -1,0 +1,46 @@
+# Busforge on the NAS. Self-contained stack (project name: busforge), separate
+# from the Ansible-managed nas-apps stack. CI ships this file to
+# /srv/busforge/ and runs `docker compose pull && up -d`.
+services:
+  busforge:
+    image: ghcr.io/busforge/busforge:latest
+    container_name: busforge
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - TZ=Europe/Berlin
+    volumes:
+      # SQLite DB + uploaded .knxproj/.knxkeys. Bind-mounted under the appdata
+      # base dir (like the other NAS apps) so it lands on the backed-up data
+      # array, not Docker's internal volume store.
+      - /srv/busforge/data:/app/apps/server/data
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      # Primary LAN endpoint: plain HTTP on the .lan name.
+      - "traefik.http.routers.busforge.rule=Host(`busforge.internal`)"
+      - "traefik.http.routers.busforge.entrypoints=web"
+      - "traefik.http.routers.busforge.service=busforge"
+      # HTTPS on the .example.org name, served by the shared *.lan wildcard cert.
+      - "traefik.http.routers.busforge-secure.rule=Host(`busforge.lan.example.org`)"
+      - "traefik.http.routers.busforge-secure.entrypoints=websecure"
+      - "traefik.http.routers.busforge-secure.service=busforge"
+      - "traefik.http.routers.busforge-secure.tls=true"
+      - "traefik.http.routers.busforge-secure.tls.certresolver=hetznerdns"
+      - "traefik.http.routers.busforge-secure.tls.domains[0].main=*.lan.example.org"
+      # Redirect plain HTTP on the .example.org name to HTTPS.
+      - "traefik.http.routers.busforge-redirect.rule=Host(`busforge.lan.example.org`)"
+      - "traefik.http.routers.busforge-redirect.entrypoints=web"
+      - "traefik.http.routers.busforge-redirect.service=busforge"
+      - "traefik.http.routers.busforge-redirect.middlewares=busforge-redirect-https"
+      - "traefik.http.middlewares.busforge-redirect-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.busforge-redirect-https.redirectscheme.permanent=true"
+      # WebSocket bus monitor uses the standard HTTP upgrade, no extra config.
+      - "traefik.http.services.busforge.loadbalancer.server.port=3000"
+
+networks:
+  # Provided by the Ansible-managed nas-apps stack (Traefik reverse proxy).
+  traefik:
+    name: traefik
+    external: true
