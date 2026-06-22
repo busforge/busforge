@@ -39,6 +39,13 @@ export function MonitorView() {
   const { data: history } = useTelegrams(projectId);
 
   const gaIndex = useMemo(() => { const m = new Map<number, GaInfo>(); if (project) indexGas(project.groupRanges, m); return m; }, [project]);
+  // Source individual address -> device name, so the monitor reads
+  // "<device> <kind> <group address name>" instead of bare addresses.
+  const deviceIndex = useMemo(() => {
+    const m = new Map<string, string>();
+    if (project) for (const d of project.devices) if (d.name) m.set(d.ia, d.name);
+    return m;
+  }, [project]);
   const [rows, setRows] = useState<Telegram[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(paused);
@@ -68,8 +75,6 @@ export function MonitorView() {
     if (!paused) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [rows, paused]);
 
-  const hasNames = rows.some((t) => gaIndex.has(t.dstRaw));
-
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -93,24 +98,29 @@ export function MonitorView() {
               <tr>
                 <th className="px-3 py-2 font-medium">Time</th>
                 <th className="px-3 py-2 font-medium">Source</th>
-                <th className="px-3 py-2 font-medium">Dest</th>
-                {hasNames && <th className="px-3 py-2 font-medium">Name</th>}
                 <th className="px-3 py-2 font-medium">Kind</th>
+                <th className="px-3 py-2 font-medium">Destination</th>
                 <th className="px-3 py-2 font-medium">Value</th>
               </tr>
             </thead>
-            <tbody className="font-mono">
+            <tbody>
               {rows.map((t, i) => {
                 const ga = gaIndex.get(t.dstRaw);
+                const srcName = deviceIndex.get(t.src);
                 const value = decodeDpt(t.raw, ga?.dpt);
                 return (
                   <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
-                    <td className="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{time(t.ts)}</td>
-                    <td className="px-3 py-1.5">{t.src}</td>
-                    <td className="px-3 py-1.5 text-primary">{t.dst}</td>
-                    {hasNames && <td className="max-w-48 truncate px-3 py-1.5 font-sans text-muted-foreground">{ga?.name ?? ""}</td>}
+                    <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted-foreground">{time(t.ts)}</td>
+                    <td className="px-3 py-1.5">
+                      <div className="max-w-48 truncate">{srcName ?? <span className="font-mono text-muted-foreground">{t.src}</span>}</div>
+                      {srcName && <div className="font-mono text-[10px] text-muted-foreground">{t.src}</div>}
+                    </td>
                     <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
-                    <td className="px-3 py-1.5 text-foreground" title={`0x${t.raw}`}>{value}</td>
+                    <td className="px-3 py-1.5">
+                      <div className="max-w-56 truncate">{ga?.name || <span className="font-mono text-primary">{t.dst}</span>}</div>
+                      {ga?.name && <div className="font-mono text-[10px] text-primary">{t.dst}</div>}
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-foreground" title={`0x${t.raw}`}>{value}</td>
                   </tr>
                 );
               })}
@@ -121,16 +131,17 @@ export function MonitorView() {
           <div className="divide-y divide-border/40 sm:hidden">
             {rows.map((t, i) => {
               const ga = gaIndex.get(t.dstRaw);
+              const srcName = deviceIndex.get(t.src);
               const value = decodeDpt(t.raw, ga?.dpt);
               return (
                 <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm text-primary">{t.dst}</span>
+                      <span className="truncate text-sm">{srcName ?? <span className="font-mono text-muted-foreground">{t.src}</span>}</span>
                       <KindChip kind={t.kind} />
                     </div>
-                    {ga?.name && <div className="truncate text-xs">{ga.name}</div>}
-                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · from {t.src}</div>
+                    <div className="truncate text-xs">{ga?.name || <span className="font-mono text-primary">{t.dst}</span>}</div>
+                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · {t.src} → {t.dst}</div>
                   </div>
                   <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>
                 </div>
