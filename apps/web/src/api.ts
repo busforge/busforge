@@ -13,7 +13,7 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
   value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; readOnly?: boolean;
-  changed?: boolean;
+  changed?: boolean; defaultValue?: string;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;

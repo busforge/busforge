@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter, redirect, Outlet } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProjectsScreen } from "./views/Projects.tsx";
 import { ProjectLayout } from "./views/ProjectLayout.tsx";
 import { DevicesView } from "./views/Devices.tsx";
@@ -10,10 +11,10 @@ import { InterfaceView } from "./views/Interface.tsx";
 
 function RootLayout() {
   return (
-    <>
+    <TooltipProvider delayDuration={0}>
       <Outlet />
       <Toaster position="bottom-right" />
-    </>
+    </TooltipProvider>
   );
 }
 
@@ -41,7 +42,17 @@ const devicesRoute = createRoute({
     changed: s.changed === true || s.changed === "true" ? true : undefined,
   }),
 });
-const deviceRoute = createRoute({ getParentRoute: () => projectRoute, path: "devices/$deviceId", component: DeviceConfig });
+// Carries the device-list filter (q, changed) so the back button and match
+// highlighting can reuse it.
+const deviceRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "devices/$deviceId",
+  component: DeviceConfig,
+  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean } => ({
+    q: typeof s.q === "string" && s.q ? s.q : undefined,
+    changed: s.changed === true || s.changed === "true" ? true : undefined,
+  }),
+});
 const groupsRoute = createRoute({ getParentRoute: () => projectRoute, path: "groups", component: GroupAddressesView });
 const monitorRoute = createRoute({ getParentRoute: () => projectRoute, path: "monitor", component: MonitorView });
 const interfaceRoute = createRoute({ getParentRoute: () => projectRoute, path: "interface", component: InterfaceView });

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Cpu, Info, Loader2, Network, RotateCcw } from "lucide-react";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import type { CfgComObjView, CfgParamView, GroupRangeNode } from "../api.ts";
+import type { CfgComObjView, CfgItem, CfgParamView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -39,9 +40,22 @@ const flagWords = (f: CfgComObjView["flags"], t: TFn) =>
   [f.comm && t("device.flagCommunication"), f.read && t("device.flagRead"), f.write && t("device.flagWrite"), f.transmit && t("device.flagTransmit"), f.update && t("device.flagUpdate")]
     .filter(Boolean).join(", ");
 
+const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
+const norm = (s?: string) => (s ?? "").toLowerCase();
+// Whether an item matches the carried search term (mirrors the device-list deep
+// search: param name/value and com-object function/name).
+function itemMatches(item: CfgItem, q: string): boolean {
+  if (!q) return false;
+  if (item.kind === "param") return norm(item.param.name).includes(q) || norm(item.param.value).includes(q);
+  if (item.kind === "comObject") return norm(comObjLabel(item.comObject)).includes(q) || norm(item.comObject.name).includes(q);
+  return false;
+}
+
 export function DeviceConfig() {
   const { t } = useTranslation();
   const { projectId, deviceId } = useParams({ from: "/projects/$projectId/devices/$deviceId" });
+  const search = useSearch({ from: "/projects/$projectId/devices/$deviceId" });
+  const q = (search.q ?? "").toLowerCase();
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
@@ -68,32 +82,68 @@ export function DeviceConfig() {
     qc.invalidateQueries({ queryKey: qk.deviceConfig(projectId, deviceId) });
   };
 
+  // Section table-of-contents: scroll to a card and track the active one.
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [activeSec, setActiveSec] = useState<string | null>(null);
+  const scrollToSec = (id: string) => cardRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  useEffect(() => {
+    if (!view) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActiveSec(top.target.id);
+      },
+      { rootMargin: "-80px 0px -70% 0px", threshold: 0 },
+    );
+    cardRefs.current.forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, [view]);
+
+  // Jump to the first row matching the carried search term.
+  useEffect(() => {
+    if (!q || !view) return;
+    const el = containerRef.current?.querySelector('[data-match="true"]');
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [q, view]);
+
+  const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { ghost?: boolean; disabled?: boolean; testId?: string }) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant={opts?.ghost ? "ghost" : "outline"} size="icon"
+          className={cn("size-9", opts?.ghost && "text-muted-foreground")}
+          disabled={opts?.disabled} onClick={onClick} aria-label={t(key)} data-testid={opts?.testId}
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{t(key)}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Button asChild variant="ghost" size="icon" aria-label={t("device.back")} className="text-muted-foreground">
-          <Link to="/projects/$projectId/devices" params={{ projectId }}><ChevronLeft className="size-5" /></Link>
-        </Button>
-        <div className="leading-tight">
-          <div className="flex items-center gap-2 font-semibold">
-            {device?.name || t("common.unnamed")}
-            <ChangePill changes={device?.changes} />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button asChild variant="ghost" size="icon" aria-label={t("device.back")} className="shrink-0 text-muted-foreground">
+            <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed }}><ChevronLeft className="size-5" /></Link>
+          </Button>
+          <div className="min-w-0 leading-tight">
+            <div className="flex items-center gap-2 font-semibold">
+              <span className="truncate">{device?.name || t("common.unnamed")}</span>
+              <ChangePill changes={device?.changes} />
+            </div>
+            <div className="font-mono text-xs text-primary">{device?.ia}</div>
           </div>
-          <div className="font-mono text-xs text-primary">{device?.ia}</div>
         </div>
-        {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-        <Button
-          variant="ghost" size="sm" className="ml-auto text-muted-foreground"
-          disabled={!hasChanges || saving} onClick={() => setRevertOpen(true)} data-testid="revert-device"
-        >
-          <RotateCcw className="size-4" /> {t("device.revert")}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setFlashGaOpen(true)} data-testid="program-ga">
-          <Network className="size-4" /> {t("device.programGAs")}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setFlashOpen(true)} data-testid="program-device">
-          <Cpu className="size-4" /> {t("device.programDevice")}
-        </Button>
+        <div className="flex items-center justify-end gap-2">
+          {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
+          {actionBtn("device.programGAs", <Network className="size-4" />, () => setFlashGaOpen(true), { testId: "program-ga" })}
+          {actionBtn("device.programDevice", <Cpu className="size-4" />, () => setFlashOpen(true), { testId: "program-device" })}
+        </div>
       </div>
 
       {device && <FlashDialog open={flashOpen} onOpenChange={setFlashOpen} projectId={projectId} device={device} target="params" onFlashed={afterFlash} />}
@@ -124,79 +174,132 @@ export function DeviceConfig() {
         </CardContent></Card>
       )}
 
-      {view && view.blocks.map((block) => (
-        <Card key={block.id}>
-          <CardContent className="space-y-0.5 py-4">
-            <h3 className="mb-3 border-b border-border/60 pb-2 text-base font-semibold text-foreground">{block.name}</h3>
-            {block.items.map((item, i) => {
-              if (item.kind === "separator") {
-                if (item.uiHint === "HorizontalRuler") return <Separator key={i} className="my-2" />;
-                if (!item.text) return null;
-                if (item.uiHint === "Headline")
-                  return <div key={i} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
-                return <p key={i} className={cn("py-1 text-xs", item.uiHint === "Error" ? "text-destructive" : "text-muted-foreground")}>{item.text}</p>;
-              }
-              if (item.kind === "comObject") {
-                const co = item.comObject;
-                // Just the function ("Schalten EIN/AUS"); the channel/device name is
-                // redundant (the assigned GA already names it) so it is dropped.
-                const label = co.functionText || co.name;
-                const flags = flagWords(co.flags, t);
-                const dpt = co.dpt || co.objectSize || t("device.unknownDpt");
-                const infoTitle = flags
-                  ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
-                  : t("device.objectInfo", { number: co.number, dpt });
-                return (
-                  <div key={i} className={cn("flex items-center justify-between gap-4 border-l-2 py-1.5 pl-3 text-sm", co.changed ? "border-primary bg-primary/5" : "border-transparent")}>
-                    <span className="flex min-w-0 flex-1 items-center gap-2">
-                      {co.changed ? <ChangedDot title={t("device.changedDot")} /> : null}
-                      <span className="truncate">{label}</span>
-                      <span title={infoTitle} className="shrink-0 cursor-help text-muted-foreground"><Info className="size-3.5" /></span>
-                    </span>
-                    <div className={cn("shrink-0", CONTROL_W)}><GaCombobox options={gaOptions} value={co.gaRaw ?? null} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
-                  </div>
-                );
-              }
-              return <ParamRow key={i} param={item.param} changedTitle={t("device.changedDot")} onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })} />;
-            })}
-          </CardContent>
-        </Card>
-      ))}
+      {view && view.blocks.length > 0 && (
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          {view.blocks.length > 1 && (
+            <nav className="lg:sticky lg:top-16 lg:w-56 lg:shrink-0">
+              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
+                {view.blocks.map((block) => {
+                  const id = `sec-${block.id}`;
+                  return (
+                    <li key={block.id}>
+                      <button
+                        type="button" onClick={() => scrollToSec(id)}
+                        className={cn(
+                          "w-full whitespace-nowrap rounded px-2 py-1 text-left text-sm transition-colors lg:truncate",
+                          activeSec === id ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        )}
+                      >
+                        {block.name}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </nav>
+          )}
+
+          <div ref={containerRef} className="min-w-0 flex-1 space-y-4">
+            {view.blocks.map((block) => (
+              <Card key={block.id} id={`sec-${block.id}`} ref={(el) => { if (el) cardRefs.current.set(`sec-${block.id}`, el); }} className="scroll-mt-20">
+                <CardContent className="space-y-0.5 py-4">
+                  <h3 className="mb-3 border-b border-border/60 pb-2 text-base font-semibold text-foreground">{block.name}</h3>
+                  {block.items.map((item, i) => {
+                    if (item.kind === "separator") {
+                      if (item.uiHint === "HorizontalRuler") return <Separator key={i} className="my-2" />;
+                      if (!item.text) return null;
+                      if (item.uiHint === "Error") return <p key={i} className="py-1 text-xs text-destructive">{item.text}</p>;
+                      // Any other text separator is a section heading in ETS.
+                      return <div key={i} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
+                    }
+                    if (item.kind === "comObject") {
+                      const co = item.comObject;
+                      const flags = flagWords(co.flags, t);
+                      const dpt = co.dpt || co.objectSize || t("device.unknownDpt");
+                      const info = flags
+                        ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
+                        : t("device.objectInfo", { number: co.number, dpt });
+                      const hl = itemMatches(item, q);
+                      return (
+                        <div
+                          key={i} data-match={hl || undefined}
+                          className={cn(
+                            "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+                            co.changed ? "border-primary bg-primary/5" : "border-transparent",
+                            hl && "rounded-md bg-ok/10 ring-1 ring-ok/50",
+                          )}
+                        >
+                          <span className="flex min-w-0 items-center gap-2 sm:flex-1">
+                            {co.changed ? <ChangedDot title={t("device.changedDot")} /> : null}
+                            <span className="min-w-0">{comObjLabel(co)}</span>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button type="button" aria-label={info} className="shrink-0 text-muted-foreground"><Info className="size-3.5" /></button>
+                              </TooltipTrigger>
+                              <TooltipContent className="whitespace-pre-line">{info}</TooltipContent>
+                            </Tooltip>
+                          </span>
+                          <div className={cn("shrink-0", CONTROL_W)}><GaCombobox options={gaOptions} value={co.gaRaw ?? null} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
+                        </div>
+                      );
+                    }
+                    return <ParamRow key={i} param={item.param} changedTitle={t("device.changedDot")} highlight={itemMatches(item, q)} onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })} />;
+                  })}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ParamRow({ param, changedTitle, onChange }: { param: CfgParamView; changedTitle: string; onChange: (value: string) => void }) {
+function ParamRow({ param, changedTitle, highlight, onChange }: { param: CfgParamView; changedTitle: string; highlight: boolean; onChange: (value: string) => void }) {
   const [local, setLocal] = useState(param.value);
   useEffect(() => setLocal(param.value), [param.value]);
 
+  // Read-only params are informational displays (e.g. "Info: ..."); render them
+  // as plain text instead of disabled form controls, which read as broken.
+  const readOnlyText = param.control === "enum"
+    ? (param.options?.find((o) => String(o.value) === param.value)?.text ?? param.value)
+    : param.value;
+
   return (
-    <div className={cn("flex items-center justify-between gap-4 border-l-2 py-1.5 pl-3", param.changed ? "border-primary bg-primary/5" : "border-transparent")}>
-      <span className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+    <div
+      data-match={highlight || undefined}
+      className={cn(
+        "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+        param.changed ? "border-primary bg-primary/5" : "border-transparent",
+        highlight && "rounded-md bg-ok/10 ring-1 ring-ok/50",
+      )}
+    >
+      <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
         {param.changed ? <ChangedDot title={changedTitle} /> : null}
-        <span className="truncate">{param.name}</span>
+        <span className="min-w-0">{param.name}</span>
       </span>
       <div className={cn("flex shrink-0 items-center gap-2", CONTROL_W)}>
-        {param.control === "enum" && (
-          <Select value={param.value} onValueChange={onChange} disabled={param.readOnly}>
+        {param.readOnly ? (
+          <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
+        ) : param.control === "enum" ? (
+          <Select value={param.value} onValueChange={onChange}>
             <SelectTrigger className="w-full" data-testid={`param-${param.refId}`}><SelectValue /></SelectTrigger>
             <SelectContent>
               {param.options?.map((o) => <SelectItem key={o.value} value={String(o.value)}>{o.text}</SelectItem>)}
             </SelectContent>
           </Select>
-        )}
-        {param.control === "number" && (
+        ) : param.control === "number" ? (
           <Input
-            type="number" value={local} min={param.min} max={param.max} readOnly={param.readOnly}
+            type="number" value={local} min={param.min} max={param.max}
             onChange={(e) => setLocal(e.target.value)}
-            onBlur={() => !param.readOnly && local !== param.value && onChange(local)}
+            onBlur={() => local !== param.value && onChange(local)}
             className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
+        ) : param.control === "text" ? (
+          <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">{param.value}</span>
         )}
-        {param.control === "text" && (
-          <Input className="w-full" value={local} readOnly={param.readOnly} onChange={(e) => setLocal(e.target.value)} onBlur={() => !param.readOnly && local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
-        )}
-        {param.control === "unsupported" && <span className="font-mono text-xs text-muted-foreground">{param.value}</span>}
         {param.suffix && <span className="shrink-0 text-xs text-muted-foreground">{param.suffix}</span>}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Search, X, Zap } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -47,17 +47,35 @@ export function DevicesView() {
     return [...list].sort((a, b) => (isChanged(b) ? 1 : 0) - (isChanged(a) ? 1 : 0));
   }, [searched, onlyChanged]);
 
+  // Carry the current filter into the device URL so its back button and match
+  // highlighting can reuse it.
+  const listSearch = { q: q || undefined, changed: onlyChanged || undefined };
   const row = (d: Device) => ({
     to: "/projects/$projectId/devices/$deviceId" as const,
     params: { projectId, deviceId: d.id },
+    search: listSearch,
   });
+
+  // Cmd/Ctrl+F focuses the device search instead of the browser find.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder={t("devices.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="device-search" />
+          <Input ref={searchRef} placeholder={t("devices.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="device-search" />
           {q && (
             <button
               type="button" aria-label={t("devices.clearSearch")} onClick={() => setQ("")} data-testid="device-search-clear"
