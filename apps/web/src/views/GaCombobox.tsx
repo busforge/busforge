@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronsUpDown, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
@@ -7,11 +7,12 @@ import { cn } from "@/lib/utils";
 
 export interface GaOption { raw: number; address: string; name: string; }
 
-// Searchable group-address picker for re-pointing a com-object.
+// Searchable group-address picker for assigning a com-object. Passing null
+// clears the link (unassigns the com-object).
 export function GaCombobox({ options, value, onChange, testId }: {
   options: GaOption[];
   value: number | null;
-  onChange: (raw: number) => void;
+  onChange: (raw: number | null) => void;
   testId?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -19,8 +20,11 @@ export function GaCombobox({ options, value, onChange, testId }: {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" size="sm" className="h-8 w-full justify-between font-mono text-xs" data-testid={testId}>
-          <span className="truncate">{sel ? `${sel.address} ${sel.name}` : "unassigned"}</span>
+        <Button
+          variant="outline" role="combobox" size="sm" data-testid={testId}
+          className={cn("h-8 w-full justify-between font-mono text-xs", !sel && "border-dashed text-muted-foreground")}
+        >
+          <span className="truncate">{sel ? `${sel.address} ${sel.name}` : "assign GA…"}</span>
           <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -30,6 +34,12 @@ export function GaCombobox({ options, value, onChange, testId }: {
           <CommandList>
             <CommandEmpty>No group address.</CommandEmpty>
             <CommandGroup>
+              {value != null && (
+                <CommandItem value="__unassign__" onSelect={() => { onChange(null); setOpen(false); }} className="gap-2 text-muted-foreground">
+                  <X className="size-3.5" />
+                  <span>Unassign</span>
+                </CommandItem>
+              )}
               {options.map((o) => (
                 <CommandItem key={o.raw} value={`${o.address} ${o.name}`} onSelect={() => { onChange(o.raw); setOpen(false); }} className="gap-2">
                   <Check className={cn("size-3.5", o.raw === value ? "opacity-100" : "opacity-0")} />

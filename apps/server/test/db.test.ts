@@ -7,7 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -88,6 +88,53 @@ describe("projects", () => {
     // re-point replaces the link (slot order preserved)
     setDeviceLink(db, "p1", "P-TEST-0_DI-1", "O-1_R-1", [9]);
     expect(getDeviceLinks(db, "p1", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([9]);
+  });
+
+  test("fresh import reports no per-device changes", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    for (const d of getProject(db, "p1")!.devices) expect(d.changes).toEqual({ params: 0, links: 0 });
+  });
+
+  test("tracks parameter changes and resets on flash", () => {
+    const xml0 = `<?xml version="1.0" encoding="utf-8"?>
+      <KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><Installations><Installation><Topology>
+        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
+          <ParameterInstanceRefs>
+            <ParameterInstanceRef RefId="M-X_A-1_P-1_R-1" Value="600" />
+            <ParameterInstanceRef RefId="M-X_A-1_P-2_R-1" Value="1" />
+          </ParameterInstanceRefs>
+        </DeviceInstance></Line></Area>
+      </Topology></Installation></Installations></Project></KNX>`;
+    const db = fresh();
+    insertProject(db, "p1", parseProject(xml0, undefined, "x"), "/tmp/p1", 1000);
+    const dev = "DI-9";
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined(); // clean
+
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "60");
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 1 });
+
+    // Editing back to the baseline value is not a change.
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "600");
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+
+    // Flashing (baseline := current) clears the marker.
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "60");
+    resetParamBase(db, "p1", dev);
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+  });
+
+  test("tracks link changes and resets on flash", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1"; // seeded from the fixture: O-1_R-1 -> [1, 2]
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+
+    setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 1 });
+
+    resetLinkBase(db, "p1", dev);
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
   });
 
   test("interface update", () => {

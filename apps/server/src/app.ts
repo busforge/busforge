@@ -8,7 +8,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses } from "./flash.ts";
 
 export interface AppState {
@@ -149,6 +149,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
           dryRun: url.searchParams.get("dry") === "1",
         });
+        // The device's group tables now match our links: clear the change marker.
+        if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId);
         return json(result);
       } finally {
         state.flashing = false;
@@ -177,6 +179,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
           dryRun: url.searchParams.get("dry") === "1",
         });
+        // The device's parameter segment now matches our values: clear the marker.
+        if (result.flashed && result.verified !== false) resetParamBase(db, id, deviceId);
         return json(result);
       } finally {
         state.flashing = false;

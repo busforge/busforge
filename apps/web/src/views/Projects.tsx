@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Flame, FolderUp, KeyRound, Loader2, Trash2, Cpu, Network } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type ProjectSummary } from "../api.ts";
+import { qk, useProjects } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,26 +18,22 @@ import { cn } from "@/lib/utils";
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export function ProjectsScreen({ onOpen }: { onOpen: (id: string) => void }) {
-  const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+export function ProjectsScreen() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { data: projects = [], isLoading } = useProjects();
   const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
 
-  async function refresh() {
-    setLoading(true);
-    try { setProjects(await api.listProjects()); }
-    catch (e) { toast.error("Could not load projects", { description: (e as Error).message }); }
-    finally { setLoading(false); }
-  }
-  useEffect(() => { refresh(); }, []);
+  const open = (id: string) => navigate({ to: "/projects/$projectId/devices", params: { projectId: id } });
 
-  async function confirmDelete() {
-    const target = pendingDelete;
-    if (!target) return;
-    setPendingDelete(null);
-    try { await api.deleteProject(target.id); toast.message(`Deleted ${target.name}`); refresh(); }
-    catch (e) { toast.error("Delete failed", { description: (e as Error).message }); }
-  }
+  const del = useMutation({
+    mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: (_r, id) => {
+      qc.invalidateQueries({ queryKey: qk.projects });
+      toast.message(`Deleted ${projects.find((p) => p.id === id)?.name ?? "project"}`);
+    },
+    onError: (e) => toast.error("Delete failed", { description: (e as Error).message }),
+  });
 
   return (
     <div className="mx-auto flex min-h-full max-w-5xl flex-col px-4 py-8 sm:px-6">
@@ -48,20 +47,18 @@ export function ProjectsScreen({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
       </header>
 
-      <ImportCard onImported={(id) => { refresh(); onOpen(id); }} />
-
-      <div className="mt-8">
+      <div>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Projects</h2>
-        {loading ? (
+        {isLoading ? (
           <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading…</div>
         ) : projects.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
-            No projects yet. Import a <span className="font-mono">.knxproj</span> above to get started.
+            No projects yet. Import a <span className="font-mono">.knxproj</span> below to get started.
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {projects.map((p) => (
-              <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => onOpen(p.id)}>
+              <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
                 <CardContent className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="truncate text-lg font-bold">{p.name}</div>
@@ -86,6 +83,10 @@ export function ProjectsScreen({ onOpen }: { onOpen: (id: string) => void }) {
         )}
       </div>
 
+      <div className="mt-8">
+        <ImportCard onImported={(id) => { qc.invalidateQueries({ queryKey: qk.projects }); open(id); }} />
+      </div>
+
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -96,7 +97,10 @@ export function ProjectsScreen({ onOpen }: { onOpen: (id: string) => void }) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete">
+            <AlertDialogAction
+              onClick={() => { const t = pendingDelete; setPendingDelete(null); if (t) del.mutate(t.id); }}
+              className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete"
+            >
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -109,30 +113,21 @@ export function ProjectsScreen({ onOpen }: { onOpen: (id: string) => void }) {
 function ImportCard({ onImported }: { onImported: (id: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function pick(f: File | null) { setFile(f); setError(null); }
 
-  async function submit() {
-    if (!file) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await api.importProject(file, password);
+  const importMut = useMutation({
+    mutationFn: () => api.importProject(file!, password),
+    onSuccess: (res) => {
       toast.success(`Imported ${res.name}`, { description: `${res.deviceCount} devices, ${res.gaCount} group addresses` });
       setFile(null); setPassword("");
       onImported(res.id);
-    } catch (e) {
-      const msg = (e as Error).message;
-      setError(msg);
-      toast.error("Import failed", { description: msg });
-    } finally {
-      setBusy(false);
-    }
-  }
+    },
+    onError: (e) => { const msg = (e as Error).message; setError(msg); toast.error("Import failed", { description: msg }); },
+  });
 
   return (
     <Card>
@@ -164,8 +159,8 @@ function ImportCard({ onImported }: { onImported: (id: string) => void }) {
           </div>
         </div>
         {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-        <Button onClick={submit} disabled={!file || busy} data-testid="import-submit">
-          {busy ? <><Loader2 className="size-4 animate-spin" /> Importing…</> : "Import"}
+        <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending} data-testid="import-submit">
+          {importMut.isPending ? <><Loader2 className="size-4 animate-spin" /> Importing…</> : "Import"}
         </Button>
       </CardContent>
     </Card>

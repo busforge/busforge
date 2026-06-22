@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 // Program a device's parameter segment. Previews the change with a dry-run
 // before writing, then flashes and reports the verified result. Only the
 // parameter segment (LSM4) is written; a backup is taken server-side.
-export function FlashDialog({ open, onOpenChange, projectId, device, target }: {
+export function FlashDialog({ open, onOpenChange, projectId, device, target, onFlashed }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   projectId: string;
   device: Device;
   target: "params" | "ga";
+  onFlashed?: () => void;
 }) {
   const [dry, setDry] = useState<FlashResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -41,7 +42,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, target }: {
     if (busyRef.current) return;
     busyRef.current = true;
     setFlashing(true); setError(null);
-    try { setDone(await run(false)); }
+    try { const r = await run(false); setDone(r); if (r.flashed) onFlashed?.(); }
     catch (e) { setError((e as Error).message); }
     finally { setFlashing(false); busyRef.current = false; }
   }

@@ -2,7 +2,8 @@
 // here (not imported from @busforge/project) to keep the browser bundle free of
 // the node-crypto loader code.
 
-export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; }
+export interface DeviceChanges { params: number; links: number; }
+export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; changes?: DeviceChanges; }
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
 export interface ProjectInterface { interfaceIp: string; port: number; }

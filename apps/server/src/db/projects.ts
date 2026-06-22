@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode } from "@busforge/project";
+import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
+
+export type DeviceWithChanges = Device & { changes: DeviceChanges };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; importedAt: number; }
 export interface ProjectInterface { interfaceIp: string; port: number; }
@@ -7,7 +10,7 @@ export interface StoredProject {
   id: string;
   name: string;
   interface: ProjectInterface;
-  devices: Device[];
+  devices: DeviceWithChanges[];
   groupRanges: GroupRangeNode[];
   gaCount: number;
 }
@@ -19,8 +22,10 @@ export function insertProject(db: Database, id: string, project: Project, source
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
+  const insParamBase = db.prepare("INSERT OR REPLACE INTO device_param_base (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
   const insModules = db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES (?, ?, ?)");
   const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
+  const insLinkBase = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
     const rangeId = Number(insRange.run(id, parentId, node.name, node.rangeStart, node.rangeEnd).lastInsertRowid);
@@ -32,9 +37,9 @@ export function insertProject(db: Database, id: string, project: Project, source
     insProject.run(id, project.name, now, sourceFile);
     for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer);
     for (const r of project.groupRanges) insertRange(r, null);
-    for (const dp of project.deviceParams) for (const v of dp.values) insParam.run(id, dp.deviceId, v.refId, v.value);
+    for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
-    for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw));
+    for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
   })();
 }
 
@@ -53,7 +58,9 @@ export function getProject(db: Database, id: string): StoredProject | null {
     | { id: string; name: string; ip: string; port: number } | null;
   if (!p) return null;
 
-  const devices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
+  const changes = getProjectChanges(db, id);
+  const devices: DeviceWithChanges[] = baseDevices.map((d) => ({ ...d, changes: changes.get(d.id) ?? { params: 0, links: 0 } }));
 
   const rangeRows = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id").all(id) as
     { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];

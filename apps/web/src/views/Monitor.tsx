@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
+import { useParams } from "@tanstack/react-router";
 import { decodeDpt } from "@busforge/knx/dpt";
-import { api, type BusStatus, type GroupRangeNode, type Project, type Telegram } from "../api.ts";
+import { type GroupRangeNode, type Telegram } from "../api.ts";
+import { useProject, useBusStatus, useTelegrams } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -29,20 +31,26 @@ function KindChip({ kind }: { kind: string }) {
   );
 }
 
-export function MonitorView({ projectId, status, project }: { projectId: string; status: BusStatus; project: Project }) {
-  const gaIndex = useMemo(() => { const m = new Map<number, GaInfo>(); indexGas(project.groupRanges, m); return m; }, [project]);
+export function MonitorView() {
+  const { projectId } = useParams({ from: "/projects/$projectId" });
+  const { data: project } = useProject(projectId);
+  const { data: bus } = useBusStatus(projectId);
+  const status = bus?.status ?? "disconnected";
+  const { data: history } = useTelegrams(projectId);
+
+  const gaIndex = useMemo(() => { const m = new Map<number, GaInfo>(); if (project) indexGas(project.groupRanges, m); return m; }, [project]);
   const [rows, setRows] = useState<Telegram[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load the recorded history (works offline too).
+  // Seed from the recorded history once it loads (and when switching projects);
+  // live telegrams below append onto this.
+  const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    let live = true;
-    api.telegrams(projectId, 500).then((h) => { if (live) setRows(h); }).catch(() => {});
-    return () => { live = false; };
-  }, [projectId]);
+    if (history && seededFor.current !== projectId) { setRows(history); seededFor.current = projectId; }
+  }, [history, projectId]);
 
   // Stream live telegrams while connected.
   useEffect(() => {

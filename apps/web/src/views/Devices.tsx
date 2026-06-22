@@ -1,24 +1,55 @@
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
-import type { Device, Project } from "../api.ts";
+import { Search, Zap } from "lucide-react";
+import { Link, useParams } from "@tanstack/react-router";
+import type { Device, DeviceChanges } from "../api.ts";
+import { useProject } from "../queries.ts";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DeviceConfig } from "./DeviceConfig.tsx";
+import { cn } from "@/lib/utils";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
+const total = (c?: DeviceChanges) => (c ? c.params + c.links : 0);
+const changeTitle = (c: DeviceChanges) =>
+  [c.params && `${c.params} parameter${c.params > 1 ? "s" : ""}`, c.links && `${c.links} group address${c.links > 1 ? "es" : ""}`]
+    .filter(Boolean).join(", ") + " changed since last programming";
 
-export function DevicesView({ project }: { project: Project }) {
+// Amber pill flagging a device with unprogrammed edits. Nothing for clean devices.
+function ChangePill({ changes }: { changes?: DeviceChanges }) {
+  const n = total(changes);
+  if (!n || !changes) return null;
+  return (
+    <span
+      title={changeTitle(changes)}
+      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
+    >
+      <Zap className="size-3" /> {n} change{n > 1 ? "s" : ""}
+    </span>
+  );
+}
+
+export function DevicesView() {
+  const { projectId } = useParams({ from: "/projects/$projectId" });
+  const { data: project } = useProject(projectId);
   const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<Device | null>(null);
+
+  const all = project?.devices ?? [];
   const devices = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return project.devices;
-    return project.devices.filter((d) => `${d.ia} ${d.name} ${manuf(d.manufacturer)}`.toLowerCase().includes(needle));
-  }, [project, q]);
+    const filtered = needle
+      ? all.filter((d) => `${d.ia} ${d.name} ${manuf(d.manufacturer)}`.toLowerCase().includes(needle))
+      : all;
+    // Devices with unprogrammed changes float to the top (stable within groups).
+    return [...filtered].sort((a, b) => (total(b.changes) > 0 ? 1 : 0) - (total(a.changes) > 0 ? 1 : 0));
+  }, [all, q]);
 
-  if (selected) return <DeviceConfig projectId={project.id} project={project} device={selected} onBack={() => setSelected(null)} />;
+  const changedCount = all.filter((d) => total(d.changes) > 0).length;
+
+  const row = (d: Device) => ({
+    to: "/projects/$projectId/devices/$deviceId" as const,
+    params: { projectId, deviceId: d.id },
+  });
 
   return (
     <div className="space-y-4">
@@ -27,7 +58,14 @@ export function DevicesView({ project }: { project: Project }) {
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input placeholder="Filter devices…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
         </div>
-        <span className="font-mono text-xs text-muted-foreground">{devices.length} / {project.devices.length}</span>
+        <div className="flex items-center gap-3">
+          {changedCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-xs text-primary" title="Devices with edits not yet programmed">
+              <Zap className="size-3.5" /> {changedCount} to program
+            </span>
+          )}
+          <span className="font-mono text-xs text-muted-foreground">{devices.length} / {all.length}</span>
+        </div>
       </div>
 
       {/* Table on wide screens. */}
@@ -39,33 +77,48 @@ export function DevicesView({ project }: { project: Project }) {
               <TableHead>Name</TableHead>
               <TableHead className="w-32">Manufacturer</TableHead>
               <TableHead>Application</TableHead>
+              <TableHead className="w-28 text-right">Status</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {devices.map((d) => (
-              <TableRow key={d.ia} className="cursor-pointer" onClick={() => setSelected(d)} data-testid={`device-${d.ia}`}>
-                <TableCell className="font-mono text-primary">{d.ia}</TableCell>
-                <TableCell className="font-medium">{d.name || <span className="text-muted-foreground">(unnamed)</span>}</TableCell>
-                <TableCell><Badge variant="outline" className="font-mono">{manuf(d.manufacturer)}</Badge></TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{d.appRef}</TableCell>
-              </TableRow>
-            ))}
+            {devices.map((d) => {
+              const changed = total(d.changes) > 0;
+              return (
+                <TableRow key={d.ia} className={cn("cursor-pointer", changed && "bg-primary/[0.04]")} data-testid={`device-${d.ia}`}>
+                  <TableCell className={cn("font-mono text-primary", changed && "border-l-2 border-primary")}>
+                    <Link {...row(d)} className="block">{d.ia}</Link>
+                  </TableCell>
+                  <TableCell className="font-medium"><Link {...row(d)} className="block">{d.name || <span className="text-muted-foreground">(unnamed)</span>}</Link></TableCell>
+                  <TableCell><Badge variant="outline" className="font-mono">{manuf(d.manufacturer)}</Badge></TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{d.appRef}</TableCell>
+                  <TableCell className="text-right"><ChangePill changes={d.changes} /></TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </Card>
 
       {/* Cards on mobile. */}
       <div className="space-y-2 sm:hidden">
-        {devices.map((d) => (
-          <Card key={d.ia} className="gap-2 p-3 cursor-pointer" onClick={() => setSelected(d)}>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-primary">{d.ia}</span>
-              <Badge variant="outline" className="font-mono text-[10px]">{manuf(d.manufacturer)}</Badge>
-            </div>
-            <div className="font-medium">{d.name || <span className="text-muted-foreground">(unnamed)</span>}</div>
-            <div className="truncate font-mono text-xs text-muted-foreground">{d.appRef}</div>
-          </Card>
-        ))}
+        {devices.map((d) => {
+          const changed = total(d.changes) > 0;
+          return (
+            <Link key={d.ia} {...row(d)} className="block">
+              <Card className={cn("gap-2 p-3", changed && "border-l-2 border-l-primary bg-primary/[0.04]")}>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-primary">{d.ia}</span>
+                  <Badge variant="outline" className="font-mono text-[10px]">{manuf(d.manufacturer)}</Badge>
+                </div>
+                <div className="font-medium">{d.name || <span className="text-muted-foreground">(unnamed)</span>}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-xs text-muted-foreground">{d.appRef}</span>
+                  <ChangePill changes={d.changes} />
+                </div>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

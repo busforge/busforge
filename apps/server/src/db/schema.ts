@@ -93,6 +93,29 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_links_device ON device_links(project_id, device_id);
   `,
+  // Baselines of the "programmed" state, to surface per-device unprogrammed
+  // changes. Seeded at import as a copy of the live params/links, refreshed
+  // after a successful flash. A device has changes when its live params/links
+  // differ from these. Existing data is backfilled as a clean baseline.
+  `
+  CREATE TABLE device_param_base (
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL,
+    param_ref_id TEXT NOT NULL,
+    value        TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id, param_ref_id)
+  );
+  CREATE TABLE device_link_base (
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id      TEXT NOT NULL,
+    com_obj_ref_id TEXT NOT NULL,
+    slot           INTEGER NOT NULL,
+    ga_raw         INTEGER NOT NULL,
+    PRIMARY KEY (project_id, device_id, com_obj_ref_id, slot)
+  );
+  INSERT INTO device_param_base SELECT * FROM device_parameters;
+  INSERT INTO device_link_base SELECT * FROM device_links;
+  `,
 ];
 
 function migrate(db: Database): void {
