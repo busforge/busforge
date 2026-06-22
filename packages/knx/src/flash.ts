@@ -47,11 +47,11 @@ export async function flashGroupTables(dev: KnxDevice, tables: { addr: Buffer; a
 
 // Parameter ("par") download: rewrites the application/parameter segment (LSM 4)
 // and stamps the application id so load-completed validates.
-export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer) {
+export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer, onProgress?: (done: number, total: number) => void) {
   await lsmEvent(dev, 4, LSM.UNLOAD);
   await lsmEvent(dev, 4, LSM.LOAD);
   await allocSegment(dev, 4, image.length);
-  await dev.memWrite(await dev.tableAddr(4), image);
+  await dev.memWrite(await dev.tableAddr(4), image, { onProgress });
   await dev.propWrite(4, 13, id);
   await lsmEvent(dev, 4, LSM.LOAD_COMPLETED);
   if ((await lsmState(dev, 4)) !== STATE.LOADED) throw new Error("LSM 4 not Loaded after parameter flash");

@@ -55,14 +55,18 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
-  async memRead(addr: number, len: number, chunk = 12): Promise<Buffer> {
+  async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     const out: Buffer[] = [];
+    const total = Math.ceil(len / chunk);
+    let done = 0;
     for (let pos = addr; pos < addr + len; ) {
+      if (signal?.aborted) throw new Error("read aborted");
       const n = Math.min(chunk, addr + len - pos);
       const tail = Buffer.from([(pos >> 8) & 0xff, pos & 0xff]);
       const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, n), true);
       out.push(r!.data.subarray(2)); // skip echoed address
       pos += n;
+      onProgress?.(++done, total);
     }
     return Buffer.concat(out);
   }
@@ -77,8 +81,10 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_WRITE, tail), true);
     return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
   }
-  async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean } = {}): Promise<void> {
+  async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     const chunk = opts.chunk ?? 12;
+    const total = Math.ceil(data.length / chunk);
+    let done = 0;
     for (let pos = 0; pos < data.length; ) {
       const n = Math.min(chunk, data.length - pos);
       const slice = data.subarray(pos, pos + n);
@@ -86,6 +92,7 @@ export class KnxDevice {
       const tail = Buffer.concat([Buffer.from([(a >> 8) & 0xff, a & 0xff]), slice]);
       await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), false); // T_ACK only
       pos += n;
+      opts.onProgress?.(++done, total);
     }
     if (opts.verify ?? true) {
       const back = await this.memRead(addr, data.length);

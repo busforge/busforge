@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Device } from "../api.ts";
 import { useProject } from "../queries.ts";
 import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
+import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -106,7 +107,6 @@ export function DevicesView() {
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-28">{t("devices.colAddress")}</TableHead>
               <TableHead>{t("devices.colName")}</TableHead>
               <TableHead className="w-32">{t("devices.colManufacturer")}</TableHead>
               <TableHead>{t("devices.colApplication")}</TableHead>
@@ -118,10 +118,9 @@ export function DevicesView() {
               const changed = total(d.changes) > 0;
               return (
                 <TableRow key={d.ia} className={cn("cursor-pointer", changed && "bg-primary/[0.04]")} data-testid={`device-${d.ia}`}>
-                  <TableCell className={cn("font-mono text-primary", changed && "border-l-2 border-primary")}>
-                    <Link {...row(d)} className="block">{d.ia}</Link>
+                  <TableCell className={cn("font-medium", changed && "border-l-2 border-primary")}>
+                    <Link {...row(d)} className="flex"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
                   </TableCell>
-                  <TableCell className="font-medium"><Link {...row(d)} className="block">{d.name || <span className="text-muted-foreground">{t("common.unnamed")}</span>}</Link></TableCell>
                   <TableCell><Badge variant="outline" className="font-mono">{manuf(d.manufacturer)}</Badge></TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">{d.appRef}</TableCell>
                   <TableCell className="text-right"><ChangePill changes={d.changes} /></TableCell>
@@ -139,11 +138,10 @@ export function DevicesView() {
           return (
             <Link key={d.ia} {...row(d)} className="block">
               <Card className={cn("gap-2 p-3", changed && "border-l-2 border-l-primary bg-primary/[0.04]")}>
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-primary">{d.ia}</span>
-                  <Badge variant="outline" className="font-mono text-[10px]">{manuf(d.manufacturer)}</Badge>
+                <div className="flex items-center justify-between gap-2">
+                  <DeviceLabel name={d.name} ia={d.ia} className="min-w-0 font-medium" />
+                  <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{manuf(d.manufacturer)}</Badge>
                 </div>
-                <div className="font-medium">{d.name || <span className="text-muted-foreground">{t("common.unnamed")}</span>}</div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-mono text-xs text-muted-foreground">{d.appRef}</span>
                   <ChangePill changes={d.changes} />

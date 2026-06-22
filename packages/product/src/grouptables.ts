@@ -28,3 +28,29 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
 
   return { addr, assoc };
 }
+
+// Read a device's links back out of its group tables. Inverse of
+// buildGroupTables: resolve each association's 1-based group index through the
+// address table to a GA, then group by com-object number. The caller normalizes
+// the long/short association format before passing it in (see readGroupTables).
+// gaRaws are sorted ascending so the result is stable regardless of table order.
+export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean): ComObjectLink[] {
+  const gcount = addr.readUInt16BE(0);
+  const gas: number[] = [];
+  for (let i = 0; i < gcount; i++) gas.push(addr.readUInt16BE(2 + i * 2));
+
+  const acount = assoc.readUInt16BE(0);
+  const width = longForm ? 4 : 2;
+  const byCo = new Map<number, number[]>();
+  for (let k = 0; k < acount; k++) {
+    const off = 2 + k * width;
+    // Long form: [groupIdx:2][comObjNum:2]. Short form: [groupIdx:1][comObjNum:1].
+    const gi = longForm ? assoc.readUInt16BE(off) : assoc[off];
+    const co = longForm ? assoc.readUInt16BE(off + 2) : assoc[off + 1];
+    if (gi < 1 || gi > gas.length) continue; // unused/invalid entry
+    const list = byCo.get(co) ?? [];
+    list.push(gas[gi - 1]);
+    byCo.set(co, list);
+  }
+  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: gaRaws.sort((a, b) => a - b) }));
+}

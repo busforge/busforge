@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildGroupTables } from "../src/grouptables.ts";
+import { buildGroupTables, decodeGroupTables, type ComObjectLink } from "../src/grouptables.ts";
 
 describe("buildGroupTables", () => {
   test("address table is sorted GAs, association is ordered by com-object number", () => {
@@ -33,5 +33,44 @@ describe("buildGroupTables", () => {
     const { addr, assoc } = buildGroupTables([]);
     expect(addr.toString("hex")).toBe("0000");
     expect(assoc.toString("hex")).toBe("0000");
+  });
+});
+
+describe("decodeGroupTables", () => {
+  // Compare link sets independent of order; gaRaws are sorted by both sides.
+  const norm = (ls: ComObjectLink[]) =>
+    [...ls].sort((a, b) => a.comObjNum - b.comObjNum).map((l) => ({ comObjNum: l.comObjNum, gaRaws: [...l.gaRaws].sort((x, y) => x - y) }));
+
+  test("round-trips buildGroupTables, including a multi-GA link", () => {
+    const links: ComObjectLink[] = [
+      { comObjNum: 5, gaRaws: [0x0a02] },
+      { comObjNum: 3, gaRaws: [0x0a01] },
+      { comObjNum: 8, gaRaws: [0x0a01, 0x0a03] },
+    ];
+    const { addr, assoc } = buildGroupTables(links);
+    expect(norm(decodeGroupTables(addr, assoc, true))).toEqual(norm(links));
+  });
+
+  test("reproduces the real PSU links from its tables", () => {
+    const links: ComObjectLink[] = [
+      { comObjNum: 20, gaRaws: [7431] }, { comObjNum: 11, gaRaws: [7426] },
+      { comObjNum: 16, gaRaws: [7428] }, { comObjNum: 13, gaRaws: [7427] },
+      { comObjNum: 19, gaRaws: [7430] }, { comObjNum: 15, gaRaws: [7429] },
+    ];
+    const { addr, assoc } = buildGroupTables(links);
+    expect(norm(decodeGroupTables(addr, assoc, true))).toEqual(norm(links));
+  });
+
+  test("decodes the short association format", () => {
+    // addr: 2 GAs (0x0a01, 0x0a02). short assoc: [count][gi:1][co:1]
+    const addr = Buffer.from("00020a010a02", "hex");
+    const assoc = Buffer.from("0002" + "0103" + "0205", "hex"); // (gi1->co3)(gi2->co5)
+    expect(norm(decodeGroupTables(addr, assoc, false))).toEqual(
+      norm([{ comObjNum: 3, gaRaws: [0x0a01] }, { comObjNum: 5, gaRaws: [0x0a02] }]),
+    );
+  });
+
+  test("empty tables yield no links", () => {
+    expect(decodeGroupTables(Buffer.from("0000", "hex"), Buffer.from("0000", "hex"), true)).toEqual([]);
   });
 });

@@ -7,7 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -171,6 +171,40 @@ describe("projects", () => {
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
     expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false); // edited-from-default row removed
     expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual(baseLinks);    // link set restored
+  });
+
+  test("read-back baseline surfaces param drift; per-row revert adopts the device value", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    // Simulate a read-back result: the device drifted on a default param. The
+    // baseline is the live rows plus that override (what the server stores).
+    const base = new Map(getDeviceParams(db, "p1", dev));
+    base.set("M-X_A-1_P-9_R-1", "7");
+    replaceParamBase(db, "p1", dev, base);
+
+    const changed = getDeviceChangedKeys(db, "p1", dev);
+    expect(changed.params.has("M-X_A-1_P-9_R-1")).toBe(true);
+    expect(changed.params.size).toBe(1);
+
+    revertDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1"); // adopt the device value
+    expect(getDeviceParams(db, "p1", dev).get("M-X_A-1_P-9_R-1")).toBe("7");
+    expect(getDeviceChangedKeys(db, "p1", dev).params.size).toBe(0);
+  });
+
+  test("read-back baseline surfaces link drift; per-row revert adopts the device links", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1"; // baseline link O-1_R-1 -> [1, 2]
+    const base = new Map(getDeviceLinks(db, "p1", dev));
+    base.set("O-1_R-1", [9]); // device points the com-object at a different GA
+    replaceLinkBase(db, "p1", dev, base);
+
+    expect(getDeviceChangedKeys(db, "p1", dev).links.has("O-1_R-1")).toBe(true);
+
+    revertDeviceLink(db, "p1", dev, "O-1_R-1");
+    expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual([9]);
+    expect(getDeviceChangedKeys(db, "p1", dev).links.size).toBe(0);
   });
 
   test("device searchText indexes text params, skips numbers", () => {

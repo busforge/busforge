@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId } from "@busforge/knx";
-import { parseApplication, buildParameterImage, buildGroupTables, type ComObjectLink } from "@busforge/product";
+import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, type ComObjectLink } from "@busforge/product";
 import { readAppProgram } from "@busforge/project";
+import type { ProgressFn } from "./taskqueue.ts";
 
 const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
@@ -10,23 +11,31 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
 };
 
 // Read a device's group tables (address, association, com-object), detecting the
-// long vs short association format.
-async function readGroupTables(dev: KnxDevice): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer }> {
+// long vs short association format. `skipComObj` omits the com-object table (the
+// largest, often dozens of objects): the read-back path only needs address +
+// association to reverse the links, while flashing reads it to write it back
+// unchanged. Skipping it removes many bus round-trips.
+async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
   const counted = async (obj: number, width: number) => {
     const base = await dev.tableAddr(obj);
     const h = await dev.memRead(base, 2);
     return dev.memRead(base, 2 + (((h[0] << 8) | h[1]) * width));
   };
+  const total = skipComObj ? 2 : 3;
   const addr = await counted(1, 2);
+  onStep?.(1, total); // address table read
   const gcount = (addr[0] << 8) | addr[1];
   const a2 = await dev.tableAddr(2);
-  const acount = ((await dev.memRead(a2, 2))[0] << 8) | (await dev.memRead(a2, 2))[1];
+  const ah = await dev.memRead(a2, 2);
+  const acount = (ah[0] << 8) | ah[1];
   let assoc = await dev.memRead(a2, 2 + acount * 4);
   let long = true;
   for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
   if (!long) assoc = await dev.memRead(a2, 2 + acount * 2);
-  const comObj = await counted(3, 2);
-  return { addr, assoc, comObj };
+  onStep?.(2, total); // association table read
+  const comObj = skipComObj ? Buffer.alloc(0) : await counted(3, 2);
+  if (!skipComObj) onStep?.(3, total); // com-object table read
+  return { addr, assoc, comObj, long };
 }
 
 // Program a device's parameter segment (LSM 4) from its stored configuration.
@@ -62,6 +71,7 @@ export async function flashDeviceParameters(opts: {
   params: Map<string, string>;
   dataDir: string;
   dryRun: boolean;
+  onProgress?: ProgressFn;
 }): Promise<FlashResult> {
   const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
   if (!xml) throw new Error("application program not found in project");
@@ -70,6 +80,7 @@ export async function flashDeviceParameters(opts: {
   if (image.length === 0) throw new Error("built an empty parameter image; refusing to flash");
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);
   try {
@@ -82,7 +93,7 @@ export async function flashDeviceParameters(opts: {
     if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     const addr = await dev.tableAddr(LSM);
-    const current = await dev.memRead(addr, image.length);
+    const current = await dev.memRead(addr, image.length, 12, (d, t) => opts.onProgress?.("backup", d, t));
 
     // Backup the current segment before touching anything.
     const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
@@ -102,13 +113,13 @@ export async function flashDeviceParameters(opts: {
       return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: false, backup };
     }
 
-    await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version));
+    await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => opts.onProgress?.("write", d, t));
 
     // The device restarts after load-completed; reconnect and read the segment
     // back to confirm it matches the intended image.
     await sleep(3000);
     await dev.connect();
-    const back = await dev.memRead(await dev.tableAddr(LSM), image.length);
+    const back = await dev.memRead(await dev.tableAddr(LSM), image.length, 12, (d, t) => opts.onProgress?.("verify", d, t));
     const verified = back.equals(image);
 
     await dev.disconnect(); await tun.disconnect();
@@ -133,10 +144,12 @@ export async function flashDeviceGroupAddresses(opts: {
   port: number;
   dataDir: string;
   dryRun: boolean;
+  onProgress?: ProgressFn;
 }): Promise<FlashResult> {
   const { addr, assoc } = buildGroupTables(opts.links);
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);
   try {
@@ -146,6 +159,7 @@ export async function flashDeviceGroupAddresses(opts: {
     if (!wantMask) throw new Error("application mask unknown; refusing to flash");
     if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
+    opts.onProgress?.("read");
     const cur = await readGroupTables(dev);
     const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
     mkdirSync(backupDir, { recursive: true });
@@ -168,15 +182,90 @@ export async function flashDeviceGroupAddresses(opts: {
     }
 
     // Keep the device's com-object table; only address + association change.
+    opts.onProgress?.("write");
     await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj });
 
     await sleep(3000);
     await dev.connect();
+    opts.onProgress?.("verify");
     const back = await readGroupTables(dev);
     const verified = back.addr.equals(addr) && back.assoc.equals(assoc);
 
     await dev.disconnect(); await tun.disconnect();
     return { mask, imageBytes, diffBytes, changed: true, flashed: true, verified, backup };
+  } catch (e) {
+    try { await dev.disconnect(); } catch {}
+    try { await tun.disconnect(); } catch {}
+    throw e;
+  }
+}
+
+// Read a device's current state back off the bus and turn it into a programmed
+// baseline: the parameter rows (LSM 4) and com-object -> GA links that, stored as
+// the baseline, make any drift from the project config show up as a change.
+// Read-only on the bus: nothing is written to the device.
+//
+// `paramBase` is sparse like device_parameters: it copies the live rows and only
+// overrides a parameter where the device's value actually differs from what the
+// project would flash. Both sides are normalized through the same build+decode,
+// so default-vs-stored representation can't cause phantom diffs. The caller maps
+// each link's comObjNum back to its ref id before storing.
+export interface DeviceReadback { mask: string; paramBase: Map<string, string>; links: ComObjectLink[]; }
+
+export async function readDeviceState(opts: {
+  ia: string;
+  appRef: string;
+  sourceFile: string;
+  interfaceIp: string;
+  port: number;
+  liveParams: Map<string, string>;
+  // The parameter refs that are actually part of this device's configuration (the
+  // config view's keys). Drift is only recorded for these, so module devices,
+  // whose real params are instance-expanded and not in the flat model, don't
+  // produce phantom changes from flat refs the UI never shows.
+  relevantRefs?: Set<string>;
+  onProgress?: ProgressFn;
+  signal?: AbortSignal;
+}): Promise<DeviceReadback> {
+  const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
+  if (!xml) throw new Error("application program not found in project");
+  const model = parseApplication(xml);
+
+  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  opts.onProgress?.("connect");
+  await tun.connect();
+  const dev = new KnxDevice(tun, opts.ia);
+  try {
+    await dev.connect();
+
+    const mask = await dev.deviceDescriptor();
+    const wantMask = model.mask.replace(/^MV-/, "");
+    if (!wantMask) throw new Error("application mask unknown; refusing to read");
+    if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+
+    // Parameters (LSM 4): read the whole segment, decode it, and compare against
+    // what the project config would flash, both normalized via the same codec.
+    const paramBase = new Map(opts.liveParams);
+    const seg = model.segments.find((s) => s.lsm === LSM);
+    if (seg) {
+      const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
+      const deviceVals = decodeParameterImage(model, LSM, img);
+      const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, opts.liveParams));
+      for (const [refId, devVal] of deviceVals) {
+        if (opts.relevantRefs && !opts.relevantRefs.has(refId)) continue; // not part of this device's config
+        if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal); // device drifted from project
+      }
+    }
+
+    // Group-address links: read the address + association tables and reverse them.
+    // The com-object table is not needed to decode links, so skip it (much faster).
+    if (opts.signal?.aborted) throw new Error("read aborted");
+    opts.onProgress?.("links", 0, 2);
+    const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
+    const links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
+
+    await dev.disconnect(); await tun.disconnect();
+    return { mask, paramBase, links };
   } catch (e) {
     try { await dev.disconnect(); } catch {}
     try { await tun.disconnect(); } catch {}

@@ -4,11 +4,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
-import { createState, handleApi, type AppState } from "../src/app.ts";
+import { createState, handleApi, mergeLinkBaseline, type AppState } from "../src/app.ts";
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const encFixture = readFileSync(join(fixtures, "sample-encrypted.knxproj"));
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
+
+describe("mergeLinkBaseline (read-back link baseline)", () => {
+  const m = (o: Record<string, number[]>) => new Map(Object.entries(o));
+  const obj = (x: Map<string, number[]>) => Object.fromEntries(x);
+
+  test("non-module: overrides differing, adds device-only, clears live-only", () => {
+    const live = m({ A: [1, 2], B: [5], D: [3] });
+    const device = m({ A: [2, 1], B: [9], C: [7] }); // A same set (reordered), B differs, C new, D gone
+    expect(obj(mergeLinkBaseline(live, device, false))).toEqual({ A: [1, 2], B: [9], C: [7] });
+  });
+
+  test("module: only trusts device links mapping onto a known live com-object", () => {
+    const live = m({ A: [1, 2], B: [5], D: [3] });
+    const device = m({ A: [9], C: [7] }); // A in live -> override; C not in live -> ignore; B,D absent -> kept
+    expect(obj(mergeLinkBaseline(live, device, true))).toEqual({ A: [9], B: [5], D: [3] });
+  });
+
+  test("no drift yields an unchanged baseline (both branches)", () => {
+    const live = m({ A: [1], B: [2] });
+    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), false))).toEqual({ A: [1], B: [2] });
+    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), true))).toEqual({ A: [1], B: [2] });
+  });
+});
 
 describe("telegram decoding", () => {
   test("GroupValueWrite with a 1-bit value", () => {
@@ -228,24 +251,19 @@ describe("device configuration", () => {
     expect(((await r2!.json()) as any).error).toMatch(/interface/i);
   });
 
-  test("flash refuses a second concurrent flash (409)", async () => {
-    const state = freshState();
-    const { projectId, deviceId } = await importConfig(state);
-    await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/interface`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ interfaceIp: "203.0.113.11", port: 3671 }),
-    }), state);
-    state.flashing = true; // simulate a flash in progress; the guard fires before any bus access
-    const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
-    expect(res!.status).toBe(409);
-  });
-
-  test("flash-ga guards: unknown device 404, no interface 400, concurrent 409", async () => {
+  test("flash-ga guards: unknown device 404, no interface 400", async () => {
     const state = freshState();
     const { projectId, deviceId } = await importConfig(state);
     expect((await handleApi(req(`/api/projects/${projectId}/devices/ghost/flash-ga`, { method: "POST" }), state))!.status).toBe(404);
     const r2 = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state);
     expect(r2!.status).toBe(400);
-    state.flashing = true;
-    expect((await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!.status).toBe(409);
+  });
+
+  test("tasks endpoint is empty until a bus operation runs", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    const res = await handleApi(req(`/api/projects/${projectId}/tasks`, { method: "GET" }), state);
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual([]);
   });
 });

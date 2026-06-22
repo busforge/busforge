@@ -54,9 +54,9 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
   })();
 }
 
-export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string } | null {
-  const r = db.query("SELECT ia, app_ref AS appRef FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { ia: string; appRef: string } | null;
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef, name FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string; name: string } | null;
   return r ?? null;
 }
 
@@ -176,6 +176,48 @@ export function revertDevice(db: Database, projectId: string, deviceId: string):
     db.prepare(`INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw)
       SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?`)
       .run(projectId, deviceId);
+  })();
+}
+
+// --- Read-back: adopt the device's measured state as the baseline ------------
+// Replace a device's parameter/link baseline with values read off the bus. The
+// caller passes a sparse map (rows that differ from the project plus the copied
+// live rows), so the existing live-vs-base diff then flags exactly the drift.
+
+export function replaceParamBase(db: Database, projectId: string, deviceId: string, values: Map<string, string>): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_param_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    const ins = db.prepare("INSERT INTO device_param_base (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
+    for (const [refId, value] of values) ins.run(projectId, deviceId, refId, value);
+  })();
+}
+
+export function replaceLinkBase(db: Database, projectId: string, deviceId: string, links: Map<string, number[]>): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_link_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    const ins = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
+    for (const [refId, gaRaws] of links) gaRaws.forEach((raw, slot) => ins.run(projectId, deviceId, refId, slot, raw));
+  })();
+}
+
+// Discard one parameter's drift: set its live value back to the baseline (the
+// value on the device). Deletes the live row if the baseline has none.
+export function revertDeviceParam(db: Database, projectId: string, deviceId: string, refId: string): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_parameters WHERE project_id = ? AND device_id = ? AND param_ref_id = ?").run(projectId, deviceId, refId);
+    db.prepare(`INSERT INTO device_parameters (project_id, device_id, param_ref_id, value)
+      SELECT project_id, device_id, param_ref_id, value FROM device_param_base
+      WHERE project_id = ? AND device_id = ? AND param_ref_id = ?`).run(projectId, deviceId, refId);
+  })();
+}
+
+// Discard one com-object's drift: set its live GA links back to the baseline.
+export function revertDeviceLink(db: Database, projectId: string, deviceId: string, comObjRefId: string): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_links WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?").run(projectId, deviceId, comObjRefId);
+    db.prepare(`INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw)
+      SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base
+      WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?`).run(projectId, deviceId, comObjRefId);
   })();
 }
 

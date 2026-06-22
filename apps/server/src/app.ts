@@ -8,15 +8,18 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses } from "./flash.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
+import { TaskQueue } from "./taskqueue.ts";
 
 export interface AppState {
   db: Database;
   bus: Bus;
   dataDir: string;
   now: () => number;
-  flashing: boolean; // one flash at a time; writing two segments at once would corrupt the load procedure
+  // One physical interface, so bus operations (read/flash) run serially through
+  // this queue instead of rejecting each other; it also surfaces their progress.
+  queue: TaskQueue;
   // Parsed application programs cached per (sourceFile, appRef); immutable once a
   // project is imported, so this never needs invalidation within a run.
   appCache: Map<string, AppConfig>;
@@ -32,7 +35,8 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   // Persistent writer: every telegram of the active project is stored, whether
   // or not a monitor WebSocket is open.
   bus.subscribe((t) => { if (bus.activeProjectId) insertTelegram(db, bus.activeProjectId, t); });
-  return { db, bus, dataDir, now: opts?.now ?? (() => Date.now()), appCache: new Map(), flashing: false };
+  const now = opts?.now ?? (() => Date.now());
+  return { db, bus, dataDir, now, appCache: new Map(), queue: new TaskQueue(now) };
 }
 
 const json = (data: unknown, status = 200) =>
@@ -146,60 +150,121 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       return deviceConfig(state, id, deviceId, body.lang);
     }
 
-    // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
-    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
+    // /api/projects/:id/devices/:deviceId/revert-param  -> discard one param's drift
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert-param" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
-      if (state.flashing) return err("a flash is already in progress", 409);
-      const dev = getDeviceForFlash(db, id, deviceId);
-      if (!dev) return err("device not found", 404);
-      const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("set an interface IP first");
-      const resolved = resolveDeviceLinks(state, id, deviceId);
-      if (!resolved) return err("application program not found in project", 404);
-      state.flashing = true;
-      try {
-        if (bus.activeProjectId) await bus.disconnect();
-        const result = await flashDeviceGroupAddresses({
-          projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
-          interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
-          dryRun: url.searchParams.get("dry") === "1",
-        });
-        // The device's group tables now match our links: clear the change marker.
-        if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId);
-        return json(result);
-      } finally {
-        state.flashing = false;
-      }
+      if (!getDeviceForFlash(db, id, deviceId)) return err("device not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { paramRefId?: string; lang?: string };
+      if (!body.paramRefId) return err("paramRefId required");
+      revertDeviceParam(db, id, deviceId, body.paramRefId);
+      return deviceConfig(state, id, deviceId, body.lang);
     }
 
-    // /api/projects/:id/devices/:deviceId/flash?dry=1  -> program the parameter segment
-    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash" && req.method === "POST") {
+    // /api/projects/:id/devices/:deviceId/revert-link  -> discard one com-object's drift
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert-link" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
-      // Only one flash (dry or real) at a time: concurrent segment writes would
-      // corrupt the load procedure on the device.
-      if (state.flashing) return err("a flash is already in progress", 409);
+      const app = loadApp(state, id, deviceId);
+      if (!app) return err("device not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { comObjRefId?: string; lang?: string };
+      if (!body.comObjRefId) return err("comObjRefId required");
+      const key = body.comObjRefId.startsWith(`${app.id}_`) ? body.comObjRefId.slice(app.id.length + 1) : body.comObjRefId;
+      revertDeviceLink(db, id, deviceId, key);
+      return deviceConfig(state, id, deviceId, body.lang);
+    }
+
+    // /api/projects/:id/devices/:deviceId/read-back  -> read the device's current
+    // state off the bus and store it as the baseline, so drift shows as a change.
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "read-back" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
       if (!dev) return err("device not found", 404);
       const iface = getInterface(db, id);
       if (!iface?.interfaceIp) return err("set an interface IP first");
       const sourceFile = getSourceFile(db, id);
       if (!sourceFile) return err("project not found", 404);
-      state.flashing = true;
-      try {
-        // Free the bus so the flash holds the only connection-oriented link.
-        if (bus.activeProjectId) await bus.disconnect();
-        const result = await flashDeviceParameters({
-          projectId: id, deviceId, ia: dev.ia, appRef: dev.appRef, sourceFile,
-          interfaceIp: iface.interfaceIp, port: iface.port,
-          params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
-          dryRun: url.searchParams.get("dry") === "1",
-        });
-        // The device's parameter segment now matches our values: clear the marker.
-        if (result.flashed && result.verified !== false) resetParamBase(db, id, deviceId);
-        return json(result);
-      } finally {
-        state.flashing = false;
-      }
+      const body = (await req.json().catch(() => ({}))) as { lang?: string };
+      // Only record drift for refs the device config actually exposes (matches
+      // what the UI shows; keeps module devices from flagging flat-model refs).
+      const relevantRefs = deviceParamRefs(state, id, deviceId);
+      const rb = await state.queue.enqueue(
+        { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
+        async (progress, signal) => {
+          // Free the bus so the read holds the only connection-oriented link.
+          if (bus.activeProjectId) await bus.disconnect();
+          return readDeviceState({
+            ia: dev.ia, appRef: dev.appRef, sourceFile,
+            interfaceIp: iface.interfaceIp, port: iface.port,
+            liveParams: getDeviceParams(db, id, deviceId), relevantRefs, onProgress: progress, signal,
+          });
+        },
+      );
+      replaceParamBase(db, id, deviceId, rb.paramBase);
+      replaceLinkBase(db, id, deviceId, readbackLinkBase(state, id, deviceId, rb.links));
+      return deviceConfig(state, id, deviceId, body.lang);
+    }
+
+    // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const dev = getDeviceForFlash(db, id, deviceId);
+      if (!dev) return err("device not found", 404);
+      const iface = getInterface(db, id);
+      if (!iface?.interfaceIp) return err("set an interface IP first");
+      const resolved = resolveDeviceLinks(state, id, deviceId);
+      if (!resolved) return err("application program not found in project", 404);
+      const result = await state.queue.enqueue(
+        { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" },
+        async (progress) => {
+          if (bus.activeProjectId) await bus.disconnect();
+          return flashDeviceGroupAddresses({
+            projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
+            interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
+            dryRun: url.searchParams.get("dry") === "1", onProgress: progress,
+          });
+        },
+      );
+      // The device's group tables now match our links: clear the change marker.
+      if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId);
+      return json(result);
+    }
+
+    // /api/projects/:id/devices/:deviceId/flash?dry=1  -> program the parameter segment
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const dev = getDeviceForFlash(db, id, deviceId);
+      if (!dev) return err("device not found", 404);
+      const iface = getInterface(db, id);
+      if (!iface?.interfaceIp) return err("set an interface IP first");
+      const sourceFile = getSourceFile(db, id);
+      if (!sourceFile) return err("project not found", 404);
+      const result = await state.queue.enqueue(
+        { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" },
+        async (progress) => {
+          // Free the bus so the flash holds the only connection-oriented link.
+          if (bus.activeProjectId) await bus.disconnect();
+          return flashDeviceParameters({
+            projectId: id, deviceId, ia: dev.ia, appRef: dev.appRef, sourceFile,
+            interfaceIp: iface.interfaceIp, port: iface.port,
+            params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
+            dryRun: url.searchParams.get("dry") === "1", onProgress: progress,
+          });
+        },
+      );
+      // The device's parameter segment now matches our values: clear the marker.
+      if (result.flashed && result.verified !== false) resetParamBase(db, id, deviceId);
+      return json(result);
+    }
+
+    // /api/projects/:id/tasks  -> the device's queued/running/recent bus operations
+    if (seg.length === 4 && seg[3] === "tasks" && req.method === "GET") {
+      return json(state.queue.list(id));
+    }
+
+    // /api/projects/:id/tasks/:taskId/cancel  -> cancel a queued (or running read) task
+    if (seg.length === 6 && seg[3] === "tasks" && seg[5] === "cancel" && req.method === "POST") {
+      const cancelled = state.queue.cancel(decodeURIComponent(seg[4]));
+      if (!cancelled) return err("task cannot be cancelled", 409);
+      return json({ cancelled });
     }
 
     // /api/projects/:id/bus/{connect,disconnect,status}
@@ -298,4 +363,64 @@ function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string
     links.push({ comObjNum: num, gaRaws });
   }
   return { mask: app.mask, links };
+}
+
+// The parameter refs that make up a device's actual configuration (the config
+// view's keys): for module devices these are instance-expanded, so they differ
+// from the flat application model. Used to keep read-back drift consistent with
+// what the UI shows.
+function deviceParamRefs(state: AppState, projectId: string, deviceId: string): Set<string> {
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return new Set();
+  const view = buildDeviceConfig(app, getDeviceParams(state.db, projectId, deviceId), undefined, getDeviceModules(state.db, projectId, deviceId));
+  const refs = new Set<string>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") refs.add(it.param.refId);
+  return refs;
+}
+
+const sameGaSet = (a: number[], b: number[]) => { const x = [...a].sort((m, n) => m - n), y = [...b].sort((m, n) => m - n); return x.length === y.length && x.every((v, i) => v === y[i]); };
+
+// Merge a device's read-back links into the sparse link baseline: copy the live
+// links, then override only where the device differs. Non-module devices map 1:1,
+// so a com-object missing from the device read is genuinely unassigned (cleared).
+// Module devices can't reverse instance numbering reliably, so only links that map
+// onto a known live com-object are trusted; others are neither invented nor dropped.
+export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<string, number[]>, hasModules: boolean): Map<string, number[]> {
+  const base = new Map(live);
+  if (hasModules) {
+    for (const [key, dev] of device) {
+      if (live.has(key) && !sameGaSet(live.get(key) ?? [], dev)) base.set(key, dev);
+    }
+  } else {
+    for (const key of new Set([...live.keys(), ...device.keys()])) {
+      const proj = live.get(key) ?? [];
+      const dev = device.get(key) ?? [];
+      if (!sameGaSet(proj, dev)) { if (dev.length) base.set(key, dev); else base.delete(key); }
+    }
+  }
+  return base;
+}
+
+// Turn the links read off a device (keyed by com-object number) into the sparse
+// link baseline keyed by stored ref id: copy the live links, then override only
+// the com-objects whose device GA set differs from the project, so the live-vs-
+// base diff flags exactly the drift. Inverse of resolveDeviceLinks' numbering.
+function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[]): Map<string, number[]> {
+  const { db } = state;
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new Error("application program not found in project");
+  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
+  // number -> stored ref key. App covers hidden com-objects; the view's
+  // module-resolved numbers take precedence.
+  const keyByNum = new Map<number, string>();
+  for (const [full, cor] of app.comObjectRefs) {
+    const num = app.comObjects.get(cor.refId)?.number;
+    if (num !== undefined) keyByNum.set(num, full.slice(app.id.length + 1));
+  }
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") keyByNum.set(it.comObject.number, it.comObject.refId.slice(app.id.length + 1));
+
+  const device = new Map<string, number[]>();
+  for (const l of deviceLinks) { const key = keyByNum.get(l.comObjNum); if (key) device.set(key, l.gaRaws); }
+
+  return mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, app.hasModules);
 }

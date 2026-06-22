@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, Trash2 } from "lucide-react";
+import { ArrowDownUp, Pause, Play, Trash2 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { decodeDpt } from "@busforge/knx/dpt";
@@ -7,6 +7,8 @@ import { type GroupRangeNode, type Telegram } from "../api.ts";
 import { useProject, useBusStatus, useTelegrams } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DeviceLabel } from "@/components/DeviceLabel.tsx";
+import { GaLabel } from "@/components/GaLabel.tsx";
 import { cn } from "@/lib/utils";
 
 interface GaInfo { name: string; dpt: string; }
@@ -50,9 +52,14 @@ export function MonitorView() {
   }, [project]);
   const [rows, setRows] = useState<Telegram[]>([]);
   const [paused, setPaused] = useState(false);
+  const [newestFirst, setNewestFirst] = useState(true); // default: latest telegrams on top
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // `rows` is chronological (oldest first); flip for display when newest-first.
+  const displayRows = useMemo(() => (newestFirst ? [...rows].reverse() : rows), [rows, newestFirst]);
 
   // Seed from the recorded history once it loads (and when switching projects);
   // live telegrams below append onto this.
@@ -74,8 +81,10 @@ export function MonitorView() {
   }, [projectId, status]);
 
   useEffect(() => {
-    if (!paused) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [rows, paused]);
+    if (paused) return;
+    if (newestFirst) listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    else bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [rows, paused, newestFirst]);
 
   return (
     <div className="space-y-3">
@@ -85,6 +94,9 @@ export function MonitorView() {
           {status !== "connected" && <span className="text-muted-foreground"> · {t("monitor.offline")}</span>}
         </span>
         <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setNewestFirst((s) => !s)} title={t(newestFirst ? "monitor.newestFirst" : "monitor.oldestFirst")} data-testid="monitor-sort">
+            <ArrowDownUp className="size-3.5" /> {t(newestFirst ? "monitor.newestFirst" : "monitor.oldestFirst")}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setPaused((p) => !p)} data-testid="monitor-pause">
             {paused ? <><Play className="size-3.5" /> {t("monitor.resume")}</> : <><Pause className="size-3.5" /> {t("monitor.pause")}</>}
           </Button>
@@ -93,7 +105,7 @@ export function MonitorView() {
       </div>
 
       <Card className="overflow-hidden py-0">
-        <div className="max-h-[65vh] overflow-y-auto">
+        <div ref={listRef} className="max-h-[65vh] overflow-y-auto">
           {/* Table on wide screens. */}
           <table className="hidden w-full border-collapse text-xs sm:table">
             <thead className="sticky top-0 z-10 bg-secondary/95 text-left font-sans uppercase tracking-wider text-muted-foreground backdrop-blur">
@@ -106,22 +118,16 @@ export function MonitorView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((t, i) => {
+              {displayRows.map((t, i) => {
                 const ga = gaIndex.get(t.dstRaw);
                 const srcName = deviceIndex.get(t.src);
                 const value = decodeDpt(t.raw, ga?.dpt);
                 return (
                   <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
                     <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted-foreground">{time(t.ts)}</td>
-                    <td className="px-3 py-1.5">
-                      <div className="max-w-48 truncate">{srcName ?? <span className="font-mono text-muted-foreground">{t.src}</span>}</div>
-                      {srcName && <div className="font-mono text-[10px] text-muted-foreground">{t.src}</div>}
-                    </td>
+                    <td className="px-3 py-1.5"><DeviceLabel name={srcName} ia={t.src} placeholder={false} className="max-w-48" /></td>
                     <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
-                    <td className="px-3 py-1.5">
-                      <div className="max-w-56 truncate">{ga?.name || <span className="font-mono text-primary">{t.dst}</span>}</div>
-                      {ga?.name && <div className="font-mono text-[10px] text-primary">{t.dst}</div>}
-                    </td>
+                    <td className="px-3 py-1.5"><GaLabel name={ga?.name} address={t.dst} placeholder={false} className="max-w-56" /></td>
                     <td className="px-3 py-1.5 font-mono text-foreground" title={`0x${t.raw}`}>{value}</td>
                   </tr>
                 );
@@ -131,7 +137,7 @@ export function MonitorView() {
 
           {/* Cards on mobile. */}
           <div className="divide-y divide-border/40 sm:hidden">
-            {rows.map((t, i) => {
+            {displayRows.map((t, i) => {
               const ga = gaIndex.get(t.dstRaw);
               const srcName = deviceIndex.get(t.src);
               const value = decodeDpt(t.raw, ga?.dpt);
@@ -139,10 +145,10 @@ export function MonitorView() {
                 <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="truncate text-sm">{srcName ?? <span className="font-mono text-muted-foreground">{t.src}</span>}</span>
+                      <DeviceLabel name={srcName} ia={t.src} placeholder={false} className="text-sm" />
                       <KindChip kind={t.kind} />
                     </div>
-                    <div className="truncate text-xs">{ga?.name || <span className="font-mono text-primary">{t.dst}</span>}</div>
+                    <GaLabel name={ga?.name} address={t.dst} placeholder={false} className="text-xs" />
                     <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · {t.src} → {t.dst}</div>
                   </div>
                   <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>

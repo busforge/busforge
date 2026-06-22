@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api } from "./api.ts";
+import { api, type Task } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -14,6 +14,7 @@ export const qk = {
   // catalogue text in that language; the server maps it to the nearest
   // available catalogue language.
   deviceConfig: (id: string, deviceId: string, lang: string) => ["deviceConfig", id, deviceId, lang] as const,
+  tasks: (id: string) => ["tasks", id] as const,
 };
 
 export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.listProjects });
@@ -30,6 +31,19 @@ export const useBusStatus = (id: string) =>
 
 export const useTelegrams = (id: string) =>
   useQuery({ queryKey: qk.telegrams(id), queryFn: () => api.telegrams(id, 500) });
+
+// Bus-operation queue. A steady heartbeat keeps the header in sync even with
+// operations triggered elsewhere (the bus is serialized server-side); it speeds
+// up while something is running/queued so progress feels live.
+export const useTasks = (id: string) =>
+  useQuery({
+    queryKey: qk.tasks(id),
+    queryFn: () => api.tasks(id),
+    refetchInterval: (q) => {
+      const data = q.state.data as Task[] | undefined;
+      return data?.some((t) => t.state === "running" || t.state === "queued") ? 500 : 2000;
+    },
+  });
 
 export const useDeviceConfig = (id: string, deviceId: string) => {
   const { i18n } = useTranslation();
@@ -69,5 +83,19 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     mutationFn: () => api.revertDevice(projectId, deviceId, lang),
     onSuccess,
   });
-  return { setParam, setLink, revert, after };
+  const revertParam = useMutation({
+    mutationFn: (refId: string) => api.revertParam(projectId, deviceId, refId, lang),
+    onSuccess,
+  });
+  const revertLink = useMutation({
+    mutationFn: (comObjRefId: string) => api.revertLink(projectId, deviceId, comObjRefId, lang),
+    onSuccess,
+  });
+  // Read the device's state off the bus and adopt it as the baseline; the
+  // refreshed view flags any rows that drift from the project config.
+  const readBack = useMutation({
+    mutationFn: () => api.readBackDevice(projectId, deviceId, lang),
+    onSuccess,
+  });
+  return { setParam, setLink, revert, revertParam, revertLink, readBack, after };
 }

@@ -1,9 +1,9 @@
 import { Activity, ChevronLeft, Cpu, Network, SlidersHorizontal } from "lucide-react";
 import { Link, Outlet, useParams, useRouterState } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { useProject, useBusStatus } from "../queries.ts";
+import { useProject } from "../queries.ts";
 import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/StatusBadge.tsx";
+import { TaskIndicator } from "@/components/TaskIndicator.tsx";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
 
 const TABS = [
@@ -17,7 +17,6 @@ export function ProjectLayout() {
   const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
-  const { data: bus } = useBusStatus(projectId);
 
   // Which tab is active, derived from the path segment after the project id.
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -38,8 +37,8 @@ export function ProjectLayout() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <TaskIndicator projectId={projectId} />
           <LanguageSwitcher />
-          <StatusBadge status={bus?.status ?? "disconnected"} />
         </div>
       </header>
 

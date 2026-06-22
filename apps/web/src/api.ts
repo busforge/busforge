@@ -29,6 +29,14 @@ export interface CfgBlock { id: string; name: string; items: CfgItem[]; }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
 export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 
+export type TaskKind = "read" | "flash-params" | "flash-ga";
+export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
+export interface Task {
+  id: string; projectId: string; deviceId: string; deviceName: string; ia: string;
+  kind: TaskKind; state: TaskState; phase: string | null; done: number; total: number;
+  error: string | null; queuedAt: number; startedAt: number | null; finishedAt: number | null;
+}
+
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
 export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; }
@@ -79,6 +87,24 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  revertParam: (id: string, deviceId: string, paramRefId: string, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-param`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId, lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  revertLink: (id: string, deviceId: string, comObjRefId: string, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-link`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  // Read the device's current configuration off the bus and adopt it as the
+  // baseline; returns the refreshed config view (drifted rows now flagged).
+  readBackDevice: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/read-back`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  tasks: (id: string): Promise<Task[]> => fetch(`/api/projects/${id}/tasks`).then((r) => jsonOrThrow<Task[]>(r)),
+  cancelTask: (id: string, taskId: string): Promise<{ cancelled: string }> =>
+    fetch(`/api/projects/${id}/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }).then((r) => jsonOrThrow<{ cancelled: string }>(r)),
 
   busStatus: (id: string): Promise<BusState> => fetch(`/api/projects/${id}/bus/status`).then((r) => jsonOrThrow<BusState>(r)),
   busConnect: (id: string): Promise<{ status: BusStatus }> => fetch(`/api/projects/${id}/bus/connect`, { method: "POST" }).then((r) => jsonOrThrow<{ status: BusStatus }>(r)),

@@ -4,7 +4,10 @@ import { XMLParser } from "fast-xml-parser";
 // to build a parameter memory image: parameter types (sizes), parameters (with
 // memory location), parameter refs, and the default parameter segment.
 
-export interface ParamType { id: string; sizeInBit: number; signed: boolean; }
+// `base` is the parameter's value kind, needed to pick the right memory codec:
+// "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
+export type ParamBase = "Value" | "Number" | "Float" | "Text" | "Time" | "Other";
+export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
 export interface Segment { id: string; lsm: number; size: number; data: Buffer; }
@@ -34,10 +37,13 @@ export function parseApplication(xml: string): AppModel {
 
   const types = new Map<string, ParamType>();
   for (const t of arr<any>(st.ParameterTypes?.ParameterType)) {
+    const base: ParamBase = t.TypeFloat ? "Float" : t.TypeNumber ? "Number" : t.TypeText ? "Text"
+      : t.TypeTime ? "Time" : t.TypeRestriction ? "Value" : "Other";
     const tr = t.TypeRestriction ?? t.TypeNumber ?? t.TypeText ?? t.TypeFloat ?? t.TypeTime ?? {};
-    const sizeInBit = Number(tr.SizeInBit ?? 0);
+    // A DPT-9 float is 16 bits; the manufacturer XML may omit SizeInBit on TypeFloat.
+    const sizeInBit = Number(tr.SizeInBit ?? (base === "Float" ? 16 : 0));
     const signed = String(t.TypeNumber?.Type ?? tr.Type ?? "").toLowerCase().includes("signed");
-    types.set(t.Id, { id: t.Id, sizeInBit, signed });
+    types.set(t.Id, { id: t.Id, base, sizeInBit, signed });
   }
 
   const params = new Map<string, Param>();
