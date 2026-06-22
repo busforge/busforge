@@ -1,5 +1,4 @@
 // KNXnet/IP + cEMI + TPCI/APCI byte handling. See ../../../docs/findings.md.
-import dgram from "node:dgram";
 
 export const KNXPORT = 3671;
 
@@ -60,9 +59,6 @@ export function parseApdu(tpdu: Buffer): ParsedApdu {
   if ((apci & 0x3c0) === APCI.MEMORY_RESPONSE) apci = APCI.MEMORY_RESPONSE;
   return { control: false, seq, apci, data: tpdu.subarray(2) };
 }
-
-export const localIpFor = (ip: string, port = KNXPORT) =>
-  new Promise<string>((res) => { const s = dgram.createSocket("udp4"); s.connect(port, ip, () => { const a = s.address().address; s.close(); res(a); }); });
 
 // --- group address (multicast) ---
 export const gaToNum = (s: string) => { const [m, mid, sub] = s.split("/").map(Number); return (m << 11) | (mid << 8) | sub; };

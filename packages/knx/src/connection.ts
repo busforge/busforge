@@ -1,5 +1,5 @@
 import dgram from "node:dgram";
-import { SVC, knxFrame, hpai, localIpFor, KNXPORT } from "./frame.ts";
+import { SVC, knxFrame, hpai, KNXPORT } from "./frame.ts";
 
 // KNXnet/IP tunnelling connection. Handles the KNXnet/IP layer (connect,
 // tunnelling request/ack both directions) and surfaces incoming cEMI L_Data
@@ -7,8 +7,6 @@ import { SVC, knxFrame, hpai, localIpFor, KNXPORT } from "./frame.ts";
 // lives one layer up in KnxDevice.
 export class KnxIpTunnel {
   private sock!: dgram.Socket;
-  private localIp = "0.0.0.0";
-  private localPort = 0;
   channel = 0;
   assignedIa = 0;
   private txSeq = 0;
@@ -22,11 +20,15 @@ export class KnxIpTunnel {
   async connect(): Promise<void> {
     this.sock = dgram.createSocket("udp4");
     await new Promise<void>((r) => this.sock.bind(0, () => r()));
-    this.localPort = this.sock.address().port;
-    this.localIp = await localIpFor(this.ifaceIp, this.port);
     this.sock.on("message", (m) => this.onMessage(m));
 
-    const body = Buffer.concat([hpai(this.localIp, this.localPort), hpai(this.localIp, this.localPort), Buffer.from([0x04, 0x04, 0x02, 0x00])]);
+    // Advertise a NAT-mode HPAI (0.0.0.0:0) so the gateway replies to the
+    // observed packet source instead of an address we name. Required behind NAT
+    // (e.g. the server in a Docker bridge network, where our real local address
+    // is an unroutable 172.x/192.168.x container IP); on a flat LAN the packet
+    // source is our real address anyway, so this works in both cases.
+    const nat = hpai("0.0.0.0", 0);
+    const body = Buffer.concat([nat, nat, Buffer.from([0x04, 0x04, 0x02, 0x00])]);
     const done = this.once((m) => m.readUInt16BE(2) === SVC.CONNECT_RES, 4000, "connect");
     await this.send(knxFrame(SVC.CONNECT_REQ, body));
     const res = await done;
@@ -78,7 +80,7 @@ export class KnxIpTunnel {
   }
 
   async disconnect() {
-    try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai(this.localIp, this.localPort)]))); } catch {}
+    try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); } catch {}
     this.sock?.close();
   }
 }
