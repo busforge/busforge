@@ -61,13 +61,29 @@ export function matchTest(test: string, v: number): boolean {
   return false;
 }
 
+// Map a requested language to one the catalogue actually carries. The UI sends a
+// short code ("de", "en") while catalogues use full identifiers ("de-DE",
+// "en-GB"); match exactly first, then by primary subtag, else fall back to the
+// catalogue's default (its untranslated base text).
+export function resolveLanguage(app: AppConfig, requested?: string): string {
+  if (!requested) return app.defaultLanguage;
+  const want = requested.toLowerCase();
+  const prefix = want.split("-")[0];
+  const all = [app.defaultLanguage, ...app.languages];
+  return (
+    all.find((l) => l.toLowerCase() === want) ??
+    all.find((l) => l.toLowerCase().split("-")[0] === prefix) ??
+    app.defaultLanguage
+  );
+}
+
 export function buildDeviceConfig(
   app: AppConfig,
   overrides: Map<string, string>,
   lang?: string,
   moduleInstances: ModuleInstance[] = [],
 ): DeviceConfigView {
-  const language = lang ?? app.defaultLanguage;
+  const language = resolveLanguage(app, lang);
   const env = new Map(overrides); // working values; Assign mutates this
 
   // Effective value: device instance value (keyed by the rewritten instance id)

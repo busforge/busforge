@@ -79,7 +79,7 @@ export function DeviceConfig() {
     });
   const afterFlash = () => {
     qc.invalidateQueries({ queryKey: qk.project(projectId) });
-    qc.invalidateQueries({ queryKey: qk.deviceConfig(projectId, deviceId) });
+    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
   };
 
   // Section table-of-contents: scroll to a card and track the active one.

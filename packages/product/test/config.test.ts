@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
-import { buildDeviceConfig, matchTest, type CfgParamView, type CfgItem } from "../src/config.ts";
+import { buildDeviceConfig, matchTest, resolveLanguage, type CfgParamView, type CfgItem } from "../src/config.ts";
 
 const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "utf8");
 const app = parseAppConfig(xml);
@@ -150,5 +150,20 @@ describe("localization", () => {
     expect(mode.options).toEqual([{ value: 0, text: "Off" }, { value: 1, text: "Ein" }]);
     // Level has no translation -> base text
     expect(params(v)[1].param.name).toBe("Level");
+  });
+
+  test("a short UI code resolves to the catalogue's full language", () => {
+    // "de" must reach the de-DE translations (the UI sends short codes).
+    const v = buildDeviceConfig(app, new Map(), "de");
+    expect(params(v)[0].param.name).toBe("Modus");
+  });
+
+  test("resolveLanguage matches exact, then prefix, then falls back to default", () => {
+    expect(resolveLanguage(app, "de-DE")).toBe("de-DE"); // exact
+    expect(resolveLanguage(app, "de")).toBe("de-DE"); // primary subtag
+    expect(resolveLanguage(app, "de-AT")).toBe("de-DE"); // same subtag, different region
+    expect(resolveLanguage(app, "en")).toBe("en-US"); // matches the default
+    expect(resolveLanguage(app, "fr")).toBe("en-US"); // unknown -> default base text
+    expect(resolveLanguage(app, undefined)).toBe("en-US"); // none -> default
   });
 });

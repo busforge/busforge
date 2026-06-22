@@ -70,9 +70,9 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
   flashDeviceGa: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash-ga${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
-  setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[]): Promise<DeviceConfigView> =>
+  setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[], lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/links`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang: "de-DE" }),
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   revertDevice: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
