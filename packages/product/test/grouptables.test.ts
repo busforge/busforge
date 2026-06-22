@@ -73,4 +73,19 @@ describe("decodeGroupTables", () => {
   test("empty tables yield no links", () => {
     expect(decodeGroupTables(Buffer.from("0000", "hex"), Buffer.from("0000", "hex"), true)).toEqual([]);
   });
+
+  test("a truncated table (header count exceeds the bytes read) decodes the whole entries, no crash", () => {
+    // Header claims 4 GAs / 3 assoc entries, but the buffers were cut short (a
+    // short device read). Must not read past the buffer (regression: RangeError
+    // "offset out of range" crashed the whole read-back).
+    const addr = Buffer.from("0004" + "0a01" + "0a02", "hex"); // says 4, only 2 present
+    const assoc = Buffer.from("0003" + "00010003" + "0002", "hex"); // says 3, 1 whole entry + a stub
+    expect(norm(decodeGroupTables(addr, assoc, true))).toEqual(
+      norm([{ comObjNum: 3, gaRaws: [0x0a01] }]),
+    );
+  });
+
+  test("buffers too short for even the header yield no links", () => {
+    expect(decodeGroupTables(Buffer.alloc(0), Buffer.alloc(1), true)).toEqual([]);
+  });
 });

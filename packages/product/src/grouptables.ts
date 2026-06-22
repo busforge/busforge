@@ -35,15 +35,20 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
 // the long/short association format before passing it in (see readGroupTables).
 // gaRaws are sorted ascending so the result is stable regardless of table order.
 export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean): ComObjectLink[] {
-  const gcount = addr.readUInt16BE(0);
+  // The header count comes off the device and is trusted only up to the bytes
+  // actually returned: a short or truncated table read (some devices return
+  // fewer bytes than requested) must degrade to the readable entries, never read
+  // past the buffer and crash the whole read-back.
+  const gcount = addr.length >= 2 ? addr.readUInt16BE(0) : 0;
   const gas: number[] = [];
-  for (let i = 0; i < gcount; i++) gas.push(addr.readUInt16BE(2 + i * 2));
+  for (let i = 0; i < gcount && 2 + i * 2 + 2 <= addr.length; i++) gas.push(addr.readUInt16BE(2 + i * 2));
 
-  const acount = assoc.readUInt16BE(0);
+  const acount = assoc.length >= 2 ? assoc.readUInt16BE(0) : 0;
   const width = longForm ? 4 : 2;
   const byCo = new Map<number, number[]>();
   for (let k = 0; k < acount; k++) {
     const off = 2 + k * width;
+    if (off + width > assoc.length) break; // truncated table: stop at the last whole entry
     // Long form: [groupIdx:2][comObjNum:2]. Short form: [groupIdx:1][comObjNum:1].
     const gi = longForm ? assoc.readUInt16BE(off) : assoc[off];
     const co = longForm ? assoc.readUInt16BE(off + 2) : assoc[off + 1];
