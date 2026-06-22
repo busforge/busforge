@@ -94,6 +94,25 @@ describe("API (project resources)", () => {
     expect(res!.status).toBe(404);
   });
 
+  test("editing a param back to its default clears the change", async () => {
+    const state = freshState();
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    const imp = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
+    const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
+    const dev = proj.devices[0].id;
+    const set = (value: string) => handleApi(req(`/api/projects/${imp.id}/devices/${dev}/params`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId: "M-TEST_A-1_P-1_R-1", value }),
+    }), state);
+    const changes = async () => ((await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any).devices[0].changes;
+
+    await set("1"); // away from the default ("0")
+    expect(await changes()).toMatchObject({ params: 1 });
+    await set("0"); // back to the default -> override dropped, no longer a change
+    expect(await changes()).toMatchObject({ params: 0 });
+  });
+
   test("interface round-trip per project", async () => {
     const state = freshState();
     const imp = (await (await importDemo(state))!.json()) as any;

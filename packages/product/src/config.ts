@@ -22,6 +22,7 @@ export interface CfgParamView {
   suffix?: string;
   readOnly?: boolean;
   changed?: boolean; // differs from the programmed baseline; filled in by the server
+  defaultValue?: string; // value with no user override (ref/param default), for change detection
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -117,7 +118,8 @@ export function buildDeviceConfig(
     } else if (type?.base === "Number") control = "number";
     else if (type?.base === "Text") control = "text";
 
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read" } };
+    const defaultValue = ref.value ?? param.value ?? "";
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read", defaultValue } };
   };
 
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {

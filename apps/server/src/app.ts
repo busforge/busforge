@@ -8,7 +8,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses } from "./flash.ts";
 
 export interface AppState {
@@ -114,7 +114,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const deviceId = decodeURIComponent(seg[4]);
       const body = (await req.json()) as { paramRefId?: string; value?: string; lang?: string };
       if (!body.paramRefId || body.value === undefined) return err("paramRefId and value required");
-      setDeviceParam(db, id, deviceId, body.paramRefId, String(body.value));
+      const value = String(body.value);
+      // If the value equals the parameter's default, drop the override instead of
+      // storing it, so restoring the default clears the "changed" marker (the
+      // sparse baseline has no row for default-valued params).
+      const def = resolveParamDefault(state, id, deviceId, body.paramRefId);
+      if (def !== undefined && value === def) deleteDeviceParam(db, id, deviceId, body.paramRefId);
+      else setDeviceParam(db, id, deviceId, body.paramRefId, value);
       return deviceConfig(state, id, deviceId, body.lang);
     }
 
@@ -237,6 +243,16 @@ function loadApp(state: AppState, projectId: string, deviceId: string): AppConfi
     state.appCache.set(cacheKey, app);
   }
   return app;
+}
+
+// The default value of a parameter (ref/param default, ignoring user overrides),
+// resolved from the built config view so module-instance params work too.
+function resolveParamDefault(state: AppState, projectId: string, deviceId: string, refId: string): string | undefined {
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return undefined;
+  const view = buildDeviceConfig(app, getDeviceParams(state.db, projectId, deviceId), undefined, getDeviceModules(state.db, projectId, deviceId));
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param" && it.param.refId === refId) return it.param.defaultValue;
+  return undefined;
 }
 
 // Build a device's configuration view and overlay each com-object's stored GA link.

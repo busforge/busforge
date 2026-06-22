@@ -14,6 +14,14 @@ export function setDeviceParam(db: Database, projectId: string, deviceId: string
     .run(projectId, deviceId, refId, value);
 }
 
+// Remove a parameter override so the device falls back to the (sparse) default.
+// Used when an edit restores a param to its default, so it stops counting as a
+// change (the baseline has no row for default-valued params).
+export function deleteDeviceParam(db: Database, projectId: string, deviceId: string, refId: string): void {
+  db.prepare("DELETE FROM device_parameters WHERE project_id = ? AND device_id = ? AND param_ref_id = ?")
+    .run(projectId, deviceId, refId);
+}
+
 // The application program ref for a device (to locate its app XML), and the
 // project's stored source-file path.
 export function getDeviceModules(db: Database, projectId: string, deviceId: string): ModuleInstance[] {
