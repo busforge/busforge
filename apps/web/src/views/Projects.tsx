@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Flame, FolderUp, KeyRound, Loader2, Trash2, Cpu, Network } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api, type ProjectSummary } from "../api.ts";
 import { qk, useProjects } from "../queries.ts";
@@ -10,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -19,6 +21,7 @@ import { cn } from "@/lib/utils";
 const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 export function ProjectsScreen() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: projects = [], isLoading } = useProjects();
@@ -30,9 +33,9 @@ export function ProjectsScreen() {
     mutationFn: (id: string) => api.deleteProject(id),
     onSuccess: (_r, id) => {
       qc.invalidateQueries({ queryKey: qk.projects });
-      toast.message(`Deleted ${projects.find((p) => p.id === id)?.name ?? "project"}`);
+      toast.message(t("projects.deleted", { name: projects.find((p) => p.id === id)?.name ?? "project" }));
     },
-    onError: (e) => toast.error("Delete failed", { description: (e as Error).message }),
+    onError: (e) => toast.error(t("projects.deleteFailed"), { description: (e as Error).message }),
   });
 
   return (
@@ -43,17 +46,18 @@ export function ProjectsScreen() {
         </div>
         <div className="leading-none">
           <div className="text-xl font-extrabold tracking-[0.2em]">BUSFORGE</div>
-          <div className="mt-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">KNX bus tool</div>
+          <div className="mt-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{t("common.tagline")}</div>
         </div>
+        <LanguageSwitcher className="ml-auto" />
       </header>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Projects</h2>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{t("projects.heading")}</h2>
         {isLoading ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading…</div>
+          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("common.loading")}</div>
         ) : projects.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground">
-            No projects yet. Import a <span className="font-mono">.knxproj</span> below to get started.
+            {t("projects.empty")}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -72,7 +76,7 @@ export function ProjectsScreen() {
                     variant="ghost" size="icon"
                     className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                     onClick={(e) => { e.stopPropagation(); setPendingDelete(p); }}
-                    aria-label="Delete project"
+                    aria-label={t("projects.deleteAria")}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -90,18 +94,18 @@ export function ProjectsScreen() {
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete project "{pendingDelete?.name}"?</AlertDialogTitle>
+            <AlertDialogTitle>{t("projects.deleteTitle", { name: pendingDelete?.name })}</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes the stored project and its recorded bus log. This cannot be undone.
+              {t("projects.deleteBody")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => { const t = pendingDelete; setPendingDelete(null); if (t) del.mutate(t.id); }}
+              onClick={() => { const target = pendingDelete; setPendingDelete(null); if (target) del.mutate(target.id); }}
               className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete"
             >
-              Delete
+              {t("projects.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -111,6 +115,7 @@ export function ProjectsScreen() {
 }
 
 function ImportCard({ onImported }: { onImported: (id: string) => void }) {
+  const { t } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -122,20 +127,20 @@ function ImportCard({ onImported }: { onImported: (id: string) => void }) {
   const importMut = useMutation({
     mutationFn: () => api.importProject(file!, password),
     onSuccess: (res) => {
-      toast.success(`Imported ${res.name}`, { description: `${res.deviceCount} devices, ${res.gaCount} group addresses` });
+      toast.success(t("import.imported", { name: res.name }), { description: t("import.importedDesc", { devices: res.deviceCount, gas: res.gaCount }) });
       setFile(null); setPassword("");
       onImported(res.id);
     },
-    onError: (e) => { const msg = (e as Error).message; setError(msg); toast.error("Import failed", { description: msg }); },
+    onError: (e) => { const msg = (e as Error).message; setError(msg); toast.error(t("import.failed"), { description: msg }); },
   });
 
   return (
     <Card>
-      <CardHeader><CardTitle className="flex items-center gap-2"><FolderUp className="size-4 text-primary" /> Add a project</CardTitle></CardHeader>
+      <CardHeader><CardTitle className="flex items-center gap-2"><FolderUp className="size-4 text-primary" /> {t("import.title")}</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
           <div className="space-y-1.5">
-            <Label>.knxproj file</Label>
+            <Label>{t("import.fileLabel")}</Label>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -149,18 +154,18 @@ function ImportCard({ onImported }: { onImported: (id: string) => void }) {
             >
               {file
                 ? <span className="font-mono text-foreground">{file.name}</span>
-                : <span className="text-muted-foreground">Drop a <span className="font-mono">.knxproj</span> or click to browse</span>}
+                : <span className="text-muted-foreground">{t("import.dropHint")}</span>}
             </button>
             <input ref={inputRef} type="file" accept=".knxproj" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
           </div>
           <div className="space-y-1.5">
-            <Label className="flex items-center gap-1.5"><KeyRound className="size-3.5" /> Password</Label>
-            <Input type="password" value={password} placeholder="optional" onChange={(e) => setPassword(e.target.value)} className="sm:w-44" />
+            <Label className="flex items-center gap-1.5"><KeyRound className="size-3.5" /> {t("import.password")}</Label>
+            <Input type="password" value={password} placeholder={t("import.passwordPlaceholder")} onChange={(e) => setPassword(e.target.value)} className="sm:w-44" />
           </div>
         </div>
         {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending} data-testid="import-submit">
-          {importMut.isPending ? <><Loader2 className="size-4 animate-spin" /> Importing…</> : "Import"}
+          {importMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("import.importing")}</> : t("import.submit")}
         </Button>
       </CardContent>
     </Card>

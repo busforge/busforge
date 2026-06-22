@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronRight, Search } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import type { GroupRangeNode } from "../api.ts";
 import { useProject } from "../queries.ts";
 import { Card } from "@/components/ui/card";
@@ -10,6 +11,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 
 function RangeBlock({ node, depth, filter }: { node: GroupRangeNode; depth: number; filter: string }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(depth < 1);
   const matchingGas = node.addresses.filter((g) => !filter || `${g.address} ${g.name} ${g.dpt}`.toLowerCase().includes(filter));
   const childBlocks = node.children.map((c) => <RangeBlock key={c.id} node={c} depth={depth + 1} filter={filter} />);
@@ -23,7 +25,7 @@ function RangeBlock({ node, depth, filter }: { node: GroupRangeNode; depth: numb
       <Collapsible open={expanded} onOpenChange={setOpen}>
         <CollapsibleTrigger className="group flex w-full items-center gap-2 py-1.5 text-left text-sm transition-colors hover:text-primary">
           <ChevronRight className={cn("size-3.5 text-muted-foreground transition-transform", expanded && "rotate-90")} />
-          <span className="font-medium">{node.name || <span className="text-muted-foreground">(unnamed range)</span>}</span>
+          <span className="font-medium">{node.name || <span className="text-muted-foreground">{t("groups.unnamedRange")}</span>}</span>
           <span className="font-mono text-[10px] text-muted-foreground">{node.rangeStart}-{node.rangeEnd}</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -33,7 +35,7 @@ function RangeBlock({ node, depth, filter }: { node: GroupRangeNode; depth: numb
               {matchingGas.map((g) => (
                 <div key={g.raw} className="flex items-center gap-3 rounded px-2 py-1 text-sm hover:bg-secondary/50">
                   <span className="w-16 shrink-0 font-mono text-primary">{g.address}</span>
-                  <span className="flex-1 truncate">{g.name || <span className="text-muted-foreground">(unnamed)</span>}</span>
+                  <span className="flex-1 truncate">{g.name || <span className="text-muted-foreground">{t("common.unnamed")}</span>}</span>
                   {g.dpt && <Badge variant="outline" className="font-mono text-[10px]">{g.dpt}</Badge>}
                 </div>
               ))}
@@ -50,6 +52,7 @@ function hasMatch(node: GroupRangeNode, filter: string): boolean {
 }
 
 export function GroupAddressesView() {
+  const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
   const [q, setQ] = useState("");
@@ -62,9 +65,9 @@ export function GroupAddressesView() {
       <div className="flex items-center justify-between gap-4">
         <div className="relative max-w-xs flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Filter group addresses…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
+          <Input placeholder={t("groups.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
         </div>
-        <span className="font-mono text-xs text-muted-foreground">{project.gaCount} addresses</span>
+        <span className="font-mono text-xs text-muted-foreground">{t("groups.count", { count: project.gaCount })}</span>
       </div>
       <Card className="p-4">
         {project.groupRanges.map((r) => <RangeBlock key={r.id} node={r} depth={0} filter={filter} />)}

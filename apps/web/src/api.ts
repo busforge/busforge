@@ -3,7 +3,7 @@
 // the node-crypto loader code.
 
 export interface DeviceChanges { params: number; links: number; }
-export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; changes?: DeviceChanges; }
+export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; }
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
 export interface ProjectInterface { interfaceIp: string; port: number; }
@@ -13,11 +13,13 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
   value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; readOnly?: boolean;
+  changed?: boolean;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean };
   gaRaw?: number | null;
+  changed?: boolean;
 }
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }
@@ -71,6 +73,11 @@ export const api = {
   setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[]): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/links`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang: "de-DE" }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  revertDevice: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   busStatus: (id: string): Promise<BusState> => fetch(`/api/projects/${id}/bus/status`).then((r) => jsonOrThrow<BusState>(r)),

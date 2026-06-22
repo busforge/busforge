@@ -48,5 +48,9 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     mutationFn: (v: { comObjRefId: string; gaRaws: number[] }) => api.setDeviceLink(projectId, deviceId, v.comObjRefId, v.gaRaws),
     onSuccess: (view) => { qc.setQueryData(qk.deviceConfig(projectId, deviceId), view); qc.invalidateQueries({ queryKey: qk.project(projectId) }); },
   });
-  return { setParam, setLink, after };
+  const revert = useMutation({
+    mutationFn: () => api.revertDevice(projectId, deviceId, LANG),
+    onSuccess: (view) => { qc.setQueryData(qk.deviceConfig(projectId, deviceId), view); qc.invalidateQueries({ queryKey: qk.project(projectId) }); },
+  });
+  return { setParam, setLink, revert, after };
 }

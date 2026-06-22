@@ -30,7 +30,17 @@ const projectIndexRoute = createRoute({
   beforeLoad: ({ params }) => { throw redirect({ to: "/projects/$projectId/devices", params }); },
 });
 
-const devicesRoute = createRoute({ getParentRoute: () => projectRoute, path: "devices", component: DevicesView });
+// Device-list filter state lives in the URL so it survives browser back/forward
+// and reload (q = search text, changed = "only to program" toggle).
+const devicesRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "devices",
+  component: DevicesView,
+  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean } => ({
+    q: typeof s.q === "string" && s.q ? s.q : undefined,
+    changed: s.changed === true || s.changed === "true" ? true : undefined,
+  }),
+});
 const deviceRoute = createRoute({ getParentRoute: () => projectRoute, path: "devices/$deviceId", component: DeviceConfig });
 const groupsRoute = createRoute({ getParentRoute: () => projectRoute, path: "groups", component: GroupAddressesView });
 const monitorRoute = createRoute({ getParentRoute: () => projectRoute, path: "monitor", component: MonitorView });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Network, Plug, PlugZap } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api } from "../api.ts";
 import { qk, useProject, useBusStatus } from "../queries.ts";
@@ -12,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/StatusBadge.tsx";
 
 export function InterfaceView() {
+  const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
@@ -34,13 +36,13 @@ export function InterfaceView() {
 
   const connectMut = useMutation({
     mutationFn: async () => { await saveMut.mutateAsync(); return api.busConnect(projectId); },
-    onSuccess: () => { refreshStatus(); toast.success("Connected to the bus"); },
-    onError: (e) => { toast.error("Connection failed", { description: (e as Error).message }); refreshStatus(); },
+    onSuccess: () => { refreshStatus(); toast.success(t("iface.connected")); },
+    onError: (e) => { toast.error(t("iface.connectFailed"), { description: (e as Error).message }); refreshStatus(); },
   });
   const disconnectMut = useMutation({
     mutationFn: () => api.busDisconnect(projectId),
-    onSuccess: () => { refreshStatus(); toast.message("Disconnected from the bus"); },
-    onError: (e) => { toast.error("Disconnect failed", { description: (e as Error).message }); refreshStatus(); },
+    onSuccess: () => { refreshStatus(); toast.message(t("iface.disconnected")); },
+    onError: (e) => { toast.error(t("iface.disconnectFailed"), { description: (e as Error).message }); refreshStatus(); },
   });
 
   const connected = status === "connected";
@@ -49,30 +51,30 @@ export function InterfaceView() {
   return (
     <div className="mx-auto max-w-xl space-y-4">
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Network className="size-4 text-primary" /> Bus interface</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Network className="size-4 text-primary" /> {t("iface.title")}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 space-y-1.5">
-              <Label>Interface IP (KNXnet/IP)</Label>
+              <Label>{t("iface.ipLabel")}</Label>
               <Input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="198.51.100.10" className="font-mono" data-testid="ip" />
             </div>
             <div className="space-y-1.5">
-              <Label>Port</Label>
+              <Label>{t("iface.portLabel")}</Label>
               <Input value={port} onChange={(e) => setPort(e.target.value)} className="font-mono" />
             </div>
           </div>
           <Button
             variant="outline"
-            onClick={() => saveMut.mutate(undefined, { onSuccess: () => toast.success("Interface saved"), onError: (e) => toast.error("Save failed", { description: (e as Error).message }) })}
+            onClick={() => saveMut.mutate(undefined, { onSuccess: () => toast.success(t("iface.saved")), onError: (e) => toast.error(t("iface.saveFailed"), { description: (e as Error).message }) })}
             disabled={saveMut.isPending}
           >
-            Save
+            {t("common.save")}
           </Button>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Plug className="size-4 text-primary" /> Connection</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Plug className="size-4 text-primary" /> {t("iface.connectionTitle")}</CardTitle></CardHeader>
         <CardContent className="flex items-center justify-between gap-4">
           <StatusBadge status={busy && !connected ? "connecting" : status} />
           <Button
@@ -80,7 +82,7 @@ export function InterfaceView() {
             disabled={busy} variant={connected ? "destructive" : "default"} data-testid="connect"
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Plug className="size-4" /> : <PlugZap className="size-4" />}
-            {busy ? "…" : connected ? "Disconnect" : "Connect"}
+            {busy ? "…" : connected ? t("iface.disconnect") : t("iface.connect")}
           </Button>
         </CardContent>
       </Card>

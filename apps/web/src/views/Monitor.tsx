@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Trash2 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 import { decodeDpt } from "@busforge/knx/dpt";
 import { type GroupRangeNode, type Telegram } from "../api.ts";
 import { useProject, useBusStatus, useTelegrams } from "../queries.ts";
@@ -32,6 +33,7 @@ function KindChip({ kind }: { kind: string }) {
 }
 
 export function MonitorView() {
+  const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
   const { data: bus } = useBusStatus(projectId);
@@ -79,14 +81,14 @@ export function MonitorView() {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <span className="font-mono text-xs text-muted-foreground">
-          {rows.length} telegrams {paused && <span className="text-primary">· paused</span>}
-          {status !== "connected" && <span className="text-muted-foreground"> · offline (history)</span>}
+          {t("monitor.telegrams", { count: rows.length })} {paused && <span className="text-primary">· {t("monitor.paused")}</span>}
+          {status !== "connected" && <span className="text-muted-foreground"> · {t("monitor.offline")}</span>}
         </span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setPaused((p) => !p)} data-testid="monitor-pause">
-            {paused ? <><Play className="size-3.5" /> Resume</> : <><Pause className="size-3.5" /> Pause</>}
+            {paused ? <><Play className="size-3.5" /> {t("monitor.resume")}</> : <><Pause className="size-3.5" /> {t("monitor.pause")}</>}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setRows([])}><Trash2 className="size-3.5" /> Clear</Button>
+          <Button variant="outline" size="sm" onClick={() => setRows([])}><Trash2 className="size-3.5" /> {t("monitor.clear")}</Button>
         </div>
       </div>
 
@@ -96,11 +98,11 @@ export function MonitorView() {
           <table className="hidden w-full border-collapse text-xs sm:table">
             <thead className="sticky top-0 z-10 bg-secondary/95 text-left font-sans uppercase tracking-wider text-muted-foreground backdrop-blur">
               <tr>
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Source</th>
-                <th className="px-3 py-2 font-medium">Kind</th>
-                <th className="px-3 py-2 font-medium">Destination</th>
-                <th className="px-3 py-2 font-medium">Value</th>
+                <th className="px-3 py-2 font-medium">{t("monitor.colTime")}</th>
+                <th className="px-3 py-2 font-medium">{t("monitor.colSource")}</th>
+                <th className="px-3 py-2 font-medium">{t("monitor.colKind")}</th>
+                <th className="px-3 py-2 font-medium">{t("monitor.colDestination")}</th>
+                <th className="px-3 py-2 font-medium">{t("monitor.colValue")}</th>
               </tr>
             </thead>
             <tbody>
@@ -151,7 +153,7 @@ export function MonitorView() {
 
           {rows.length === 0 && (
             <div className="px-3 py-10 text-center font-mono text-xs text-muted-foreground">
-              {status === "connected" ? "Waiting for bus traffic…" : "No telegrams recorded yet. Connect in Interface to capture live traffic."}
+              {status === "connected" ? t("monitor.waiting") : t("monitor.emptyHistory")}
             </div>
           )}
           <div ref={bottomRef} />
