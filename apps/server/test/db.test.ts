@@ -122,6 +122,11 @@ describe("projects", () => {
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "60");
     resetParamBase(db, "p1", dev);
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+
+    // A param edited from its DEFAULT (never seeded into the baseline, since
+    // 0.xml is sparse) still counts as a change.
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 1 });
   });
 
   test("tracks link changes and resets on flash", () => {

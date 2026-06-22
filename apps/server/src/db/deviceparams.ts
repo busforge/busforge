@@ -70,13 +70,25 @@ export function getProjectChanges(db: Database, projectId: string): Map<string, 
     const c = out.get(id) ?? { params: 0, links: 0 };
     c[k] = n; out.set(id, c);
   };
+  // Symmetric difference of (param, value) rows, counted as distinct params. A
+  // plain JOIN would miss a param edited from its default: 0.xml is sparse, so
+  // such a param has no baseline row and editing it inserts a live-only row.
   const paramRows = db.query(`
-    SELECT p.device_id AS deviceId, COUNT(*) AS n
-    FROM device_parameters p
-    JOIN device_param_base b ON b.project_id = p.project_id AND b.device_id = p.device_id AND b.param_ref_id = p.param_ref_id
-    WHERE p.project_id = ? AND p.value <> b.value
-    GROUP BY p.device_id
-  `).all(projectId) as { deviceId: string; n: number }[];
+    SELECT device_id AS deviceId, COUNT(DISTINCT param_ref_id) AS n FROM (
+      SELECT device_id, param_ref_id FROM (
+        SELECT device_id, param_ref_id, value FROM device_parameters WHERE project_id = ?
+        EXCEPT
+        SELECT device_id, param_ref_id, value FROM device_param_base WHERE project_id = ?
+      )
+      UNION ALL
+      SELECT device_id, param_ref_id FROM (
+        SELECT device_id, param_ref_id, value FROM device_param_base WHERE project_id = ?
+        EXCEPT
+        SELECT device_id, param_ref_id, value FROM device_parameters WHERE project_id = ?
+      )
+    )
+    GROUP BY device_id
+  `).all(projectId, projectId, projectId, projectId) as { deviceId: string; n: number }[];
   for (const r of paramRows) bump(r.deviceId, "params", r.n);
 
   // Com-objects whose link set differs = symmetric difference of (com_obj, slot, ga)

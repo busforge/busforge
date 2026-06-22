@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronLeft, Cpu, Loader2, Network, Zap } from "lucide-react";
+import { ChevronLeft, Cpu, Loader2, Network } from "lucide-react";
 import { Link, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { CfgParamView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
+import { ChangePill } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,8 +40,6 @@ export function DeviceConfig() {
     qc.invalidateQueries({ queryKey: qk.project(projectId) });
     qc.invalidateQueries({ queryKey: qk.deviceConfig(projectId, deviceId) });
   };
-  const changes = device?.changes;
-  const changeTotal = changes ? changes.params + changes.links : 0;
 
   return (
     <div className="space-y-4">
@@ -51,11 +50,7 @@ export function DeviceConfig() {
         <div className="leading-tight">
           <div className="flex items-center gap-2 font-semibold">
             {device?.name || "(unnamed)"}
-            {changeTotal > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary">
-                <Zap className="size-3" /> {changeTotal} unprogrammed
-              </span>
-            )}
+            <ChangePill changes={device?.changes} />
           </div>
           <div className="font-mono text-xs text-primary">{device?.ia}</div>
         </div>

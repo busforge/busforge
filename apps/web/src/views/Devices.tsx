@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Search, Zap } from "lucide-react";
 import { Link, useParams } from "@tanstack/react-router";
-import type { Device, DeviceChanges } from "../api.ts";
+import type { Device } from "../api.ts";
 import { useProject } from "../queries.ts";
+import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -10,24 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
-const total = (c?: DeviceChanges) => (c ? c.params + c.links : 0);
-const changeTitle = (c: DeviceChanges) =>
-  [c.params && `${c.params} parameter${c.params > 1 ? "s" : ""}`, c.links && `${c.links} group address${c.links > 1 ? "es" : ""}`]
-    .filter(Boolean).join(", ") + " changed since last programming";
-
-// Amber pill flagging a device with unprogrammed edits. Nothing for clean devices.
-function ChangePill({ changes }: { changes?: DeviceChanges }) {
-  const n = total(changes);
-  if (!n || !changes) return null;
-  return (
-    <span
-      title={changeTitle(changes)}
-      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
-    >
-      <Zap className="size-3" /> {n} change{n > 1 ? "s" : ""}
-    </span>
-  );
-}
 
 export function DevicesView() {
   const { projectId } = useParams({ from: "/projects/$projectId" });
