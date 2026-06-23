@@ -9,7 +9,8 @@ import { insertProject, listProjects, getProject, deleteProject, setInterface } 
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
 import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
-import { putAppProgram, getAppProgram } from "../src/db/catalog.ts";
+import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
+import { createProject, addDevice } from "../src/db/projects.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { appProgramId } from "@busforge/project";
@@ -278,6 +279,67 @@ describe("catalog (app programs)", () => {
     putAppProgram(db, "M-1_A-1", "<ApplicationProgram>two</ApplicationProgram>");
     expect(getAppProgram(db, "M-1_A-1")).toContain("one");
     expect((db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
+  });
+});
+
+describe("catalog (products + placement)", () => {
+  const product = (o: Partial<ReturnType<typeof getCatalogProduct>> = {}) => ({
+    appRef: "M-9_H-1_HP-1", productRef: "M-9_P-1", appProgramId: "M-9_A-1",
+    manufacturer: 9, name: "Demo", orderNumber: "ON-1", hwVersion: "3", ...o,
+  });
+
+  test("put/get/list catalog products; put is idempotent", () => {
+    const db = fresh();
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")).toBeNull();
+    putCatalogProduct(db, product());
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")).toMatchObject({ name: "Demo", orderNumber: "ON-1" });
+    putCatalogProduct(db, product({ name: "Renamed" })); // OR IGNORE: first wins
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")!.name).toBe("Demo");
+    expect(listCatalogProducts(db)).toHaveLength(1);
+  });
+
+  test("backfill adds only products whose app program is stored", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    // Two device rows; only one has a stored program.
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','Switch','M-9_P-1','M-9_H-1_HP-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','Dim','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>"); // only HP-1's program
+
+    expect(backfillCatalogFromDevices(db)).toBe(1);
+    const list = listCatalogProducts(db);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ appRef: "M-9_H-1_HP-1", name: "Switch", orderNumber: "" });
+    expect(backfillCatalogFromDevices(db)).toBe(0); // idempotent
+  });
+
+  test("addDevice allocates the next free address and references the catalog", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>");
+    putCatalogProduct(db, product());
+    const a = addDevice(db, "p1", product(), "");
+    const b = addDevice(db, "p1", product(), "Custom name");
+    expect(a.ia).toBe("1.1.1");
+    expect(b.ia).toBe("1.1.2");
+    const rows = db.query("SELECT instance_id AS id, ia, name, app_ref AS appRef FROM devices WHERE project_id='p1' ORDER BY ia").all() as any[];
+    expect(rows[0]).toMatchObject({ name: "Demo", appRef: "M-9_H-1_HP-1" }); // falls back to product name
+    expect(rows[1].name).toBe("Custom name");
+  });
+
+  test("gc drops catalog products whose program is no longer referenced", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>");
+    putCatalogProduct(db, product());
+    addDevice(db, "p1", product(), "");
+    expect(gcAppPrograms(db)).toBe(0); // still referenced by the placed device
+    expect(listCatalogProducts(db)).toHaveLength(1);
+
+    db.prepare("DELETE FROM devices WHERE project_id='p1'").run();
+    expect(gcAppPrograms(db)).toBe(1); // program now orphaned
+    expect(getAppProgram(db, "M-9_A-1")).toBeNull();
+    expect(listCatalogProducts(db)).toHaveLength(0); // its catalog row went too
   });
 });
 

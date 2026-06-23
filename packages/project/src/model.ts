@@ -10,6 +10,20 @@ export interface Device {
   comment: string;      // ETS "Beschreibung" (Comment/Description), for search
 }
 
+// A placeable catalog product: a manufacturer product paired with an application
+// program it runs. Extracted from the manufacturer Hardware.xml at ingest. The
+// shape is source-agnostic: a .knxproj and a .knxprod share this structure, so
+// the same extractor feeds the catalog from either (see the storage design note).
+export interface CatalogProduct {
+  appRef: string;       // Hardware2Program Id == a device's Hardware2ProgramRefId
+  productRef: string;   // Product Id == a device's ProductRefId
+  appProgramId: string; // appProgramId(appRef): the app_programs catalog key
+  manufacturer: number; // from the M-XXXX prefix
+  name: string;         // product catalogue text
+  orderNumber: string;  // manufacturer order number
+  hwVersion: string;    // hardware VersionNumber
+}
+
 // A device's stored parameter values, keyed by the application ParameterRef id.
 export interface DeviceParam { refId: string; value: string; }
 export interface DeviceParams { deviceId: string; values: DeviceParam[]; }

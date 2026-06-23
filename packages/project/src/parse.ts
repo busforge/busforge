@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import { numToGa } from "@busforge/knx";
 import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode } from "./model.ts";
 
-const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
+export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
 // "DPST-1-1" -> "1.001"; "DPT-1" -> "1.*"; pass through anything else.
 function dptDisplay(s: string | undefined): string {
@@ -14,8 +14,9 @@ function dptDisplay(s: string | undefined): string {
   return s;
 }
 
-const manufacturerOf = (productRef: string): number => {
-  const m = /^M-([0-9A-Fa-f]+)/.exec(productRef);
+// Numeric KNX manufacturer id from an M-XXXX-prefixed ref (product or app ref).
+export const manufacturerOf = (ref: string): number => {
+  const m = /^M-([0-9A-Fa-f]+)/.exec(ref);
   return m ? parseInt(m[1], 16) : 0;
 };
 

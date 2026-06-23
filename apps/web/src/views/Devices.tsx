@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
-import { Search, X, Zap } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Search, X, Zap, Plus, Loader2, Cpu } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import type { Device } from "../api.ts";
-import { useProject } from "../queries.ts";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { api, type Device, type CatalogProduct } from "../api.ts";
+import { useProject, useCatalog, qk } from "../queries.ts";
 import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Input } from "@/components/ui/input";
@@ -11,7 +13,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { errMsg } from "../lib/apiError.ts";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
 const isChanged = (d: Device) => total(d.changes) > 0;
@@ -57,6 +63,8 @@ export function DevicesView() {
     search: listSearch,
   });
 
+  const [addOpen, setAddOpen] = useState(false);
+
   // Cmd/Ctrl+F focuses the device search instead of the browser find.
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -99,8 +107,13 @@ export function DevicesView() {
             </Button>
           )}
           <span className="font-mono text-xs text-muted-foreground">{t("devices.count", { shown: devices.length, total: all.length })}</span>
+          <Button size="sm" onClick={() => setAddOpen(true)} data-testid="add-device">
+            <Plus className="size-4" /> {t("devices.addDevice")}
+          </Button>
         </div>
       </div>
+
+      <AddDeviceDialog open={addOpen} onOpenChange={setAddOpen} projectId={projectId} />
 
       {/* Table on wide screens. */}
       <Card className={cn("hidden overflow-hidden py-0", devices.length > 0 && "sm:block")}>
@@ -158,5 +171,79 @@ export function DevicesView() {
         </p>
       )}
     </div>
+  );
+}
+
+// Catalog picker: search the global product catalog and place the chosen product
+// into this project as a new device. The server allocates the address; on success
+// we refresh the device list and open the new device's configuration.
+function AddDeviceDialog({
+  open, onOpenChange, projectId,
+}: { open: boolean; onOpenChange: (o: boolean) => void; projectId: string }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [q, setQ] = useState("");
+  const { data: catalog = [], isLoading } = useCatalog(open);
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return catalog;
+    return catalog.filter((p) => `${p.name} ${p.orderNumber} ${manuf(p.manufacturer)}`.toLowerCase().includes(needle));
+  }, [catalog, q]);
+
+  const add = useMutation({
+    mutationFn: (p: CatalogProduct) => api.addDevice(projectId, p.appRef, p.productRef),
+    onSuccess: (res, p) => {
+      qc.invalidateQueries({ queryKey: qk.project(projectId) });
+      toast.success(t("catalog.added", { name: p.name }));
+      onOpenChange(false);
+      setQ("");
+      navigate({ to: "/projects/$projectId/devices/$deviceId", params: { projectId, deviceId: res.id } });
+    },
+    onError: (e) => toast.error(t("catalog.failed"), { description: errMsg(t, e) }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) setQ(""); onOpenChange(o); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Cpu className="size-4 text-primary" /> {t("catalog.title")}</DialogTitle>
+          <DialogDescription>{t("catalog.description")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input autoFocus placeholder={t("catalog.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="catalog-search" />
+        </div>
+
+        <div className="max-h-80 space-y-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("common.loading")}</div>
+          ) : catalog.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{t("catalog.empty")}</p>
+          ) : filtered.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{t("catalog.noMatch")}</p>
+          ) : (
+            filtered.map((p) => (
+              <button
+                key={`${p.appRef}|${p.productRef}`}
+                type="button"
+                disabled={add.isPending}
+                onClick={() => add.mutate(p)}
+                data-testid="catalog-item"
+                className="flex w-full items-center justify-between gap-3 rounded-md border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 disabled:opacity-50"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{p.name || p.productRef}</div>
+                  {p.orderNumber && <div className="font-mono text-[11px] text-muted-foreground">{t("catalog.orderNo")} {p.orderNumber}</div>}
+                </div>
+                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{manuf(p.manufacturer)}</Badge>
+              </button>
+            ))
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

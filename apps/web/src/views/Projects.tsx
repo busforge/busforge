@@ -35,6 +35,7 @@ export function ProjectsScreen() {
   const { data: projects = [], isLoading } = useProjects();
   const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [blankOpen, setBlankOpen] = useState(false);
 
   const open = (id: string) => navigate({ to: "/projects/$projectId/devices", params: { projectId: id } });
 
@@ -62,7 +63,7 @@ export function ProjectsScreen() {
 
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{t("projects.heading")}</h2>
-        <NewProjectMenu onImport={() => setImportOpen(true)} />
+        <NewProjectMenu onImport={() => setImportOpen(true)} onBlank={() => setBlankOpen(true)} />
       </div>
 
       {isLoading ? (
@@ -108,6 +109,12 @@ export function ProjectsScreen() {
         onImported={(id) => { qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
       />
 
+      <BlankProjectDialog
+        open={blankOpen}
+        onOpenChange={setBlankOpen}
+        onCreated={(id) => { qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
+      />
+
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -131,7 +138,7 @@ export function ProjectsScreen() {
   );
 }
 
-function NewProjectMenu({ onImport }: { onImport: () => void }) {
+function NewProjectMenu({ onImport, onBlank }: { onImport: () => void; onBlank: () => void }) {
   const { t } = useTranslation();
   return (
     <DropdownMenu>
@@ -144,13 +151,55 @@ function NewProjectMenu({ onImport }: { onImport: () => void }) {
         <DropdownMenuItem onSelect={onImport} data-testid="menu-import">
           <FolderUp className="size-4 text-primary" /> {t("projects.importOption")}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled>
-          <FilePlus2 className="size-4" />
-          <span>{t("projects.blankOption")}</span>
-          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground">{t("projects.blankSoon")}</span>
+        <DropdownMenuItem onSelect={onBlank} data-testid="menu-blank">
+          <FilePlus2 className="size-4 text-primary" /> {t("projects.blankOption")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function BlankProjectDialog({
+  open, onOpenChange, onCreated,
+}: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (id: string) => void }) {
+  const { t } = useTranslation();
+  const [name, setName] = useState("");
+
+  const createMut = useMutation({
+    mutationFn: () => api.createProject(name.trim()),
+    onSuccess: (res) => { setName(""); onOpenChange(false); onCreated(res.id); },
+    onError: (e) => toast.error(t("projects.blankFailed"), { description: errMsg(t, e) }),
+  });
+  const submit = () => { if (name.trim() && !createMut.isPending) createMut.mutate(); };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) setName(""); onOpenChange(o); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><FilePlus2 className="size-4 text-primary" /> {t("projects.blankTitle")}</DialogTitle>
+          <DialogDescription>{t("projects.blankDescription")}</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1.5">
+          <Label>{t("projects.blankNameLabel")}</Label>
+          <Input
+            autoFocus
+            value={name}
+            placeholder={t("projects.blankNamePlaceholder")}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            data-testid="blank-name"
+          />
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+          <Button onClick={submit} disabled={!name.trim() || createMut.isPending} data-testid="blank-submit">
+            {createMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.blankCreating")}</> : t("projects.blankCreate")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

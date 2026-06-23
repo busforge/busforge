@@ -16,9 +16,15 @@ export const qk = {
   deviceConfig: (id: string, deviceId: string, lang: string) => ["deviceConfig", id, deviceId, lang] as const,
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
+  catalog: ["catalog"] as const,
 };
 
 export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.listProjects });
+
+// The device catalog is global and rarely changes within a session; cache it
+// (refetched on demand when the picker opens via staleTime expiry).
+export const useCatalog = (enabled = true) =>
+  useQuery({ queryKey: qk.catalog, queryFn: api.catalog, enabled, staleTime: 60_000 });
 
 export const useProject = (id: string) =>
   useQuery({ queryKey: qk.project(id), queryFn: () => api.getProject(id) });

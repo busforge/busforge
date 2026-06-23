@@ -1,8 +1,9 @@
 import { pbkdf2Sync } from "node:crypto";
+import { XMLParser } from "fast-xml-parser";
 import { readZip } from "./zip.ts";
-import { parseProject } from "./parse.ts";
+import { parseProject, arr, manufacturerOf } from "./parse.ts";
 import { KnxprojError } from "./errors.ts";
-import type { Project } from "./model.ts";
+import type { Project, CatalogProduct } from "./model.ts";
 
 // ETS6 derives the WinZip password as base64(PBKDF2-HMAC-SHA256(pw utf-16le,
 // "21.project.ets.knx.org", 65536, 32)). See docs/findings.md.
@@ -114,6 +115,49 @@ export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Ma
     if (out.has(id)) continue;
     const key = [...outer.keys()].find((n) => n.endsWith(`${id}.xml`));
     if (key) out.set(id, dec.decode(outer.get(key)!));
+  }
+  return out;
+}
+
+// Pull every placeable catalog product out of the manufacturer Hardware.xml files
+// in the outer zip: each product paired with each application program its hardware
+// can run, carrying the catalogue name, order number and hardware version. These
+// files sit plaintext in the outer archive (no password needed). Source-agnostic:
+// a .knxprod shares the same Manufacturer/Hardware structure, so this extractor
+// generalizes to it for the official-catalog ingest (milestone 5).
+export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
+  const outer = readZip(bytes);
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const out: CatalogProduct[] = [];
+  for (const [key, buf] of outer) {
+    if (!key.endsWith("Hardware.xml")) continue;
+    const doc = parser.parse(dec.decode(buf));
+    for (const manu of arr(doc?.KNX?.ManufacturerData?.Manufacturer)) {
+      for (const hw of arr(manu?.Hardware?.Hardware)) {
+        const hwVersion = String(hw.VersionNumber ?? "");
+        const products = arr(hw?.Products?.Product);
+        const programs = arr(hw?.Hardware2Programs?.Hardware2Program);
+        // A hardware groups its product variants and the application programs it
+        // runs; a device picks one of each. Pair them so any valid device combo
+        // is offered (typically one product to one program).
+        for (const p of products) {
+          const productRef = String(p.Id ?? "");
+          if (!productRef) continue;
+          for (const h2p of programs) {
+            const appRef = String(h2p.Id ?? "");
+            if (!appRef) continue;
+            out.push({
+              appRef, productRef,
+              appProgramId: appProgramId(appRef),
+              manufacturer: manufacturerOf(productRef),
+              name: String(p.Text ?? ""),
+              orderNumber: String(p.OrderNumber ?? ""),
+              hwVersion,
+            });
+          }
+        }
+      }
+    }
   }
   return out;
 }

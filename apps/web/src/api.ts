@@ -10,6 +10,8 @@ export interface ProjectInterface { interfaceIp: string; port: number; }
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; importedAt: number; }
 export interface Project { id: string; name: string; interface: ProjectInterface; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
+// A placeable catalog product (the device picker's list for blank projects).
+export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "color" | "unsupported";
   value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; readOnly?: boolean;
@@ -84,6 +86,17 @@ export const api = {
     if (password) form.set("password", password);
     return jsonOrThrow<ImportResult>(await fetch("/api/projects/import", { method: "POST", body: form }));
   },
+
+  // Create a blank project (no devices), to be populated from the catalog.
+  createProject: (name: string): Promise<ProjectSummary> =>
+    fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<ProjectSummary>(r)),
+
+  // The browsable device catalog (products placeable into a project).
+  catalog: (): Promise<CatalogProduct[]> => fetch("/api/catalog/products").then((r) => jsonOrThrow<CatalogProduct[]>(r)),
+
+  // Place a catalog product into a project as a new device (server allocates the IA).
+  addDevice: (id: string, appRef: string, productRef: string, name?: string): Promise<{ id: string; ia: string }> =>
+    fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
 
   getProject: (id: string): Promise<Project> => fetch(`/api/projects/${id}`).then((r) => jsonOrThrow<Project>(r)),
 

@@ -161,6 +161,24 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, name)
   );
   `,
+  // Catalog product metadata: the browsable layer for placing devices into a
+  // blank project. One row per (product, application program) the device can be,
+  // carrying the catalogue name / order number / hardware version. Global and
+  // shared like app_programs; app_program_id links to the stored program XML, so
+  // every catalog product is placeable. Populated at import from Hardware.xml and
+  // (for legacy imports) backfilled from existing device rows.
+  `
+  CREATE TABLE catalog_products (
+    app_ref        TEXT NOT NULL,
+    product_ref    TEXT NOT NULL,
+    app_program_id TEXT NOT NULL,
+    manufacturer   INTEGER NOT NULL,
+    name           TEXT NOT NULL DEFAULT '',
+    order_number   TEXT NOT NULL DEFAULT '',
+    hw_version     TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (app_ref, product_ref)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

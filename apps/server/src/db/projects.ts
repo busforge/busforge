@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import type { Project, Device, GroupAddress, GroupRangeNode } from "@busforge/project";
+import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct } from "@busforge/project";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 
 // searchText is a server-built, lowercased blob (comment + user-entered text
@@ -44,6 +45,38 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
     for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
   })();
+}
+
+// Create an empty project (no devices/GAs), the starting point for authoring from
+// the catalog. source_file is left empty, like an import (the DB is the store).
+export function createProject(db: Database, id: string, name: string, now: number): void {
+  db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, '')").run(id, name, now);
+}
+
+// Place a catalog product into a project as a new device instance: allocate the
+// next free individual address (area 1, scanning lines then device addresses) and
+// a stable instance id, and insert the device row referencing the catalog. No
+// parameter rows are seeded (absent == application defaults) and no baseline is
+// written (the device is unprogrammed). Returns the new device's instance id + IA.
+export function addDevice(db: Database, projectId: string, product: CatalogProduct, name: string): { id: string; ia: string } {
+  const used = new Set(
+    (db.query("SELECT ia FROM devices WHERE project_id = ?").all(projectId) as { ia: string }[])
+      .map((r) => r.ia.split("."))
+      .filter((p) => p[0] === "1")
+      .map((p) => `${p[1]}.${p[2]}`),
+  );
+  let ia = "";
+  for (let line = 1; line <= 15 && !ia; line++) {
+    for (let addr = 1; addr <= 255; addr++) {
+      if (!used.has(`${line}.${addr}`)) { ia = `1.${line}.${addr}`; break; }
+    }
+  }
+  if (!ia) throw new Error("no free individual address in area 1");
+  const instanceId = `BF-${randomUUID()}`;
+  db.prepare(
+    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, '')",
+  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer);
+  return { id: instanceId, ia };
 }
 
 export function listProjects(db: Database): ProjectSummary[] {

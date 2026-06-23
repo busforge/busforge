@@ -215,6 +215,94 @@ describe("API (project resources)", () => {
   });
 });
 
+describe("blank projects + catalog (device placement)", () => {
+  const tmps: string[] = [];
+  function freshState(): AppState {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-blank-"));
+    tmps.push(dir);
+    return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
+  }
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+  const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
+  const importConfig = async (state: AppState) => {
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    return (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
+  };
+
+  test("import backfills a placeable catalog from its devices", async () => {
+    const state = freshState();
+    await importConfig(state);
+    const catalog = (await (await handleApi(req("/api/catalog/products"), state))!.json()) as any[];
+    expect(catalog.length).toBeGreaterThanOrEqual(1);
+    const prod = catalog.find((p) => p.appRef === "M-TEST_H-1_HP-1");
+    expect(prod).toBeDefined();
+    expect(prod.appProgramId).toBe("M-TEST_A-1");
+  });
+
+  test("create blank project -> place a device -> configurable", async () => {
+    const state = freshState();
+    await importConfig(state); // seeds the catalog
+    const catalog = (await (await handleApi(req("/api/catalog/products"), state))!.json()) as any[];
+    const prod = catalog.find((p) => p.appRef === "M-TEST_H-1_HP-1");
+
+    // Blank project: created empty.
+    const created = await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "From scratch" }),
+    }), state);
+    expect(created!.status).toBe(201);
+    const blank = (await created!.json()) as any;
+    expect(blank).toMatchObject({ name: "From scratch", deviceCount: 0, gaCount: 0 });
+
+    // Place a device from the catalog.
+    const added = await handleApi(req(`/api/projects/${blank.id}/devices`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appRef: prod.appRef, productRef: prod.productRef }),
+    }), state);
+    expect(added!.status).toBe(201);
+    const device = (await added!.json()) as any;
+    expect(device.ia).toBe("1.1.1"); // first free address in a fresh project
+    expect(device.id).toBeString();
+
+    // The project now has the device, and its config view builds from the catalog.
+    const proj = (await (await handleApi(req(`/api/projects/${blank.id}`), state))!.json()) as any;
+    expect(proj.devices).toHaveLength(1);
+    expect(proj.devices[0]).toMatchObject({ id: device.id, ia: "1.1.1", appRef: prod.appRef });
+
+    const cfg = await handleApi(req(`/api/projects/${blank.id}/devices/${device.id}/config`), state);
+    expect(cfg!.status).toBe(200);
+    const view = (await cfg!.json()) as any;
+    expect(view.blocks.length).toBeGreaterThan(0);
+
+    // A second device gets the next free address.
+    const added2 = (await (await handleApi(req(`/api/projects/${blank.id}/devices`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appRef: prod.appRef, productRef: prod.productRef }),
+    }), state))!.json()) as any;
+    expect(added2.ia).toBe("1.1.2");
+  });
+
+  test("create with no name -> 400; place unknown product -> 404", async () => {
+    const state = freshState();
+    const noName = await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "  " }),
+    }), state);
+    expect(noName!.status).toBe(400);
+    expect(((await noName!.json()) as any).error.code).toBe("PROJECT_NAME_REQUIRED");
+
+    const blank = (await (await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "P" }),
+    }), state))!.json()) as any;
+    const bad = await handleApi(req(`/api/projects/${blank.id}/devices`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appRef: "M-NOPE_H-9_HP-9", productRef: "M-NOPE_P-9" }),
+    }), state);
+    expect(bad!.status).toBe(404);
+    expect(((await bad!.json()) as any).error.code).toBe("CATALOG_PRODUCT_NOT_FOUND");
+  });
+});
+
 describe("device configuration", () => {
   const tmps: string[] = [];
   function freshState(): AppState {

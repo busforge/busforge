@@ -2,13 +2,13 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { loadKnxproj, readAppProgram, extractAppPrograms, appProgramId, readBaggage } from "@busforge/project";
+import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts, appProgramId, readBaggage } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
-import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
+import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
-import { putAppProgram, getAppProgram, gcAppPrograms } from "./db/catalog.ts";
+import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { exportProject } from "./db/exportProject.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
@@ -60,10 +60,29 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   const { db, bus } = state;
 
   try {
+    // /api/catalog/products  -> browsable device catalog for placing into projects
+    if (seg[1] === "catalog") {
+      if (seg.length === 3 && seg[2] === "products" && req.method === "GET") {
+        // Surface products from projects imported before the catalog table existed.
+        backfillCatalogFromDevices(db);
+        return json(listCatalogProducts(db));
+      }
+      return err("NOT_FOUND", "not found", 404);
+    }
     if (seg[1] !== "projects") return err("NOT_FOUND", "not found", 404);
 
     // /api/projects
     if (seg.length === 2 && req.method === "GET") return json(listProjects(db));
+
+    // /api/projects  (POST: create a blank project, no import)
+    if (seg.length === 2 && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as { name?: string };
+      const name = (body.name ?? "").trim();
+      if (!name) return err("PROJECT_NAME_REQUIRED", "project name required");
+      const id = randomUUID();
+      createProject(db, id, name, state.now());
+      return json({ id, name, deviceCount: 0, gaCount: 0 }, 201);
+    }
 
     // /api/projects/import
     if (seg.length === 3 && seg[2] === "import" && req.method === "POST") {
@@ -77,6 +96,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       // Extract the referenced application programs up front (pure, reads the zip),
       // so a bad archive fails before anything is written to disk or the DB.
       const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
+      // Catalog product metadata for browsing/placing devices later. Keep only the
+      // products whose program we actually stored, so every catalog entry is placeable.
+      const catalog = extractCatalogProducts(bytes).filter((p) => programs.has(p.appProgramId));
 
       const id = randomUUID();
       // DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's backup-store):
@@ -93,6 +115,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       db.transaction(() => {
         insertProject(db, id, project, "", state.now());
         for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
+        for (const p of catalog) putCatalogProduct(db, p);
         for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
       })();
       return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length });
@@ -111,6 +134,18 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       gcAppPrograms(db); // drop catalog entries no longer referenced by any project
       rmSync(join(state.dataDir, "projects", id), { recursive: true, force: true }); // legacy file store + flash backups
       return json({ ok: true });
+    }
+
+    // /api/projects/:id/devices  (POST: place a catalog product as a new device)
+    if (seg.length === 4 && seg[3] === "devices" && req.method === "POST") {
+      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: string };
+      if (!body.appRef || !body.productRef) return err("DEVICE_FIELDS_REQUIRED", "appRef and productRef required");
+      const product = getCatalogProduct(db, body.appRef, body.productRef);
+      if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
+      if (!getAppProgram(db, product.appProgramId)) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
+      const device = addDevice(db, id, product, (body.name ?? "").trim());
+      return json(device, 201);
     }
 
     // /api/projects/:id/interface
