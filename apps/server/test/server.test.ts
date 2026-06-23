@@ -169,6 +169,47 @@ describe("API (project resources)", () => {
     expect((await handleApi(req(`/api/projects/${imp.id}`, { method: "DELETE" }), state))!.status).toBe(404);
   });
 
+  test("snapshots: create -> edit -> restore round-trip", async () => {
+    const state = freshState();
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    const imp = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
+    const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
+    const dev = proj.devices[0].id;
+    const param = "M-TEST_A-1_P-1_R-1";
+
+    // Capture a manual restore point of the clean (seeded) config.
+    const created = await handleApi(req(`/api/projects/${imp.id}/snapshots`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: "clean" }),
+    }), state);
+    expect(created!.status).toBe(201);
+    const snap = (await created!.json()) as any;
+    expect(snap).toMatchObject({ label: "clean", kind: "manual" });
+
+    const list = (await (await handleApi(req(`/api/projects/${imp.id}/snapshots`), state))!.json()) as any[];
+    expect(list).toHaveLength(1);
+
+    // Edit a parameter, then restore: the edit is rolled back.
+    await handleApi(req(`/api/projects/${imp.id}/devices/${dev}/params`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId: param, value: "1" }),
+    }), state);
+    const afterEdit = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
+    expect(afterEdit.devices[0].changes).toMatchObject({ params: 1 });
+
+    const restored = await handleApi(req(`/api/projects/${imp.id}/snapshots/${snap.id}/restore`, { method: "POST" }), state);
+    expect(restored!.status).toBe(200);
+    const afterRestore = (await restored!.json()) as any;
+    expect(afterRestore.devices[0].changes).toMatchObject({ params: 0 });
+  });
+
+  test("snapshot restore/delete of an unknown id -> 404", async () => {
+    const state = freshState();
+    const imp = (await (await importDemo(state))!.json()) as any;
+    expect((await handleApi(req(`/api/projects/${imp.id}/snapshots/ghost/restore`, { method: "POST" }), state))!.status).toBe(404);
+    expect((await handleApi(req(`/api/projects/${imp.id}/snapshots/ghost`, { method: "DELETE" }), state))!.status).toBe(404);
+  });
+
   test("non-api path returns null (falls through to static)", async () => {
     expect(await handleApi(req("/index.html"), freshState())).toBeNull();
   });

@@ -43,6 +43,12 @@ export interface Task {
   error: string | null; errorCode: string | null; queuedAt: number; startedAt: number | null; finishedAt: number | null;
 }
 
+export type SnapshotKind = "manual" | "auto";
+export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore";
+export interface SnapshotMeta {
+  id: string; label: string; kind: SnapshotKind; reason: SnapshotReason; createdAt: number; schemaVersion: number;
+}
+
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
 export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; }
@@ -127,6 +133,14 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/read-back`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  snapshots: (id: string): Promise<SnapshotMeta[]> => fetch(`/api/projects/${id}/snapshots`).then((r) => jsonOrThrow<SnapshotMeta[]>(r)),
+  createSnapshot: (id: string, label: string): Promise<SnapshotMeta | null> =>
+    fetch(`/api/projects/${id}/snapshots`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) }).then((r) => jsonOrThrow<SnapshotMeta | null>(r)),
+  restoreSnapshot: (id: string, sid: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}/restore`, { method: "POST" }).then((r) => jsonOrThrow<Project>(r)),
+  deleteSnapshot: (id: string, sid: string): Promise<{ ok: true }> =>
+    fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
 
   tasks: (id: string): Promise<Task[]> => fetch(`/api/projects/${id}/tasks`).then((r) => jsonOrThrow<Task[]>(r)),
   cancelTask: (id: string, taskId: string): Promise<{ cancelled: string }> =>

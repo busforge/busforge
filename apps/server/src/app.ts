@@ -7,6 +7,7 @@ import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink }
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
+import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
@@ -122,6 +123,29 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 4 && seg[3] === "telegrams" && req.method === "GET") {
       const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get("limit") ?? 500)));
       return json(recentTelegrams(db, id, limit));
+    }
+
+    // /api/projects/:id/snapshots  -> list restore points / create a manual one
+    if (seg.length === 4 && seg[3] === "snapshots") {
+      if (req.method === "GET") return json(listSnapshots(db, id));
+      if (req.method === "POST") {
+        if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+        const body = (await req.json().catch(() => ({}))) as { label?: string };
+        const snap = createSnapshot(db, id, { label: (body.label ?? "").trim(), kind: "manual", reason: "manual" }, state.now());
+        return json(snap, 201);
+      }
+    }
+
+    // /api/projects/:id/snapshots/:sid/restore  -> roll the config back to a snapshot
+    if (seg.length === 6 && seg[3] === "snapshots" && seg[5] === "restore" && req.method === "POST") {
+      if (!restoreSnapshot(db, id, decodeURIComponent(seg[4]), state.now())) return err("SNAPSHOT_NOT_FOUND", "snapshot not found", 404);
+      return json(getProject(db, id));
+    }
+
+    // /api/projects/:id/snapshots/:sid  -> delete a restore point
+    if (seg.length === 5 && seg[3] === "snapshots" && req.method === "DELETE") {
+      if (!deleteSnapshot(db, id, decodeURIComponent(seg[4]))) return err("SNAPSHOT_NOT_FOUND", "snapshot not found", 404);
+      return json({ ok: true });
     }
 
     // /api/projects/:id/devices/:deviceId/config?lang=
@@ -240,6 +264,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+      const dryGa = url.searchParams.get("dry") === "1";
+      // Auto restore point of the about-to-be-programmed config (real flash only).
+      if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
       const result = await state.queue.enqueue(
         { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" },
         async (progress) => {
@@ -247,7 +274,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           return flashDeviceGroupAddresses({
             projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
             interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
-            dryRun: url.searchParams.get("dry") === "1", onProgress: progress,
+            dryRun: dryGa, onProgress: progress,
           });
         },
       );
@@ -265,6 +292,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
       const sourceFile = getSourceFile(db, id);
       if (!sourceFile) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const dryParams = url.searchParams.get("dry") === "1";
+      // Auto restore point of the about-to-be-programmed config (real flash only).
+      if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
       const result = await state.queue.enqueue(
         { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" },
         async (progress) => {
@@ -274,7 +304,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
             projectId: id, deviceId, ia: dev.ia, appRef: dev.appRef, sourceFile,
             interfaceIp: iface.interfaceIp, port: iface.port,
             params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
-            dryRun: url.searchParams.get("dry") === "1", onProgress: progress,
+            dryRun: dryParams, onProgress: progress,
           });
         },
       );

@@ -110,6 +110,7 @@ export function DeviceConfig() {
   const afterFlash = () => {
     qc.invalidateQueries({ queryKey: qk.project(projectId) });
     qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
+    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) }); // a real flash captures an auto restore point
   };
 
   // Section index. Only top-level group headers are tracked/scroll targets (one

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useProject } from "../queries.ts";
 import { Brandmark } from "@/components/Brandmark.tsx";
 import { TaskIndicator } from "@/components/TaskIndicator.tsx";
+import { SnapshotPanel } from "@/components/SnapshotPanel.tsx";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
 
 const TABS = [
@@ -41,6 +42,7 @@ export function ProjectLayout() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <SnapshotPanel projectId={projectId} />
             <TaskIndicator projectId={projectId} />
             <LanguageSwitcher />
           </div>

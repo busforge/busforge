@@ -121,7 +121,28 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE devices ADD COLUMN comment TEXT NOT NULL DEFAULT '';
   `,
+  // ETS-style restore points: one JSON snapshot of the project's config layer
+  // (parameter values, links, name, interface) per row. Manual (user title) or
+  // automatic (before a risky operation). Restoring rewrites the config but
+  // leaves the programmed baselines untouched, so drift stays truthful.
+  `
+  CREATE TABLE snapshots (
+    id             TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    label          TEXT NOT NULL DEFAULT '',
+    kind           TEXT NOT NULL,
+    reason         TEXT NOT NULL DEFAULT '',
+    created_at     INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL,
+    payload        TEXT NOT NULL
+  );
+  CREATE INDEX idx_snapshots_project ON snapshots(project_id, created_at);
+  `,
 ];
+
+// The schema version stamped into a snapshot at capture, so a future migration
+// that changes the config layer can detect and handle older payloads on restore.
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 function migrate(db: Database): void {
   const current = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;

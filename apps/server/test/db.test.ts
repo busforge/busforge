@@ -8,6 +8,7 @@ import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
 import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -233,6 +234,107 @@ describe("projects", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM devices").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM group_addresses").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM telegrams").get()).toMatchObject({ n: 0 });
+  });
+});
+
+describe("snapshots", () => {
+  const dev = "P-TEST-0_DI-1"; // demo fixture: link O-1_R-1 -> [1, 2]
+
+  test("serialize captures params, links and project meta", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    setInterface(db, "p1", "203.0.113.15", 3672);
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    const cfg = serializeConfig(db, "p1");
+    expect(cfg.project).toMatchObject({ name: "Demo", interfaceIp: "203.0.113.15", interfacePort: 3672 });
+    expect(cfg.deviceParameters).toContainEqual({ deviceId: dev, paramRefId: "M-X_A-1_P-9_R-1", value: "7" });
+    expect(cfg.deviceLinks).toContainEqual({ deviceId: dev, comObjRefId: "O-1_R-1", slot: 0, gaRaw: 1 });
+  });
+
+  test("restore rolls the config back to a captured point", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const base = createSnapshot(db, "p1", { kind: "manual", label: "base", reason: "manual" }, 1000)!;
+    expect(base.label).toBe("base");
+
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
+    expect(getProjectChanges(db, "p1").get(dev)).toBeDefined();
+
+    expect(restoreSnapshot(db, "p1", base.id, 2000)).toBe(true);
+    expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false); // edit gone
+    expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual([1, 2]);        // link restored
+    expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();               // matches baseline again
+  });
+
+  test("restore is undoable: it first captures the current state", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const base = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+
+    restoreSnapshot(db, "p1", base.id, 2000);
+    const list = listSnapshots(db, "p1");
+    const undo = list.find((s) => s.reason === "before-restore")!;
+    expect(undo).toBeDefined();
+    // The undo point holds the edited value; restoring it brings the edit back.
+    restoreSnapshot(db, "p1", undo.id, 3000);
+    expect(getDeviceParams(db, "p1", dev).get("M-X_A-1_P-9_R-1")).toBe("7");
+  });
+
+  test("restore leaves the programmed baseline untouched (drift stays truthful)", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const clean = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
+    // Program a value: baseline := edited. Then restore the clean snapshot.
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    resetParamBase(db, "p1", dev);
+    restoreSnapshot(db, "p1", clean.id, 2000);
+    // Live is back to clean, but the baseline still says "7", so it shows as drift.
+    expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false);
+    expect(getDeviceChangedKeys(db, "p1", dev).params.has("M-X_A-1_P-9_R-1")).toBe(true);
+  });
+
+  test("auto snapshots dedup against the latest; manual ones never do", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    expect(createSnapshot(db, "p1", { kind: "auto", reason: "before-flash" }, 1000)).not.toBeNull();
+    expect(createSnapshot(db, "p1", { kind: "auto", reason: "before-flash" }, 1001)).toBeNull(); // identical -> skipped
+    expect(listSnapshots(db, "p1")).toHaveLength(1);
+    // Manual is always stored, even with an identical payload.
+    expect(createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1002)).not.toBeNull();
+    expect(listSnapshots(db, "p1")).toHaveLength(2);
+  });
+
+  test("auto snapshots are pruned to the ring buffer; manual survive", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const keep = createSnapshot(db, "p1", { kind: "manual", label: "keep", reason: "manual" }, 1000)!;
+    for (let i = 0; i < 25; i++) {
+      setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", String(i)); // distinct payload each round
+      createSnapshot(db, "p1", { kind: "auto", reason: "before-flash" }, 2000 + i);
+    }
+    const list = listSnapshots(db, "p1");
+    expect(list.filter((s) => s.kind === "auto")).toHaveLength(20); // AUTO_KEEP
+    expect(list.find((s) => s.id === keep.id)).toBeDefined();        // manual untouched
+  });
+
+  test("delete removes one; restore/delete of an unknown id report failure", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const s = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
+    expect(deleteSnapshot(db, "p1", s.id)).toBe(true);
+    expect(listSnapshots(db, "p1")).toHaveLength(0);
+    expect(deleteSnapshot(db, "p1", s.id)).toBe(false);
+    expect(restoreSnapshot(db, "p1", "ghost", 2000)).toBe(false);
+  });
+
+  test("snapshots cascade on project delete", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000);
+    deleteProject(db, "p1");
+    expect(db.query("SELECT COUNT(*) AS n FROM snapshots").get()).toMatchObject({ n: 0 });
   });
 });
 

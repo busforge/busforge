@@ -15,6 +15,7 @@ export const qk = {
   // available catalogue language.
   deviceConfig: (id: string, deviceId: string, lang: string) => ["deviceConfig", id, deviceId, lang] as const,
   tasks: (id: string) => ["tasks", id] as const,
+  snapshots: (id: string) => ["snapshots", id] as const,
 };
 
 export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.listProjects });
@@ -44,6 +45,34 @@ export const useTasks = (id: string) =>
       return data?.some((t) => t.state === "running" || t.state === "queued") ? 500 : 2000;
     },
   });
+
+export const useSnapshots = (id: string) =>
+  useQuery({ queryKey: qk.snapshots(id), queryFn: () => api.snapshots(id) });
+
+// Snapshot create/restore/delete. Restore rewrites the whole config layer, so it
+// invalidates the project (device list + change counts) and every device config
+// view; create/delete only refresh the snapshot list.
+export function useSnapshotActions(projectId: string) {
+  const qc = useQueryClient();
+  const refreshList = () => qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+  const create = useMutation({
+    mutationFn: (label: string) => api.createSnapshot(projectId, label),
+    onSuccess: refreshList,
+  });
+  const restore = useMutation({
+    mutationFn: (sid: string) => api.restoreSnapshot(projectId, sid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.project(projectId) });
+      qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
+      refreshList(); // restore inserts an auto undo-point
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (sid: string) => api.deleteSnapshot(projectId, sid),
+    onSuccess: refreshList,
+  });
+  return { create, restore, remove };
+}
 
 export const useDeviceConfig = (id: string, deviceId: string) => {
   const { i18n } = useTranslation();
