@@ -13,7 +13,7 @@
                 </TypeRestriction>
               </ParameterType>
               <ParameterType Id="M-TEST_A-1_PT-Num" Name="Num">
-                <TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" />
+                <TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" Increment="5" UIHint="Slider" />
               </ParameterType>
               <ParameterType Id="M-TEST_A-1_PT-Txt" Name="Txt">
                 <TypeText SizeInBit="80" />

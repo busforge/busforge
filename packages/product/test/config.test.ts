@@ -66,6 +66,12 @@ describe("buildDeviceConfig visibility", () => {
     expect(level).toMatchObject({ control: "number", value: "42", min: 0, max: 100, suffix: "%" });
   });
 
+  test("TypeNumber Increment becomes the spinner step and UIHint=Slider a slider", () => {
+    const level = params(buildDeviceConfig(app, new Map()))[1].param;
+    expect(level.step).toBe(5);
+    expect(level.slider).toBe(true);
+  });
+
   test("Mode=0 takes the default branch: shows Label, hides Level + com-object", () => {
     const v = buildDeviceConfig(app, new Map([["M-TEST_A-1_P-1_R-1", "0"]]));
     expect(params(v).map((p) => p.param.name)).toEqual(["Mode", "Label"]);

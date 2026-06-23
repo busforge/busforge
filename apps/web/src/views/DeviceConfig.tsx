@@ -431,9 +431,22 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
           >
             {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
           </select>
+        ) : param.control === "number" && param.slider ? (
+          // ETS UIHint="Slider": a bounded range with a live numeric readout.
+          <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
+            <input
+              type="range" value={local} min={param.min} max={param.max} step={param.step ?? 1}
+              onChange={(e) => setLocal(e.target.value)}
+              onPointerUp={() => local !== param.value && onChange(local)}
+              onKeyUp={() => local !== param.value && onChange(local)}
+              onBlur={() => local !== param.value && onChange(local)}
+              className="h-9 w-full accent-primary"
+            />
+            <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums">{local}</span>
+          </span>
         ) : param.control === "number" ? (
           <Input
-            type="number" value={local} min={param.min} max={param.max}
+            type="number" value={local} min={param.min} max={param.max} step={param.step}
             onChange={(e) => setLocal(e.target.value)}
             onBlur={() => local !== param.value && onChange(local)}
             className="w-full font-mono" data-testid={`param-${param.refId}`}

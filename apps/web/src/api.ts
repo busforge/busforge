@@ -12,7 +12,7 @@ export interface Project { id: string; name: string; interface: ProjectInterface
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
-  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; readOnly?: boolean;
+  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; readOnly?: boolean;
   changed?: boolean; defaultValue?: string; typeLabel?: string; indent?: number;
 }
 export interface CfgComObjView {

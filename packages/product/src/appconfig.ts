@@ -18,6 +18,8 @@ export interface CfgType {
   enums: EnumOption[];
   min?: number;
   max?: number;
+  increment?: number; // TypeNumber spinner step (ETS Increment)
+  uiHint?: string;    // ETS UIHint on the type (e.g. "Slider" for a numeric range)
 }
 export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; }
@@ -175,6 +177,8 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
       enums,
       min: num(ia.minInclusive),
       max: num(ia.maxInclusive),
+      increment: num(ia.Increment),
+      uiHint: ia.UIHint,
     });
   }
   return out;

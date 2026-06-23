@@ -32,6 +32,8 @@ export interface CfgParamView {
   min?: number;
   max?: number;
   suffix?: string;
+  step?: number; // number spinner step (ETS Increment)
+  slider?: boolean; // ETS UIHint="Slider": render a range slider (needs min+max)
   readOnly?: boolean;
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
@@ -159,7 +161,11 @@ export function buildDeviceConfig(
 
     const defaultValue = ref.value ?? param.value ?? "";
     const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read", defaultValue, typeLabel } };
+    // ETS spinner step / slider hint live on the TypeNumber; a slider needs a
+    // bounded range to render, so fall back to the plain number input without one.
+    const step = control === "number" ? type?.increment : undefined;
+    const slider = control === "number" && type?.uiHint === "Slider" && type.min !== undefined && type.max !== undefined;
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, readOnly: access === "Read", defaultValue, typeLabel } };
   };
 
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {

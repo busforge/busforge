@@ -63,9 +63,29 @@ HIGH impact (changes what is shown, the order, visibility, or numbering):
 | ComObject | `ReadOnInitFlag` (2204×) | open | the 6th flag missing on every object (we show only R/W/C/T/U) |
 | ParameterBlock (item-less) | self-closing collector blocks | **fixed** | a reached childless header (e.g. "Scene") is shown as an empty navigable section; headers in inactive choose branches stay hidden (no noise) |
 
-Still open (MED): `TypeNumber/@Increment` (spinner step), `TypeNumber/@UIHint=Slider`,
-`Parameter/@InitialValue`, `Parameter/@BaseValue` (allocator/module numbering,
-flash path), `TypeFloat/@Encoding`. LOW (safe to ignore): `InternalDescription`,
+MED impact, resolved:
+
+| Where | Attribute | Status | Notes |
+|---|---|---|---|
+| TypeNumber | `Increment` | **fixed** | becomes the number input's spinner step (e.g. PSU current in 5 mA steps); verified live on 1.1.x |
+| TypeNumber | `UIHint="Slider"` | **fixed** | a bounded number renders as a range slider with a live readout; verified live on 1.1.x (0-255) |
+
+MED impact, analyzed and deferred (each with a concrete reason, not silently skipped):
+
+- `Parameter/@InitialValue` (1× in the catalogues): on a hidden `Access="None"`
+  parameter and equal to `Value`. We already drop `Access="None"` rows and the
+  view is driven by `Value`, so honoring `InitialValue` would have **zero visible
+  effect**. Reading it would only matter for "unchanged since factory" detection,
+  which busforge does not do. Left unread on purpose.
+- `Parameter/@BaseValue` (5×): on read-only mirror parameters inside modules,
+  pointing at a module `Argument`. This is the per-instance allocator/numbering
+  mechanism, i.e. exactly the work tracked under "Planned: unify the model"
+  below. Deferred to that effort, not addressed piecemeal.
+- `TypeFloat/@Encoding` (3×): `TypeFloat` is wholly unsupported today (shown with
+  a "not supported" badge), so its `Encoding` is moot until float rendering lands
+  (roadmap item 2). Surfaced via the unsupported-type badge already.
+
+LOW (safe to ignore): `InternalDescription`,
 `Tag`, `DefaultUnionParameter`, `Inline`, `Icon`, `SecurityRequired`, plugin
 validation, `LegacyPatchAlways`, color/IP/time sub-attributes (types unsupported
 anyway).
@@ -77,7 +97,8 @@ is allocator/`Repeat Count` module expansion, guarded by `unmappedParamRefs`.
 **Prioritized fixes:** (1) Channel heading text, (2) Enumeration `DisplayOrder`,
 (3) per-row `DisplayOrder` ordering, (4) ParameterBlock `Access="None"` hiding,
 (5) `IndentLevel` row nesting, (6) `ReadOnInitFlag`, (7) item-less collector
-blocks, (8) `Increment`/slider.
+blocks, (8) `Increment`/slider. All landed; the only remaining attribute work
+(`BaseValue` allocator) is folded into the model-unification effort below.
 
 **Visibility mechanism:** keep this inventory current and provide a re-runnable
 audit (a dev script that, given a project's app XMLs, lists attributes present
@@ -103,7 +124,7 @@ but unread) so a new ignored attribute is found by us, not by the user.
 | Type | Status | Notes |
 |---|---|---|
 | TypeRestriction (enumeration) | full | dropdown |
-| TypeNumber | full | number input |
+| TypeNumber | full | number input; `Increment` spinner step; `UIHint="Slider"` renders a range slider |
 | TypeText | full | text input |
 | TypeRestriction Base="BinaryValue" | not yet | shown with "not supported" badge |
 | TypeFloat | not yet | KNX 2-byte float / IEEE; badge |
