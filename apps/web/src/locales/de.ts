@@ -81,6 +81,9 @@ const de: Messages = {
     objectInfo: "Objekt {{number}}\nDatentyp: {{dpt}}",
     objectInfoFlags: "Objekt {{number}}\nDatentyp: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unbekannt",
+    gapsTitle: "Dieses Gerät nutzt Einstellungen, die busforge noch nicht vollständig unterstützt:",
+    gapType: "{{type}} ({{count}})",
+    gapElement: "Element {{tag}} ({{count}})",
     unsupportedType: "{{type}} noch nicht unterstützt",
     unsupportedElement: "Noch nicht unterstützt: {{tag}} (dieser Bereich bleibt verborgen, bis busforge ihn darstellen kann)",
     flagCommunication: "Kommunikation",
@@ -88,6 +91,7 @@ const de: Messages = {
     flagWrite: "Schreiben",
     flagTransmit: "Übertragen",
     flagUpdate: "Aktualisieren",
+    flagReadOnInit: "Beim Start lesen",
   },
   changes: {
     pill_one: "{{count}} Änderung",

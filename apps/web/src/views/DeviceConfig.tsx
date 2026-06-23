@@ -56,7 +56,7 @@ function countChanged(view: DeviceConfigView): number {
 }
 
 const flagWords = (f: CfgComObjView["flags"], t: TFn) =>
-  [f.comm && t("device.flagCommunication"), f.read && t("device.flagRead"), f.write && t("device.flagWrite"), f.transmit && t("device.flagTransmit"), f.update && t("device.flagUpdate")]
+  [f.comm && t("device.flagCommunication"), f.read && t("device.flagRead"), f.write && t("device.flagWrite"), f.transmit && t("device.flagTransmit"), f.update && t("device.flagUpdate"), f.readOnInit && t("device.flagReadOnInit")]
     .filter(Boolean).join(", ");
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
@@ -129,6 +129,18 @@ export function DeviceConfig() {
 
   const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
     g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
+
+  // What this device uses that busforge does not fully support yet, aggregated
+  // for the notice at the top so the gaps are explicit, not hidden in the list.
+  const gaps = useMemo(() => {
+    const types = new Map<string, number>();
+    const elements = new Map<string, number>();
+    for (const b of view?.blocks ?? []) for (const it of b.items) {
+      if (it.kind === "param" && it.param.control === "unsupported") types.set(it.param.typeLabel ?? "?", (types.get(it.param.typeLabel ?? "?") ?? 0) + 1);
+      else if (it.kind === "unsupported") elements.set(it.label, (elements.get(it.label) ?? 0) + 1);
+    }
+    return { types: [...types.entries()], elements: [...elements.entries()] };
+  }, [view]);
 
   // Scroll-spy: the active group is the last whose header sits above a small top
   // offset. Deterministic (always exactly one), so no flicker between sections.
@@ -276,6 +288,19 @@ export function DeviceConfig() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {(gaps.types.length > 0 || gaps.elements.length > 0) && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">{t("device.gapsTitle")}</p>
+            <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-amber-700/90 dark:text-amber-300/90">
+              {gaps.types.map(([label, n]) => <li key={`t-${label}`}>{t("device.gapType", { type: label, count: n })}</li>)}
+              {gaps.elements.map(([label, n]) => <li key={`e-${label}`}>{t("device.gapElement", { tag: label, count: n })}</li>)}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{(error as Error).message}</p>}

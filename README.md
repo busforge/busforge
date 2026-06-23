@@ -47,7 +47,9 @@ manufacturer installation already exercises a large slice of what ETS supports.
 **A hard rule keeps the gap honest: nothing is ever dropped silently.** Anything
 the engine cannot render is shown in the UI as an explicit "not supported yet"
 marker (with the parameter's type or the unknown element's name), never omitted
-and never shown as an empty control. A missing parameter that merely looks absent
+and never shown as an empty control. The device page also carries a notice at the
+top summarizing exactly what that device uses that is not yet supported, so the
+gap is visible at a glance. A missing parameter that merely looks absent
 is the worst failure mode: it hides configuration and hides drift (a changed
 value the user cannot see). Completeness is treated as a correctness property, so
 the same model must drive what we parse, what the UI shows, and the image we

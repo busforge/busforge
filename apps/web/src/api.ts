@@ -17,7 +17,7 @@ export interface CfgParamView {
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
-  objectSize: string; dpt: string; flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean };
+  objectSize: string; dpt: string; flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
   gaRaw?: number | null;
   changed?: boolean;
 }

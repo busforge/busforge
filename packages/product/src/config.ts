@@ -251,6 +251,7 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
+          if (n.access === "None") break; // ETS hides Access="None" blocks
           const items: CfgItem[] = [];
           collect(n.children, items, scope);
           if (items.length) {

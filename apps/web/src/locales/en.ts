@@ -79,6 +79,9 @@ const en = {
     objectInfo: "Object {{number}}\nData type: {{dpt}}",
     objectInfoFlags: "Object {{number}}\nData type: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unknown",
+    gapsTitle: "This device uses settings busforge does not fully support yet:",
+    gapType: "{{type}} ({{count}})",
+    gapElement: "Element {{tag}} ({{count}})",
     unsupportedType: "{{type}} not supported yet",
     unsupportedElement: "Not supported yet: {{tag}} (this section is hidden until busforge can render it)",
     flagCommunication: "Communication",
@@ -86,6 +89,7 @@ const en = {
     flagWrite: "Write",
     flagTransmit: "Transmit",
     flagUpdate: "Update",
+    flagReadOnInit: "Read on init",
   },
   changes: {
     pill_one: "{{count}} change",

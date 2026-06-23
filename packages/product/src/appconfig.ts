@@ -8,7 +8,7 @@ import { XMLParser } from "fast-xml-parser";
 // The dynamic tree's child order is semantically significant (first-matching
 // `when`, default fallback, sequence of items), so we parse order-preserving.
 
-export interface EnumOption { value: number; text: string; id: string; }
+export interface EnumOption { value: number; text: string; id: string; displayOrder: number; }
 export interface CfgType {
   id: string;
   base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Other";
@@ -21,7 +21,7 @@ export interface CfgType {
 }
 export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; }
-export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; }
+export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags; textParamRefId?: string; baseNumber?: string;
@@ -32,7 +32,7 @@ export interface CfgComObjectRef {
 }
 
 export type DynNode =
-  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; children: DynNode[] }
+  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; children: DynNode[] }
   | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "unsupported"; tag: string }
@@ -159,10 +159,11 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
     let enums: EnumOption[] = [];
     if (tag === "TypeRestriction") {
       base = ia.Base === "BinaryValue" ? "BinaryValue" : "Value";
-      enums = childrenByTag(kidsOf(inner), "Enumeration").map((e) => {
+      // ETS shows enum options ordered by DisplayOrder, not document order.
+      enums = childrenByTag(kidsOf(inner), "Enumeration").map((e, i) => {
         const ea = attrsOf(e);
-        return { value: Number(ea.Value), text: ea.Text ?? "", id: ea.Id };
-      });
+        return { value: Number(ea.Value), text: ea.Text ?? "", id: ea.Id, displayOrder: ea.DisplayOrder !== undefined ? Number(ea.DisplayOrder) : i };
+      }).sort((a, b) => a.displayOrder - b.displayOrder);
     } else if (tag === "TypeNumber") base = "Number";
     else if (tag === "TypeFloat") base = "Float";
     else if (tag === "TypeText") base = "Text";
@@ -214,7 +215,7 @@ function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
     out.set(a.Id, {
       id: a.Id, number: Number(a.Number ?? 0), name: a.Name ?? "", text: a.Text ?? "",
       functionText: a.FunctionText ?? "", objectSize: a.ObjectSize ?? "", dpt: a.DatapointType ?? "",
-      flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag) },
+      flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag), readOnInit: bool(a.ReadOnInitFlag) },
       textParamRefId: a.TextParameterRefId,
       baseNumber: a.BaseNumber,
     });
@@ -233,6 +234,7 @@ function parseComObjectRefs(staticKids: ONode[]): Map<string, CfgComObjectRef> {
     if (a.CommunicationFlag) flags.comm = bool(a.CommunicationFlag);
     if (a.TransmitFlag) flags.transmit = bool(a.TransmitFlag);
     if (a.UpdateFlag) flags.update = bool(a.UpdateFlag);
+    if (a.ReadOnInitFlag) flags.readOnInit = bool(a.ReadOnInitFlag);
     out.set(a.Id, {
       id: a.Id, refId: a.RefId, text: a.Text, functionText: a.FunctionText,
       objectSize: a.ObjectSize, dpt: a.DatapointType, flags, textParamRefId: a.TextParameterRefId,
@@ -276,7 +278,7 @@ function parseDyn(n: ONode): DynNode | null {
     case "Repeat":
       return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
-      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, access: a.Access, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterSeparator":
       return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
     case "ParameterRefRef":

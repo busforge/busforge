@@ -88,7 +88,7 @@ describe("buildDeviceConfig visibility", () => {
     const v = buildDeviceConfig(app, new Map());
     const co = comObjs(v)[0] as { comObject: any };
     expect(co.comObject).toMatchObject({ number: 0, functionText: "On/Off", dpt: "DPST-1-1" });
-    expect(co.comObject.flags).toEqual({ read: false, write: true, comm: true, transmit: true, update: false });
+    expect(co.comObject.flags).toEqual({ read: false, write: true, comm: true, transmit: true, update: false, readOnInit: false });
   });
 });
 
