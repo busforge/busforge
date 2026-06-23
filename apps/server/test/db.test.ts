@@ -10,6 +10,7 @@ import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/teleg
 import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram } from "../src/db/catalog.ts";
+import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -248,6 +249,23 @@ describe("catalog (app programs)", () => {
     putAppProgram(db, "M-1_A-1", "<ApplicationProgram>two</ApplicationProgram>");
     expect(getAppProgram(db, "M-1_A-1")).toContain("one");
     expect((db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
+  });
+});
+
+describe("baggage (DCA blobs)", () => {
+  test("put then get filters by device-id prefix; projectHasBaggage reflects presence", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    expect(projectHasBaggage(db, "p1")).toBe(false);
+
+    putBaggage(db, "p1", "DI-1_Dalie64.bin", Buffer.from("aaa"));
+    putBaggage(db, "p1", "DI-2_other.bin", Buffer.from("bbb"));
+    expect(projectHasBaggage(db, "p1")).toBe(true);
+
+    const got = getDeviceBaggage(db, "p1", "DI-1");
+    expect(Object.keys(got)).toEqual(["DI-1_Dalie64.bin"]);
+    expect(Buffer.from(got["DI-1_Dalie64.bin"], "base64").toString()).toBe("aaa");
+    expect(getDeviceBaggage(db, "p1", "DI-9")).toEqual({}); // no match
   });
 });
 

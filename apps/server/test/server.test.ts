@@ -1,5 +1,5 @@
 import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
@@ -335,16 +335,73 @@ describe("device configuration", () => {
     expect(((await res!.json()) as any).error.code).toBe("APP_PROGRAM_MISSING");
   });
 
-  test("falls back to the source file and backfills the catalog (pre-catalog projects)", async () => {
+  test("falls back to the source file and backfills the catalog (legacy projects)", async () => {
     const state = freshState();
     const { projectId, deviceId } = await importConfig(state);
-    // Simulate a project imported before the catalog existed: drop its catalog row,
-    // clear the in-memory parse cache, and confirm the config still resolves.
+    // Simulate a project imported before DB storage: the app program lives only on
+    // disk and source_file points at it, with no catalog row.
+    const dir = join(state.dataDir, "projects", projectId);
+    mkdirSync(dir, { recursive: true });
+    const sourceFile = join(dir, "original.knxproj");
+    writeFileSync(sourceFile, cfgFixture);
     state.db.exec("DELETE FROM app_programs");
+    state.db.query("UPDATE projects SET source_file = ? WHERE id = ?").run(sourceFile, projectId);
     state.appCache.clear();
+
     const v = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
     expect(paramNames(v)).toEqual(["Mode=0", "Label=hello"]);
     // The fallback backfilled the catalog so the next read hits the DB.
     expect((state.db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
+  });
+
+  test("import writes no project files (DB is self-contained for app programs)", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    expect(existsSync(join(state.dataDir, "projects", projectId))).toBe(false);
+  });
+
+  test("catalog GC on delete keeps shared entries, drops orphaned ones", async () => {
+    const state = freshState();
+    const a = await importConfig(state);
+    const b = await importConfig(state); // same fixture -> same catalog id, shared
+    expect((state.db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
+
+    await handleApi(req(`/api/projects/${a.projectId}`, { method: "DELETE" }), state);
+    expect((state.db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1); // still used by b
+
+    await handleApi(req(`/api/projects/${b.projectId}`, { method: "DELETE" }), state);
+    expect((state.db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(0); // orphan removed
+  });
+
+  test("baggage: serves DB blobs for the device, and a deleted project cascades", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    // Seed baggage as the importer would (slash-flattened, device-id prefixed).
+    state.db.query("INSERT INTO device_baggage (project_id, name, data) VALUES (?, ?, ?)")
+      .run(projectId, `${deviceId}_Dalie64.bin`, Buffer.from("hello"));
+    state.db.query("INSERT INTO device_baggage (project_id, name, data) VALUES (?, ?, ?)")
+      .run(projectId, "OTHER_x.bin", Buffer.from("nope"));
+
+    const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/baggage`), state);
+    const out = (await res!.json()) as Record<string, string>;
+    expect(Object.keys(out)).toEqual([`${deviceId}_Dalie64.bin`]);     // only this device's blob
+    expect(Buffer.from(out[`${deviceId}_Dalie64.bin`], "base64").toString()).toBe("hello");
+
+    await handleApi(req(`/api/projects/${projectId}`, { method: "DELETE" }), state);
+    expect((state.db.query("SELECT COUNT(*) AS n FROM device_baggage").get() as any).n).toBe(0); // cascaded
+  });
+
+  test("baggage falls back to the on-disk store for legacy projects", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state); // fixture has no baggage -> none in the DB
+    // Simulate a project imported before DB baggage: blobs only on disk.
+    const bagDir = join(state.dataDir, "projects", projectId, "baggage");
+    mkdirSync(bagDir, { recursive: true });
+    writeFileSync(join(bagDir, `${deviceId}_Dalie64.bin`), Buffer.from("legacy"));
+
+    const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/baggage`), state);
+    const out = (await res!.json()) as Record<string, string>;
+    expect(Object.keys(out)).toEqual([`${deviceId}_Dalie64.bin`]);
+    expect(Buffer.from(out[`${deviceId}_Dalie64.bin`], "base64").toString()).toBe("legacy");
   });
 });

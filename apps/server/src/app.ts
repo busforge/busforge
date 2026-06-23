@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { loadKnxproj, readAppProgram, extractAppPrograms, appProgramId, readBaggage } from "@busforge/project";
@@ -8,7 +8,8 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
-import { putAppProgram, getAppProgram } from "./db/catalog.ts";
+import { putAppProgram, getAppProgram, gcAppPrograms } from "./db/catalog.ts";
+import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
@@ -77,34 +78,22 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
 
       const id = randomUUID();
-      const dir = join(state.dataDir, "projects", id);
-      mkdirSync(dir, { recursive: true });
-      const sourceFile = join(dir, "original.knxproj");
-      writeFileSync(sourceFile, bytes);
-      // Persist DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's
-      // backup-store) so native DCA-replacement modules can read it later. The
-      // inner zip is only decryptable here, with the import password in hand.
-      try {
-        const baggage = readBaggage(bytes, password);
-        if (baggage.size > 0) {
-          const bagDir = join(dir, "baggage");
-          mkdirSync(bagDir, { recursive: true });
-          for (const [bname, buf] of baggage) writeFileSync(join(bagDir, bname.replace(/[/\\]/g, "__")), buf);
-        }
-      } catch { /* baggage is best-effort; never block an import on it */ }
-      try {
-        // Project rows and the shared catalog populate atomically: a failure in
-        // either rolls back both, so we never leave project rows whose dir/file the
-        // catch below has already removed. (Populating the catalog from the DB-side
-        // is what lets config/flash/read-back read app programs from the DB.)
-        db.transaction(() => {
-          insertProject(db, id, project, sourceFile, state.now());
-          for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
-        })();
-      } catch (e) {
-        rmSync(dir, { recursive: true, force: true }); // don't leave an orphan dir behind
-        throw e;
-      }
+      // DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's backup-store):
+      // the inner zip is only decryptable here, with the import password in hand.
+      // Best-effort; never block an import on it. Flattened name keeps the device-id
+      // prefix the baggage endpoint filters on.
+      let baggage = new Map<string, Buffer>();
+      try { baggage = readBaggage(bytes, password); } catch { /* best-effort */ }
+
+      // Everything is stored in the DB; no project files are written at import. The
+      // raw .knxproj is not kept (app programs live in the catalog, baggage in the
+      // DB), so an import is one atomic transaction with nothing to clean up on
+      // failure. source_file is left empty (only legacy projects have a file).
+      db.transaction(() => {
+        insertProject(db, id, project, "", state.now());
+        for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
+        for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
+      })();
       return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length });
     }
 
@@ -118,7 +107,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 3 && req.method === "DELETE") {
       if (!deleteProject(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
       if (bus.activeProjectId === id) await bus.disconnect();
-      rmSync(join(state.dataDir, "projects", id), { recursive: true, force: true });
+      gcAppPrograms(db); // drop catalog entries no longer referenced by any project
+      rmSync(join(state.dataDir, "projects", id), { recursive: true, force: true }); // legacy file store + flash backups
       return json({ ok: true });
     }
 
@@ -167,6 +157,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // device (base64), consumed by native DCA-replacement modules.
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "baggage" && req.method === "GET") {
       const deviceId = decodeURIComponent(seg[4]);
+      // DB is authoritative for projects imported with DB baggage; fall back to the
+      // on-disk store only for legacy projects that have no baggage rows at all.
+      if (projectHasBaggage(db, id)) return json(getDeviceBaggage(db, id, deviceId));
       const bagDir = join(state.dataDir, "projects", id, "baggage");
       const out: Record<string, string> = {};
       if (existsSync(bagDir)) {

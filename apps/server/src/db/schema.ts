@@ -149,6 +149,18 @@ const MIGRATIONS: string[] = [
     xml TEXT NOT NULL
   );
   `,
+  // DCA baggage (BinaryData/UserFiles from the inner archive, e.g. a DALI
+  // gateway's backup-store) moved off disk into the DB, so the project dir is no
+  // longer an import-time store. Per project, keyed by the (slash-flattened)
+  // baggage name; a device's blobs are those whose name starts with its id.
+  `
+  CREATE TABLE device_baggage (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    PRIMARY KEY (project_id, name)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { appProgramId } from "@busforge/project";
 
 // Catalog layer: manufacturer application programs, keyed by application-program
 // id (the value of appProgramId(appRef)). Global and shared across projects; a
@@ -16,4 +17,18 @@ export function putAppProgram(db: Database, id: string, xml: string): void {
 export function getAppProgram(db: Database, id: string): string | null {
   const r = db.query("SELECT xml FROM app_programs WHERE id = ?").get(id) as { xml: string } | null;
   return r?.xml ?? null;
+}
+
+// Drop catalog entries no longer referenced by any device (ref-counting GC, run
+// after a project is deleted). The reference key is appProgramId(appRef), which is
+// a code mapping, so the live set is computed in JS rather than SQL. Returns the
+// number of removed entries.
+export function gcAppPrograms(db: Database): number {
+  const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices").all() as { appRef: string }[];
+  const live = new Set(refs.map((r) => appProgramId(r.appRef)));
+  const ids = db.query("SELECT id FROM app_programs").all() as { id: string }[];
+  const del = db.prepare("DELETE FROM app_programs WHERE id = ?");
+  let n = 0;
+  db.transaction(() => { for (const { id } of ids) if (!live.has(id)) { del.run(id); n++; } })();
+  return n;
 }
