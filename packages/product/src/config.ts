@@ -120,6 +120,10 @@ export function buildDeviceConfig(
   };
   const subst = (text: string, scope: Scope): string =>
     text.replace(/\{\{([^}]+)\}\}/g, (m, k) => scope.textArgs.get(k) ?? m);
+  // Tidy a display label: normalize newlines, drop the manufacturer's leading/
+  // trailing whitespace (often a faux-indent), and upper-case the first letter in
+  // the catalogue's language (some texts are authored lower-case).
+  const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
   const selectWhen = (defParamRefId: string, whens: DynWhen[], scope: Scope): DynWhen | undefined => {
     const v = Number(resolve(defParamRefId, scope) ?? 0);
@@ -137,7 +141,7 @@ export function buildDeviceConfig(
     if (access === "None") return null;
     const type = app.types.get(param.typeId);
     const value = resolve(defRefId, scope) ?? "";
-    const name = subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope);
+    const name = cap(subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope));
     const suffix = param.suffix ? subst(tr(param.id, "SuffixText", param.suffix), scope) : undefined;
     // TypeNone is a display-only element (no datapoint). A nameless one is a pure
     // ETS layout spacer with nothing to show or support; drop only that case. A
@@ -257,7 +261,7 @@ export function buildDeviceConfig(
           if (items.length) {
             let name = blockTitle(n, scope);
             if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
-            const node: Node = { block: { id: scope.rewrite(n.id), name, items, level: 0 }, order: headOrder(n), seq: seq++, children: [] };
+            const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0 }, order: headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children);
           } else {
@@ -272,7 +276,7 @@ export function buildDeviceConfig(
           // (ChannelIndependentBlock, Repeat, generic Channel) stays transparent.
           const heading = n.text.trim();
           if (heading) {
-            let name = subst(n.text, scope).replace(/\{\{0\}\}/g, (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? "");
+            const name = cap(subst(n.text, scope).replace(/\{\{0\}\}/g, (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? ""));
             const node: Node = { block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: n.number ? Number(n.number) : 0, seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children);

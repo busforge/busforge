@@ -349,14 +349,16 @@ export function DeviceConfig() {
             </nav>
           )}
 
-          <div ref={containerRef} className="min-w-0 flex-1 space-y-4">
+          <div ref={containerRef} className="min-w-0 flex-1 space-y-6">
             {groups.map((g) => (
-              <Card key={g.head.id} id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="scroll-mt-20">
-                <CardContent className="space-y-0.5 py-4">
-                  <h3 className="mb-3 flex items-center gap-2 border-b border-border/60 pb-2 text-base font-semibold text-foreground">
-                    <span className="min-w-0 truncate">{g.head.name}</span>
-                    {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
-                  </h3>
+              // Section heading sits ABOVE the card so each channel/group start is clear.
+              <section key={g.head.id} className="space-y-2">
+                <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-20 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                  <span className="min-w-0 truncate">{g.head.name}</span>
+                  {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                </h2>
+                <Card>
+                  <CardContent className="space-y-0.5 py-4">
                   {g.head.items.map((item: CfgItem, i: number) => renderItem(item, i))}
                   {g.children.map((child: CfgBlock) => {
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
@@ -375,8 +377,9 @@ export function DeviceConfig() {
                       </section>
                     );
                   })}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </section>
             ))}
           </div>
         </div>
@@ -407,7 +410,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
     >
       <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
         {param.changed ? <ChangedDot title={changedTitle} /> : null}
-        <span className="min-w-0">{param.name}</span>
+        <span className="min-w-0 whitespace-pre-line">{param.name}</span>
       </span>
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
       <div className={cn("flex shrink-0 items-center gap-2", CONTROL_W)}>
