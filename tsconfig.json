@@ -11,5 +11,5 @@
     "noEmit": true,
     "verbatimModuleSyntax": true
   },
-  "exclude": ["node_modules", "apps/web", "reference"]
+  "exclude": ["node_modules", "apps/web", "plugins", "reference"]
 }

@@ -29,7 +29,9 @@ export type CfgItem =
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
 // Set when the device is configured via a manufacturer ETS DCA app (Windows-only
 // plugin); its proprietary config is not shown/editable here, standard params are.
-export interface DcaInfo { hint: string }
+// `module` is present when busforge ships a native replacement for that DCA.
+export interface DcaModuleInfo { id: string; displayName: string; category: string; compatible: boolean; deviceVersion: number; supportedVersions: number[] }
+export interface DcaInfo { hint: string; module?: DcaModuleInfo }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
 export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 
@@ -89,6 +91,10 @@ export const api = {
 
   deviceConfig: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/config${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  // DCA config blobs for a device (name -> base64), consumed by native DCA modules.
+  deviceBaggage: (id: string, deviceId: string): Promise<Record<string, string>> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/baggage`).then((r) => jsonOrThrow<Record<string, string>>(r)),
   setDeviceParam: (id: string, deviceId: string, paramRefId: string, value: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/params`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId, value, lang }),

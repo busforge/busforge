@@ -1,8 +1,8 @@
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { loadKnxproj, readAppProgram } from "@busforge/project";
+import { loadKnxproj, readAppProgram, readBaggage } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
@@ -12,6 +12,7 @@ import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, g
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
+import { resolveDcaModule } from "./dca.ts";
 
 export interface AppState {
   db: Database;
@@ -75,6 +76,17 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       mkdirSync(dir, { recursive: true });
       const sourceFile = join(dir, "original.knxproj");
       writeFileSync(sourceFile, bytes);
+      // Persist DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's
+      // backup-store) so native DCA-replacement modules can read it later. The
+      // inner zip is only decryptable here, with the import password in hand.
+      try {
+        const baggage = readBaggage(bytes, password);
+        if (baggage.size > 0) {
+          const bagDir = join(dir, "baggage");
+          mkdirSync(bagDir, { recursive: true });
+          for (const [bname, buf] of baggage) writeFileSync(join(bagDir, bname.replace(/[/\\]/g, "__")), buf);
+        }
+      } catch { /* baggage is best-effort; never block an import on it */ }
       try {
         insertProject(db, id, project, sourceFile, state.now());
       } catch (e) {
@@ -115,6 +127,19 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/devices/:deviceId/config?lang=
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {
       return deviceConfig(state, id, decodeURIComponent(seg[4]), url.searchParams.get("lang") ?? undefined);
+    }
+    // /api/projects/:id/devices/:deviceId/baggage  -> DCA config blobs for this
+    // device (base64), consumed by native DCA-replacement modules.
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "baggage" && req.method === "GET") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const bagDir = join(state.dataDir, "projects", id, "baggage");
+      const out: Record<string, string> = {};
+      if (existsSync(bagDir)) {
+        for (const f of readdirSync(bagDir)) {
+          if (f.startsWith(`${deviceId}_`)) out[f] = readFileSync(join(bagDir, f)).toString("base64");
+        }
+      }
+      return json(out);
     }
     // /api/projects/:id/devices/:deviceId/params
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "params" && req.method === "PUT") {
@@ -334,6 +359,9 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   const app = loadApp(state, projectId, deviceId);
   if (!app) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
+  // Offer a native DCA-replacement module if one matches this app program.
+  const module = resolveDcaModule(app.id, app.appVersion);
+  if (module) view.dca = { ...(view.dca ?? { hint: "" }), module };
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   for (const b of view.blocks) for (const it of b.items) {

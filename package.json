@@ -2,12 +2,12 @@
   "name": "busforge",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
+  "workspaces": ["packages/*", "apps/*", "plugins/*"],
   "scripts": {
     "knx": "bun run packages/knx/src/cli.ts",
     "dev:server": "bun run --cwd apps/server dev",
     "dev:web": "bun run --cwd apps/web dev",
-    "test": "bun test packages apps/server",
+    "test": "bun test packages apps/server plugins",
     "typecheck": "tsc --noEmit",
     "build:web": "bun run --cwd apps/web build",
     "check": "bun run typecheck && bun run test && bun run build:web"

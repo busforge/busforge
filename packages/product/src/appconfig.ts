@@ -61,11 +61,26 @@ export interface ModuleInstance { id: string; refId: string; args: { refId: stri
 // run that plugin or read its proprietary config; we only flag it so the gap is
 // explicit. The standard parameters below the notice are still editable and safe
 // to program (the DCA's config lives in separate interface objects we never touch).
-export interface DcaInfo { hint: string }
+export interface DcaInfo { hint: string; module?: DcaModuleInfo }
+
+// A busforge-native module that re-implements a specific DCA, resolved for this
+// device by the server's module registry. `compatible` is false when the module
+// exists but does not declare this device's application version as supported, in
+// which case the UI offers it "at your own risk". Filled in server-side; the
+// product layer only carries the type.
+export interface DcaModuleInfo {
+  id: string;
+  displayName: string;
+  category: string;          // generic kind, e.g. "DALI configuration"
+  compatible: boolean;
+  deviceVersion: number;     // this device's ETS ApplicationVersion
+  supportedVersions: number[]; // versions the module declares it was built for
+}
 
 export interface AppConfig {
   id: string;
   mask: string;
+  appVersion: number;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -159,6 +174,7 @@ export function parseAppConfig(xml: string): AppConfig {
   return {
     id: appAttrs.Id,
     mask: appAttrs.MaskVersion ?? "",
+    appVersion: Number(appAttrs.ApplicationVersion ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules, dca,

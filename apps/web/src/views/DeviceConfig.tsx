@@ -19,6 +19,7 @@ import {
 import { FlashDialog } from "./FlashDialog.tsx";
 import { GaCombobox, type GaOption } from "./GaCombobox.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
+import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -349,13 +350,17 @@ export function DeviceConfig() {
       </AlertDialog>
 
       {view?.dca && (
-        <div className="flex items-start gap-2 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-700 dark:text-sky-300" data-testid="dca-notice">
-          <Puzzle className="mt-0.5 size-4 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-medium">{t("device.dcaTitle")}</p>
-            <p className="text-sky-700/90 dark:text-sky-300/90">{t("device.dcaBody")}</p>
-            {view.dca.hint && <p className="text-xs text-sky-700/70 dark:text-sky-300/70">{view.dca.hint}</p>}
-          </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300" data-testid="dca-notice">
+          <Puzzle className="size-4 shrink-0" />
+          <span className="font-medium">{view.dca.module ? view.dca.module.category : t("device.dcaTitle")}</span>
+          {view.dca.module && (
+            <span className="text-xs text-sky-700/70 dark:text-sky-300/70">
+              {view.dca.module.displayName} · {t("dca.version", { version: view.dca.module.deviceVersion })}
+            </span>
+          )}
+          {view.dca.module && (
+            <span className="ml-auto"><DcaModuleDialog projectId={projectId} deviceId={deviceId} module={view.dca.module} /></span>
+          )}
         </div>
       )}
 

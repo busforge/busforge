@@ -8,6 +8,7 @@
     "start": "bun run src/index.ts"
   },
   "dependencies": {
+    "@busforge/dca-theben-dali-e64": "*",
     "@busforge/knx": "*",
     "@busforge/product": "*",
     "@busforge/project": "*"

@@ -10,33 +10,32 @@ function deriveWinzipPassword(password: string): string {
   return pbkdf2Sync(Buffer.from(password, "utf16le"), Buffer.from("21.project.ets.knx.org"), 65536, 32, "sha256").toString("base64");
 }
 
+// Resolve the inner project archive ("P-XXXX.zip" at the root of the outer zip),
+// decrypting with the project password when it is encrypted. Returns undefined
+// for an unencrypted export that has no inner archive (0.xml sits in the outer
+// zip). Shared by loadKnxproj and readBaggage so the decrypt fallback lives once.
+function resolveInner(outer: Map<string, Buffer>, password: string | undefined): Map<string, Buffer> | undefined {
+  const innerName = [...outer.keys()].find((n) => /(^|\/)P-[^/]+\.zip$/.test(n));
+  if (!innerName) return undefined;
+  const innerBuf = outer.get(innerName)!;
+  try {
+    return readZip(innerBuf); // unencrypted inner (rare, but possible)
+  } catch {
+    if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
+    return readZip(innerBuf, deriveWinzipPassword(password));
+  }
+}
+
 // Load a .knxproj: unzip the outer archive, decrypt the inner P-XXXX.zip if
 // password-protected, and parse 0.xml into the project view-model.
 export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbackName: string): Project {
   const outer = readZip(bytes);
+  const inner = resolveInner(outer, password);
 
-  // Inner project archive: "P-XXXX.zip" at the root of the outer zip.
-  const innerName = [...outer.keys()].find((n) => /(^|\/)P-[^/]+\.zip$/.test(n));
-
-  let xml0: string;
-  let projectXml: string | undefined;
-
-  if (innerName) {
-    const innerBuf = outer.get(innerName)!;
-    let inner: Map<string, Buffer>;
-    try {
-      inner = readZip(innerBuf); // unencrypted inner (rare, but possible)
-    } catch (e) {
-      if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
-      inner = readZip(innerBuf, deriveWinzipPassword(password));
-    }
-    xml0 = textOf(inner, "0.xml");
-    projectXml = tryTextOf(inner, "project.xml") ?? tryTextOf(outer, "project.xml");
-  } else {
-    // Unencrypted export: 0.xml sits directly in the outer zip under P-XXXX/.
-    xml0 = textOf(outer, "0.xml");
-    projectXml = tryTextOf(outer, "project.xml");
-  }
+  // Encrypted/normal export keeps 0.xml in the inner archive; an unencrypted
+  // export keeps it directly in the outer zip under P-XXXX/.
+  const xml0 = inner ? textOf(inner, "0.xml") : textOf(outer, "0.xml");
+  const projectXml = (inner && tryTextOf(inner, "project.xml")) ?? tryTextOf(outer, "project.xml");
 
   return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer));
 }
@@ -69,6 +68,21 @@ function textOf(files: Map<string, Buffer>, suffix: string): string {
   const t = tryTextOf(files, suffix);
   if (t === undefined) throw new KnxprojError("INVALID_KNXPROJ", `${suffix} not found in archive`);
   return t;
+}
+
+// Extract the project's "baggage": the BinaryData/ and UserFiles/ entries from the
+// inner archive. BinaryData holds DCA configuration blobs (e.g. a DALI gateway's
+// backup-store); UserFiles holds bundled ETS apps. Returned keyed by basename
+// (the leading "BinaryData/"/"UserFiles/" folder is dropped). Empty when absent.
+export function readBaggage(bytes: Buffer, password: string | undefined): Map<string, Buffer> {
+  const inner = resolveInner(readZip(bytes), password);
+  const out = new Map<string, Buffer>();
+  if (!inner) return out;
+  for (const [name, buf] of inner) {
+    const m = /(?:^|\/)(?:BinaryData|UserFiles)\/(.+)$/.exec(name);
+    if (m && buf.length > 0) out.set(m[1], buf);
+  }
+  return out;
 }
 
 // Hardware2ProgramRefId -> ApplicationProgram id.
