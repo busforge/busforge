@@ -465,7 +465,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
             type="number" value={local} min={param.min} max={param.max} step={param.step}
             onChange={(e) => setLocal(e.target.value)}
             onBlur={commitNumber}
-            onKeyDown={(e) => { if (e.key === "Enter") commitNumber(); }}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : param.control === "text" ? (
