@@ -110,8 +110,10 @@ describe("module instantiation", () => {
       { id: "MD-1_M-1_MI-2", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "B" }, { refId: "MD-1_A-2", value: "20" }] },
     ];
     const v = buildDeviceConfig(moduleApp, new Map(), undefined, instances);
-    // one block per instance, with {{ChNo}} substituted
-    expect(v.blocks.map((b) => b.name)).toEqual(["Channel A", "Channel B"]);
+    // The <Channel Text="Channels"> heading becomes a navigable section (level 0)
+    // and the two module instances are its sub-blocks (level 1), {{ChNo}} substituted.
+    expect(v.blocks.map((b) => b.name)).toEqual(["Channels", "Channel A", "Channel B"]);
+    expect(v.blocks.map((b) => b.level)).toEqual([0, 1, 1]);
     // param ids are rewritten to the instance-scoped form
     const ps = params(v);
     expect(ps.map((p) => p.param.refId)).toEqual(["M-TEST_A-2_MD-1_M-1_MI-1_P-1_R-1", "M-TEST_A-2_MD-1_M-1_MI-2_P-1_R-1"]);

@@ -265,7 +265,22 @@ export function buildDeviceConfig(
           }
           break;
         }
-        case "container": walk(n.children, scope, into); break;
+        case "container": {
+          // A Channel with a heading text becomes a navigable section (e.g.
+          // "GRUNDMODUL {{0}}" -> "Basic module HMG 6 T"); {{0}} is the channel's
+          // TextParameterRefId value, else its Number. A text-less container
+          // (ChannelIndependentBlock, Repeat, generic Channel) stays transparent.
+          const heading = n.text.trim();
+          if (heading) {
+            let name = subst(n.text, scope).replace(/\{\{0\}\}/g, (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? "");
+            const node: Node = { block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: n.number ? Number(n.number) : 0, seq: seq++, children: [] };
+            into.push(node);
+            walk(n.children, scope, node.children);
+          } else {
+            walk(n.children, scope, into);
+          }
+          break;
+        }
         case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) walk(w.children, scope, into); break; }
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into); break; }
         default: break;

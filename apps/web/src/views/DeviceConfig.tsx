@@ -316,21 +316,32 @@ export function DeviceConfig() {
             <nav className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
               <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
                 {groups.map((g) => {
-                  const headId = `sec-${g.head.id}`;
-                  const active = activeSec === headId;
-                  return (
-                    <li key={g.head.id}>
+                  // Sidebar shows the group head plus its direct (level-1) blocks;
+                  // deeper sub-blocks are reached by scrolling. Active = neutral
+                  // fill + left bar; the amber dot is reserved for "has changes".
+                  const navBtn = (id: string, label: string, sub: boolean, changed: boolean) => {
+                    const active = activeSec === id;
+                    return (
                       <button
-                        type="button" onClick={() => scrollToSec(headId)}
+                        key={id} type="button" onClick={() => scrollToSec(id)}
                         className={cn(
-                          // Active = neutral fill + left bar; the amber dot (right) is reserved for "has changes".
-                          "flex w-full items-center gap-2 whitespace-nowrap rounded border-l-2 px-2 py-1 text-left text-sm transition-colors lg:truncate",
-                          active ? "border-foreground/50 bg-secondary font-medium text-foreground" : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                          "flex w-full items-center gap-2 whitespace-nowrap rounded border-l-2 py-1 pr-2 text-left text-sm transition-colors lg:truncate",
+                          sub ? "pl-5" : "pl-2",
+                          active ? "border-foreground/50 bg-secondary font-medium text-foreground"
+                            : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                            : "border-transparent font-medium text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
                         )}
                       >
-                        <span className="truncate">{g.head.name}</span>
-                        {groupChanged(g) && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                        <span className="truncate">{label}</span>
+                        {changed && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                       </button>
+                    );
+                  };
+                  return (
+                    <li key={g.head.id} className="lg:contents">
+                      {navBtn(`sec-${g.head.id}`, g.head.name, false, groupChanged(g))}
+                      {g.children.filter((c) => c.level === 1).map((c) =>
+                        navBtn(`sec-${c.id}`, c.name, true, c.items.some(isItemChanged)))}
                     </li>
                   );
                 })}
@@ -347,12 +358,23 @@ export function DeviceConfig() {
                     {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                   </h3>
                   {g.head.items.map((item: CfgItem, i: number) => renderItem(item, i))}
-                  {g.children.map((child: CfgBlock) => (
-                    <section key={child.id} className="pt-3">
-                      <h4 className="mt-2 mb-2 border-l-2 border-foreground/25 pl-2 text-sm font-semibold text-foreground">{child.name}</h4>
-                      {child.items.map((item: CfgItem, i: number) => renderItem(item, `${child.id}-${i}`))}
-                    </section>
-                  ))}
+                  {g.children.map((child: CfgBlock) => {
+                    const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
+                    return (
+                      <section
+                        key={child.id} id={`sec-${child.id}`}
+                        ref={child.level === 1 ? registerRef(`sec-${child.id}`) : undefined}
+                        className={cn("scroll-mt-20 pt-3", deep && "pl-3")}
+                      >
+                        <h4 className={cn("mt-2 mb-2 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold",
+                          deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
+                          <span className="min-w-0 truncate">{child.name}</span>
+                          {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                        </h4>
+                        {child.items.map((item: CfgItem, i: number) => renderItem(item, `${child.id}-${i}`))}
+                      </section>
+                    );
+                  })}
                 </CardContent>
               </Card>
             ))}

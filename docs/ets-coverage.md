@@ -57,7 +57,7 @@ HIGH impact (changes what is shown, the order, visibility, or numbering):
 | ParameterRef (block heading) | `DisplayOrder` | **fixed** | blocks now ordered by it, not document order |
 | Enumeration | `DisplayOrder` (2435×) | open | dropdown options shown in document order, not ETS order |
 | ParameterRef / ParameterRefRef (rows) | `DisplayOrder` / `IndentLevel` (904×) | open | rows inside a block not ordered/indented like ETS |
-| `<Channel>` | heading `Text`/`Number`/`TextParameterRefId` (99×) | open | channel section titles (e.g. "GRUNDMODUL {{0}}") dropped entirely |
+| `<Channel>` | heading `Text`/`Number`/`TextParameterRefId` (99×) | **fixed** | channel sections now shown as navigable groups with `{{0}}` substituted |
 | ParameterBlock | `Access="None"`/`Read` (29×) | open | we render blocks ETS hides |
 | ParameterBlock | `ShowInComObjectTree` (263×) | open | com-object grouping signal ignored |
 | ComObject | `ReadOnInitFlag` (2204×) | open | the 6th flag missing on every object (we show only R/W/C/T/U) |
@@ -95,7 +95,7 @@ but unread) so a new ignored attribute is found by us, not by the user.
 | Repeat | full | transparent container; expands via module instances |
 | Assign / Union / TextParameterRefId substitution | full | |
 | ChannelIndependentBlock | full | transparent container |
-| Channel | partial | container works, the channel's heading/label is dropped |
+| Channel | full | heading shown as a navigable section (Text + `{{0}}` substitution) |
 | Unknown / vendor element | surfaced | emitted as an `unsupported` marker (no longer silent) |
 
 ## Parameter type coverage

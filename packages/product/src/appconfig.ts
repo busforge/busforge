@@ -33,7 +33,7 @@ export interface CfgComObjectRef {
 
 export type DynNode =
   | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; children: DynNode[] }
-  | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
+  | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "unsupported"; tag: string }
   | { kind: "paramRef"; refId: string }
@@ -276,7 +276,7 @@ function parseDyn(n: ONode): DynNode | null {
     // instance lookup expand each one; without this the whole repeated block (a
     // large part of channel devices) silently disappears.
     case "Repeat":
-      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
       return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, access: a.Access, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterSeparator":
