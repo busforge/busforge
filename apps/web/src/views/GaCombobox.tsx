@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
+import { GaLabel } from "@/components/GaLabel.tsx";
 import { cn } from "@/lib/utils";
 
 export interface GaOption { raw: number; address: string; name: string; }
@@ -23,8 +24,8 @@ export function GaCombobox({ options, value, onChange, testId }: {
   // Until then render just the light trigger button.
   const [active, setActive] = useState(false);
   const sel = options.find((o) => o.raw === value);
-  const triggerClass = cn("h-9 w-full justify-between font-mono text-xs font-normal", !sel && "border-dashed text-muted-foreground");
-  const label = <><span className="truncate">{sel ? `${sel.address} ${sel.name}` : t("ga.assign")}</span><ChevronsUpDown className="size-3.5 shrink-0 opacity-50" /></>;
+  const triggerClass = cn("h-9 w-full justify-between font-normal", !sel && "border-dashed font-mono text-xs text-muted-foreground");
+  const label = <>{sel ? <GaLabel name={sel.name} address={sel.address} className="min-w-0" /> : <span className="truncate">{t("ga.assign")}</span>}<ChevronsUpDown className="size-3.5 shrink-0 opacity-50" /></>;
 
   if (!active) {
     return (
@@ -55,9 +56,8 @@ export function GaCombobox({ options, value, onChange, testId }: {
               )}
               {options.map((o) => (
                 <CommandItem key={o.raw} value={`${o.address} ${o.name}`} onSelect={() => { onChange(o.raw); setOpen(false); }} className="gap-2">
-                  <Check className={cn("size-3.5", o.raw === value ? "opacity-100" : "opacity-0")} />
-                  <span className="w-16 shrink-0 font-mono text-primary">{o.address}</span>
-                  <span className="truncate">{o.name}</span>
+                  <Check className={cn("size-3.5 shrink-0", o.raw === value ? "opacity-100" : "opacity-0")} />
+                  <GaLabel name={o.name} address={o.address} className="min-w-0" />
                 </CommandItem>
               ))}
             </CommandGroup>

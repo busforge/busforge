@@ -53,7 +53,15 @@ const deviceRoute = createRoute({
     changed: s.changed === true || s.changed === "true" ? true : undefined,
   }),
 });
-const groupsRoute = createRoute({ getParentRoute: () => projectRoute, path: "groups", component: GroupAddressesView });
+// Group-address filter text lives in the URL so it survives back/forward and reload.
+const groupsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "groups",
+  component: GroupAddressesView,
+  validateSearch: (s: Record<string, unknown>): { q?: string } => ({
+    q: typeof s.q === "string" && s.q ? s.q : undefined,
+  }),
+});
 const monitorRoute = createRoute({ getParentRoute: () => projectRoute, path: "monitor", component: MonitorView });
 const interfaceRoute = createRoute({ getParentRoute: () => projectRoute, path: "interface", component: InterfaceView });
 

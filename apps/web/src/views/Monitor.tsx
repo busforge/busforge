@@ -60,6 +60,8 @@ export function MonitorView() {
 
   // `rows` is chronological (oldest first); flip for display when newest-first.
   const displayRows = useMemo(() => (newestFirst ? [...rows].reverse() : rows), [rows, newestFirst]);
+  // Hoisted because `t` is shadowed by the telegram variable inside the row maps.
+  const unknownLabel = t("common.unknown");
 
   // Seed from the recorded history once it loads (and when switching projects);
   // live telegrams below append onto this.
@@ -125,9 +127,9 @@ export function MonitorView() {
                 return (
                   <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
                     <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted-foreground">{time(t.ts)}</td>
-                    <td className="px-3 py-1.5"><DeviceLabel name={srcName} ia={t.src} placeholder={false} className="max-w-48" /></td>
+                    <td className="px-3 py-1.5"><DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="max-w-48" /></td>
                     <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
-                    <td className="px-3 py-1.5"><GaLabel name={ga?.name} address={t.dst} placeholder={false} className="max-w-56" /></td>
+                    <td className="px-3 py-1.5"><GaLabel name={ga?.name} address={t.dst} fallback={unknownLabel} className="max-w-56" /></td>
                     <td className="px-3 py-1.5 font-mono text-foreground" title={`0x${t.raw}`}>{value}</td>
                   </tr>
                 );
@@ -145,10 +147,10 @@ export function MonitorView() {
                 <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <DeviceLabel name={srcName} ia={t.src} placeholder={false} className="text-sm" />
+                      <DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="text-sm" />
                       <KindChip kind={t.kind} />
                     </div>
-                    <GaLabel name={ga?.name} address={t.dst} placeholder={false} className="text-xs" />
+                    <GaLabel name={ga?.name} address={t.dst} fallback={unknownLabel} className="text-xs" />
                     <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · {t.src} → {t.dst}</div>
                   </div>
                   <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>
