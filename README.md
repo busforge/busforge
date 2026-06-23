@@ -249,7 +249,7 @@ Busforge is **source-available under the
   noncommercial license.
 
 If you want to use Busforge commercially, or license parts of it for your own
-product, reach out via the [project page](https://github.com/busforge/busforge).
+product, reach out via the [project homepage](https://fohlmeister.com).
 
 The full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeister.
 
