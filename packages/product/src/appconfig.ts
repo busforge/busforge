@@ -266,6 +266,12 @@ function parseDyn(n: ONode): DynNode | null {
   switch (tag) {
     case "ChannelIndependentBlock":
     case "Channel":
+    // A Repeat wraps a Module that is replicated once per channel (e.g. the six
+    // HMG heating channels). The actual instances and their args come from the
+    // device's 0.xml, so treat Repeat as transparent and let the Module case +
+    // instance lookup expand each one; without this the whole repeated block (a
+    // large part of channel devices) silently disappears.
+    case "Repeat":
       return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
       return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };

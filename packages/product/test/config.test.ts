@@ -99,6 +99,9 @@ describe("module instantiation", () => {
     expect(moduleApp.comObjects.has("M-TEST_A-2_MD-1_O-1")).toBe(true);
   });
 
+  // The fixture's module sits inside a <Repeat> (how real channel devices, e.g.
+  // the HMG heating channels, declare replication). These tests therefore also
+  // guard that a Repeat is transparent and never swallows its module.
   test("expands each device module instance with rewritten ids, substituted text, and based numbering", () => {
     const instances = [
       { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },

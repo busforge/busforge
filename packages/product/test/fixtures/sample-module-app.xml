@@ -51,7 +51,9 @@
           <Dynamic>
             <ChannelIndependentBlock>
               <Channel Id="M-TEST_A-2_CH-1" Name="ch" Text="Channels" Number="1">
-                <Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />
+                <Repeat Id="M-TEST_A-2_X-1" Name="C" Count="4">
+                  <Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />
+                </Repeat>
               </Channel>
             </ChannelIndependentBlock>
           </Dynamic>
