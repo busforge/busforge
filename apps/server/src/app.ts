@@ -2,12 +2,13 @@ import { join } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { loadKnxproj, readAppProgram, readBaggage } from "@busforge/project";
+import { loadKnxproj, readAppProgram, extractAppPrograms, appProgramId, readBaggage } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
+import { putAppProgram, getAppProgram } from "./db/catalog.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
@@ -23,8 +24,8 @@ export interface AppState {
   // One physical interface, so bus operations (read/flash) run serially through
   // this queue instead of rejecting each other; it also surfaces their progress.
   queue: TaskQueue;
-  // Parsed application programs cached per (sourceFile, appRef); immutable once a
-  // project is imported, so this never needs invalidation within a run.
+  // Parsed application programs cached per application-program id; catalog entries
+  // are immutable manufacturer data, so this never needs invalidation within a run.
   appCache: Map<string, AppConfig>;
 }
 
@@ -71,6 +72,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
       const bytes = Buffer.from(await file.arrayBuffer());
       const project = loadKnxproj(bytes, password, name);
+      // Extract the referenced application programs up front (pure, reads the zip),
+      // so a bad archive fails before anything is written to disk or the DB.
+      const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
 
       const id = randomUUID();
       const dir = join(state.dataDir, "projects", id);
@@ -89,7 +93,14 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         }
       } catch { /* baggage is best-effort; never block an import on it */ }
       try {
-        insertProject(db, id, project, sourceFile, state.now());
+        // Project rows and the shared catalog populate atomically: a failure in
+        // either rolls back both, so we never leave project rows whose dir/file the
+        // catch below has already removed. (Populating the catalog from the DB-side
+        // is what lets config/flash/read-back read app programs from the DB.)
+        db.transaction(() => {
+          insertProject(db, id, project, sourceFile, state.now());
+          for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
+        })();
       } catch (e) {
         rmSync(dir, { recursive: true, force: true }); // don't leave an orphan dir behind
         throw e;
@@ -232,8 +243,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const iface = getInterface(db, id);
       if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
-      const sourceFile = getSourceFile(db, id);
-      if (!sourceFile) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const appXml = resolveAppXml(state, id, dev.appRef);
+      if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
       // Only record drift for refs the device config actually exposes (matches
       // what the UI shows; keeps module devices from flagging flat-model refs).
@@ -244,7 +255,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           // Free the bus so the read holds the only connection-oriented link.
           if (bus.activeProjectId) await bus.disconnect();
           return readDeviceState({
-            ia: dev.ia, appRef: dev.appRef, sourceFile,
+            ia: dev.ia, appXml,
             interfaceIp: iface.interfaceIp, port: iface.port,
             liveParams: getDeviceParams(db, id, deviceId), relevantRefs, onProgress: progress, signal,
           });
@@ -290,8 +301,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const iface = getInterface(db, id);
       if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
-      const sourceFile = getSourceFile(db, id);
-      if (!sourceFile) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const appXml = resolveAppXml(state, id, dev.appRef);
+      if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const dryParams = url.searchParams.get("dry") === "1";
       // Auto restore point of the about-to-be-programmed config (real flash only).
       if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
@@ -301,7 +312,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           // Free the bus so the flash holds the only connection-oriented link.
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceParameters({
-            projectId: id, deviceId, ia: dev.ia, appRef: dev.appRef, sourceFile,
+            projectId: id, deviceId, ia: dev.ia, appXml,
             interfaceIp: iface.interfaceIp, port: iface.port,
             params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
             dryRun: dryParams, onProgress: progress,
@@ -355,16 +366,29 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   }
 }
 
-// Load and cache a device's parsed application program from the stored .knxproj.
+// Resolve a device's application-program XML: from the shared catalog, falling
+// back to the stored .knxproj for projects imported before the catalog existed
+// (and backfilling the catalog so the next read hits the DB). The catalog is
+// keyed by application-program id, so this is shared across devices and projects.
+function resolveAppXml(state: AppState, projectId: string, appRef: string): string | null {
+  const id = appProgramId(appRef);
+  const cached = getAppProgram(state.db, id);
+  if (cached) return cached;
+  const sourceFile = getSourceFile(state.db, projectId);
+  if (!sourceFile || !existsSync(sourceFile)) return null;
+  const xml = readAppProgram(readFileSync(sourceFile), appRef);
+  if (xml) putAppProgram(state.db, id, xml);
+  return xml;
+}
+
+// Load and cache a device's parsed application program from the catalog.
 function loadApp(state: AppState, projectId: string, deviceId: string): AppConfig | null {
   const appRef = getDeviceAppRef(state.db, projectId, deviceId);
   if (!appRef) return null;
-  const sourceFile = getSourceFile(state.db, projectId);
-  if (!sourceFile) return null;
-  const cacheKey = `${sourceFile}::${appRef}`;
+  const cacheKey = appProgramId(appRef); // catalog is global, immutable once stored
   let app = state.appCache.get(cacheKey);
   if (!app) {
-    const xml = readAppProgram(readFileSync(sourceFile), appRef);
+    const xml = resolveAppXml(state, projectId, appRef);
     if (!xml) return null;
     app = parseAppConfig(xml);
     state.appCache.set(cacheKey, app);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../src/zip.ts";
 import { parseProject } from "../src/parse.ts";
-import { loadKnxproj, deriveWinzipPassword } from "../src/knxproj.ts";
+import { loadKnxproj, deriveWinzipPassword, extractAppPrograms, appProgramId } from "../src/knxproj.ts";
 
 const fix = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n));
 const xml0 = readFileSync(join(import.meta.dir, "fixtures", "sample-0.xml"), "utf8");
@@ -88,5 +88,22 @@ describe("loadKnxproj (integration)", () => {
   test("throws a coded error on a wrong password", () => {
     try { loadKnxproj(fix("sample-encrypted.knxproj"), "wrong", "x"); expect.unreachable(); }
     catch (e) { expect((e as { code?: string }).code).toBe("WRONG_PASSWORD"); }
+  });
+});
+
+describe("extractAppPrograms (catalog ingest)", () => {
+  test("maps each device app ref to its application-program XML, deduped", () => {
+    const bytes = fix("sample-config.knxproj");
+    const proj = loadKnxproj(bytes, "tester12", "x");
+    const refs = proj.devices.map((d) => d.appRef);
+    expect(refs).toEqual(["M-TEST_H-1_HP-1"]);
+
+    const programs = extractAppPrograms(bytes, refs);
+    // keyed by application-program id, not the hardware app ref
+    expect([...programs.keys()]).toEqual([appProgramId("M-TEST_H-1_HP-1")]); // "M-TEST_A-1"
+    expect(programs.get("M-TEST_A-1")).toContain("<ApplicationProgram");
+
+    // repeating a ref does not duplicate the entry (reads the zip once)
+    expect(extractAppPrograms(bytes, [...refs, ...refs]).size).toBe(1);
   });
 });

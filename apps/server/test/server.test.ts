@@ -307,4 +307,44 @@ describe("device configuration", () => {
     expect(res!.status).toBe(200);
     expect(await res!.json()).toEqual([]);
   });
+
+  test("import populates the shared app-program catalog", async () => {
+    const state = freshState();
+    await importConfig(state);
+    const rows = state.db.query("SELECT id FROM app_programs").all() as { id: string }[];
+    expect(rows.map((r) => r.id)).toEqual(["M-TEST_A-1"]);
+  });
+
+  test("config reads from the catalog, not the source file", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    // Remove the raw .knxproj: the catalog must be self-sufficient for the config view.
+    rmSync(join(state.dataDir, "projects", projectId), { recursive: true, force: true });
+    const v = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(paramNames(v)).toEqual(["Mode=0", "Label=hello"]);
+  });
+
+  test("config returns 404 APP_PROGRAM_MISSING when the program is in neither catalog nor file", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    state.db.exec("DELETE FROM app_programs");                                   // no catalog entry
+    rmSync(join(state.dataDir, "projects", projectId), { recursive: true, force: true }); // no fallback file
+    state.appCache.clear();
+    const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state);
+    expect(res!.status).toBe(404);
+    expect(((await res!.json()) as any).error.code).toBe("APP_PROGRAM_MISSING");
+  });
+
+  test("falls back to the source file and backfills the catalog (pre-catalog projects)", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    // Simulate a project imported before the catalog existed: drop its catalog row,
+    // clear the in-memory parse cache, and confirm the config still resolves.
+    state.db.exec("DELETE FROM app_programs");
+    state.appCache.clear();
+    const v = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(paramNames(v)).toEqual(["Mode=0", "Label=hello"]);
+    // The fallback backfilled the catalog so the next read hits the DB.
+    expect((state.db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
+  });
 });

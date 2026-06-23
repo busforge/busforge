@@ -138,6 +138,17 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_snapshots_project ON snapshots(project_id, created_at);
   `,
+  // Catalog layer: manufacturer application programs, keyed by application-program
+  // id (appProgramId), stored as the decrypted XML extracted at import. Global and
+  // shared (not project-scoped): many devices and projects reuse one entry. This
+  // moves the only runtime dependency on the raw .knxproj into the DB; the parser
+  // stays the source of truth (we parse the stored XML at runtime, RAM-cached).
+  `
+  CREATE TABLE app_programs (
+    id  TEXT PRIMARY KEY,
+    xml TEXT NOT NULL
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -102,4 +102,20 @@ export function readAppProgram(bytes: Buffer, appRef: string): string | null {
   return key ? new TextDecoder("utf-8").decode(outer.get(key)!) : null;
 }
 
+// Extract every distinct application program referenced by the given device app
+// refs, keyed by application-program id. Reads the outer zip once (unlike calling
+// readAppProgram per device), for populating the catalog at import. App programs
+// sit plaintext in the outer archive, so no password is needed.
+export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Map<string, string> {
+  const outer = readZip(bytes);
+  const out = new Map<string, string>();
+  for (const appRef of appRefs) {
+    const id = appProgramId(appRef);
+    if (out.has(id)) continue;
+    const key = [...outer.keys()].find((n) => n.endsWith(`${id}.xml`));
+    if (key) out.set(id, dec.decode(outer.get(key)!));
+  }
+  return out;
+}
+
 export { deriveWinzipPassword };

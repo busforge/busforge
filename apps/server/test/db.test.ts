@@ -9,6 +9,7 @@ import { insertProject, listProjects, getProject, deleteProject, setInterface } 
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
 import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
+import { putAppProgram, getAppProgram } from "../src/db/catalog.ts";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -234,6 +235,19 @@ describe("projects", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM devices").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM group_addresses").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM telegrams").get()).toMatchObject({ n: 0 });
+  });
+});
+
+describe("catalog (app programs)", () => {
+  test("put then get; put is idempotent and keeps the first XML", () => {
+    const db = fresh();
+    expect(getAppProgram(db, "M-1_A-1")).toBeNull();
+    putAppProgram(db, "M-1_A-1", "<ApplicationProgram>one</ApplicationProgram>");
+    expect(getAppProgram(db, "M-1_A-1")).toContain("one");
+    // INSERT OR IGNORE: a second put for the same id does not overwrite.
+    putAppProgram(db, "M-1_A-1", "<ApplicationProgram>two</ApplicationProgram>");
+    expect(getAppProgram(db, "M-1_A-1")).toContain("one");
+    expect((db.query("SELECT COUNT(*) AS n FROM app_programs").get() as any).n).toBe(1);
   });
 });
 

@@ -1,8 +1,7 @@
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId } from "@busforge/knx";
 import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, type ComObjectLink } from "@busforge/product";
-import { readAppProgram } from "@busforge/project";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -65,8 +64,7 @@ export async function flashDeviceParameters(opts: {
   projectId: string;
   deviceId: string;
   ia: string;
-  appRef: string;
-  sourceFile: string;
+  appXml: string;
   interfaceIp: string;
   port: number;
   params: Map<string, string>;
@@ -74,9 +72,7 @@ export async function flashDeviceParameters(opts: {
   dryRun: boolean;
   onProgress?: ProgressFn;
 }): Promise<FlashResult> {
-  const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
-  if (!xml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
-  const model = parseApplication(xml);
+  const model = parseApplication(opts.appXml);
   // SAFETY: the image builder reads only static parameter refs; it does not yet
   // expand channel/module instances. Any stored value keyed to an instance
   // (…_MI-…) has no matching ref, so it would be silently dropped and that
@@ -229,8 +225,7 @@ export interface DeviceReadback { mask: string; paramBase: Map<string, string>; 
 
 export async function readDeviceState(opts: {
   ia: string;
-  appRef: string;
-  sourceFile: string;
+  appXml: string;
   interfaceIp: string;
   port: number;
   liveParams: Map<string, string>;
@@ -242,9 +237,7 @@ export async function readDeviceState(opts: {
   onProgress?: ProgressFn;
   signal?: AbortSignal;
 }): Promise<DeviceReadback> {
-  const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
-  if (!xml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
-  const model = parseApplication(xml);
+  const model = parseApplication(opts.appXml);
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
   opts.onProgress?.("connect");
