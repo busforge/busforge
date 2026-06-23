@@ -1,12 +1,15 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, X } from "lucide-react";
+import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, X } from "lucide-react";
 import { toast } from "sonner";
 import type { BusStatus, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
-import { qk, useBusStatus, useTasks } from "../queries.ts";
+import { qk, useBusStatus, useProject, useTasks } from "../queries.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { errMsg, localizeError } from "../lib/apiError.ts";
@@ -18,9 +21,10 @@ const dotColor = (s: BusStatus) => (s === "connected" ? "bg-ok" : s === "connect
 const cancellable = (t: Task) => t.state === "queued" || (t.state === "running" && t.kind === "read");
 
 // Combined header widget for the bus: shows the connection status when idle, the
-// running operation (with live progress) when busy, and a popover that lists the
-// connection state plus every queued/recent task. The bus is serialized
-// server-side, so this is the single place the bus's activity is surfaced.
+// running operation (with live progress) when busy, and a popover that holds the
+// interface configuration (IP/port + connect/disconnect) plus every queued/recent
+// task. The bus is serialized server-side, so this is the single place the bus's
+// configuration and activity are surfaced.
 export function TaskIndicator({ projectId }: { projectId: string }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -63,12 +67,9 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
           {queued > 0 && <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">+{queued}</span>}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-2">
-        <div className="flex items-center gap-2 px-1 pb-2 text-xs">
-          <StatusDot status={status} />
-          <span className={cn("font-mono uppercase tracking-wider", status === "connected" ? "text-ok" : "text-muted-foreground")}>{t(`status.${status}`)}</span>
-        </div>
-        <div className="mb-1.5 border-t border-border/60 px-1 pt-2 text-xs font-semibold text-muted-foreground">{t("task.title")}</div>
+      <PopoverContent align="end" className="w-96 p-3">
+        <ConnectionPanel projectId={projectId} status={status} />
+        <div className="mb-1.5 mt-3 border-t border-border/60 px-1 pt-2.5 text-xs font-semibold text-muted-foreground">{t("task.title")}</div>
         {tasks.length === 0 ? (
           <div className="px-1 pb-1 text-xs text-muted-foreground">{t("task.none")}</div>
         ) : (
@@ -76,6 +77,86 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+// Interface configuration + connection control, living at the top of the bus
+// popover. Disconnected: the IP/port fields are editable and the primary button
+// saves them and connects. Connected/connecting: the configured endpoint is shown
+// read-only and the button disconnects. Replaces the former standalone Interface tab.
+function ConnectionPanel({ projectId, status }: { projectId: string; status: BusStatus }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const { data: project } = useProject(projectId);
+
+  const [ip, setIp] = useState("");
+  const [port, setPort] = useState("3671");
+  // Seed the fields once the project loads (and when switching projects).
+  useEffect(() => {
+    if (project) { setIp(project.interface.interfaceIp); setPort(String(project.interface.port)); }
+  }, [project?.id]);
+
+  const refreshStatus = () => qc.invalidateQueries({ queryKey: qk.busStatus(projectId) });
+
+  const connectMut = useMutation({
+    mutationFn: async () => {
+      const saved = await api.saveInterface(projectId, { interfaceIp: ip, port: Number(port) });
+      setIp(saved.interfaceIp); setPort(String(saved.port));
+      qc.invalidateQueries({ queryKey: qk.project(projectId) });
+      return api.busConnect(projectId);
+    },
+    onSuccess: () => { refreshStatus(); toast.success(t("iface.connected")); },
+    onError: (e) => { toast.error(t("iface.connectFailed"), { description: errMsg(t, e) }); refreshStatus(); },
+  });
+  const disconnectMut = useMutation({
+    mutationFn: () => api.busDisconnect(projectId),
+    onSuccess: () => { refreshStatus(); toast.message(t("iface.disconnected")); },
+    onError: (e) => { toast.error(t("iface.disconnectFailed"), { description: errMsg(t, e) }); refreshStatus(); },
+  });
+
+  const connected = status === "connected";
+  const busy = connectMut.isPending || disconnectMut.isPending;
+  const editable = status === "disconnected" && !busy;
+
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-2 px-1">
+        <div className="flex items-center gap-2 text-xs">
+          <StatusDot status={busy && !connected ? "connecting" : status} />
+          <span className={cn("font-mono uppercase tracking-wider", connected ? "text-ok" : "text-muted-foreground")}>
+            {t(`status.${busy && !connected ? "connecting" : status}`)}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => (connected ? disconnectMut.mutate() : connectMut.mutate())}
+          disabled={busy || (!connected && !ip.trim())}
+          variant={connected ? "destructive" : "default"}
+          data-testid="connect"
+        >
+          {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Plug className="size-4" /> : <PlugZap className="size-4" />}
+          {busy ? "…" : connected ? t("iface.disconnect") : t("iface.connect")}
+        </Button>
+      </div>
+
+      {editable ? (
+        <div className="grid grid-cols-3 gap-2 px-1">
+          <div className="col-span-2 space-y-1">
+            <Label className="text-[11px] text-muted-foreground">{t("iface.ipLabel")}</Label>
+            <Input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="198.51.100.10" className="h-8 font-mono text-sm" data-testid="ip" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">{t("iface.portLabel")}</Label>
+            <Input value={port} onChange={(e) => setPort(e.target.value)} className="h-8 font-mono text-sm" />
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 px-1 font-mono text-xs text-muted-foreground">
+          <Network className="size-3.5 shrink-0" />
+          <span className="truncate">{ip || "—"}:{port}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

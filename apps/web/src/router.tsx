@@ -7,7 +7,6 @@ import { DevicesView } from "./views/Devices.tsx";
 import { DeviceConfig } from "./views/DeviceConfig.tsx";
 import { GroupAddressesView } from "./views/GroupAddresses.tsx";
 import { MonitorView } from "./views/Monitor.tsx";
-import { InterfaceView } from "./views/Interface.tsx";
 
 function RootLayout() {
   return (
@@ -63,11 +62,10 @@ const groupsRoute = createRoute({
   }),
 });
 const monitorRoute = createRoute({ getParentRoute: () => projectRoute, path: "monitor", component: MonitorView });
-const interfaceRoute = createRoute({ getParentRoute: () => projectRoute, path: "interface", component: InterfaceView });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  projectRoute.addChildren([projectIndexRoute, devicesRoute, deviceRoute, groupsRoute, monitorRoute, interfaceRoute]),
+  projectRoute.addChildren([projectIndexRoute, devicesRoute, deviceRoute, groupsRoute, monitorRoute]),
 ]);
 
 export const router = createRouter({ routeTree });
