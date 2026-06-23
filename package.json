@@ -2,6 +2,7 @@
   "name": "busforge",
   "private": true,
   "type": "module",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "workspaces": ["packages/*", "apps/*", "plugins/*"],
   "scripts": {
     "knx": "bun run packages/knx/src/cli.ts",

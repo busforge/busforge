@@ -11,7 +11,7 @@ const de: Messages = {
     close: "Schließen",
     unnamed: "(ohne Namen)",
     unknown: "(unbekannt)",
-    tagline: "KNX-Bus-Werkzeug",
+    tagline: "Open commissioning tool for KNX",
   },
   status: {
     connected: "verbunden",

@@ -4,6 +4,6 @@
   "type": "module",
   "module": "src/index.ts",
   "exports": { ".": "./src/index.ts", "./dpt": "./src/dpt.ts" },
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": { "typecheck": "tsc --noEmit", "test": "bun test" }
 }

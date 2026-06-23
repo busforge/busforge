@@ -9,7 +9,7 @@ const en = {
     close: "Close",
     unnamed: "(unnamed)",
     unknown: "(unknown)",
-    tagline: "KNX bus tool",
+    tagline: "Open commissioning tool for KNX",
   },
   status: {
     connected: "connected",

@@ -1,9 +1,22 @@
-# Busforge
+<p align="center">
+  <img src="docs/brand/busforge-banner.png" alt="Busforge, an open commissioning tool for KNX" width="880">
+</p>
 
-**An open commissioning tool for KNX installations.** Cross-platform,
-self-hostable alternative to KNX ETS. Import a project, browse the installation,
-watch the bus with decoded values, edit a device's configuration, and
-**program ("download") real KNX devices** over IP, all from a web UI.
+<p align="center">
+  <em>Cross-platform, self-hostable alternative to KNX ETS. Import a project, watch the bus, configure and program real KNX devices, all from a web UI.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-f3a44a" alt="License: PolyForm Noncommercial 1.0.0">
+  <img src="https://img.shields.io/badge/runtime-Bun%20%2B%20TypeScript-e5e8eb" alt="Bun + TypeScript">
+  <img src="https://img.shields.io/badge/verified-on%20real%20hardware-54c57a" alt="Verified on real hardware">
+</p>
+
+---
+
+**An open commissioning tool for KNX installations.** Import a project, browse the
+installation, watch the bus with decoded values, edit a device's configuration,
+and **program ("download") real KNX devices** over IP, all from a web UI.
 Self-hostable as a single Docker container (think: deploy it on your NAS).
 TypeScript on Bun, React frontend.
 
@@ -30,10 +43,26 @@ current architecture and features.
 | Bus monitor with DPT-decoded values + GA names | ✅ |
 | Device configuration UI (edit + persist parameters) | ✅ |
 | Program parameters and group addresses from the UI (backup + verify + revert) | ✅ verified on the bus |
+| Snapshots: config-only restore points (capture, compare, restore) | ✅ |
+| DCA replacement plugins: native device-specific views, no ETS DCA needed | ✅ (Theben DALI gateway) |
 | KNX Secure | ⬜ |
 
-All ✅ items are **verified against a real KNX installation** (a live, multi
-manufacturer house bus via an MDT KNXnet/IP interface).
+All ✅ items except where noted are **verified against a real KNX installation**
+(a live, multi-manufacturer house bus via an MDT KNXnet/IP interface).
+
+---
+
+## How it fits together
+
+<p align="center">
+  <img src="docs/brand/busforge-architecture.png" alt="Busforge data flow: knxproj import, parse, SQLite store, web UI, program and flash with verify, KNX bus, live bus monitor feedback" width="900">
+</p>
+
+A user-provided `.knxproj` is decrypted and parsed into a SQLite store. The web UI
+reads and edits the configuration; the programming path builds the exact image
+bytes, backs up the device segment, flashes over KNXnet/IP, and reads it back to
+verify. The live bus monitor decodes telegrams from the installation straight
+back into the UI.
 
 ---
 
@@ -69,15 +98,15 @@ device to defaults. Full detail and roadmap: [`docs/ets-coverage.md`](docs/ets-c
 | Repeat (channel replication) | ✅ |
 | Assign / Union / TextParameterRefId substitution | ✅ |
 | ChannelIndependentBlock | ✅ |
-| Channel heading/label | ⚠️ container works, heading dropped |
+| Channel heading/label (becomes a navigable section) | ✅ |
 | Unknown / vendor element | 🔶 surfaced as a visible "not supported" marker |
 
 **Parameter types**
 
 | Type | Status |
 |---|---|
-| Enumeration (TypeRestriction) / Number / Text | ✅ editable |
-| Float / Time / Color / IP address / Binary | 🔶 shown read-only with a "not supported yet" badge |
+| Enumeration (TypeRestriction) / Number / Text / Color (RGB) | ✅ editable |
+| Float / Time / IP address / Binary | 🔶 shown read-only with a "not supported yet" badge |
 | TypeNone (display) | 🔶 named ones shown; empty spacers omitted |
 
 **Programming (image build)**
@@ -106,7 +135,7 @@ reverted. The device autonomously changed its behaviour after we wrote the setti
 
 ```
 packages/
-  knx/          KNX transport (own MIT implementation)
+  knx/          KNX transport (own implementation)
     frame/connection/device.ts  KNXnet/IP, tunnel, connection-oriented device
     flash.ts                     the load procedures (parameter + group tables)
     dpt.ts                       browser-safe DPT value decoder
@@ -115,13 +144,19 @@ packages/
     appconfig/config.ts          the dynamic parameter UI (visibility, modules)
     image.ts / grouptables.ts    build the bytes to flash (params / GA tables)
 apps/
-  server/       Bun server: handleApi router, SQLite (db/), Bus, flash
+  server/       Bun server: handleApi router, SQLite (db/), Bus, flash, snapshots
   web/          React / Vite / shadcn frontend (the "Precision Instrument" theme)
+plugins/
+  dca-theben-dali-e64/   DCA replacement: a native, read-only DALI view rebuilt
+                         from the device's own backup store (no ETS DCA plugin)
 docs/
-  ui.md         current architecture and features (start here)
-  findings.md   the protocol knowledge: formats, load procedure, gotchas
-  deployment.md CI/CD pipeline and NAS deployment
-  *-plan.md     per-iteration design notes
+  ui.md             current architecture and features (start here)
+  findings.md       the protocol knowledge: formats, load procedure, gotchas
+  ets-coverage.md   ETS parity tracking and roadmap
+  dca-plugin-architecture.md   how native DCA-replacement plugins are wired
+  design-system.md  brand and visual language (also the diagram style handoff)
+  storage-and-snapshots-design.md   DB, catalog and snapshot model
+  deployment.md     CI/CD pipeline and NAS deployment
 ```
 
 The genuinely hard part of this project was the protocol **discovery** (the subtle
@@ -139,9 +174,13 @@ KNXnet/IP interface and your own `.knxproj`.
 ```bash
 bun install
 bun run dev:server     # Bun API on :3000
-bun run dev:web        # Vite UI, proxies /api  (or: bun run build:web && bun run apps/server/src/index.ts)
-bun run check          # typecheck + tests + web build
+bun run dev:web        # Vite UI, proxies /api  (or: bun run build && bun run apps/server/src/index.ts)
+bun run check          # typecheck + tests + build, across every workspace
 ```
+
+The monorepo is managed with Bun workspaces. `check` aggregates each workspace's
+own `typecheck` / `test` / `build` scripts via `bun run --filter='*'`, so a new
+package is picked up automatically.
 
 Open the web app, import a `.knxproj`, set the interface, and go. **Writing to a
 device follows a real load procedure that unloads tables first; Busforge backs up
@@ -167,20 +206,58 @@ See [`docs/deployment.md`](docs/deployment.md) for the pipeline and runtime mode
   WebSocket, fast, clean single-container Docker deploy. `node:dgram` (UDP, which
   KNXnet/IP needs) is verified working on Bun; the KNX code is written runtime
   agnostic so it also runs on Node if needed.
-- **Own KNX implementation (MIT)**: existing open KNX libraries do runtime group
+- **Own KNX implementation**: existing open KNX libraries do runtime group
   communication only, not device programming. We implement the management and load
   procedure ourselves, which we have to anyway, so there is no third-party library
   to depend on.
 
-## Licensing / ethics
-- We ship **tooling**, never manufacturer product data or any proprietary binary.
-  The user brings their own `.knxproj` (which embeds the manufacturer data they
-  legally obtained) or downloads `.knxprod` from the manufacturer.
-- Parsing files you own and speaking the standardized KNX management protocol is
-  legitimate. We do not use the KNX trademark or claim certification.
+---
+
+## Trademarks and independence
+
+Busforge is an **independent, community project**. It is **not affiliated with,
+endorsed by, sponsored by, or certified by the KNX Association** or any device
+manufacturer.
+
+- **KNX** is a registered trademark of the KNX Association cvba. **ETS** is a
+  registered trademark of the KNX Association cvba. Manufacturer and product names
+  (for example the device families Busforge can configure) are trademarks of their
+  respective owners.
+- These names are used **only descriptively**, to identify the standard and the
+  devices Busforge interoperates with (nominative use). Busforge does not claim any
+  KNX certification and is not "KNX software" in the certified sense.
+- Busforge ships **tooling only**, never manufacturer product data or any
+  proprietary binary. The user brings their own `.knxproj` (which embeds the
+  manufacturer data they legally obtained) or downloads `.knxprod` from the
+  manufacturer. Parsing files you own and speaking the standardized KNX management
+  protocol is legitimate interoperability.
+
+---
+
+## License
+
+Busforge is **source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE)**, a dual-licensing model:
+
+- **Noncommercial use is free.** Private use, hobby projects, research, education,
+  and noncommercial organizations may use, modify, and share Busforge at no cost
+  under the license terms.
+- **Commercial use requires a separate commercial license** from the author.
+  Using Busforge (or parts of it) in a for-profit or business context, for example
+  an integrator commissioning client installations for pay, or a manufacturer
+  embedding it in a product or paid service, is **not** granted by the
+  noncommercial license.
+
+If you want to use Busforge commercially, or license parts of it for your own
+product, get in touch: **https://github.com/busforge/busforge**.
+
+The full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeister.
+
+---
 
 ## Next steps
 1. Full group-address link management (add/remove links, multiple GAs per
    com-object, create new GAs).
 2. KNX Secure.
 3. Config display completeness (DPT-9 float / text / binary value editors).
+4. Channel/module device programming (per-instance parameter offsets).

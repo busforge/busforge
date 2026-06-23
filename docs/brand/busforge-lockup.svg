@@ -31,5 +31,5 @@
   <text x="64" y="30" font-family="Archivo, sans-serif" font-weight="800" font-size="23"
         letter-spacing="3.6" fill="#1c1004">BUSFORGE</text>
   <text x="65.5" y="45" font-family="'JetBrains Mono', monospace" font-weight="500" font-size="9.5"
-        letter-spacing="2" fill="#8a6a3a">KNX-BUS-WERKZEUG</text>
+        letter-spacing="2" fill="#8a6a3a">OPEN COMMISSIONING TOOL FOR KNX</text>
 </svg>

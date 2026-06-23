@@ -1,0 +1,118 @@
+<svg id="arch" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" role="img" aria-label="Busforge data flow">
+  <defs>
+    <style>@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;800&amp;family=JetBrains+Mono:wght@400;500&amp;family=Instrument+Serif:ital@0;1&amp;display=swap');</style>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc270"/><stop offset=".5" stop-color="#f3a44a"/><stop offset="1" stop-color="#e1862a"/>
+    </linearGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(229,232,235,0.05)"/>
+    </pattern>
+    <marker id="a-muted" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8d9399"/></marker>
+    <marker id="a-muted-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#8d9399"/></marker>
+    <marker id="a-accent" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#f3a44a"/></marker>
+    <marker id="a-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#57b5d8"/></marker>
+  </defs>
+
+  <rect fill="#090e12"/>
+  <rect fill="url(#dots)"/>
+
+  <!-- header -->
+  <text x="40" y="48" font-family="'JetBrains Mono', monospace" font-size="13" letter-spacing="3" fill="#f3a44a">DATA FLOW</text>
+  <text x="40" y="92" font-family="'Instrument Serif', serif" font-size="34" fill="#e5e8eb">How a project flows through Busforge</text>
+
+  <!-- ARROWS (drawn before boxes) -->
+  <g fill="none">
+    <!-- main pipeline -->
+    <line x1="200" y1="210" x2="248" y2="210" stroke="#8d9399" stroke-width="1.4" marker-end="url(#a-muted)"/>
+    <line x1="408" y1="210" x2="456" y2="210" stroke="#8d9399" stroke-width="1.4" marker-end="url(#a-muted)"/>
+    <!-- store <-> ui bidirectional -->
+    <line x1="616" y1="210" x2="664" y2="210" stroke="#8d9399" stroke-width="1.4" marker-end="url(#a-muted)" marker-start="url(#a-muted-start)"/>
+    <line x1="824" y1="210" x2="872" y2="210" stroke="#8d9399" stroke-width="1.4" marker-end="url(#a-muted)"/>
+    <!-- flash (accent headline) -->
+    <line x1="1032" y1="210" x2="1080" y2="210" stroke="#f3a44a" stroke-width="2" marker-end="url(#a-accent)"/>
+    <!-- live bus feed (link blue): devices -> monitor -> UI -->
+    <path d="M1160 250 V402 H824" stroke="#57b5d8" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#a-link)"/>
+    <path d="M744 370 V250" stroke="#57b5d8" stroke-width="1.4" stroke-dasharray="5,4" marker-end="url(#a-link)"/>
+  </g>
+
+  <!-- arrow labels (masked) -->
+  <g font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="0.06em" text-anchor="middle">
+    <rect x="206" y="196" width="36" height="13" fill="#090e12"/><text x="224" y="205" fill="#8d9399">IMPORT</text>
+    <rect x="414" y="196" width="36" height="13" fill="#090e12"/><text x="432" y="205" fill="#8d9399">STORE</text>
+    <rect x="622" y="196" width="36" height="13" fill="#090e12"/><text x="640" y="205" fill="#8d9399">EDIT</text>
+    <rect x="828" y="196" width="40" height="13" fill="#090e12"/><text x="848" y="205" fill="#8d9399">BUILD</text>
+    <rect x="1036" y="196" width="40" height="13" fill="#090e12"/><text x="1056" y="205" fill="#f3a44a">FLASH</text>
+    <rect x="966" y="396" width="36" height="13" fill="#090e12"/><text x="984" y="405" fill="#57b5d8">LIVE</text>
+    <rect x="716" y="304" width="44" height="13" fill="#090e12"/><text x="738" y="313" fill="#57b5d8">DECODE</text>
+  </g>
+
+  <!-- NODES -->
+  <!-- helper: each node = mask + box + tag + name + sublabel -->
+  <!-- n1 .knxproj (input) -->
+  <rect x="40" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="40" y="170" width="160" height="80" rx="8" fill="rgba(141,147,153,0.10)" stroke="#717880" stroke-width="1"/>
+  <rect x="52" y="182" width="34" height="13" rx="2" fill="none" stroke="rgba(113,120,128,0.6)" stroke-width="0.8"/>
+  <text x="69" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#a7adb3">FILE</text>
+  <text x="120" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">.knxproj</text>
+  <text x="120" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">ETS6 · AES</text>
+
+  <!-- n2 import & parse -->
+  <rect x="248" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="248" y="170" width="160" height="80" rx="8" fill="#13181d" stroke="rgba(141,147,153,0.45)" stroke-width="1"/>
+  <rect x="260" y="182" width="40" height="13" rx="2" fill="none" stroke="rgba(141,147,153,0.4)" stroke-width="0.8"/>
+  <text x="280" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#8d9399">PARSE</text>
+  <text x="328" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">Import &amp; parse</text>
+  <text x="328" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">packages/project</text>
+
+  <!-- n3 sqlite store -->
+  <rect x="456" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="456" y="170" width="160" height="80" rx="8" fill="rgba(229,232,235,0.05)" stroke="#8d9399" stroke-width="1"/>
+  <rect x="468" y="182" width="40" height="13" rx="2" fill="none" stroke="rgba(141,147,153,0.5)" stroke-width="0.8"/>
+  <text x="488" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#8d9399">STORE</text>
+  <text x="536" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">SQLite</text>
+  <text x="536" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">apps/server</text>
+
+  <!-- n4 web ui -->
+  <rect x="664" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="664" y="170" width="160" height="80" rx="8" fill="#13181d" stroke="rgba(141,147,153,0.45)" stroke-width="1"/>
+  <rect x="676" y="182" width="34" height="13" rx="2" fill="none" stroke="rgba(141,147,153,0.4)" stroke-width="0.8"/>
+  <text x="693" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#8d9399">APP</text>
+  <text x="744" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">Web UI</text>
+  <text x="744" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">apps/web</text>
+
+  <!-- n5 program (FOCAL) -->
+  <rect x="872" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="872" y="170" width="160" height="80" rx="8" fill="rgba(243,164,74,0.10)" stroke="#f3a44a" stroke-width="1.4"/>
+  <rect x="884" y="182" width="40" height="13" rx="2" fill="none" stroke="rgba(243,164,74,0.6)" stroke-width="0.8"/>
+  <text x="904" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#f3a44a">LOAD</text>
+  <text x="952" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">Program</text>
+  <text x="952" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#cda36a">backup · flash · verify</text>
+
+  <!-- n6 knx devices (external) -->
+  <rect x="1080" y="170" width="160" height="80" rx="8" fill="#090e12"/>
+  <rect x="1080" y="170" width="160" height="80" rx="8" fill="rgba(229,232,235,0.03)" stroke="rgba(229,232,235,0.30)" stroke-width="1"/>
+  <rect x="1092" y="182" width="32" height="13" rx="2" fill="none" stroke="rgba(229,232,235,0.3)" stroke-width="0.8"/>
+  <text x="1108" y="191.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#aeb3b8">BUS</text>
+  <text x="1160" y="222" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">KNX devices</text>
+  <text x="1160" y="240" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">KNXnet/IP</text>
+
+  <!-- bus monitor (feedback) -->
+  <rect x="664" y="370" width="160" height="64" rx="8" fill="#090e12"/>
+  <rect x="664" y="370" width="160" height="64" rx="8" fill="#13181d" stroke="rgba(87,181,216,0.45)" stroke-width="1"/>
+  <rect x="676" y="380" width="34" height="13" rx="2" fill="none" stroke="rgba(87,181,216,0.5)" stroke-width="0.8"/>
+  <text x="693" y="389.5" font-family="'JetBrains Mono', monospace" font-size="7.5" letter-spacing="0.08em" text-anchor="middle" fill="#57b5d8">LIVE</text>
+  <text x="744" y="412" font-family="Archivo, sans-serif" font-weight="600" font-size="15" text-anchor="middle" fill="#e5e8eb">Bus monitor</text>
+  <text x="744" y="428" font-family="'JetBrains Mono', monospace" font-size="9" text-anchor="middle" fill="#8d9399">decoded DPT values</text>
+
+  <!-- legend -->
+  <line x1="40" y1="474" x2="1240" y2="474" stroke="rgba(229,232,235,0.12)" stroke-width="0.8"/>
+  <g font-family="'JetBrains Mono', monospace" font-size="8.5" letter-spacing="0.1em">
+    <text x="40" y="496" fill="#8d9399">LEGEND</text>
+    <line x1="120" y1="493" x2="148" y2="493" stroke="#8d9399" stroke-width="1.4"/>
+    <text x="156" y="496" fill="#8d9399">IMPORT PIPELINE</text>
+    <line x1="320" y1="493" x2="348" y2="493" stroke="#f3a44a" stroke-width="2"/>
+    <text x="356" y="496" fill="#8d9399">PROGRAM / FLASH</text>
+    <line x1="540" y1="493" x2="568" y2="493" stroke="#57b5d8" stroke-width="1.4" stroke-dasharray="5,4"/>
+    <text x="576" y="496" fill="#8d9399">LIVE BUS FEED</text>
+  </g>
+</svg>
