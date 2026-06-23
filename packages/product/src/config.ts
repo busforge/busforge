@@ -1,12 +1,15 @@
-import type { AppConfig, CfgType, ComObjFlags, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgType, ComObjFlags, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 
 // A human label for a datapoint type the engine cannot edit yet, shown on the
 // "not supported" row so the gap is explicit (never a blank/empty control).
 function unsupportedTypeLabel(type: CfgType | undefined): string {
   const byTag: Record<string, string> = {
-    TypeFloat: "Float", TypeTime: "Time", TypeColor: "Color",
+    TypeFloat: "Float", TypeTime: "Time",
     TypeIPAddress: "IP address", TypePicture: "Picture", TypeNone: "Display",
   };
+  // Only RGB colour is editable; other colour spaces (HSV) are surfaced as
+  // unsupported so we never write an sRGB hex into a differently-encoded register.
+  if (type?.kind === "TypeColor") return type.colorSpace ? `Color (${type.colorSpace})` : "Color";
   if (type?.kind && byTag[type.kind]) return byTag[type.kind];
   if (type?.base === "BinaryValue") return "Binary";
   return type?.kind || "Unknown type";
@@ -26,7 +29,7 @@ function unsupportedTypeLabel(type: CfgType | undefined): string {
 export interface CfgParamView {
   refId: string;
   name: string;
-  control: "enum" | "number" | "text" | "unsupported";
+  control: "enum" | "number" | "text" | "color" | "unsupported";
   value: string;
   options?: { value: number; text: string }[];
   min?: number;
@@ -52,7 +55,7 @@ export type CfgItem =
   | { kind: "comObject"; comObject: CfgComObjView }
   | { kind: "unsupported"; label: string }; // an ETS dynamic element the engine does not handle yet
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
+export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
 
 interface Scope {
   rewrite: (id: string) => string;     // module-def id -> device instance id (identity at top level)
@@ -158,6 +161,10 @@ export function buildDeviceConfig(
       options = type.enums.map((e) => ({ value: e.value, text: tr(e.id, "Text", e.text) }));
     } else if (type?.base === "Number") control = "number";
     else if (type?.base === "Text") control = "text";
+    // TypeColor stores an #RRGGBB hex. Only the RGB space maps directly to the
+    // native sRGB colour picker; HSV (and any other space) stays unsupported
+    // until its encoding is verified, so we never write a wrong colour back.
+    else if (type?.base === "Color" && type.colorSpace === "RGB") control = "color";
 
     const defaultValue = ref.value ?? param.value ?? "";
     const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
@@ -321,5 +328,5 @@ export function buildDeviceConfig(
   };
   emit(roots, 0);
 
-  return { blocks, hasModules: app.hasModules };
+  return { blocks, hasModules: app.hasModules, dca: app.dca };
 }

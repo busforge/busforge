@@ -248,7 +248,7 @@ describe("device configuration", () => {
     // known device but no interface set -> refuses before any bus access
     const r2 = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
     expect(r2!.status).toBe(400);
-    expect(((await r2!.json()) as any).error).toMatch(/interface/i);
+    expect(((await r2!.json()) as any).error.code).toBe("INTERFACE_NOT_SET");
   });
 
   test("flash-ga guards: unknown device 404, no interface 400", async () => {

@@ -1,5 +1,6 @@
 import { inflateRawSync } from "node:zlib";
 import { pbkdf2Sync, createCipheriv, createHmac, timingSafeEqual } from "node:crypto";
+import { KnxprojError } from "./errors.ts";
 
 // Minimal ZIP reader, dependency-free. Handles STORE (0) and DEFLATE (8), plus
 // WinZip-AES (method 99) used by ETS for the encrypted inner P-XXXX.zip.
@@ -17,7 +18,7 @@ function findEOCD(buf: Buffer): number {
   for (let i = buf.length - 22; i >= min; i--) {
     if (buf.readUInt32LE(i) === EOCD_SIG) return i;
   }
-  throw new Error("not a zip (no EOCD)");
+  throw new KnxprojError("INVALID_KNXPROJ", "not a zip (no EOCD)");
 }
 
 function readCentralDirectory(buf: Buffer): CDEntry[] {
@@ -26,7 +27,7 @@ function readCentralDirectory(buf: Buffer): CDEntry[] {
   let off = buf.readUInt32LE(eocd + 16);
   const entries: CDEntry[] = [];
   for (let i = 0; i < count; i++) {
-    if (buf.readUInt32LE(off) !== CD_SIG) throw new Error("bad central directory entry");
+    if (buf.readUInt32LE(off) !== CD_SIG) throw new KnxprojError("INVALID_KNXPROJ", "bad central directory entry");
     const method = buf.readUInt16LE(off + 10);
     const compSize = buf.readUInt32LE(off + 20);
     const nameLen = buf.readUInt16LE(off + 28);
@@ -43,7 +44,7 @@ function readCentralDirectory(buf: Buffer): CDEntry[] {
 // Locate the compressed payload and the AES extra field (if any) from the local
 // file header, which is authoritative for where the data begins.
 function readLocal(buf: Buffer, e: CDEntry): { data: Buffer; aes?: { strength: number; method: number } } {
-  if (buf.readUInt32LE(e.lfhOffset) !== LFH_SIG) throw new Error("bad local header");
+  if (buf.readUInt32LE(e.lfhOffset) !== LFH_SIG) throw new KnxprojError("INVALID_KNXPROJ", "bad local header");
   const nameLen = buf.readUInt16LE(e.lfhOffset + 26);
   const extraLen = buf.readUInt16LE(e.lfhOffset + 28);
   const extraStart = e.lfhOffset + 30 + nameLen;
@@ -66,7 +67,7 @@ function readLocal(buf: Buffer, e: CDEntry): { data: Buffer; aes?: { strength: n
 function decompress(data: Buffer, method: number): Buffer {
   if (method === 0) return Buffer.from(data);
   if (method === 8) return inflateRawSync(data);
-  throw new Error(`unsupported compression method ${method}`);
+  throw new KnxprojError("INVALID_KNXPROJ", `unsupported compression method ${method}`);
 }
 
 // WinZip-AES (AE-1/AE-2): payload = salt | pwVerify(2) | ciphertext | authCode(10).
@@ -83,10 +84,10 @@ function aesDecrypt(payload: Buffer, password: string, strength: number): Buffer
   const encKey = dk.subarray(0, keyLen);
   const macKey = dk.subarray(keyLen, keyLen * 2);
   const verify = dk.subarray(keyLen * 2);
-  if (!timingSafeEqual(verify, pwVerify)) throw new Error("wrong password");
+  if (!timingSafeEqual(verify, pwVerify)) throw new KnxprojError("WRONG_PASSWORD", "wrong password");
 
   const mac = createHmac("sha1", macKey).update(cipher).digest().subarray(0, 10);
-  if (!timingSafeEqual(mac, authCode)) throw new Error("AES auth failed (corrupt data or wrong password)");
+  if (!timingSafeEqual(mac, authCode)) throw new KnxprojError("DECRYPT_FAILED", "AES auth failed (corrupt data or wrong password)");
 
   // WinZip CTR: keystream = AES-ECB(counter); counter is a little-endian 128-bit
   // integer starting at 1, incremented per 16-byte block.
@@ -111,8 +112,8 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
     if (e.name.endsWith("/")) continue;
     const { data, aes } = readLocal(buf, e);
     if (e.method === 99) {
-      if (!aes) throw new Error(`AES entry ${e.name} missing AES extra field`);
-      if (!password) throw new Error("password required");
+      if (!aes) throw new KnxprojError("INVALID_KNXPROJ", `AES entry ${e.name} missing AES extra field`);
+      if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "password required");
       const plain = aesDecrypt(data, password, aes.strength);
       files.set(e.name, decompress(plain, aes.method));
     } else {

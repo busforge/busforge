@@ -20,6 +20,7 @@ export interface CfgType {
   max?: number;
   increment?: number; // TypeNumber spinner step (ETS Increment)
   uiHint?: string;    // ETS UIHint on the type (e.g. "Slider" for a numeric range)
+  colorSpace?: string; // TypeColor Space ("RGB" | "HSV")
 }
 export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; }
@@ -54,6 +55,14 @@ export interface ModuleDefModel { id: string; args: ModuleArg[]; dynamic: DynNod
 // argument values. id/refId are prefix-stripped as ETS stores them.
 export interface ModuleInstance { id: string; refId: string; args: { refId: string; value: string }[]; }
 
+// A device whose real configuration lives in a manufacturer ETS "DCA" (Device
+// Configuration App): a Windows-only .NET/WPF plugin that runs inside ETS, e.g.
+// a DALI gateway's line scan, ECG addressing, groups and scenes. busforge cannot
+// run that plugin or read its proprietary config; we only flag it so the gap is
+// explicit. The standard parameters below the notice are still editable and safe
+// to program (the DCA's config lives in separate interface objects we never touch).
+export interface DcaInfo { hint: string }
+
 export interface AppConfig {
   id: string;
   mask: string;
@@ -68,6 +77,7 @@ export interface AppConfig {
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
   hasModules: boolean;
+  dca?: DcaInfo;
 }
 
 // --- order-preserving node helpers (fast-xml-parser preserveOrder shape) ---
@@ -139,12 +149,19 @@ export function parseAppConfig(xml: string): AppConfig {
   const dynamic = dynamicNode ? kidsOf(dynamicNode).map(parseDyn).filter(Boolean) as DynNode[] : [];
   const hasModules = moduleDefs.size > 0;
 
+  // ETS marks DCA-driven application programs in their name/description (e.g.
+  // "DALI-Gateway KNX plus (DCA Version)" with "you need the ETS DCA App
+  // installed"). Detect that explicit marker; the manufacturer's own description
+  // becomes the hint we show next to the notice.
+  const desc = appAttrs.VisibleDescription ?? "";
+  const dca = /\bDCA\b/i.test(appAttrs.Name ?? "") || /\bDCA\b/i.test(desc) ? { hint: desc.trim() } : undefined;
+
   return {
     id: appAttrs.Id,
     mask: appAttrs.MaskVersion ?? "",
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules,
+    types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules, dca,
   };
 }
 
@@ -179,6 +196,7 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
       max: num(ia.maxInclusive),
       increment: num(ia.Increment),
       uiHint: ia.UIHint,
+      colorSpace: ia.Space,
     });
   }
   return out;

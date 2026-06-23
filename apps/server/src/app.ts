@@ -10,6 +10,7 @@ import { insertProject, listProjects, getProject, deleteProject, getInterface, s
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
+import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 
 export interface AppState {
@@ -41,7 +42,9 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
-const err = (message: string, status = 400) => json({ error: message }, status);
+// Error responses carry a stable `code` (for client localization) plus the
+// English `message` as a fallback/log line.
+const err = (code: string, message: string, status = 400) => json({ error: { code, message } }, status);
 
 // Handle an /api/* request. Returns null for non-API paths so the caller can
 // fall through to static serving.
@@ -52,7 +55,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   const { db, bus } = state;
 
   try {
-    if (seg[1] !== "projects") return err("not found", 404);
+    if (seg[1] !== "projects") return err("NOT_FOUND", "not found", 404);
 
     // /api/projects
     if (seg.length === 2 && req.method === "GET") return json(listProjects(db));
@@ -61,7 +64,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 3 && seg[2] === "import" && req.method === "POST") {
       const form = await req.formData();
       const file = form.get("file");
-      if (!(file instanceof Blob)) return err("missing file");
+      if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
       const password = (form.get("password") as string) || undefined;
       const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
       const bytes = Buffer.from(await file.arrayBuffer());
@@ -86,10 +89,10 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id
     if (seg.length === 3 && req.method === "GET") {
       const p = getProject(db, id);
-      return p ? json(p) : err("project not found", 404);
+      return p ? json(p) : err("PROJECT_NOT_FOUND", "project not found", 404);
     }
     if (seg.length === 3 && req.method === "DELETE") {
-      if (!deleteProject(db, id)) return err("project not found", 404);
+      if (!deleteProject(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
       if (bus.activeProjectId === id) await bus.disconnect();
       rmSync(join(state.dataDir, "projects", id), { recursive: true, force: true });
       return json({ ok: true });
@@ -98,8 +101,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/interface
     if (seg.length === 4 && seg[3] === "interface" && req.method === "PUT") {
       const body = (await req.json()) as { interfaceIp?: string; port?: number };
-      if (!body.interfaceIp || !body.port) return err("interfaceIp and port required");
-      if (!setInterface(db, id, body.interfaceIp, Number(body.port))) return err("project not found", 404);
+      if (!body.interfaceIp || !body.port) return err("INTERFACE_FIELDS_REQUIRED", "interfaceIp and port required");
+      if (!setInterface(db, id, body.interfaceIp, Number(body.port))) return err("PROJECT_NOT_FOUND", "project not found", 404);
       return json(getInterface(db, id));
     }
 
@@ -117,7 +120,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "params" && req.method === "PUT") {
       const deviceId = decodeURIComponent(seg[4]);
       const body = (await req.json()) as { paramRefId?: string; value?: string; lang?: string };
-      if (!body.paramRefId || body.value === undefined) return err("paramRefId and value required");
+      if (!body.paramRefId || body.value === undefined) return err("PARAM_FIELDS_REQUIRED", "paramRefId and value required");
       const value = String(body.value);
       // If the value equals the parameter's default, drop the override instead of
       // storing it, so restoring the default clears the "changed" marker (the
@@ -132,9 +135,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "links" && req.method === "PUT") {
       const deviceId = decodeURIComponent(seg[4]);
       const body = (await req.json()) as { comObjRefId?: string; gaRaws?: number[]; lang?: string };
-      if (!body.comObjRefId || !Array.isArray(body.gaRaws)) return err("comObjRefId and gaRaws required");
+      if (!body.comObjRefId || !Array.isArray(body.gaRaws)) return err("COMOBJ_FIELDS_REQUIRED", "comObjRefId and gaRaws required");
       const app = loadApp(state, id, deviceId);
-      if (!app) return err("device not found", 404);
+      if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
       // Accept the full (view) ref id or the stored stripped key.
       const key = body.comObjRefId.startsWith(`${app.id}_`) ? body.comObjRefId.slice(app.id.length + 1) : body.comObjRefId;
       setDeviceLink(db, id, deviceId, key, body.gaRaws.map(Number));
@@ -144,7 +147,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/devices/:deviceId/revert  -> discard unprogrammed edits
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
-      if (!getDeviceForFlash(db, id, deviceId)) return err("device not found", 404);
+      if (!getDeviceForFlash(db, id, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
       revertDevice(db, id, deviceId);
       return deviceConfig(state, id, deviceId, body.lang);
@@ -153,9 +156,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/devices/:deviceId/revert-param  -> discard one param's drift
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert-param" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
-      if (!getDeviceForFlash(db, id, deviceId)) return err("device not found", 404);
+      if (!getDeviceForFlash(db, id, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const body = (await req.json().catch(() => ({}))) as { paramRefId?: string; lang?: string };
-      if (!body.paramRefId) return err("paramRefId required");
+      if (!body.paramRefId) return err("PARAM_REF_REQUIRED", "paramRefId required");
       revertDeviceParam(db, id, deviceId, body.paramRefId);
       return deviceConfig(state, id, deviceId, body.lang);
     }
@@ -164,9 +167,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert-link" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
       const app = loadApp(state, id, deviceId);
-      if (!app) return err("device not found", 404);
+      if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const body = (await req.json().catch(() => ({}))) as { comObjRefId?: string; lang?: string };
-      if (!body.comObjRefId) return err("comObjRefId required");
+      if (!body.comObjRefId) return err("COMOBJ_REF_REQUIRED", "comObjRefId required");
       const key = body.comObjRefId.startsWith(`${app.id}_`) ? body.comObjRefId.slice(app.id.length + 1) : body.comObjRefId;
       revertDeviceLink(db, id, deviceId, key);
       return deviceConfig(state, id, deviceId, body.lang);
@@ -177,11 +180,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "read-back" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
-      if (!dev) return err("device not found", 404);
+      if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("set an interface IP first");
+      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
       const sourceFile = getSourceFile(db, id);
-      if (!sourceFile) return err("project not found", 404);
+      if (!sourceFile) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
       // Only record drift for refs the device config actually exposes (matches
       // what the UI shows; keeps module devices from flagging flat-model refs).
@@ -207,11 +210,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
-      if (!dev) return err("device not found", 404);
+      if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("set an interface IP first");
+      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
-      if (!resolved) return err("application program not found in project", 404);
+      if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const result = await state.queue.enqueue(
         { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" },
         async (progress) => {
@@ -232,11 +235,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash" && req.method === "POST") {
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
-      if (!dev) return err("device not found", 404);
+      if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
       const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("set an interface IP first");
+      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
       const sourceFile = getSourceFile(db, id);
-      if (!sourceFile) return err("project not found", 404);
+      if (!sourceFile) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const result = await state.queue.enqueue(
         { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" },
         async (progress) => {
@@ -263,7 +266,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/tasks/:taskId/cancel  -> cancel a queued (or running read) task
     if (seg.length === 6 && seg[3] === "tasks" && seg[5] === "cancel" && req.method === "POST") {
       const cancelled = state.queue.cancel(decodeURIComponent(seg[4]));
-      if (!cancelled) return err("task cannot be cancelled", 409);
+      if (!cancelled) return err("TASK_NOT_CANCELLABLE", "task cannot be cancelled", 409);
       return json({ cancelled });
     }
 
@@ -275,8 +278,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       }
       if (seg[4] === "connect" && req.method === "POST") {
         const iface = getInterface(db, id);
-        if (!iface) return err("project not found", 404);
-        if (!iface.interfaceIp) return err("set an interface IP first");
+        if (!iface) return err("PROJECT_NOT_FOUND", "project not found", 404);
+        if (!iface.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
         if (bus.activeProjectId && bus.activeProjectId !== id) await bus.disconnect();
         await bus.connect(id, iface.interfaceIp, iface.port);
         return json({ status: bus.status, projectId: id });
@@ -287,9 +290,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       }
     }
 
-    return err("not found", 404);
+    return err("NOT_FOUND", "not found", 404);
   } catch (e) {
-    return err((e as Error).message, 400);
+    // Coded errors (ApiError / KnxprojError) carry a client-localizable code;
+    // anything else is an unexpected failure surfaced raw under INTERNAL.
+    const code = errorCode(e);
+    const status = e instanceof ApiError ? e.status : code ? 400 : 500;
+    return err(code ?? "INTERNAL", (e as Error).message, status);
   }
 }
 
@@ -323,9 +330,9 @@ function resolveParamDefault(state: AppState, projectId: string, deviceId: strin
 // Build a device's configuration view and overlay each com-object's stored GA link.
 function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string): Response {
   const { db } = state;
-  if (!getDeviceForFlash(db, projectId, deviceId)) return err("device not found", 404);
+  if (!getDeviceForFlash(db, projectId, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
-  if (!app) return err("application program not found in project", 404);
+  if (!app) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
@@ -359,7 +366,7 @@ function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string
     const full = `${app.id}_${refId}`;
     const direct = app.comObjects.get(app.comObjectRefs.get(full)?.refId ?? "")?.number;
     const num = numByRef.get(full) ?? direct;
-    if (num === undefined) throw new Error(`cannot resolve com-object ${refId} for flashing; refusing to avoid dropping its group address`);
+    if (num === undefined) throw new ApiError("COMOBJ_UNRESOLVED", `cannot resolve com-object ${refId} for flashing; refusing to avoid dropping its group address`);
     links.push({ comObjNum: num, gaRaws });
   }
   return { mask: app.mask, links };
@@ -408,7 +415,7 @@ export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<strin
 function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[]): Map<string, number[]> {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
-  if (!app) throw new Error("application program not found in project");
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
   // number -> stored ref key. App covers hidden com-objects; the view's
   // module-resolved numbers take precedence.

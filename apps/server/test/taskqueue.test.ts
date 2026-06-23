@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { TaskQueue } from "../src/taskqueue.ts";
+import { ApiError } from "../src/errors.ts";
 
 const meta = (deviceId: string) => ({ projectId: "p1", deviceId, deviceName: deviceId, ia: "1.1.1", kind: "read" as const });
 const defer = () => { let resolve!: () => void; const p = new Promise<void>((r) => (resolve = r)); return { p, resolve }; };
@@ -32,7 +33,18 @@ describe("TaskQueue", () => {
     const tasks = q.list("p1");
     expect(tasks.find((t) => t.deviceId === "d1")?.state).toBe("error");
     expect(tasks.find((t) => t.deviceId === "d1")?.error).toBe("boom");
+    expect(tasks.find((t) => t.deviceId === "d1")?.errorCode).toBeNull(); // plain Error carries no code
     expect(tasks.find((t) => t.deviceId === "d2")?.state).toBe("done");
+  });
+
+  test("captures a coded error's code so the UI can localize it", async () => {
+    const q = new TaskQueue(() => 0);
+    const j = q.enqueue(meta("d1"), async () => { throw new ApiError("MASK_MISMATCH", "device mask 1 != expected 2"); });
+    await expect(j).rejects.toThrow("device mask 1 != expected 2");
+    const task = q.list("p1").find((t) => t.deviceId === "d1");
+    expect(task?.state).toBe("error");
+    expect(task?.error).toBe("device mask 1 != expected 2"); // raw message kept as fallback
+    expect(task?.errorCode).toBe("MASK_MISMATCH"); // code flows through for localization
   });
 
   test("exposes live phase + chunk progress", async () => {

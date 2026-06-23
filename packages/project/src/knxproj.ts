@@ -1,6 +1,7 @@
 import { pbkdf2Sync } from "node:crypto";
 import { readZip } from "./zip.ts";
 import { parseProject } from "./parse.ts";
+import { KnxprojError } from "./errors.ts";
 import type { Project } from "./model.ts";
 
 // ETS6 derives the WinZip password as base64(PBKDF2-HMAC-SHA256(pw utf-16le,
@@ -26,7 +27,7 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
     try {
       inner = readZip(innerBuf); // unencrypted inner (rare, but possible)
     } catch (e) {
-      if (!password) throw new Error("project is password-protected");
+      if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
       inner = readZip(innerBuf, deriveWinzipPassword(password));
     }
     xml0 = textOf(inner, "0.xml");
@@ -66,7 +67,7 @@ function tryTextOf(files: Map<string, Buffer>, suffix: string): string | undefin
 }
 function textOf(files: Map<string, Buffer>, suffix: string): string {
   const t = tryTextOf(files, suffix);
-  if (t === undefined) throw new Error(`${suffix} not found in archive`);
+  if (t === undefined) throw new KnxprojError("INVALID_KNXPROJ", `${suffix} not found in archive`);
   return t;
 }
 

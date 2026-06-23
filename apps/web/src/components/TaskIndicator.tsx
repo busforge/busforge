@@ -9,6 +9,7 @@ import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { errMsg, localizeError } from "../lib/apiError.ts";
 
 const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network };
 const pct = (t: Task) => (t.total > 0 ? Math.round((t.done / t.total) * 100) : null);
@@ -28,7 +29,7 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   const status: BusStatus = bus?.status ?? "disconnected";
   const cancel = useMutation({
     mutationFn: (taskId: string) => api.cancelTask(projectId, taskId),
-    onError: (e) => toast.error(t("task.cancelError"), { description: (e as Error).message }),
+    onError: (e) => toast.error(t("task.cancelError"), { description: errMsg(t, e) }),
     onSettled: () => qc.invalidateQueries({ queryKey: qk.tasks(projectId) }),
   });
 
@@ -122,7 +123,7 @@ function TaskRow({ task, t, onCancel, canceling }: { task: Task; t: (k: string, 
       )}
       {task.state === "queued" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.queued")}</div>}
       {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.cancelled")}</div>}
-      {task.state === "error" && <div className="mt-0.5 truncate text-[10px] text-destructive" title={task.error ?? ""}>{task.error}</div>}
+      {task.state === "error" && (() => { const msg = localizeError(t, task.errorCode, task.error); return <div className="mt-0.5 truncate text-[10px] text-destructive" title={msg}>{msg}</div>; })()}
     </div>
   );
 }

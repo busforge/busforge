@@ -129,15 +129,16 @@ but unread) so a new ignored attribute is found by us, not by the user.
 | TypeRestriction Base="BinaryValue" | not yet | shown with "not supported" badge |
 | TypeFloat | not yet | KNX 2-byte float / IEEE; badge |
 | TypeTime | not yet | badge |
-| TypeColor | not yet | badge |
+| TypeColor (RGB) | full | native colour picker; stores #RRGGBB |
+| TypeColor (HSV) | not yet | badge; sRGB picker would mis-encode HSV, pending encoding check |
 | TypeIPAddress | not yet | badge |
 | TypeNone (display) | not yet | informational; badge |
 
 ## Roadmap (priority order)
 
 1. `<Channel>` heading/label (reuse `blockTitle`; same class as the Repeat fix).
-2. Render the remaining parameter types: Float, Time, Color, IP address, Binary,
-   and TypeNone displays.
+2. Render the remaining parameter types: Float, Time, IP address, Binary,
+   and TypeNone displays (Color is done: native picker).
 3. Allocator-based module numbering / `Repeat Count` without 0.xml instances
    (needed once we support adding channels, not just reading existing config).
 

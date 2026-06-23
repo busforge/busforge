@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { errorCode } from "./errors.ts";
 
 // A single physical KNX interface backs every bus operation (one tunnel, one
 // connection-oriented device link), so reads and flashes cannot run in parallel.
@@ -20,6 +21,9 @@ export interface Task {
   done: number;
   total: number;
   error: string | null;
+  // Stable code for client localization when the failure is a coded error; null
+  // for cancellations and uncoded (unexpected) failures.
+  errorCode: string | null;
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
@@ -55,7 +59,7 @@ export class TaskQueue {
   enqueue<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal) => Promise<T>): Promise<T> {
     const task: Task = {
       id: randomUUID(), ...meta, state: "queued", phase: null, done: 0, total: 0,
-      error: null, queuedAt: this.now(), startedAt: null, finishedAt: null,
+      error: null, errorCode: null, queuedAt: this.now(), startedAt: null, finishedAt: null,
     };
     const controller = new AbortController();
     this.controllers.set(task.id, controller);
@@ -78,7 +82,7 @@ export class TaskQueue {
         return r;
       } catch (e) {
         if (controller.signal.aborted) { task.state = "cancelled"; task.error = null; }
-        else { task.state = "error"; task.error = (e as Error).message; }
+        else { task.state = "error"; task.error = (e as Error).message; task.errorCode = errorCode(e) ?? null; }
         throw e;
       } finally {
         task.finishedAt = this.now();

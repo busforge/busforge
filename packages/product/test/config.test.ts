@@ -49,6 +49,14 @@ describe("parseAppConfig", () => {
     expect(app.types.get("M-TEST_A-1_PT-Mode")!.enums.map((e) => e.value)).toEqual([0, 1]);
     expect(app.types.get("M-TEST_A-1_PT-Num")).toMatchObject({ base: "Number", min: 0, max: 100 });
   });
+  test("flags a DCA-driven application program (and not a normal one)", () => {
+    const dcaXml = `<KNX><ApplicationProgram Id="M-TEST_A-DCA" Name="DALI-Gateway (DCA Version)" VisibleDescription="You need the ETS DCA App installed."><Static/><Dynamic/></ApplicationProgram></KNX>`;
+    const dcaApp = parseAppConfig(dcaXml);
+    expect(dcaApp.dca?.hint).toBe("You need the ETS DCA App installed.");
+    expect(buildDeviceConfig(dcaApp, new Map()).dca?.hint).toBe("You need the ETS DCA App installed.");
+    expect(app.dca).toBeUndefined();
+    expect(buildDeviceConfig(app, new Map()).dca).toBeUndefined();
+  });
 });
 
 describe("buildDeviceConfig visibility", () => {
@@ -191,6 +199,10 @@ describe("localization", () => {
     expect(byName("Switch time").param).toMatchObject({ control: "unsupported", typeLabel: "Time" });
     // Supported types still render normally.
     expect(byName("Level").param.control).toBe("number");
+    // TypeColor RGB is editable: a colour control carrying the stored #RRGGBB value.
+    expect(byName("Strip colour").param).toMatchObject({ control: "color", value: "#FF0000" });
+    // TypeColor HSV stays unsupported (encoding unverified) with a labelled badge.
+    expect(byName("Mood colour").param).toMatchObject({ control: "unsupported", typeLabel: "Color (HSV)" });
   });
 
   test("sibling blocks are ordered by heading DisplayOrder, not document order (ETS parity)", () => {

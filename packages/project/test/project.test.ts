@@ -79,11 +79,14 @@ describe("loadKnxproj (integration)", () => {
     expect(proj.devices).toHaveLength(2);
   });
 
-  test("throws a clear error on a missing password", () => {
+  test("throws a coded error on a missing password", () => {
     expect(() => loadKnxproj(fix("sample-encrypted.knxproj"), undefined, "x")).toThrow(/password/i);
+    try { loadKnxproj(fix("sample-encrypted.knxproj"), undefined, "x"); }
+    catch (e) { expect((e as { code?: string }).code).toBe("PASSWORD_REQUIRED"); }
   });
 
-  test("throws on a wrong password", () => {
-    expect(() => loadKnxproj(fix("sample-encrypted.knxproj"), "wrong", "x")).toThrow();
+  test("throws a coded error on a wrong password", () => {
+    try { loadKnxproj(fix("sample-encrypted.knxproj"), "wrong", "x"); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("WRONG_PASSWORD"); }
   });
 });

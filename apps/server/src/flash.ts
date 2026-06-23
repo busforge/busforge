@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId } from "@busforge/knx";
 import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, type ComObjectLink } from "@busforge/product";
 import { readAppProgram } from "@busforge/project";
+import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
 const byteDiff = (a: Buffer, b: Buffer): number => {
@@ -74,7 +75,7 @@ export async function flashDeviceParameters(opts: {
   onProgress?: ProgressFn;
 }): Promise<FlashResult> {
   const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
-  if (!xml) throw new Error("application program not found in project");
+  if (!xml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
   const model = parseApplication(xml);
   // SAFETY: the image builder reads only static parameter refs; it does not yet
   // expand channel/module instances. Any stored value keyed to an instance
@@ -83,14 +84,15 @@ export async function flashDeviceParameters(opts: {
   // configured channel device. (Removed once the image path expands modules.)
   const unmapped = unmappedParamRefs(model, opts.params);
   if (unmapped.length) {
-    throw new Error(
+    throw new ApiError(
+      "CHANNEL_MODULES_UNSUPPORTED",
       `parameter programming does not support this device's channel modules yet: ` +
       `${unmapped.length} stored value(s) would be dropped and those channels reset to defaults ` +
       `(e.g. ${unmapped[0]}). Refusing to flash to protect the device configuration.`,
     );
   }
   const image = buildParameterImage(model, LSM, opts.params);
-  if (image.length === 0) throw new Error("built an empty parameter image; refusing to flash");
+  if (image.length === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
   opts.onProgress?.("connect");
@@ -102,8 +104,8 @@ export async function flashDeviceParameters(opts: {
     // Safety: confirm we are talking to the expected device/application.
     const mask = await dev.deviceDescriptor();
     const wantMask = model.mask.replace(/^MV-/, "");
-    if (!wantMask) throw new Error("application mask unknown; refusing to flash");
-    if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+    if (!wantMask) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing to flash");
+    if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     const addr = await dev.tableAddr(LSM);
     const current = await dev.memRead(addr, image.length, 12, (d, t) => opts.onProgress?.("backup", d, t));
@@ -169,8 +171,8 @@ export async function flashDeviceGroupAddresses(opts: {
     await dev.connect();
     const mask = await dev.deviceDescriptor();
     const wantMask = opts.expectedMask.replace(/^MV-/, "");
-    if (!wantMask) throw new Error("application mask unknown; refusing to flash");
-    if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+    if (!wantMask) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing to flash");
+    if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     opts.onProgress?.("read");
     const cur = await readGroupTables(dev);
@@ -241,7 +243,7 @@ export async function readDeviceState(opts: {
   signal?: AbortSignal;
 }): Promise<DeviceReadback> {
   const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
-  if (!xml) throw new Error("application program not found in project");
+  if (!xml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
   const model = parseApplication(xml);
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
@@ -253,8 +255,8 @@ export async function readDeviceState(opts: {
 
     const mask = await dev.deviceDescriptor();
     const wantMask = model.mask.replace(/^MV-/, "");
-    if (!wantMask) throw new Error("application mask unknown; refusing to read");
-    if (!mask.includes(wantMask)) throw new Error(`device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+    if (!wantMask) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing to read");
+    if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     // Parameters (LSM 4): read the whole segment, decode it, and compare against
     // what the project config would flash, both normalized via the same codec.
@@ -272,7 +274,7 @@ export async function readDeviceState(opts: {
 
     // Group-address links: read the address + association tables and reverse them.
     // The com-object table is not needed to decode links, so skip it (much faster).
-    if (opts.signal?.aborted) throw new Error("read aborted");
+    if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
     opts.onProgress?.("links", 0, 2);
     const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
     const links = decodeGroupTables(gt.addr, gt.assoc, gt.long);

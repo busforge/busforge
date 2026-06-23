@@ -7,6 +7,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { errMsg } from "../lib/apiError.ts";
 
 // Program a device's parameter segment. Previews the change with a dry-run
 // before writing, then flashes and reports the verified result. Only the
@@ -24,7 +25,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, target, onF
   const [checking, setChecking] = useState(false);
   const [flashing, setFlashing] = useState(false);
   const [done, setDone] = useState<FlashResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const busyRef = useRef(false); // guards against a same-tick double click
 
   const run = (dryRun: boolean) => (target === "ga" ? api.flashDeviceGa : api.flashDevice)(projectId, device.id, dryRun);
@@ -37,21 +38,24 @@ export function FlashDialog({ open, onOpenChange, projectId, device, target, onF
     setDry(null); setDone(null); setError(null); setChecking(true);
     run(true)
       .then(setDry)
-      .catch((e) => setError((e as Error).message))
+      .catch((e) => setError(e))
       .finally(() => setChecking(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, device.id, target]);
 
   useEffect(() => { if (open) check(); }, [open, check]);
 
-  const isConnError = !!error && /timeout|connect|tunnel|unreachable|ECONN|EHOST|network/i.test(error);
+  // Connection-class failures are detected on the raw (English) message, which is
+  // preserved alongside any localized display text.
+  const rawError = error instanceof Error ? error.message : "";
+  const isConnError = !!error && /timeout|connect|tunnel|unreachable|ECONN|EHOST|network/i.test(rawError);
 
   async function flash() {
     if (busyRef.current) return;
     busyRef.current = true;
     setFlashing(true); setError(null);
     try { const r = await run(false); setDone(r); if (r.flashed) onFlashed?.(); }
-    catch (e) { setError((e as Error).message); }
+    catch (e) { setError(e); }
     finally { setFlashing(false); busyRef.current = false; }
   }
 
@@ -69,9 +73,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, target, onF
 
         <div className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-sm">
           {checking && <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>}
-          {error && (
+          {!!error && (
             <div className="space-y-1">
-              <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {error}</span>
+              <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, error)}</span>
               {isConnError && (
                 <p className="pl-6 text-xs text-muted-foreground">
                   {t("flash.connHint")}
@@ -94,7 +98,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, target, onF
 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={flashing}>{done ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
-          {error && !flashing && (
+          {!!error && !flashing && (
             <Button variant="outline" onClick={check} data-testid="flash-retry">
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>

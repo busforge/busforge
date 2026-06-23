@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/StatusBadge.tsx";
+import { errMsg } from "../lib/apiError.ts";
 
 export function InterfaceView() {
   const { t } = useTranslation();
@@ -37,12 +38,12 @@ export function InterfaceView() {
   const connectMut = useMutation({
     mutationFn: async () => { await saveMut.mutateAsync(); return api.busConnect(projectId); },
     onSuccess: () => { refreshStatus(); toast.success(t("iface.connected")); },
-    onError: (e) => { toast.error(t("iface.connectFailed"), { description: (e as Error).message }); refreshStatus(); },
+    onError: (e) => { toast.error(t("iface.connectFailed"), { description: errMsg(t, e) }); refreshStatus(); },
   });
   const disconnectMut = useMutation({
     mutationFn: () => api.busDisconnect(projectId),
     onSuccess: () => { refreshStatus(); toast.message(t("iface.disconnected")); },
-    onError: (e) => { toast.error(t("iface.disconnectFailed"), { description: (e as Error).message }); refreshStatus(); },
+    onError: (e) => { toast.error(t("iface.disconnectFailed"), { description: errMsg(t, e) }); refreshStatus(); },
   });
 
   const connected = status === "connected";
@@ -65,7 +66,7 @@ export function InterfaceView() {
           </div>
           <Button
             variant="outline"
-            onClick={() => saveMut.mutate(undefined, { onSuccess: () => toast.success(t("iface.saved")), onError: (e) => toast.error(t("iface.saveFailed"), { description: (e as Error).message }) })}
+            onClick={() => saveMut.mutate(undefined, { onSuccess: () => toast.success(t("iface.saved")), onError: (e) => toast.error(t("iface.saveFailed"), { description: errMsg(t, e) }) })}
             disabled={saveMut.isPending}
           >
             {t("common.save")}

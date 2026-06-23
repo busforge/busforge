@@ -11,7 +11,7 @@ export interface ProjectSummary { id: string; name: string; deviceCount: number;
 export interface Project { id: string; name: string; interface: ProjectInterface; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
 export interface CfgParamView {
-  refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
+  refId: string; name: string; control: "enum" | "number" | "text" | "color" | "unsupported";
   value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; readOnly?: boolean;
   changed?: boolean; defaultValue?: string; typeLabel?: string; indent?: number;
 }
@@ -27,7 +27,10 @@ export type CfgItem =
   | { kind: "comObject"; comObject: CfgComObjView }
   | { kind: "unsupported"; label: string };
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
+// Set when the device is configured via a manufacturer ETS DCA app (Windows-only
+// plugin); its proprietary config is not shown/editable here, standard params are.
+export interface DcaInfo { hint: string }
+export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
 export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 
 export type TaskKind = "read" | "flash-params" | "flash-ga";
@@ -35,16 +38,32 @@ export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;
   kind: TaskKind; state: TaskState; phase: string | null; done: number; total: number;
-  error: string | null; queuedAt: number; startedAt: number | null; finishedAt: number | null;
+  error: string | null; errorCode: string | null; queuedAt: number; startedAt: number | null; finishedAt: number | null;
 }
 
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
 export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; }
 
+// Thrown on a non-OK response. `code` is the backend's stable error code (when
+// present) the UI maps to a localized string; `message` is the English fallback.
+export class ApiError extends Error {
+  constructor(message: string, public readonly code?: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as any).error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const e = (body as { error?: unknown }).error;
+    if (e && typeof e === "object") {
+      const { code, message } = e as { code?: string; message?: string };
+      throw new ApiError(message ?? `HTTP ${res.status}`, code);
+    }
+    throw new ApiError(typeof e === "string" ? e : `HTTP ${res.status}`);
+  }
   return body as T;
 }
 

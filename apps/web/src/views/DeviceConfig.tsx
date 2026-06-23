@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, Puzzle, RotateCcw, Search, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -20,6 +20,7 @@ import { FlashDialog } from "./FlashDialog.tsx";
 import { GaCombobox, type GaOption } from "./GaCombobox.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { cn } from "@/lib/utils";
+import { errMsg } from "../lib/apiError.ts";
 
 // Shared width of the right-hand control column, so parameter inputs and the
 // group-address picker line up and none of them get cut off.
@@ -92,7 +93,7 @@ export function DeviceConfig() {
   const [revertOpen, setRevertOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
 
-  const onError = (e: unknown) => toast.error(t("device.saveError"), { description: (e as Error).message });
+  const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
   const relink = (comObjRefId: string, gaRaw: number | null) =>
     setLink.mutate({ comObjRefId, gaRaws: gaRaw == null ? [] : [gaRaw] }, { onError });
   const doRevert = () =>
@@ -103,7 +104,7 @@ export function DeviceConfig() {
   const doReadBack = () =>
     readBack.mutate(undefined, {
       onSuccess: (v) => { const n = countChanged(v); toast.success(n ? t("device.readDrift", { count: n }) : t("device.readNoDrift")); },
-      onError: (e) => toast.error(t("device.readError"), { description: (e as Error).message }),
+      onError: (e) => toast.error(t("device.readError"), { description: errMsg(t, e) }),
     });
   const afterFlash = () => {
     qc.invalidateQueries({ queryKey: qk.project(projectId) });
@@ -329,6 +330,17 @@ export function DeviceConfig() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {view?.dca && (
+        <div className="flex items-start gap-2 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-sky-700 dark:text-sky-300" data-testid="dca-notice">
+          <Puzzle className="mt-0.5 size-4 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">{t("device.dcaTitle")}</p>
+            <p className="text-sky-700/90 dark:text-sky-300/90">{t("device.dcaBody")}</p>
+            {view.dca.hint && <p className="text-xs text-sky-700/70 dark:text-sky-300/70">{view.dca.hint}</p>}
+          </div>
+        </div>
+      )}
+
       {(gaps.types.length > 0 || gaps.elements.length > 0) && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -343,7 +355,7 @@ export function DeviceConfig() {
       )}
 
       {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}
-      {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{(error as Error).message}</p>}
+      {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{errMsg(t, error)}</p>}
       {view && !isLoading && view.blocks.length === 0 && !error && (
         <Card><CardContent className="text-sm text-muted-foreground">
           {t("device.noParams")}
@@ -491,7 +503,14 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
       <div className={cn("flex shrink-0 items-center gap-2", CONTROL_W)}>
         {param.readOnly ? (
-          <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
+          param.control === "color" ? (
+            <span className="flex w-full items-center gap-2 text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>
+              <span style={{ background: param.value }} className="inline-block size-5 shrink-0 rounded border border-input" />
+              <span className="font-mono">{param.value}</span>
+            </span>
+          ) : (
+            <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
+          )
         ) : param.control === "enum" ? (
           // Native <select>: a device can have 500+ enums; mounting that many
           // Radix Selects is the page's main render cost. Native is browser-cheap
@@ -526,6 +545,19 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           />
         ) : param.control === "text" ? (
           <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
+        ) : param.control === "color" ? (
+          // TypeColor (RGB): native colour picker. Values are stored as #RRGGBB;
+          // ETS uses upper-case, so normalise typed/picked input to upper-case to
+          // match the stored default (no upper/lower drift) and read back exactly.
+          <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
+            <input
+              type="color" value={(local || "#000000").toLowerCase()}
+              onChange={(e) => setLocal(e.target.value.toUpperCase())}
+              onBlur={() => local !== param.value && onChange(local)}
+              className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background p-0.5"
+            />
+            <span className="font-mono text-sm text-muted-foreground">{local}</span>
+          </span>
         ) : (
           // Type we cannot edit yet: show the value read-only with an explicit
           // "not supported" badge so the gap is visible, never a blank control.
