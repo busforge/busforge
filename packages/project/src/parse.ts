@@ -19,12 +19,12 @@ const manufacturerOf = (productRef: string): number => {
   return m ? parseInt(m[1], 16) : 0;
 };
 
-export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string): Project {
+export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const doc = p.parse(xml0);
 
   const installation = firstByKey(doc, "Installation");
-  const topology = parseTopology(installation?.Topology);
+  const topology = parseTopology(installation?.Topology, productNames);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
@@ -93,7 +93,7 @@ function parseName(projectXml: string | undefined, installation: any, fallbackNa
   return fallbackName;
 }
 
-function parseTopology(topo: any): Topology {
+function parseTopology(topo: any, productNames: Map<string, string>): Topology {
   const areas: TopologyArea[] = [];
   for (const area of arr<any>(topo?.Area)) {
     const lines = arr<any>(area.Line).map((line) => {
@@ -102,7 +102,9 @@ function parseTopology(topo: any): Topology {
       const devices: Device[] = devNodes.map((d) => ({
         id: String(d.Id ?? ""),
         ia: `${Number(area.Address)}.${Number(line.Address)}.${Number(d.Address)}`,
-        name: String(d.Name ?? ""),
+        // ETS falls back to the catalogue product name when a device has no
+        // user-given instance name.
+        name: String(d.Name || productNames.get(String(d.ProductRefId ?? "")) || ""),
         productRef: String(d.ProductRefId ?? ""),
         appRef: String(d.Hardware2ProgramRefId ?? ""),
         manufacturer: manufacturerOf(String(d.ProductRefId ?? "")),

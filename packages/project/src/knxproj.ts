@@ -37,7 +37,26 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
     projectXml = tryTextOf(outer, "project.xml");
   }
 
-  return parseProject(xml0, projectXml, fallbackName);
+  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer));
+}
+
+// Map ProductRefId -> catalogue product name from the manufacturer Hardware.xml
+// files (plaintext in the outer zip). Used as the device-name fallback, matching
+// ETS, when a device instance has no user-given name. A device's ProductRefId
+// equals the <Product Id="..."> it references.
+function parseProductNames(outer: Map<string, Buffer>): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const [key, buf] of outer) {
+    if (!key.endsWith("Hardware.xml")) continue;
+    const xml = dec.decode(buf);
+    for (const m of xml.matchAll(/<Product\b[^>]*>/g)) {
+      const tag = m[0];
+      const id = /\bId="([^"]+)"/.exec(tag)?.[1];
+      const text = /\bText="([^"]*)"/.exec(tag)?.[1];
+      if (id && text) names.set(id, text);
+    }
+  }
+  return names;
 }
 
 const dec = new TextDecoder("utf-8");
