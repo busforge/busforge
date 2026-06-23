@@ -289,9 +289,13 @@ export function DeviceConfig() {
     );
   };
 
+  // The section index mirrors the (filtered) tree shown on the right, so it stays
+  // useful while searching; show it whenever there is more than one place to jump.
+  const navCount = filteredGroups.reduce((n, g) => n + 1 + g.children.filter((c) => c.level === 1).length, 0);
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-2">
           <Button asChild variant="ghost" size="icon" aria-label={t("device.back")} className="shrink-0 text-muted-foreground">
             <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed }}><ChevronLeft className="size-5" /></Link>
@@ -301,7 +305,21 @@ export function DeviceConfig() {
             <ChangePill changes={device?.changes} />
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2">
+        {view && view.blocks.length > 0 && (
+          <div className="relative w-full sm:max-w-xs sm:flex-1">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="config-search" />
+            {qRaw && (
+              <button
+                type="button" aria-label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-2 sm:shrink-0">
           {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
           {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving, testId: "read-back" })}
@@ -364,23 +382,11 @@ export function DeviceConfig() {
 
       {view && view.blocks.length > 0 && (
         <div className="space-y-4">
-          <div className="relative max-w-xs">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="config-search" />
-            {qRaw && (
-              <button
-                type="button" aria-label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                <X className="size-4" />
-              </button>
-            )}
-          </div>
           {filteredGroups.length === 0 ? (
             <Card><CardContent className="py-4 text-sm text-muted-foreground">{t("device.searchEmpty")}</CardContent></Card>
           ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          {filteredGroups.length > 1 && (
+          {navCount > 1 && (
             <nav className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
               <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
                 {filteredGroups.map((g) => {

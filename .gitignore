@@ -26,3 +26,8 @@ reference/
 # local session state
 .remember
 *.tsbuildinfo
+
+# playwright-cli artifacts (snapshots, console logs, screenshots)
+**/.playwright-cli/
+# local git worktrees
+.worktrees/
