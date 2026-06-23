@@ -13,7 +13,7 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 export interface CfgParamView {
   refId: string; name: string; control: "enum" | "number" | "text" | "unsupported";
   value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; readOnly?: boolean;
-  changed?: boolean; defaultValue?: string;
+  changed?: boolean; defaultValue?: string; typeLabel?: string;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -24,8 +24,9 @@ export interface CfgComObjView {
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }
   | { kind: "param"; param: CfgParamView }
-  | { kind: "comObject"; comObject: CfgComObjView };
-export interface CfgBlock { id: string; name: string; items: CfgItem[]; }
+  | { kind: "comObject"; comObject: CfgComObjView }
+  | { kind: "unsupported"; label: string };
+export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
 export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 

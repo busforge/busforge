@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Cpu, Download, Info, Loader2, Network, RotateCcw } from "lucide-react";
+import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, RotateCcw } from "lucide-react";
 import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import type { CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
+import type { CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -61,6 +60,7 @@ const flagWords = (f: CfgComObjView["flags"], t: TFn) =>
     .filter(Boolean).join(", ");
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
+const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && !!it.comObject.changed);
 const norm = (s?: string) => (s ?? "").toLowerCase();
 // Whether an item matches the carried search term (mirrors the device-list deep
 // search: param name/value and com-object function/name).
@@ -107,24 +107,50 @@ export function DeviceConfig() {
     qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
   };
 
-  // Section table-of-contents: scroll to a card and track the active one.
-  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Section index. Only top-level group headers are tracked/scroll targets (one
+  // per channel/area), so the index stays short and the scroll-spy reliable even
+  // on devices with hundreds of rows.
+  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeSec, setActiveSec] = useState<string | null>(null);
   const scrollToSec = (id: string) => cardRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
+  // Fold the flat block list into top-level groups: a level-0 block heads a
+  // group, the sub-blocks that follow (level >= 1) become its sub-sections. This
+  // mirrors the ETS tree (channel -> Settings/Heating/...).
+  const groups = useMemo(() => {
+    const gs: { head: CfgBlock; children: CfgBlock[] }[] = [];
+    for (const b of view?.blocks ?? []) {
+      if (b.level === 0 || gs.length === 0) gs.push({ head: b, children: [] });
+      else gs[gs.length - 1].children.push(b);
+    }
+    return gs;
+  }, [view]);
+
+  const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
+    g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
+
+  // Scroll-spy: the active group is the last whose header sits above a small top
+  // offset. Deterministic (always exactly one), so no flicker between sections.
   useEffect(() => {
     if (!view) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-        if (top) setActiveSec(top.target.id);
-      },
-      { rootMargin: "-80px 0px -70% 0px", threshold: 0 },
-    );
-    cardRefs.current.forEach((el) => obs.observe(el));
-    return () => obs.disconnect();
-  }, [view]);
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      let active: string | null = null;
+      let bestTop = -Infinity;
+      cardRefs.current.forEach((el, id) => {
+        const top = el.getBoundingClientRect().top;
+        if (top <= 96 && top > bestTop) { bestTop = top; active = id; }
+      });
+      if (!active && groups[0]) active = `sec-${groups[0].head.id}`;
+      setActiveSec(active);
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => { window.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [view, groups]);
 
   // Jump to the first row matching the carried search term.
   useEffect(() => {
@@ -147,6 +173,68 @@ export function DeviceConfig() {
       <TooltipContent>{t(key)}</TooltipContent>
     </Tooltip>
   );
+
+  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); };
+
+  const renderItem = (item: CfgItem, key: string | number) => {
+    if (item.kind === "separator") {
+      if (item.uiHint === "HorizontalRuler") return <Separator key={key} className="my-2" />;
+      if (!item.text) return null;
+      if (item.uiHint === "Error") return <p key={key} className="py-1 text-xs text-destructive">{item.text}</p>;
+      // Any other text separator is a section heading in ETS.
+      return <div key={key} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
+    }
+    if (item.kind === "comObject") {
+      const co = item.comObject;
+      const flags = flagWords(co.flags, t);
+      const dpt = co.dpt || co.objectSize || t("device.unknownDpt");
+      const info = flags
+        ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
+        : t("device.objectInfo", { number: co.number, dpt });
+      const hl = itemMatches(item, q);
+      return (
+        <div
+          key={key} data-match={hl || undefined}
+          className={cn(
+            "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+            co.changed ? "border-primary bg-primary/5" : "border-transparent",
+            hl && "rounded-md bg-ok/10 ring-1 ring-ok/50",
+          )}
+        >
+          <span className="flex min-w-0 items-center gap-2 sm:flex-1">
+            {co.changed ? <ChangedDot title={t("device.changedDot")} /> : null}
+            <span className="min-w-0">{comObjLabel(co)}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" aria-label={info} className="shrink-0 text-muted-foreground"><Info className="size-3.5" /></button>
+              </TooltipTrigger>
+              <TooltipContent className="whitespace-pre-line">{info}</TooltipContent>
+            </Tooltip>
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
+            <div className={cn("shrink-0", CONTROL_W)}><GaCombobox options={gaOptions} value={co.gaRaw ?? null} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
+          </div>
+        </div>
+      );
+    }
+    if (item.kind === "unsupported") {
+      return (
+        <div key={key} className="my-1 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span>{t("device.unsupportedElement", { tag: item.label })}</span>
+        </div>
+      );
+    }
+    return (
+      <ParamRow
+        key={key} param={item.param} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
+        highlight={itemMatches(item, q)}
+        onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })}
+        onRevert={() => revertParam.mutate(item.param.refId, { onError })}
+      />
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -199,21 +287,24 @@ export function DeviceConfig() {
 
       {view && view.blocks.length > 0 && (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          {view.blocks.length > 1 && (
-            <nav className="lg:sticky lg:top-16 lg:w-56 lg:shrink-0">
-              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible lg:pb-0">
-                {view.blocks.map((block) => {
-                  const id = `sec-${block.id}`;
+          {groups.length > 1 && (
+            <nav className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
+              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
+                {groups.map((g) => {
+                  const headId = `sec-${g.head.id}`;
+                  const active = activeSec === headId;
                   return (
-                    <li key={block.id}>
+                    <li key={g.head.id}>
                       <button
-                        type="button" onClick={() => scrollToSec(id)}
+                        type="button" onClick={() => scrollToSec(headId)}
                         className={cn(
-                          "w-full whitespace-nowrap rounded px-2 py-1 text-left text-sm transition-colors lg:truncate",
-                          activeSec === id ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                          // Active = neutral fill + left bar; the amber dot (right) is reserved for "has changes".
+                          "flex w-full items-center gap-2 whitespace-nowrap rounded border-l-2 px-2 py-1 text-left text-sm transition-colors lg:truncate",
+                          active ? "border-foreground/50 bg-secondary font-medium text-foreground" : "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
                         )}
                       >
-                        {block.name}
+                        <span className="truncate">{g.head.name}</span>
+                        {groupChanged(g) && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                       </button>
                     </li>
                   );
@@ -223,61 +314,20 @@ export function DeviceConfig() {
           )}
 
           <div ref={containerRef} className="min-w-0 flex-1 space-y-4">
-            {view.blocks.map((block) => (
-              <Card key={block.id} id={`sec-${block.id}`} ref={(el) => { if (el) cardRefs.current.set(`sec-${block.id}`, el); }} className="scroll-mt-20">
+            {groups.map((g) => (
+              <Card key={g.head.id} id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="scroll-mt-20">
                 <CardContent className="space-y-0.5 py-4">
-                  <h3 className="mb-3 border-b border-border/60 pb-2 text-base font-semibold text-foreground">{block.name}</h3>
-                  {block.items.map((item, i) => {
-                    if (item.kind === "separator") {
-                      if (item.uiHint === "HorizontalRuler") return <Separator key={i} className="my-2" />;
-                      if (!item.text) return null;
-                      if (item.uiHint === "Error") return <p key={i} className="py-1 text-xs text-destructive">{item.text}</p>;
-                      // Any other text separator is a section heading in ETS.
-                      return <div key={i} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
-                    }
-                    if (item.kind === "comObject") {
-                      const co = item.comObject;
-                      const flags = flagWords(co.flags, t);
-                      const dpt = co.dpt || co.objectSize || t("device.unknownDpt");
-                      const info = flags
-                        ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
-                        : t("device.objectInfo", { number: co.number, dpt });
-                      const hl = itemMatches(item, q);
-                      return (
-                        <div
-                          key={i} data-match={hl || undefined}
-                          className={cn(
-                            "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
-                            co.changed ? "border-primary bg-primary/5" : "border-transparent",
-                            hl && "rounded-md bg-ok/10 ring-1 ring-ok/50",
-                          )}
-                        >
-                          <span className="flex min-w-0 items-center gap-2 sm:flex-1">
-                            {co.changed ? <ChangedDot title={t("device.changedDot")} /> : null}
-                            <span className="min-w-0">{comObjLabel(co)}</span>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button type="button" aria-label={info} className="shrink-0 text-muted-foreground"><Info className="size-3.5" /></button>
-                              </TooltipTrigger>
-                              <TooltipContent className="whitespace-pre-line">{info}</TooltipContent>
-                            </Tooltip>
-                          </span>
-                          <div className="flex shrink-0 items-center gap-2">
-                            {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
-                            <div className={cn("shrink-0", CONTROL_W)}><GaCombobox options={gaOptions} value={co.gaRaw ?? null} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
-                          </div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <ParamRow
-                        key={i} param={item.param} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
-                        highlight={itemMatches(item, q)}
-                        onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })}
-                        onRevert={() => revertParam.mutate(item.param.refId, { onError })}
-                      />
-                    );
-                  })}
+                  <h3 className="mb-3 flex items-center gap-2 border-b border-border/60 pb-2 text-base font-semibold text-foreground">
+                    <span className="min-w-0 truncate">{g.head.name}</span>
+                    {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                  </h3>
+                  {g.head.items.map((item: CfgItem, i: number) => renderItem(item, i))}
+                  {g.children.map((child: CfgBlock) => (
+                    <section key={child.id} className="pt-3">
+                      <h4 className="mt-2 mb-2 border-l-2 border-foreground/25 pl-2 text-sm font-semibold text-foreground">{child.name}</h4>
+                      {child.items.map((item: CfgItem, i: number) => renderItem(item, `${child.id}-${i}`))}
+                    </section>
+                  ))}
                 </CardContent>
               </Card>
             ))}
@@ -289,6 +339,7 @@ export function DeviceConfig() {
 }
 
 function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; highlight: boolean; onChange: (value: string) => void; onRevert: () => void }) {
+  const { t } = useTranslation();
   const [local, setLocal] = useState(param.value);
   useEffect(() => setLocal(param.value), [param.value]);
 
@@ -316,12 +367,16 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
         {param.readOnly ? (
           <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
         ) : param.control === "enum" ? (
-          <Select value={param.value} onValueChange={onChange}>
-            <SelectTrigger className="w-full" data-testid={`param-${param.refId}`}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {param.options?.map((o) => <SelectItem key={o.value} value={String(o.value)}>{o.text}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          // Native <select>: a device can have 500+ enums; mounting that many
+          // Radix Selects is the page's main render cost. Native is browser-cheap
+          // and fully functional, so the whole list stays visible without lag.
+          <select
+            value={param.value} onChange={(e) => onChange(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            data-testid={`param-${param.refId}`}
+          >
+            {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
+          </select>
         ) : param.control === "number" ? (
           <Input
             type="number" value={local} min={param.min} max={param.max}
@@ -332,7 +387,14 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
         ) : param.control === "text" ? (
           <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
         ) : (
-          <span className="font-mono text-xs text-muted-foreground">{param.value}</span>
+          // Type we cannot edit yet: show the value read-only with an explicit
+          // "not supported" badge so the gap is visible, never a blank control.
+          <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-3" />{t("device.unsupportedType", { type: param.typeLabel ?? "?" })}
+            </span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{param.value}</span>
+          </span>
         )}
         {param.suffix && <span className="shrink-0 text-xs text-muted-foreground">{param.suffix}</span>}
       </div>

@@ -37,6 +37,56 @@ manufacturer house bus via an MDT KNXnet/IP interface).
 
 ---
 
+## ETS compatibility & coverage
+
+The goal is **100% parity with ETS** for the device configuration view: every
+parameter, channel and com-object ETS shows, busforge should show and program
+identically. We are not there yet, and the importer in front of a real, multi
+manufacturer installation already exercises a large slice of what ETS supports.
+
+**A hard rule keeps the gap honest: nothing is ever dropped silently.** Anything
+the engine cannot render is shown in the UI as an explicit "not supported yet"
+marker (with the parameter's type or the unknown element's name), never omitted
+and never shown as an empty control. A missing parameter that merely looks absent
+is the worst failure mode: it hides configuration and hides drift (a changed
+value the user cannot see). Completeness is treated as a correctness property, so
+the same model must drive what we parse, what the UI shows, and the image we
+program. A flash is refused when the stored configuration contains parameters the
+image builder cannot place, so an incomplete render can never silently reset a
+device to defaults. Full detail and roadmap: [`docs/ets-coverage.md`](docs/ets-coverage.md).
+
+**Dynamic elements**
+
+| Element | Status |
+|---|---|
+| ParameterBlock (heading from Text / ParamRefId / Name) | ✅ |
+| ParameterRefRef / ComObjectRefRef | ✅ |
+| choose / when / default (+ `test` grammar) | ✅ |
+| ParameterSeparator | ✅ |
+| Module instantiation (scope rewrite, com-object base numbering) | ✅ |
+| Repeat (channel replication) | ✅ |
+| Assign / Union / TextParameterRefId substitution | ✅ |
+| ChannelIndependentBlock | ✅ |
+| Channel heading/label | ⚠️ container works, heading dropped |
+| Unknown / vendor element | 🔶 surfaced as a visible "not supported" marker |
+
+**Parameter types**
+
+| Type | Status |
+|---|---|
+| Enumeration (TypeRestriction) / Number / Text | ✅ editable |
+| Float / Time / Color / IP address / Binary | 🔶 shown read-only with a "not supported yet" badge |
+| TypeNone (display) | 🔶 named ones shown; empty spacers omitted |
+
+**Programming (image build)**
+
+| Path | Status |
+|---|---|
+| Single-block / non-module devices | ✅ verified on the bus |
+| Channel/module devices (per-instance offsets) | ⛔ not supported; parameter flash is refused to protect the config |
+
+---
+
 ## What was proven on the bus
 
 **Group address change.** Changed a device's group table entry `2/1/7 → 2/1/8`,

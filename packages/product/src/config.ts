@@ -1,4 +1,16 @@
-import type { AppConfig, ComObjFlags, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgType, ComObjFlags, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+
+// A human label for a datapoint type the engine cannot edit yet, shown on the
+// "not supported" row so the gap is explicit (never a blank/empty control).
+function unsupportedTypeLabel(type: CfgType | undefined): string {
+  const byTag: Record<string, string> = {
+    TypeFloat: "Float", TypeTime: "Time", TypeColor: "Color",
+    TypeIPAddress: "IP address", TypePicture: "Picture", TypeNone: "Display",
+  };
+  if (type?.kind && byTag[type.kind]) return byTag[type.kind];
+  if (type?.base === "BinaryValue") return "Binary";
+  return type?.kind || "Unknown type";
+}
 
 // The device-configuration engine: given an application program, a device's
 // parameter values, and its module instances, produce the visible, grouped,
@@ -23,6 +35,7 @@ export interface CfgParamView {
   readOnly?: boolean;
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
+  typeLabel?: string; // for control "unsupported": a human label of the datapoint type we can't edit yet
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -33,8 +46,9 @@ export interface CfgComObjView {
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }
   | { kind: "param"; param: CfgParamView }
-  | { kind: "comObject"; comObject: CfgComObjView };
-export interface CfgBlock { id: string; name: string; items: CfgItem[]; }
+  | { kind: "comObject"; comObject: CfgComObjView }
+  | { kind: "unsupported"; label: string }; // an ETS dynamic element the engine does not handle yet
+export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; }
 
 interface Scope {
@@ -125,6 +139,10 @@ export function buildDeviceConfig(
     const value = resolve(defRefId, scope) ?? "";
     const name = subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope);
     const suffix = param.suffix ? subst(tr(param.id, "SuffixText", param.suffix), scope) : undefined;
+    // TypeNone is a display-only element (no datapoint). A nameless one is a pure
+    // ETS layout spacer with nothing to show or support; drop only that case. A
+    // named one falls through and is shown (as an unsupported "Display" row).
+    if (type?.kind === "TypeNone" && !name.trim()) return null;
 
     let control: CfgParamView["control"] = "unsupported";
     let options: CfgParamView["options"];
@@ -135,7 +153,8 @@ export function buildDeviceConfig(
     else if (type?.base === "Text") control = "text";
 
     const defaultValue = ref.value ?? param.value ?? "";
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read", defaultValue } };
+    const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, readOnly: access === "Read", defaultValue, typeLabel } };
   };
 
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {
@@ -197,6 +216,7 @@ export function buildDeviceConfig(
         case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) collect(w.children, items, scope); break; }
         case "container": collect(n.children, items, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
+        case "unsupported": items.push({ kind: "unsupported", label: n.tag }); break; // surface, never drop
         case "block": break; // nested blocks become their own sections (walkBlocks)
       }
     }
@@ -217,10 +237,17 @@ export function buildDeviceConfig(
     return subst(n.name, scope);
   };
 
-  // Emit a UI section per ParameterBlock, descending through containers, active
-  // choose branches, and module instances in document order.
-  const blocks: CfgBlock[] = [];
-  const walkBlocks = (nodes: DynNode[], scope: Scope) => {
+  // Build the section tree in document order (so Assign side effects and choose
+  // visibility evaluate exactly as authored), then order each set of siblings the
+  // way ETS does: by the DisplayOrder of the block's heading parameter, not by
+  // document order. A block with its own items is a nesting parent (channels are
+  // level 0, their sub-blocks level 1); an item-less block stays transparent.
+  interface Node { block: CfgBlock; order: number; seq: number; children: Node[] }
+  let seq = 0;
+  const headOrder = (n: Extract<DynNode, { kind: "block" }>): number =>
+    (n.paramRefId ? app.refs.get(n.paramRefId)?.displayOrder : undefined) ?? 0;
+
+  const walk = (nodes: DynNode[], scope: Scope, into: Node[]) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
@@ -229,19 +256,36 @@ export function buildDeviceConfig(
           if (items.length) {
             let name = blockTitle(n, scope);
             if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
-            blocks.push({ id: scope.rewrite(n.id), name, items });
+            const node: Node = { block: { id: scope.rewrite(n.id), name, items, level: 0 }, order: headOrder(n), seq: seq++, children: [] };
+            into.push(node);
+            walk(n.children, scope, node.children);
+          } else {
+            walk(n.children, scope, into); // transparent wrapper: children keep this level
           }
-          walkBlocks(n.children, scope);
           break;
         }
-        case "container": walkBlocks(n.children, scope); break;
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) walkBlocks(w.children, scope); break; }
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walkBlocks(def.dynamic, makeScope(n.refId, def, inst)); break; }
+        case "container": walk(n.children, scope, into); break;
+        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) walk(w.children, scope, into); break; }
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into); break; }
         default: break;
       }
     }
   };
-  walkBlocks(app.dynamic, TOP);
+  const roots: Node[] = [];
+  walk(app.dynamic, TOP, roots);
+
+  // Stable sort each sibling list by DisplayOrder (equal/missing keeps document order).
+  const blocks: CfgBlock[] = [];
+  const emit = (nodes: Node[], level: number, parentId?: string) => {
+    nodes.sort((a, b) => (a.order - b.order) || (a.seq - b.seq));
+    for (const node of nodes) {
+      node.block.level = level;
+      node.block.parentId = parentId;
+      blocks.push(node.block);
+      emit(node.children, level + 1, node.block.id);
+    }
+  };
+  emit(roots, 0);
 
   return { blocks, hasModules: app.hasModules };
 }

@@ -18,16 +18,27 @@ export function GaCombobox({ options, value, onChange, testId }: {
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  // Mount the Popover/Command machinery only once interacted with: a device can
+  // have 100+ of these, and mounting them all up front is a real render cost.
+  // Until then render just the light trigger button.
+  const [active, setActive] = useState(false);
   const sel = options.find((o) => o.raw === value);
+  const triggerClass = cn("h-9 w-full justify-between font-mono text-xs font-normal", !sel && "border-dashed text-muted-foreground");
+  const label = <><span className="truncate">{sel ? `${sel.address} ${sel.name}` : t("ga.assign")}</span><ChevronsUpDown className="size-3.5 shrink-0 opacity-50" /></>;
+
+  if (!active) {
+    return (
+      <Button variant="outline" role="combobox" data-testid={testId} className={triggerClass}
+        onClick={() => { setActive(true); setOpen(true); }}>
+        {label}
+      </Button>
+    );
+  }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setActive(false); }}>
       <PopoverTrigger asChild>
-        <Button
-          variant="outline" role="combobox" data-testid={testId}
-          className={cn("h-9 w-full justify-between font-mono text-xs font-normal", !sel && "border-dashed text-muted-foreground")}
-        >
-          <span className="truncate">{sel ? `${sel.address} ${sel.name}` : t("ga.assign")}</span>
-          <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+        <Button variant="outline" role="combobox" data-testid={testId} className={triggerClass}>
+          {label}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-72 p-0" align="end">

@@ -69,6 +69,15 @@ export function parseApplication(xml: string): AppModel {
   return { mask, manufacturer, appNumber, version, types, params, refs, segments };
 }
 
+// Stored parameter refs the static image model cannot place (no matching
+// ParameterRef), e.g. channel/module-instance values (…_MI-…) because this model
+// does not expand modules yet. They would be silently dropped when building the
+// image, so the flash path treats a non-empty result as a refuse-to-flash signal:
+// the configuration the UI shows and the image we build must cover the same refs.
+export function unmappedParamRefs(model: AppModel, values: Map<string, string>): string[] {
+  return [...values.keys()].filter((k) => !model.refs.has(k));
+}
+
 function findFirst(node: any, key: string): any {
   if (node == null || typeof node !== "object") return undefined;
   if (node[key]) return Array.isArray(node[key]) ? node[key][0] : node[key];

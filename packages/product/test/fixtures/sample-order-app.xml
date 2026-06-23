@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-7" ApplicationNumber="7" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Order App" DefaultLanguage="en-US">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-7_PT-Num"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="M-TEST_A-7_P-A" Name="A" ParameterType="M-TEST_A-7_PT-Num" Text="A" Value="0"><Memory CodeSegment="M-TEST_A-7_RS-4" Offset="0" BitOffset="0" /></Parameter>
+              <Parameter Id="M-TEST_A-7_P-B" Name="B" ParameterType="M-TEST_A-7_PT-Num" Text="B" Value="0"><Memory CodeSegment="M-TEST_A-7_RS-4" Offset="1" BitOffset="0" /></Parameter>
+              <Parameter Id="M-TEST_A-7_P-C" Name="C" ParameterType="M-TEST_A-7_PT-Num" Text="C" Value="0"><Memory CodeSegment="M-TEST_A-7_RS-4" Offset="2" BitOffset="0" /></Parameter>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-TEST_A-7_P-A_R-A" RefId="M-TEST_A-7_P-A" DisplayOrder="300" />
+              <ParameterRef Id="M-TEST_A-7_P-B_R-B" RefId="M-TEST_A-7_P-B" DisplayOrder="100" />
+              <ParameterRef Id="M-TEST_A-7_P-C_R-C" RefId="M-TEST_A-7_P-C" DisplayOrder="200" />
+            </ParameterRefs>
+          </Static>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-TEST_A-7_PB-A" Name="A" ParamRefId="M-TEST_A-7_P-A_R-A"><ParameterRefRef RefId="M-TEST_A-7_P-A_R-A" /></ParameterBlock>
+              <ParameterBlock Id="M-TEST_A-7_PB-B" Name="B" ParamRefId="M-TEST_A-7_P-B_R-B"><ParameterRefRef RefId="M-TEST_A-7_P-B_R-B" /></ParameterBlock>
+              <ParameterBlock Id="M-TEST_A-7_PB-C" Name="C" ParamRefId="M-TEST_A-7_P-C_R-C"><ParameterRefRef RefId="M-TEST_A-7_P-C_R-C" /></ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

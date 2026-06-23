@@ -12,6 +12,7 @@ export interface EnumOption { value: number; text: string; id: string; }
 export interface CfgType {
   id: string;
   base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Other";
+  kind: string; // the raw ETS inner tag (TypeFloat, TypeTime, ...), for labelling unsupported types
   sizeInBit: number;
   signed: boolean;
   enums: EnumOption[];
@@ -19,7 +20,7 @@ export interface CfgType {
   max?: number;
 }
 export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
-export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; }
+export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
@@ -34,6 +35,7 @@ export type DynNode =
   | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; children: DynNode[] }
   | { kind: "container"; id: string; name: string; text: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
+  | { kind: "unsupported"; tag: string }
   | { kind: "paramRef"; refId: string }
   | { kind: "comObjRef"; refId: string }
   | { kind: "choose"; paramRefId: string; whens: DynWhen[] }
@@ -150,7 +152,7 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
   for (const t of container ? childrenByTag(kidsOf(container), "ParameterType") : []) {
     const id = attrsOf(t).Id;
     const inner = kidsOf(t)[0];
-    if (!inner) { out.set(id, { id, base: "Other", sizeInBit: 0, signed: false, enums: [] }); continue; }
+    if (!inner) { out.set(id, { id, base: "Other", kind: "", sizeInBit: 0, signed: false, enums: [] }); continue; }
     const ia = attrsOf(inner);
     const tag = tagOf(inner);
     let base: CfgType["base"] = "Other";
@@ -166,7 +168,7 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
     else if (tag === "TypeText") base = "Text";
     else if (tag === "TypeColor") base = "Color";
     out.set(id, {
-      id, base,
+      id, base, kind: tag,
       sizeInBit: Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
       signed: String(ia.Type ?? "").toLowerCase().includes("signed"),
       enums,
@@ -198,7 +200,7 @@ function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
   const container = firstByTag(staticKids, "ParameterRefs");
   for (const r of container ? childrenByTag(kidsOf(container), "ParameterRef") : []) {
     const a = attrsOf(r);
-    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access });
+    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access, displayOrder: a.DisplayOrder !== undefined ? Number(a.DisplayOrder) : undefined });
   }
   return refs;
 }
@@ -293,6 +295,8 @@ function parseDyn(n: ONode): DynNode | null {
       return { kind: "choose", paramRefId: a.ParamRefId, whens };
     }
     default:
-      return null;
+      // Surface a genuinely unknown ELEMENT as a visible marker instead of
+      // dropping it silently (text/whitespace pseudo-nodes are ignored).
+      return tag && !tag.startsWith("#") ? { kind: "unsupported", tag } : null;
   }
 }

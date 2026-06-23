@@ -8,6 +8,8 @@ const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "u
 const app = parseAppConfig(xml);
 const moduleApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8"));
 const accessApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-access-app.xml"), "utf8"));
+const unsupportedApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-unsupported-app.xml"), "utf8"));
+const orderApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-order-app.xml"), "utf8"));
 
 const params = (v: { blocks: { items: CfgItem[] }[] }) =>
   v.blocks.flatMap((b) => b.items).filter((i): i is { kind: "param"; param: CfgParamView } => i.kind === "param");
@@ -167,6 +169,26 @@ describe("localization", () => {
       v.blocks.find((b) => b.items.some((i) => i.kind === "separator" && i.text === "ref-block-marker"));
     expect(block(buildDeviceConfig(app, new Map(), "en"))?.name).toBe("Mode"); // base text
     expect(block(buildDeviceConfig(app, new Map(), "de"))?.name).toBe("Modus"); // translation
+  });
+
+  test("nothing is dropped silently: unknown elements and uneditable types are surfaced", () => {
+    const v = buildDeviceConfig(unsupportedApp, new Map());
+    const items = v.blocks.flatMap((b) => b.items);
+    // The unknown <FancyVendorWidget> becomes a visible marker, not a dropped node.
+    const unknown = items.find((i) => i.kind === "unsupported");
+    expect(unknown).toMatchObject({ kind: "unsupported", label: "FancyVendorWidget" });
+    // Types we cannot edit keep a row with control "unsupported" and a label.
+    const byName = (n: string) => items.find((i) => i.kind === "param" && i.param.name === n) as { param: CfgParamView };
+    expect(byName("Temperature").param).toMatchObject({ control: "unsupported", typeLabel: "Float" });
+    expect(byName("Switch time").param).toMatchObject({ control: "unsupported", typeLabel: "Time" });
+    // Supported types still render normally.
+    expect(byName("Level").param.control).toBe("number");
+  });
+
+  test("sibling blocks are ordered by heading DisplayOrder, not document order (ETS parity)", () => {
+    // Document order A, B, C; DisplayOrder 300, 100, 200 -> ETS shows B, C, A.
+    const v = buildDeviceConfig(orderApp, new Map());
+    expect(v.blocks.map((b) => b.name)).toEqual(["B", "C", "A"]);
   });
 
   test("resolveLanguage matches exact, then prefix, then falls back to default", () => {

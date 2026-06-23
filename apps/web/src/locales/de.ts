@@ -81,6 +81,8 @@ const de: Messages = {
     objectInfo: "Objekt {{number}}\nDatentyp: {{dpt}}",
     objectInfoFlags: "Objekt {{number}}\nDatentyp: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unbekannt",
+    unsupportedType: "{{type}} noch nicht unterstützt",
+    unsupportedElement: "Noch nicht unterstützt: {{tag}} (dieser Bereich bleibt verborgen, bis busforge ihn darstellen kann)",
     flagCommunication: "Kommunikation",
     flagRead: "Lesen",
     flagWrite: "Schreiben",

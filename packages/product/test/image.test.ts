@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { buildParameterImage, decodeParameterImage, encodeDpt9, decodeDpt9 } from "../src/image.ts";
+import { unmappedParamRefs } from "../src/application.ts";
 import type { AppModel, ParamType, Param, ParamRef } from "../src/application.ts";
 
 // A minimal application model covering one of each codec path: a bit-field enum,
@@ -43,6 +44,22 @@ describe("DPT-9 float codec", () => {
     for (const v of [0, 0.5, 21.5, -5.12, 100, -10.24, 20.47, -20.48]) {
       expect(decodeDpt9(encodeDpt9(v))).toBe(v);
     }
+  });
+});
+
+describe("flash coverage guard (UI/storage vs image must match)", () => {
+  test("flags stored refs the image model cannot place (e.g. module-instance values)", () => {
+    const m = model();
+    const values = new Map([
+      ["R-P-u8", "5"], // a real static ref -> mappable
+      ["M-X_MD-7_M-19_MI-1_P-1_R-1", "21"], // a channel/module-instance value -> not in the static model
+    ]);
+    expect(unmappedParamRefs(m, values)).toEqual(["M-X_MD-7_M-19_MI-1_P-1_R-1"]);
+  });
+
+  test("a fully-mappable value set is allowed (no unmapped refs)", () => {
+    const m = model();
+    expect(unmappedParamRefs(m, new Map([["R-P-u8", "5"], ["R-P-enum", "1"]]))).toEqual([]);
   });
 });
 

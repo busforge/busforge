@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId } from "@busforge/knx";
-import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, type ComObjectLink } from "@busforge/product";
+import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, type ComObjectLink } from "@busforge/product";
 import { readAppProgram } from "@busforge/project";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -76,6 +76,19 @@ export async function flashDeviceParameters(opts: {
   const xml = readAppProgram(readFileSync(opts.sourceFile), opts.appRef);
   if (!xml) throw new Error("application program not found in project");
   const model = parseApplication(xml);
+  // SAFETY: the image builder reads only static parameter refs; it does not yet
+  // expand channel/module instances. Any stored value keyed to an instance
+  // (…_MI-…) has no matching ref, so it would be silently dropped and that
+  // channel written back at its manufacturer default. Refuse rather than wipe a
+  // configured channel device. (Removed once the image path expands modules.)
+  const unmapped = unmappedParamRefs(model, opts.params);
+  if (unmapped.length) {
+    throw new Error(
+      `parameter programming does not support this device's channel modules yet: ` +
+      `${unmapped.length} stored value(s) would be dropped and those channels reset to defaults ` +
+      `(e.g. ${unmapped[0]}). Refusing to flash to protect the device configuration.`,
+    );
+  }
   const image = buildParameterImage(model, LSM, opts.params);
   if (image.length === 0) throw new Error("built an empty parameter image; refusing to flash");
 

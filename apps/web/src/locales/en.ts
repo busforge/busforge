@@ -79,6 +79,8 @@ const en = {
     objectInfo: "Object {{number}}\nData type: {{dpt}}",
     objectInfoFlags: "Object {{number}}\nData type: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unknown",
+    unsupportedType: "{{type}} not supported yet",
+    unsupportedElement: "Not supported yet: {{tag}} (this section is hidden until busforge can render it)",
     flagCommunication: "Communication",
     flagRead: "Read",
     flagWrite: "Write",

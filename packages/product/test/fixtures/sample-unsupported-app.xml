@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-9" ApplicationNumber="9" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Unsupported App" DefaultLanguage="en-US">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-9_PT-Float"><TypeFloat SizeInBit="16" /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Time"><TypeTime /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Num"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="M-TEST_A-9_P-1" Name="Temp" ParameterType="M-TEST_A-9_PT-Float" Text="Temperature" Value="21">
+                <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="0" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-9_P-2" Name="When" ParameterType="M-TEST_A-9_PT-Time" Text="Switch time" Value="0">
+                <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="2" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-9_P-3" Name="Level" ParameterType="M-TEST_A-9_PT-Num" Text="Level" Value="5">
+                <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="4" BitOffset="0" />
+              </Parameter>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-TEST_A-9_P-1_R-1" RefId="M-TEST_A-9_P-1" />
+              <ParameterRef Id="M-TEST_A-9_P-2_R-2" RefId="M-TEST_A-9_P-2" />
+              <ParameterRef Id="M-TEST_A-9_P-3_R-3" RefId="M-TEST_A-9_P-3" />
+            </ParameterRefs>
+          </Static>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-TEST_A-9_PB-1" Name="main" Text="Main">
+                <ParameterRefRef RefId="M-TEST_A-9_P-1_R-1" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-2_R-2" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-3_R-3" />
+                <FancyVendorWidget Id="M-TEST_A-9_FW-1" />
+              </ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>
