@@ -359,6 +359,9 @@ export function DeviceConfig() {
                 </h2>
                 <Card>
                   <CardContent className="space-y-0.5 py-4">
+                  {g.head.items.length === 0 && g.children.length === 0 && (
+                    <p className="text-sm text-muted-foreground">{t("device.emptySection")}</p>
+                  )}
                   {g.head.items.map((item: CfgItem, i: number) => renderItem(item, i))}
                   {g.children.map((child: CfgBlock) => {
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
@@ -402,6 +405,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
   return (
     <div
       data-match={highlight || undefined}
+      style={param.indent ? { marginLeft: `${param.indent * 1}rem` } : undefined}
       className={cn(
         "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
         param.changed ? "border-primary bg-primary/5" : "border-transparent",

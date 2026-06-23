@@ -36,6 +36,7 @@ export interface CfgParamView {
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
   typeLabel?: string; // for control "unsupported": a human label of the datapoint type we can't edit yet
+  indent?: number; // ETS IndentLevel of the row within its block (1 or 2)
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -214,7 +215,7 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint }); break;
-        case "paramRef": { const it = buildParam(n.refId, scope); if (it) items.push(it); break; }
+        case "paramRef": { const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) collect(w.children, items, scope); break; }
@@ -264,6 +265,13 @@ export function buildDeviceConfig(
             const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0 }, order: headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children);
+          } else if (n.children.length === 0 && (n.paramRefId || n.text)) {
+            // A reached but childless block is a pure category header (e.g. the
+            // "Scene" section): ETS shows it as a navigable node, so emit it as an
+            // empty section rather than dropping it. (Headers in inactive choose
+            // branches are never reached, so this adds no noise.)
+            const name = cap(blockTitle(n, scope));
+            if (name) into.push({ block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: headOrder(n), seq: seq++, children: [] });
           } else {
             walk(n.children, scope, into); // transparent wrapper: children keep this level
           }

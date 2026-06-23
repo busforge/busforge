@@ -56,14 +56,14 @@ HIGH impact (changes what is shown, the order, visibility, or numbering):
 |---|---|---|---|
 | ParameterRef (block heading) | `DisplayOrder` | **fixed** | blocks now ordered by it, not document order |
 | Enumeration | `DisplayOrder` (2435×) | open | dropdown options shown in document order, not ETS order |
-| ParameterRef / ParameterRefRef (rows) | `DisplayOrder` / `IndentLevel` (904×) | open | rows inside a block not ordered/indented like ETS |
+| ParameterRefRef (rows) | `IndentLevel` (904×) | **fixed** | rows now indented by IndentLevel; per-row DisplayOrder is a no-op (within-block document order already equals DisplayOrder) |
 | `<Channel>` | heading `Text`/`Number`/`TextParameterRefId` (99×) | **fixed** | channel sections now shown as navigable groups with `{{0}}` substituted |
 | ParameterBlock | `Access="None"`/`Read` (29×) | open | we render blocks ETS hides |
 | ParameterBlock | `ShowInComObjectTree` (263×) | open | com-object grouping signal ignored |
 | ComObject | `ReadOnInitFlag` (2204×) | open | the 6th flag missing on every object (we show only R/W/C/T/U) |
-| ParameterBlock (item-less) | self-closing collector blocks | open | item-less section headers dropped (e.g. the `Szenen`/"Scene" section) |
+| ParameterBlock (item-less) | self-closing collector blocks | **fixed** | a reached childless header (e.g. "Scene") is shown as an empty navigable section; headers in inactive choose branches stay hidden (no noise) |
 
-MED: `TypeNumber/@Increment` (spinner step), `TypeNumber/@UIHint=Slider`,
+Still open (MED): `TypeNumber/@Increment` (spinner step), `TypeNumber/@UIHint=Slider`,
 `Parameter/@InitialValue`, `Parameter/@BaseValue` (allocator/module numbering,
 flash path), `TypeFloat/@Encoding`. LOW (safe to ignore): `InternalDescription`,
 `Tag`, `DefaultUnionParameter`, `Inline`, `Icon`, `SecurityRequired`, plugin

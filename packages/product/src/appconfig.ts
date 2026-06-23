@@ -36,7 +36,7 @@ export type DynNode =
   | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "unsupported"; tag: string }
-  | { kind: "paramRef"; refId: string }
+  | { kind: "paramRef"; refId: string; indent?: number }
   | { kind: "comObjRef"; refId: string }
   | { kind: "choose"; paramRefId: string; whens: DynWhen[] }
   | { kind: "assign"; target: string; source?: string; value?: string }
@@ -282,7 +282,7 @@ function parseDyn(n: ONode): DynNode | null {
     case "ParameterSeparator":
       return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
     case "ParameterRefRef":
-      return { kind: "paramRef", refId: a.RefId };
+      return { kind: "paramRef", refId: a.RefId, indent: a.IndentLevel !== undefined ? Number(a.IndentLevel) : undefined };
     case "ComObjectRefRef":
       return { kind: "comObjRef", refId: a.RefId };
     case "Assign":

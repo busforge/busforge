@@ -80,6 +80,7 @@ const en = {
     objectInfo: "Object {{number}}\nData type: {{dpt}}",
     objectInfoFlags: "Object {{number}}\nData type: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unknown",
+    emptySection: "No parameters in this section for the current configuration.",
     gapsTitle: "This device uses settings busforge does not fully support yet:",
     gapType: "{{type}} ({{count}})",
     gapElement: "Element {{tag}} ({{count}})",

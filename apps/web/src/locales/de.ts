@@ -82,6 +82,7 @@ const de: Messages = {
     objectInfo: "Objekt {{number}}\nDatentyp: {{dpt}}",
     objectInfoFlags: "Objekt {{number}}\nDatentyp: {{dpt}}\nFlags: {{flags}}",
     unknownDpt: "unbekannt",
+    emptySection: "Keine Parameter in diesem Bereich für die aktuelle Konfiguration.",
     gapsTitle: "Dieses Gerät nutzt Einstellungen, die busforge noch nicht vollständig unterstützt:",
     gapType: "{{type}} ({{count}})",
     gapElement: "Element {{tag}} ({{count}})",
