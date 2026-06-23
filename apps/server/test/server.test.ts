@@ -391,6 +391,49 @@ describe("device configuration", () => {
     expect((state.db.query("SELECT COUNT(*) AS n FROM device_baggage").get() as any).n).toBe(0); // cascaded
   });
 
+  test("export returns a self-contained project artifact with the referenced catalog", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    const res = await handleApi(req(`/api/projects/${projectId}/export`), state);
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-disposition")).toContain(".busforge.json");
+    const data = (await res!.json()) as any;
+    expect(data.busforgeExport).toBe(1);
+    expect(data.devices).toHaveLength(1);
+    expect(Object.keys(data.catalog)).toEqual(["M-TEST_A-1"]); // referenced program bundled
+    expect(data.catalog["M-TEST_A-1"]).toContain("<ApplicationProgram");
+  });
+
+  test("export of an unknown project -> 404", async () => {
+    const res = await handleApi(req(`/api/projects/ghost/export`), freshState());
+    expect(res!.status).toBe(404);
+  });
+
+  test("export backfills the catalog from the file for legacy projects", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    // Legacy: app program only on disk, no catalog row.
+    const dir = join(state.dataDir, "projects", projectId);
+    mkdirSync(dir, { recursive: true });
+    const sourceFile = join(dir, "original.knxproj");
+    writeFileSync(sourceFile, cfgFixture);
+    state.db.exec("DELETE FROM app_programs");
+    state.db.query("UPDATE projects SET source_file = ? WHERE id = ?").run(sourceFile, projectId);
+    state.appCache.clear();
+
+    const data = (await (await handleApi(req(`/api/projects/${projectId}/export`), state))!.json()) as any;
+    expect(Object.keys(data.catalog)).toEqual(["M-TEST_A-1"]); // resolved from the file and bundled
+  });
+
+  test("export sanitizes the download filename (no header injection)", async () => {
+    const state = freshState();
+    const { projectId } = await importConfig(state);
+    state.db.query("UPDATE projects SET name = ? WHERE id = ?").run('Wohn "Z"/A\r\nx', projectId);
+    const cd = (await handleApi(req(`/api/projects/${projectId}/export`), state))!.headers.get("content-disposition")!;
+    expect(cd).toContain('filename="Wohn_Z_A_x.busforge.json"');
+    expect(cd.includes("\n")).toBe(false); // CR/LF collapsed, no header break
+  });
+
   test("baggage falls back to the on-disk store for legacy projects", async () => {
     const state = freshState();
     const { projectId, deviceId } = await importConfig(state); // fixture has no baggage -> none in the DB

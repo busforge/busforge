@@ -22,6 +22,7 @@ const en = {
     monitor: "Bus monitor",
     allProjects: "All projects",
     projectMeta: "{{devices}} devices · {{gas}} GAs",
+    exportProject: "Export project",
   },
   projects: {
     heading: "Projects",

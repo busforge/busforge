@@ -11,6 +11,8 @@ import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDe
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram } from "../src/db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
+import { exportProject } from "../src/db/exportProject.ts";
+import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -236,6 +238,33 @@ describe("projects", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM devices").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM group_addresses").get()).toMatchObject({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM telegrams").get()).toMatchObject({ n: 0 });
+  });
+});
+
+describe("project export", () => {
+  test("serializes the whole project plus referenced catalog and baggage", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
+    resetParamBase(db, "p1", dev); // adopt as baseline so the export carries baselines too
+    putBaggage(db, "p1", `${dev}_x.bin`, Buffer.from("zz"));
+    const appRefs = (db.query("SELECT DISTINCT app_ref AS a FROM devices WHERE project_id = 'p1'").all() as { a: string }[]).map((r) => r.a);
+    for (const ar of appRefs) putAppProgram(db, appProgramId(ar), `<ApplicationProgram id="${appProgramId(ar)}"/>`);
+
+    const ex = exportProject(db, "p1", 5000)!;
+    expect(ex.busforgeExport).toBe(1);
+    expect(ex.exportedAt).toBe(5000);
+    expect(ex.project.name).toBe("Demo");
+    expect(ex.devices.length).toBe(2);
+    expect(ex.groupAddresses).toHaveLength(2);
+    expect(ex.deviceParameters).toContainEqual({ deviceId: dev, paramRefId: "M-X_A-1_P-9_R-1", value: "7" });
+    expect(ex.deviceParamBase).toContainEqual({ deviceId: dev, paramRefId: "M-X_A-1_P-9_R-1", value: "7" }); // baselines included for round-trip
+    expect(ex.deviceLinks).toContainEqual({ deviceId: dev, comObjRefId: "O-1_R-1", slot: 0, gaRaw: 1 });
+    for (const ar of appRefs) expect(ex.catalog[appProgramId(ar)]).toContain("ApplicationProgram"); // referenced programs bundled
+    expect(ex.baggage).toContainEqual({ name: `${dev}_x.bin`, dataBase64: Buffer.from("zz").toString("base64") });
+
+    expect(exportProject(db, "ghost", 1)).toBeNull();
   });
 });
 

@@ -89,6 +89,10 @@ export const api = {
 
   deleteProject: (id: string): Promise<{ ok: true }> => fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
 
+  // Download URL for the portable project export (.busforge JSON). Used directly
+  // as an anchor href so the browser handles the download (Content-Disposition).
+  exportUrl: (id: string): string => `/api/projects/${id}/export`,
+
   saveInterface: (id: string, iface: ProjectInterface): Promise<ProjectInterface> =>
     fetch(`/api/projects/${id}/interface`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(iface) }).then((r) => jsonOrThrow<ProjectInterface>(r)),
 

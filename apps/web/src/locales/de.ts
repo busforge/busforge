@@ -24,6 +24,7 @@ const de: Messages = {
     monitor: "Busmonitor",
     allProjects: "Alle Projekte",
     projectMeta: "{{devices}} Geräte · {{gas}} GAs",
+    exportProject: "Projekt exportieren",
   },
   projects: {
     heading: "Projekte",

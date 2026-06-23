@@ -10,6 +10,7 @@ import { insertProject, listProjects, getProject, deleteProject, getInterface, s
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
 import { putAppProgram, getAppProgram, gcAppPrograms } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
+import { exportProject } from "./db/exportProject.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
@@ -124,6 +125,21 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 4 && seg[3] === "telegrams" && req.method === "GET") {
       const limit = Math.min(2000, Math.max(1, Number(url.searchParams.get("limit") ?? 500)));
       return json(recentTelegrams(db, id, limit));
+    }
+
+    // /api/projects/:id/export  -> download the whole project + referenced catalog
+    // as a portable .busforge JSON (our own format, not KNX).
+    if (seg.length === 4 && seg[3] === "export" && req.method === "GET") {
+      // Ensure every referenced app program is in the catalog (backfills a legacy
+      // project from its file) so the export is self-contained.
+      const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices WHERE project_id = ?").all(id) as { appRef: string }[];
+      for (const r of refs) resolveAppXml(state, id, r.appRef);
+      const data = exportProject(db, id, state.now());
+      if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";
+      return new Response(JSON.stringify(data, null, 2), {
+        headers: { "content-type": "application/json", "content-disposition": `attachment; filename="${safe}.busforge.json"` },
+      });
     }
 
     // /api/projects/:id/snapshots  -> list restore points / create a manual one

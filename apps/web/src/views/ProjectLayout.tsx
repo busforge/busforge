@@ -1,6 +1,7 @@
-import { Activity, Cpu, Network } from "lucide-react";
+import { Activity, Cpu, Download, Network } from "lucide-react";
 import { Link, Outlet, useParams, useRouterState } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { api } from "../api.ts";
 import { useProject } from "../queries.ts";
 import { Brandmark } from "@/components/Brandmark.tsx";
 import { TaskIndicator } from "@/components/TaskIndicator.tsx";
@@ -42,6 +43,16 @@ export function ProjectLayout() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <a
+              href={api.exportUrl(projectId)}
+              download
+              aria-label={t("nav.exportProject")}
+              title={t("nav.exportProject")}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+              data-testid="export-project"
+            >
+              <Download className="size-3.5 shrink-0" />
+            </a>
             <SnapshotPanel projectId={projectId} />
             <TaskIndicator projectId={projectId} />
             <LanguageSwitcher />
