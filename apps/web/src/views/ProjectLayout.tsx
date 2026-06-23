@@ -1,8 +1,8 @@
-import { Activity, ChevronLeft, Cpu, Network, SlidersHorizontal } from "lucide-react";
+import { Activity, Cpu, Network } from "lucide-react";
 import { Link, Outlet, useParams, useRouterState } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useProject } from "../queries.ts";
-import { Button } from "@/components/ui/button";
+import { Brandmark } from "@/components/Brandmark.tsx";
 import { TaskIndicator } from "@/components/TaskIndicator.tsx";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
 
@@ -10,7 +10,6 @@ const TABS = [
   { id: "devices", to: "/projects/$projectId/devices", labelKey: "nav.devices", icon: Cpu },
   { id: "groups", to: "/projects/$projectId/groups", labelKey: "nav.groups", icon: Network },
   { id: "monitor", to: "/projects/$projectId/monitor", labelKey: "nav.monitor", icon: Activity },
-  { id: "interface", to: "/projects/$projectId/interface", labelKey: "nav.interface", icon: SlidersHorizontal },
 ] as const;
 
 export function ProjectLayout() {
@@ -24,26 +23,31 @@ export function ProjectLayout() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-0">
-      <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button asChild variant="ghost" size="icon" aria-label={t("nav.allProjects")} className="shrink-0 text-muted-foreground">
-            <Link to="/"><ChevronLeft className="size-5" /></Link>
-          </Button>
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-base font-bold">{project?.name ?? "…"}</div>
-            {project && (
-              <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-muted-foreground">{t("nav.projectMeta", { devices: project.devices.length, gas: project.gaCount })}</div>
-            )}
+      <div className="sticky top-0 z-20 bg-background/90 backdrop-blur">
+        <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              to="/"
+              aria-label={t("nav.allProjects")}
+              className="grid size-9 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-[0_0_20px_-6px] shadow-primary/50 transition hover:brightness-105"
+            >
+              <Brandmark className="size-5" />
+            </Link>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-base font-bold">{project?.name ?? "…"}</div>
+              {project && (
+                <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-muted-foreground">{t("nav.projectMeta", { devices: project.devices.length, gas: project.gaCount })}</div>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <TaskIndicator projectId={projectId} />
-          <LanguageSwitcher />
-        </div>
-      </header>
+          <div className="flex shrink-0 items-center gap-2">
+            <TaskIndicator projectId={projectId} />
+            <LanguageSwitcher />
+          </div>
+        </header>
 
-      <nav className="sticky top-0 z-10 flex w-full justify-start gap-1 overflow-x-auto border-y border-border bg-background/85 px-2 backdrop-blur sm:px-4">
-        {TABS.map((tab) => {
+        <nav className="flex w-full justify-start gap-1 overflow-x-auto border-y border-border px-2 sm:px-4">
+          {TABS.map((tab) => {
           const active = seg === tab.id;
           return (
             <Link
@@ -57,7 +61,8 @@ export function ProjectLayout() {
             </Link>
           );
         })}
-      </nav>
+        </nav>
+      </div>
 
       <main className="flex-1 px-4 py-6 sm:px-6">
         <Outlet />

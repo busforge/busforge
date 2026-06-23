@@ -392,7 +392,7 @@ export function DeviceConfig() {
           ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
-            <nav className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
+            <nav className="lg:sticky lg:top-28 lg:max-h-[calc(100vh-8rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
               <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
                 {filteredGroups.map((g) => {
                   // Sidebar shows the group head plus its direct (level-1) blocks;

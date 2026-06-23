@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Flame, FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
+import { Brandmark } from "@/components/Brandmark.tsx";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -50,7 +51,7 @@ export function ProjectsScreen() {
     <div className="mx-auto flex min-h-full max-w-5xl flex-col px-4 py-8 sm:px-6">
       <header className="mb-8 flex items-center gap-3">
         <div className="grid size-10 place-items-center rounded-md bg-primary text-primary-foreground shadow-[0_0_24px_-4px] shadow-primary/50">
-          <Flame className="size-6" strokeWidth={2.5} />
+          <Brandmark className="size-6" />
         </div>
         <div className="leading-none">
           <div className="text-xl font-extrabold tracking-[0.2em]">BUSFORGE</div>
