@@ -402,6 +402,22 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
     ? (param.options?.find((o) => String(o.value) === param.value)?.text ?? param.value)
     : param.value;
 
+  // Commit a typed number: the native input does not enforce min/max on typed
+  // input, so clamp to the range and snap to the ETS step grid (anchored at min)
+  // before persisting. Empty/non-numeric input reverts to the current value.
+  const commitNumber = () => {
+    const raw = local.trim();
+    if (raw === "" || Number.isNaN(Number(raw))) { setLocal(param.value); return; }
+    let n = Number(raw);
+    const base = param.min ?? 0;
+    if (param.step && param.step > 1) n = base + Math.round((n - base) / param.step) * param.step;
+    if (param.min !== undefined) n = Math.max(param.min, n);
+    if (param.max !== undefined) n = Math.min(param.max, n);
+    const s = String(n);
+    setLocal(s);
+    if (s !== param.value) onChange(s);
+  };
+
   return (
     <div
       data-match={highlight || undefined}
@@ -448,7 +464,8 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
           <Input
             type="number" value={local} min={param.min} max={param.max} step={param.step}
             onChange={(e) => setLocal(e.target.value)}
-            onBlur={() => local !== param.value && onChange(local)}
+            onBlur={commitNumber}
+            onKeyDown={(e) => { if (e.key === "Enter") commitNumber(); }}
             className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : param.control === "text" ? (
