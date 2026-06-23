@@ -4,5 +4,6 @@
   "type": "module",
   "module": "src/index.ts",
   "exports": { ".": "./src/index.ts", "./dpt": "./src/dpt.ts" },
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": { "test": "bun test" }
 }

@@ -12,6 +12,7 @@
   "peerDependencies": {
     "react": "*"
   },
+  "scripts": { "test": "bun test" },
   "dependencies": {
     "fast-xml-parser": "^5.9.3"
   },
