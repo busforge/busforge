@@ -11,6 +11,7 @@ import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "
 import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { exportProject } from "./db/exportProject.ts";
+import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
@@ -143,6 +144,19 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
       })();
       return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length });
+    }
+
+    // /api/projects/import-busforge  (POST: re-import a .busforge project artifact)
+    if (seg.length === 3 && seg[2] === "import-busforge" && req.method === "POST") {
+      const form = await req.formData();
+      const file = form.get("file");
+      if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
+      let data: unknown;
+      try { data = JSON.parse(await file.text()); } catch { return err("BUSFORGE_INVALID", "not a valid busforge artifact"); }
+      validateExport(data); // throws a coded ImportError on a bad shape/version
+      const id = randomUUID();
+      importProjectExport(db, data, id, state.now());
+      return json({ id, name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length }, 201);
     }
 
     const id = seg[2];

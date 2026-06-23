@@ -393,6 +393,96 @@ describe("catalog import (.knxprod official source)", () => {
   });
 });
 
+describe("busforge re-import (export round-trip)", () => {
+  const tmps: string[] = [];
+  function freshState(): AppState {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-reimport-"));
+    tmps.push(dir);
+    return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
+  }
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+  const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
+  const importCfg = async (state: AppState) => {
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    return (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
+  };
+  const reimport = (state: AppState, json: unknown) => {
+    const form = new FormData();
+    form.set("file", new File([JSON.stringify(json)], "p.busforge.json"));
+    return handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state);
+  };
+
+  test("export then re-import recreates an independent, equivalent project", async () => {
+    const state = freshState();
+    const a = await importCfg(state);
+    const projA = (await (await handleApi(req(`/api/projects/${a.id}`), state))!.json()) as any;
+    const dev = projA.devices[0].id;
+    // Edit a parameter so the round-trip has a non-default value to preserve.
+    await handleApi(req(`/api/projects/${a.id}/devices/${dev}/params`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId: "M-TEST_A-1_P-1_R-1", value: "1" }),
+    }), state);
+
+    const exported = await (await handleApi(req(`/api/projects/${a.id}/export`), state))!.json();
+
+    const res = await reimport(state, exported);
+    expect(res!.status).toBe(201);
+    const b = (await res!.json()) as any;
+    expect(b.id).not.toBe(a.id);
+    expect(b).toMatchObject({ name: projA.name, deviceCount: projA.devices.length, gaCount: projA.gaCount });
+
+    // Both projects coexist.
+    const list = (await (await handleApi(req("/api/projects"), state))!.json()) as any[];
+    expect(list).toHaveLength(2);
+
+    // The re-imported project matches: devices, the group-range tree, and the edited
+    // parameter (drift preserved against the restored baseline).
+    const projB = (await (await handleApi(req(`/api/projects/${b.id}`), state))!.json()) as any;
+    expect(projB.devices.map((d: any) => [d.id, d.ia, d.appRef])).toEqual(projA.devices.map((d: any) => [d.id, d.ia, d.appRef]));
+    // The range tree round-trips structurally; ids are the global autoincrement and
+    // are legitimately reassigned, so compare with ids stripped.
+    const stripIds = (n: any): any => ({ name: n.name, rangeStart: n.rangeStart, rangeEnd: n.rangeEnd, addresses: n.addresses, children: n.children.map(stripIds) });
+    expect(projB.groupRanges.map(stripIds)).toEqual(projA.groupRanges.map(stripIds));
+    expect(projB.devices[0].changes).toMatchObject({ params: 1 });
+
+    // The catalog program came back, so the device config builds.
+    const cfg = await handleApi(req(`/api/projects/${b.id}/devices/${projB.devices[0].id}/config`), state);
+    expect(cfg!.status).toBe(200);
+    expect(((await cfg!.json()) as any).blocks.length).toBeGreaterThan(0);
+  });
+
+  test("malformed and wrong-version artifacts are rejected", async () => {
+    const state = freshState();
+    const bad = new FormData();
+    bad.set("file", new File(["not json{"], "x.busforge.json"));
+    const r1 = await handleApi(req("/api/projects/import-busforge", { method: "POST", body: bad }), state);
+    expect(r1!.status).toBe(400);
+    expect(((await r1!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
+
+    const r2 = await reimport(state, { busforgeExport: 999, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [] });
+    expect(r2!.status).toBe(400);
+    expect(((await r2!.json()) as any).error.code).toBe("BUSFORGE_VERSION_UNSUPPORTED");
+
+    const r3 = await reimport(state, { busforgeExport: 1 }); // missing project
+    expect(r3!.status).toBe(400);
+    expect(((await r3!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
+
+    // A version-1 artifact missing fields importProjectExport dereferences (catalog,
+    // baggage, the interface fields) must fail cleanly as 400, not crash mid-insert.
+    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [] };
+    for (const partial of [
+      { busforgeExport: 1, project: { name: "x", interfaceIp: "", interfacePort: 3671 }, ...arrays, baggage: [] }, // no catalog
+      { busforgeExport: 1, project: { name: "x", interfaceIp: "", interfacePort: 3671 }, ...arrays, catalog: {} }, // no baggage
+      { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {}, baggage: [] }, // no interface fields
+    ]) {
+      const r = await reimport(state, partial);
+      expect(r!.status).toBe(400);
+      expect(((await r!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
+    }
+  });
+});
+
 describe("device configuration", () => {
   const tmps: string[] = [];
   function freshState(): AppState {

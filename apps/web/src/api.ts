@@ -105,6 +105,13 @@ export const api = {
   addDevice: (id: string, appRef: string, productRef: string, name?: string): Promise<{ id: string; ia: string }> =>
     fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
 
+  // Re-import a .busforge project artifact (the export's inverse) as a new project.
+  async importBusforge(file: File): Promise<ImportResult> {
+    const form = new FormData();
+    form.set("file", file);
+    return jsonOrThrow<ImportResult>(await fetch("/api/projects/import-busforge", { method: "POST", body: form }));
+  },
+
   getProject: (id: string): Promise<Project> => fetch(`/api/projects/${id}`).then((r) => jsonOrThrow<Project>(r)),
 
   deleteProject: (id: string): Promise<{ ok: true }> => fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),

@@ -216,8 +216,11 @@ function ImportDialog({
   function pick(f: File | null) { setFile(f); setError(null); }
   function reset() { setFile(null); setPassword(""); setError(null); setDrag(false); }
 
+  // A .busforge(.json) artifact is re-imported (no password); a .knxproj is parsed.
+  const isBusforge = !!file && /\.busforge\.json$|\.json$/i.test(file.name);
+
   const importMut = useMutation({
-    mutationFn: () => api.importProject(file!, password),
+    mutationFn: () => (isBusforge ? api.importBusforge(file!) : api.importProject(file!, password)),
     onSuccess: (res) => {
       toast.success(t("import.imported", { name: res.name }), { description: t("import.importedDesc", { devices: res.deviceCount, gas: res.gaCount }) });
       reset();
@@ -253,13 +256,15 @@ function ImportDialog({
                 ? <span className="font-mono text-foreground">{file.name}</span>
                 : <span className="text-muted-foreground">{t("import.dropHint")}</span>}
             </button>
-            <input ref={inputRef} type="file" accept=".knxproj" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+            <input ref={inputRef} type="file" accept=".knxproj,.busforge.json,.json" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="flex items-center gap-1.5"><KeyRound className="size-3.5" /> {t("import.password")}</Label>
-            <Input type="password" value={password} placeholder={t("import.passwordPlaceholder")} onChange={(e) => setPassword(e.target.value)} />
-          </div>
+          {!isBusforge && (
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5"><KeyRound className="size-3.5" /> {t("import.password")}</Label>
+              <Input type="password" value={password} placeholder={t("import.passwordPlaceholder")} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+          )}
 
           {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         </div>
