@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Zap, Plus, Loader2, Cpu } from "lucide-react";
+import { Search, X, Zap, Plus, Loader2, Cpu, FolderUp } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -184,6 +184,7 @@ function AddDeviceDialog({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const prodRef = useRef<HTMLInputElement>(null);
   const { data: catalog = [], isLoading } = useCatalog(open);
 
   const filtered = useMemo(() => {
@@ -204,6 +205,17 @@ function AddDeviceDialog({
     onError: (e) => toast.error(t("catalog.failed"), { description: errMsg(t, e) }),
   });
 
+  // Ingest an official .knxprod product database into the catalog, then refresh it.
+  const importProd = useMutation({
+    mutationFn: (file: File) => api.importCatalog(file),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: qk.catalog });
+      toast.success(t("catalog.imported", { count: res.products }));
+    },
+    onError: (e) => toast.error(t("catalog.importFailed"), { description: errMsg(t, e) }),
+  });
+  const pickProd = (f: File | null) => { if (f) importProd.mutate(f); };
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) setQ(""); onOpenChange(o); }}>
       <DialogContent className="max-w-lg">
@@ -221,7 +233,12 @@ function AddDeviceDialog({
           {isLoading ? (
             <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("common.loading")}</div>
           ) : catalog.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">{t("catalog.empty")}</p>
+            <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <p className="text-sm text-muted-foreground">{t("catalog.empty")}</p>
+              <Button variant="outline" size="sm" disabled={importProd.isPending} onClick={() => prodRef.current?.click()} data-testid="catalog-import-empty">
+                {importProd.isPending ? <Loader2 className="size-4 animate-spin" /> : <FolderUp className="size-4 text-primary" />} {t("catalog.importProd")}
+              </Button>
+            </div>
           ) : filtered.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">{t("catalog.noMatch")}</p>
           ) : (
@@ -243,6 +260,20 @@ function AddDeviceDialog({
             ))
           )}
         </div>
+
+        {catalog.length > 0 && (
+          <div className="flex items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
+            <span>{t("catalog.count", { count: catalog.length })}</span>
+            <Button variant="ghost" size="sm" disabled={importProd.isPending} onClick={() => prodRef.current?.click()} data-testid="catalog-import">
+              {importProd.isPending ? <Loader2 className="size-4 animate-spin" /> : <FolderUp className="size-4 text-primary" />} {t("catalog.importProd")}
+            </Button>
+          </div>
+        )}
+
+        <input
+          ref={prodRef} type="file" accept=".knxprod" className="hidden"
+          onChange={(e) => { pickProd(e.target.files?.[0] ?? null); e.target.value = ""; }}
+        />
       </DialogContent>
     </Dialog>
   );

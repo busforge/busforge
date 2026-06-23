@@ -1,52 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { extractCatalogProducts, appProgramId } from "../src/index.ts";
-
-// Build a minimal STORE (uncompressed) zip in memory. readZip does not verify
-// CRCs, so a zero CRC is fine; this lets the test feed a synthetic .knxproj-shaped
-// archive (the real fixtures omit the plaintext Hardware.xml we parse here).
-function storeZip(files: Record<string, string>): Buffer {
-  const enc = new TextEncoder();
-  const locals: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
-  for (const [name, content] of Object.entries(files)) {
-    const nameB = Buffer.from(enc.encode(name));
-    const data = Buffer.from(enc.encode(content));
-    const lfh = Buffer.alloc(30);
-    lfh.writeUInt32LE(0x04034b50, 0);
-    lfh.writeUInt16LE(20, 4); // version needed
-    lfh.writeUInt16LE(0, 8); // method = STORE
-    lfh.writeUInt32LE(0, 14); // crc32 (unchecked)
-    lfh.writeUInt32LE(data.length, 18); // comp size
-    lfh.writeUInt32LE(data.length, 22); // uncomp size
-    lfh.writeUInt16LE(nameB.length, 26);
-    const local = Buffer.concat([lfh, nameB, data]);
-
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 4); // version made by
-    cd.writeUInt16LE(20, 6); // version needed
-    cd.writeUInt16LE(0, 10); // method
-    cd.writeUInt32LE(0, 16); // crc32
-    cd.writeUInt32LE(data.length, 20);
-    cd.writeUInt32LE(data.length, 24);
-    cd.writeUInt16LE(nameB.length, 28);
-    cd.writeUInt32LE(offset, 42); // local header offset
-    central.push(Buffer.concat([cd, nameB]));
-
-    locals.push(local);
-    offset += local.length;
-  }
-  const cdBuf = Buffer.concat(central);
-  const localBuf = Buffer.concat(locals);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(central.length, 8);
-  eocd.writeUInt16LE(central.length, 10);
-  eocd.writeUInt32LE(cdBuf.length, 12);
-  eocd.writeUInt32LE(localBuf.length, 16);
-  return Buffer.concat([localBuf, cdBuf, eocd]);
-}
+import { storeZip } from "./ziputil.ts";
 
 const hardwareXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20">

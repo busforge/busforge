@@ -21,11 +21,19 @@ export function getAppProgram(db: Database, id: string): string | null {
 
 // Catalog product metadata (the browsable layer for placing devices). Idempotent:
 // the first ingest of a (product, app program) wins; richer Hardware.xml data is
-// not overwritten by a later minimal backfill.
-export function putCatalogProduct(db: Database, p: CatalogProduct): void {
-  db.prepare(
-    "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion);
+// not overwritten by a later minimal backfill. `pin` marks an official-source
+// (.knxprod) ingest: the row stays in the catalog independent of any project, and
+// re-importing a product that arrived earlier via a project upgrades it to pinned.
+export function putCatalogProduct(db: Database, p: CatalogProduct, pin = false): void {
+  if (pin) {
+    db.prepare(
+      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion);
+  } else {
+    db.prepare(
+      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion);
+  }
 }
 
 // All placeable catalog products, ordered for the device picker.
@@ -68,11 +76,14 @@ export function backfillCatalogFromDevices(db: Database): number {
 
 // Drop catalog entries no longer referenced by any device (ref-counting GC, run
 // after a project is deleted). The reference key is appProgramId(appRef), which is
-// a code mapping, so the live set is computed in JS rather than SQL. Returns the
-// number of removed entries.
+// a code mapping, so the live set is computed in JS rather than SQL. Pinned catalog
+// products (ingested from an official .knxprod) are independent GC roots, so their
+// program and row survive even with no device using them. Returns the number of
+// removed entries.
 export function gcAppPrograms(db: Database): number {
   const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices").all() as { appRef: string }[];
   const live = new Set(refs.map((r) => appProgramId(r.appRef)));
+  for (const r of db.query("SELECT DISTINCT app_program_id AS id FROM catalog_products WHERE pinned = 1").all() as { id: string }[]) live.add(r.id);
   const ids = db.query("SELECT id FROM app_programs").all() as { id: string }[];
   const del = db.prepare("DELETE FROM app_programs WHERE id = ?");
   // A catalog product without its program XML is unplaceable, so drop those rows

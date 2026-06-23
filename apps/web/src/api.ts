@@ -94,6 +94,13 @@ export const api = {
   // The browsable device catalog (products placeable into a project).
   catalog: (): Promise<CatalogProduct[]> => fetch("/api/catalog/products").then((r) => jsonOrThrow<CatalogProduct[]>(r)),
 
+  // Ingest an official .knxprod product database into the catalog (no project created).
+  async importCatalog(file: File): Promise<{ products: number; programs: number }> {
+    const form = new FormData();
+    form.set("file", file);
+    return jsonOrThrow<{ products: number; programs: number }>(await fetch("/api/catalog/import", { method: "POST", body: form }));
+  },
+
   // Place a catalog product into a project as a new device (server allocates the IA).
   addDevice: (id: string, appRef: string, productRef: string, name?: string): Promise<{ id: string; ia: string }> =>
     fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),

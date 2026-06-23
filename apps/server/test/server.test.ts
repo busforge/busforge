@@ -5,10 +5,27 @@ import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, type AppState } from "../src/app.ts";
+import { storeZip } from "../../../packages/project/test/ziputil.ts";
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const encFixture = readFileSync(join(fixtures, "sample-encrypted.knxproj"));
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
+
+// A synthetic .knxprod: one manufacturer product with its application program,
+// laid out like the manufacturer data in a .knxproj outer zip.
+function knxprod(): Buffer {
+  const hardware = `<?xml version="1.0"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083">
+  <Hardware><Hardware Id="M-0083_H-SW4-1" Name="Switch" VersionNumber="3">
+    <Products><Product Id="M-0083_H-SW4-1_P-prod" Text="Demo Switch 4f" OrderNumber="SW-4F-001"/></Products>
+    <Hardware2Programs><Hardware2Program Id="M-0083_H-SW4-1_HP-AAAA-1-0001"><ApplicationProgramRef RefId="M-0083_A-AAAA-1-0001"/></Hardware2Program></Hardware2Programs>
+  </Hardware></Hardware>
+</Manufacturer></ManufacturerData></KNX>`;
+  return storeZip({
+    "M-0083/Hardware.xml": hardware,
+    "M-0083/M-0083_A-AAAA-1-0001.xml": `<KNX><ManufacturerData><Manufacturer><ApplicationPrograms><ApplicationProgram Id="M-0083_A-AAAA-1-0001"/></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`,
+  });
+}
 
 describe("mergeLinkBaseline (read-back link baseline)", () => {
   const m = (o: Record<string, number[]>) => new Map(Object.entries(o));
@@ -300,6 +317,79 @@ describe("blank projects + catalog (device placement)", () => {
     }), state);
     expect(bad!.status).toBe(404);
     expect(((await bad!.json()) as any).error.code).toBe("CATALOG_PRODUCT_NOT_FOUND");
+  });
+});
+
+describe("catalog import (.knxprod official source)", () => {
+  const tmps: string[] = [];
+  function freshState(): AppState {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-prod-"));
+    tmps.push(dir);
+    return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
+  }
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+  const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
+  const importProd = (state: AppState) => {
+    const form = new FormData();
+    form.set("file", new File([knxprod()], "vendor.knxprod"));
+    return handleApi(req("/api/catalog/import", { method: "POST", body: form }), state);
+  };
+
+  test("import populates the catalog without creating a project", async () => {
+    const state = freshState();
+    const res = await importProd(state);
+    expect(res!.status).toBe(201);
+    expect(await res!.json()).toEqual({ products: 1, programs: 1 });
+
+    const catalog = (await (await handleApi(req("/api/catalog/products"), state))!.json()) as any[];
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0]).toMatchObject({ name: "Demo Switch 4f", orderNumber: "SW-4F-001", appRef: "M-0083_H-SW4-1_HP-AAAA-1-0001" });
+    // No project was created.
+    expect(await (await handleApi(req("/api/projects"), state))!.json()).toEqual([]);
+  });
+
+  test("imported products are placeable into a blank project", async () => {
+    const state = freshState();
+    await importProd(state);
+    const blank = (await (await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "P" }),
+    }), state))!.json()) as any;
+    const added = await handleApi(req(`/api/projects/${blank.id}/devices`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appRef: "M-0083_H-SW4-1_HP-AAAA-1-0001", productRef: "M-0083_H-SW4-1_P-prod" }),
+    }), state);
+    expect(added!.status).toBe(201);
+    expect(((await added!.json()) as any).ia).toBe("1.1.1");
+  });
+
+  test("pinned catalog survives project deletion GC", async () => {
+    const state = freshState();
+    await importProd(state);
+    // Create then delete a blank project: GC runs on delete but must not drop the
+    // pinned official-source product.
+    const blank = (await (await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "throwaway" }),
+    }), state))!.json()) as any;
+    expect((await handleApi(req(`/api/projects/${blank.id}`, { method: "DELETE" }), state))!.status).toBe(200);
+
+    const catalog = (await (await handleApi(req("/api/catalog/products"), state))!.json()) as any[];
+    expect(catalog).toHaveLength(1); // still there
+  });
+
+  test("a non-zip upload is rejected, an empty archive too", async () => {
+    const state = freshState();
+    const junk = new FormData();
+    junk.set("file", new File([Buffer.from("not a zip")], "x.knxprod"));
+    const junkRes = await handleApi(req("/api/catalog/import", { method: "POST", body: junk }), state);
+    expect(junkRes!.status).toBe(400);
+    // A non-zip reports the .knxprod-aware code, not the .knxproj-worded zip error.
+    expect(((await junkRes!.json()) as any).error.code).toBe("CATALOG_IMPORT_EMPTY");
+
+    const empty = new FormData();
+    empty.set("file", new File([storeZip({ "readme.txt": "hi" })], "x.knxprod"));
+    const res = await handleApi(req("/api/catalog/import", { method: "POST", body: empty }), state);
+    expect(res!.status).toBe(400);
+    expect(((await res!.json()) as any).error.code).toBe("CATALOG_IMPORT_EMPTY");
   });
 });
 

@@ -179,6 +179,14 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (app_ref, product_ref)
   );
   `,
+  // Catalog persistence flag. A pinned product was ingested from an official source
+  // (a .knxprod product database), so it stays in the catalog independent of any
+  // project: its application program is a GC root, and project-delete GC never drops
+  // it. Products that only came in via a project import stay pinned=0 (GC-eligible
+  // with that project, the milestone-3 behavior). Existing rows default to 0.
+  `
+  ALTER TABLE catalog_products ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

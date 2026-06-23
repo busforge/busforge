@@ -327,6 +327,33 @@ describe("catalog (products + placement)", () => {
     expect(rows[1].name).toBe("Custom name");
   });
 
+  test("pinned (official-source) products survive gc; unpinned do not", () => {
+    const db = fresh();
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>");
+    putCatalogProduct(db, product(), true); // pinned, no device references it
+    expect(gcAppPrograms(db)).toBe(0); // pinned program is a GC root
+    expect(listCatalogProducts(db)).toHaveLength(1);
+    expect(getAppProgram(db, "M-9_A-1")).not.toBeNull();
+
+    // A second, unpinned program with no device: GC removes it and its row.
+    putAppProgram(db, "M-9_A-2", "<ApplicationProgram/>");
+    putCatalogProduct(db, product({ appRef: "M-9_H-2_HP-2", productRef: "M-9_P-2", appProgramId: "M-9_A-2" }));
+    expect(gcAppPrograms(db)).toBe(1);
+    expect(listCatalogProducts(db)).toHaveLength(1); // only the pinned one remains
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")).not.toBeNull();
+  });
+
+  test("re-importing a project product from .knxprod upgrades it to pinned", () => {
+    const db = fresh();
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>");
+    putCatalogProduct(db, product());        // arrived via a project import (unpinned)
+    putCatalogProduct(db, product(), true);  // later ingested from .knxprod -> pinned
+    const pinned = (db.query("SELECT pinned FROM catalog_products WHERE app_ref = ?").get("M-9_H-1_HP-1") as any).pinned;
+    expect(pinned).toBe(1);
+    expect(gcAppPrograms(db)).toBe(0); // now a GC root
+    expect(listCatalogProducts(db)).toHaveLength(1);
+  });
+
   test("gc drops catalog products whose program is no longer referenced", () => {
     const db = fresh();
     createProject(db, "p1", "Blank", 1000);
