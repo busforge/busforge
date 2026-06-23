@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, RotateCcw } from "lucide-react";
-import { Link, useParams, useSearch } from "@tanstack/react-router";
+import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, RotateCcw, Search, X } from "lucide-react";
+import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -75,7 +75,10 @@ export function DeviceConfig() {
   const { t } = useTranslation();
   const { projectId, deviceId } = useParams({ from: "/projects/$projectId/devices/$deviceId" });
   const search = useSearch({ from: "/projects/$projectId/devices/$deviceId" });
-  const q = (search.q ?? "").toLowerCase();
+  const navigate = useNavigate({ from: "/projects/$projectId/devices/$deviceId" });
+  const qRaw = search.q ?? "";
+  const q = qRaw.toLowerCase();
+  const setQ = (val: string) => navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true });
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
@@ -130,6 +133,53 @@ export function DeviceConfig() {
   const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
     g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
 
+  // Filter the config by the search term: a matching section header (group or
+  // sub-block name) reveals everything under it; otherwise only the matching
+  // rows (param name/value, com-object label) are kept. The group header always
+  // renders as context when any of its children survive.
+  const filteredGroups = useMemo(() => {
+    if (!q) return groups;
+    const keep = (items: CfgItem[]) => items.filter((it) => itemMatches(it, q));
+    const out: { head: CfgBlock; children: CfgBlock[] }[] = [];
+    for (const g of groups) {
+      const headMatch = norm(g.head.name).includes(q);
+      const headItems = headMatch ? g.head.items : keep(g.head.items);
+      const children: CfgBlock[] = [];
+      // Stage a dropped level-1 block so a surviving deeper child can still show
+      // its parent heading as context (kept with no items).
+      let pendingParent: CfgBlock | null = null;
+      for (const c of g.children) {
+        const cMatch = headMatch || norm(c.name).includes(q);
+        const items = cMatch ? c.items : keep(c.items);
+        const kept = cMatch || items.length > 0;
+        if (c.level === 1) {
+          if (kept) { children.push({ ...c, items }); pendingParent = null; }
+          else pendingParent = c;
+        } else if (kept) {
+          if (pendingParent) { children.push({ ...pendingParent, items: [] }); pendingParent = null; }
+          children.push({ ...c, items });
+        }
+      }
+      if (headMatch || headItems.length > 0 || children.length > 0)
+        out.push({ head: { ...g.head, items: headItems }, children });
+    }
+    return out;
+  }, [groups, q]);
+
+  // Cmd/Ctrl+F focuses the config search instead of the browser find.
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // What this device uses that busforge does not fully support yet, aggregated
   // for the notice at the top so the gaps are explicit, not hidden in the list.
   const gaps = useMemo(() => {
@@ -155,21 +205,14 @@ export function DeviceConfig() {
         const top = el.getBoundingClientRect().top;
         if (top <= 96 && top > bestTop) { bestTop = top; active = id; }
       });
-      if (!active && groups[0]) active = `sec-${groups[0].head.id}`;
+      if (!active && filteredGroups[0]) active = `sec-${filteredGroups[0].head.id}`;
       setActiveSec(active);
     };
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
     update();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => { window.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [view, groups]);
-
-  // Jump to the first row matching the carried search term.
-  useEffect(() => {
-    if (!q || !view) return;
-    const el = containerRef.current?.querySelector('[data-match="true"]');
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [q, view]);
+  }, [view, filteredGroups]);
 
   const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { ghost?: boolean; disabled?: boolean; testId?: string }) => (
     <Tooltip>
@@ -186,7 +229,7 @@ export function DeviceConfig() {
     </Tooltip>
   );
 
-  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); };
+  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
 
   const renderItem = (item: CfgItem, key: string | number) => {
     if (item.kind === "separator") {
@@ -203,14 +246,12 @@ export function DeviceConfig() {
       const info = flags
         ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
         : t("device.objectInfo", { number: co.number, dpt });
-      const hl = itemMatches(item, q);
       return (
         <div
-          key={key} data-match={hl || undefined}
+          key={key}
           className={cn(
             "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
             co.changed ? "border-primary bg-primary/5" : "border-transparent",
-            hl && "rounded-md bg-ok/10 ring-1 ring-ok/50",
           )}
         >
           <span className="flex min-w-0 items-center gap-2 sm:flex-1">
@@ -241,7 +282,6 @@ export function DeviceConfig() {
     return (
       <ParamRow
         key={key} param={item.param} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
-        highlight={itemMatches(item, q)}
         onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })}
         onRevert={() => revertParam.mutate(item.param.refId, { onError })}
       />
@@ -311,11 +351,27 @@ export function DeviceConfig() {
       )}
 
       {view && view.blocks.length > 0 && (
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          {groups.length > 1 && (
+        <div className="space-y-4">
+          <div className="relative max-w-xs">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="config-search" />
+            {qRaw && (
+              <button
+                type="button" aria-label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+          {filteredGroups.length === 0 ? (
+            <Card><CardContent className="py-4 text-sm text-muted-foreground">{t("device.searchEmpty")}</CardContent></Card>
+          ) : (
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+          {filteredGroups.length > 1 && (
             <nav className="lg:sticky lg:top-16 lg:max-h-[calc(100vh-5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
               <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
-                {groups.map((g) => {
+                {filteredGroups.map((g) => {
                   // Sidebar shows the group head plus its direct (level-1) blocks;
                   // deeper sub-blocks are reached by scrolling. Active = neutral
                   // fill + left bar; the amber dot is reserved for "has changes".
@@ -350,7 +406,7 @@ export function DeviceConfig() {
           )}
 
           <div ref={containerRef} className="min-w-0 flex-1 space-y-6">
-            {groups.map((g) => (
+            {filteredGroups.map((g) => (
               // Section heading sits ABOVE the card so each channel/group start is clear.
               <section key={g.head.id} className="space-y-2">
                 <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-20 items-center gap-2 px-1 text-lg font-semibold text-foreground">
@@ -385,13 +441,15 @@ export function DeviceConfig() {
               </section>
             ))}
           </div>
+          </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; highlight: boolean; onChange: (value: string) => void; onRevert: () => void }) {
+function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; onChange: (value: string) => void; onRevert: () => void }) {
   const { t } = useTranslation();
   const [local, setLocal] = useState(param.value);
   useEffect(() => setLocal(param.value), [param.value]);
@@ -420,12 +478,10 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, highlight, onCh
 
   return (
     <div
-      data-match={highlight || undefined}
       style={param.indent ? { marginLeft: `${param.indent * 1}rem` } : undefined}
       className={cn(
         "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
         param.changed ? "border-primary bg-primary/5" : "border-transparent",
-        highlight && "rounded-md bg-ok/10 ring-1 ring-ok/50",
       )}
     >
       <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
