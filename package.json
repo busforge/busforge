@@ -7,10 +7,10 @@
     "knx": "bun run packages/knx/src/cli.ts",
     "dev:server": "bun run --cwd apps/server dev",
     "dev:web": "bun run --cwd apps/web dev",
+    "typecheck": "bun run --filter='*' typecheck",
     "test": "bun run --filter='*' test",
-    "typecheck": "tsc --noEmit",
-    "build:web": "bun run --cwd apps/web build",
-    "check": "bun run typecheck && bun run test && bun run build:web"
+    "build": "bun run --filter='*' build",
+    "check": "bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
     "bun-types": "^1.3.14",

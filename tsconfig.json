@@ -1,15 +1,7 @@
 {
-  "compilerOptions": {
-    "target": "ESNext",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ESNext"],
-    "types": ["bun-types"],
-    "strict": true,
-    "skipLibCheck": true,
-    "allowImportingTsExtensions": true,
-    "noEmit": true,
-    "verbatimModuleSyntax": true
-  },
-  "exclude": ["node_modules", "apps/web", "plugins", "reference"]
+  // Solution-style root config. Shared options live in tsconfig.base.json; each
+  // workspace has its own tsconfig that extends it and is typechecked via
+  // `bun run --filter='*' typecheck`. This root config checks no files itself.
+  "extends": "./tsconfig.base.json",
+  "files": []
 }

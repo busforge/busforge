@@ -2,11 +2,13 @@
 FROM oven/bun:1.3 AS build
 WORKDIR /app
 COPY package.json bun.lock ./
+# Shared TS config that every workspace tsconfig extends; the web build needs it.
+COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY plugins ./plugins
 RUN bun install --frozen-lockfile
-RUN bun run build:web
+RUN bun run build
 
 FROM oven/bun:1.3
 WORKDIR /app

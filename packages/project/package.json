@@ -5,6 +5,6 @@
   "module": "src/index.ts",
   "exports": { ".": "./src/index.ts" },
   "license": "MIT",
-  "scripts": { "test": "bun test" },
+  "scripts": { "typecheck": "tsc --noEmit", "test": "bun test" },
   "dependencies": { "@busforge/knx": "*", "fast-xml-parser": "*" }
 }
