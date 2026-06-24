@@ -4,7 +4,8 @@ Flashing writes bytes into a real KNX device's memory. Wrong bytes mean a
 misconfigured device. That is recoverable (re-flash, or ETS as the last resort),
 but it is exactly the outcome nobody wants. This document is the honest account of
 **how we know the bytes are right**, and, just as important, **where we only know
-they are stable, not proven correct**.
+they are stable, not proven correct**. For which device generations and segments are
+supported at all, see [device-memory-model.md](device-memory-model.md).
 
 ![Verification model](verification.svg)
 
