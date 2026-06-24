@@ -65,7 +65,7 @@ export function decodeDpt9(raw: number): number {
   return Math.round(mant * (1 << exp)) / 100; // 0.01 resolution, no fp noise
 }
 
-function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string) {
+export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string) {
   if (!Number.isFinite(offset)) return; // malformed memory (no/garbage Offset): no location to write
   if (type.base === "Float") {
     const v = Number(valStr);

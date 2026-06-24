@@ -33,6 +33,38 @@ bun run tools/readback.ts ~/house.knxproj '<password>' 198.51.100.10 ./apps/serv
 > commit it. The tool drops a `DO_NOT_COMMIT_device_memory.txt` marker in the output
 > directory as a reminder.
 
+## dump-param-memory.ts
+
+Dump every reachable device's parameter memory into a ground-truth corpus, for both
+the LSM4 (RelativeSegment) and MV-0705 (AbsoluteSegment) models. Read-only. Unlike
+`readback.ts` it is **DB-sourced** (no `.knxproj` password): app programs and values
+come from `apps/server/data/busforge.db`.
+
+```
+bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
+```
+
+For each device it locates the parameter segments (RelativeSegment via the device
+allocator, AbsoluteSegment at its fixed XML address), reads them, and writes one
+`<ia>__<seg>.device.bin` per segment plus `manifest.json`. Default out-dir
+`apps/server/data/readback/parammem` (gitignored, real device memory).
+
+## verify-images.ts
+
+Byte-verify the image build against the corpus produced by `dump-param-memory.ts`.
+**Offline** (no bus): it reads the dumped `.bin` files and compares them against what
+Busforge builds. This is the honest correctness check, against the real device rather
+than our own frozen golden snapshot.
+
+```
+bun run tools/verify-images.ts [corpus-dir]
+```
+
+Reports per-device byte-match, and for context the union-parameter count (the known
+residual until union placement lands). MV-0705 devices build via
+`buildAbsoluteSegmentImages`; LSM4 devices via `buildParameterImage`.
+
 For the verification model and the per-device support matrix this feeds, see
-[`docs/verification.md`](../docs/verification.md) and
-[`docs/device-memory-model.md`](../docs/device-memory-model.md).
+[`docs/verification.md`](../docs/verification.md),
+[`docs/device-memory-model.md`](../docs/device-memory-model.md), and
+[`docs/mv0705-spike-findings.md`](../docs/mv0705-spike-findings.md).

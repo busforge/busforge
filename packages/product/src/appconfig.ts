@@ -34,6 +34,13 @@ export interface CfgParam {
 }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; }
 export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; }
+// An absolute-addressed memory segment (Code/AbsoluteSegment). Used by the MV-0705
+// parameter model, where parameters live in an EEPROM segment at a FIXED address
+// (no allocator), with the default image in <Data>. Kept separate from the
+// LSM-keyed CfgSegment so the proven RelativeSegment image path is untouched; the
+// MV-0705 image build (deviceimage.ts) consumes these. `address` is the literal
+// device address to read/write the segment at.
+export interface CfgAbsSegment { id: string; address: number; size: number; data: Buffer; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
@@ -100,6 +107,7 @@ export interface AppConfig {
   comObjects: Map<string, CfgComObject>;
   comObjectRefs: Map<string, CfgComObjectRef>;
   segments: CfgSegment[]; // memory segments (Code/RelativeSegment), for the image projection
+  absoluteSegments: CfgAbsSegment[]; // Code/AbsoluteSegment (MV-0705 parameter model)
   translations: Translations;
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
@@ -154,6 +162,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const comObjects = parseComObjects(staticKids);
   const comObjectRefs = parseComObjectRefs(staticKids);
   const segments = parseSegments(staticKids);
+  const absoluteSegments = parseAbsoluteSegments(staticKids);
 
   // Module definitions: merge each def's Static (its ids are globally unique,
   // prefixed with the MD id) into the shared maps, and keep its Arguments +
@@ -205,7 +214,7 @@ export function parseAppConfig(xml: string): AppConfig {
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, segments, translations, dynamic, moduleDefs, hasModules, dca,
+    types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, translations, dynamic, moduleDefs, hasModules, dca,
   };
 }
 
@@ -286,6 +295,22 @@ function parseSegments(staticKids: ONode[]): CfgSegment[] {
     // Default image: ETS authors it as a <Data> child element, older catalogues as a
     // Data attribute; attrOrText resolves either form.
     out.push({ id: a.Id, lsm: Number(a.LoadStateMachine), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
+  }
+  return out;
+}
+
+// Absolute memory segments (Code/AbsoluteSegment): the MV-0705 parameter model. Same
+// default-image shape as a RelativeSegment (a <Data> child or Data attribute), but
+// placed at a fixed device Address instead of via an allocator. Only segments that
+// carry a default image are useful for the parameter build; RAM scratch segments
+// (no Data) are kept too so the set is faithful, and the build filters by what the
+// <Memory> parameters actually target.
+function parseAbsoluteSegments(staticKids: ONode[]): CfgAbsSegment[] {
+  const code = firstByTag(staticKids, "Code");
+  const out: CfgAbsSegment[] = [];
+  for (const s of code ? childrenByTag(kidsOf(code), "AbsoluteSegment") : []) {
+    const a = attrsOf(s);
+    out.push({ id: a.Id, address: Number(a.Address), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
   }
   return out;
 }
