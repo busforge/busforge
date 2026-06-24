@@ -86,4 +86,13 @@ describe("parameter image codec", () => {
     expect(out.get("R-P-u8")).toBe("0");
     expect(out.get("R-P-float")).toBe("0");
   });
+
+  test("places sub-byte fields MSB-first (KNX big-endian bit order, hardware-verified)", () => {
+    // The 2-bit enum at offset 0, BitOffset 0 must land in the TOP two bits of the
+    // byte: value 3 -> 0xC0, not 0x03. Verified against real device memory
+    // (M-0048 went 18 -> 1 byte diff when switched from LSB to MSB; M-0081's
+    // byte-aligned image stayed a full match). Pins the convention against regression.
+    const img = buildParameterImage(model(), 4, new Map([["R-P-enum", "3"]]));
+    expect(img[0]).toBe(0xc0);
+  });
 });

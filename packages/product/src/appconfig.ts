@@ -262,24 +262,32 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
 function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   const params = new Map<string, CfgParam>();
   const container = firstByTag(staticKids, "Parameters");
-  const add = (pa: ONode, union: boolean) => {
+  // `unionMem` is the <Union>'s shared <Memory> attributes (present only for union
+  // children). A normal parameter carries its own <Memory> child; a union parameter's
+  // memory is the union's, and the parameter's own Offset/BitOffset ATTRIBUTES are
+  // relative to that shared base (union branches overlap; only the visible one is
+  // written). The union flag stays so the proven RelativeSegment image projection can
+  // keep excluding them by default (toAppModel), byte-identical to the legacy parser.
+  const add = (pa: ONode, union: boolean, unionMem?: Record<string, string>) => {
     const a = attrsOf(pa);
     const mem = firstByTag(kidsOf(pa), "Memory");
     const ma = mem ? attrsOf(mem) : undefined;
     params.set(a.Id, {
       id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access,
-      hasMemory: !!mem,
-      offset: ma ? Number(ma.Offset) : undefined,
-      bitOffset: ma ? Number(ma.BitOffset ?? 0) : undefined,
-      codeSegment: ma?.CodeSegment,
+      hasMemory: unionMem ? unionMem.CodeSegment !== undefined : !!mem,
+      offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,
+      bitOffset: unionMem ? Number(unionMem.BitOffset ?? 0) + Number(a.BitOffset ?? 0) : ma ? Number(ma.BitOffset ?? 0) : undefined,
+      codeSegment: unionMem ? unionMem.CodeSegment : ma?.CodeSegment,
       union: union || undefined,
     });
   };
   for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa, false);
-  // Union children are parameters too (overlapping memory); include them for the UI,
-  // tagged so the image projection can drop them (the legacy image parser ignored them).
+  // Union children are parameters too (overlapping memory), placed at the union's
+  // shared <Memory>. Included for the UI and (opt-in) the MV-0705 image build.
   for (const u of container ? childrenByTag(kidsOf(container), "Union") : []) {
-    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true);
+    const umem = firstByTag(kidsOf(u), "Memory");
+    const uma = umem ? attrsOf(umem) : undefined;
+    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true, uma);
   }
   return { params };
 }

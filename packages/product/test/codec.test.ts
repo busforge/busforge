@@ -50,10 +50,12 @@ describe("bitfields at non-zero bit offsets", () => {
     { Pa: { type: "Tb1", offset: 0, bit: 0 }, Pb: { type: "Tb3", offset: 0, bit: 2 }, Pc: { type: "Tb1", offset: 0, bit: 7 }, Pd: { type: "Tb4", offset: 1, bit: 4 } },
   );
   test("packs multiple fields into the right bits of a byte", () => {
-    // bit0=1, bits2-4=5 (0b101<<2=0x14), bit7=1 (0x80) -> 0x01|0x14|0x80 = 0x95
-    expect(buildHex(m, { "R-Pa": "1", "R-Pb": "5", "R-Pc": "1" }).slice(0, 2)).toBe("95");
-    // 4-bit field 0xD at bit4 of byte1 -> 0xD0
-    expect(buildHex(m, { "R-Pd": "13" }).slice(2, 4)).toBe("d0");
+    // MSB-first (KNX big-endian bit order), shift = 8 - bitOffset - width:
+    // Pa(1b@bit0)=1 -> 0x80, Pb(3b@bit2)=5 -> 0b101<<3 = 0x28, Pc(1b@bit7)=1 -> 0x01
+    // -> 0x80|0x28|0x01 = 0xA9
+    expect(buildHex(m, { "R-Pa": "1", "R-Pb": "5", "R-Pc": "1" }).slice(0, 2)).toBe("a9");
+    // 4-bit field 0xD at bit4 (MSB-first) -> shift 0 -> low nibble -> 0x0D
+    expect(buildHex(m, { "R-Pd": "13" }).slice(2, 4)).toBe("0d");
   });
   test("round-trips each field independently", () => {
     expect(roundtrip(m, { "R-Pa": "1", "R-Pb": "5", "R-Pc": "1", "R-Pd": "9" })).toMatchObject({ "R-Pa": "1", "R-Pb": "5", "R-Pc": "1", "R-Pd": "9" });

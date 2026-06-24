@@ -96,8 +96,13 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     // A sub-byte field crossing a byte boundary; ETS never allocates these, so refuse
     // rather than silently truncate the high bits into one byte.
     if (bit + sizeInBit > 8) throw new Error(`bit field crossing a byte boundary not supported (${sizeInBit} bits at bit ${bit})`);
+    // KNX numbers BitOffset from the MOST significant bit of the byte (big-endian bit
+    // order): a w-bit field at BitOffset b occupies bits [b .. b+w) counted from the
+    // top, i.e. shifted left by (8 - b - w). Verified against real device memory
+    // (M-0048/M-0081); LSB-first placement only matched byte-aligned devices.
+    const shift = 8 - bit - sizeInBit;
     const mask = (1 << sizeInBit) - 1;
-    img[offset] = (img[offset] & ~(mask << bit)) | ((v & mask) << bit);
+    img[offset] = (img[offset] & ~(mask << shift)) | ((v & mask) << shift);
   }
 }
 
@@ -118,8 +123,9 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     return String(type.signed ? img.readIntBE(offset, bytes) : img.readUIntBE(offset, bytes));
   }
   if (offset >= img.length || bit + sizeInBit > 8) return undefined;
+  const shift = 8 - bit - sizeInBit; // MSB-first bit numbering (mirror of encode)
   const mask = (1 << sizeInBit) - 1;
-  let v = (img[offset] >> bit) & mask;
+  let v = (img[offset] >> shift) & mask;
   if (type.signed && v & (1 << (sizeInBit - 1))) v -= 1 << sizeInBit; // two's complement
   return String(v);
 }

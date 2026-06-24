@@ -25,7 +25,7 @@ export function buildAbsoluteSegmentImages(
   values: Map<string, string>,
   opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
 ): DeviceSegmentImage[] {
-  const model = toAppModel(app);
+  const model = toAppModel(app, { includeUnions: true });
   // Effective value of every visible parameter, keyed by ParameterRef id.
   const view = buildDeviceConfig(app, values, opts.lang, opts.moduleInstances ?? []);
   const active = new Map<string, string>();

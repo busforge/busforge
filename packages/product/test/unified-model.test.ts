@@ -46,9 +46,10 @@ describe("unified parse -> image projection", () => {
   test("builds the expected image from defaults (segment <Data> default preserved where unwritten)", () => {
     const model = parseApplication(xml);
     const img = buildParameterImage(model, 4, new Map());
-    // byte0 enum=1 (2-bit), byte1 u8=100, byte2-3 s16=-5, byte4-5 dpt9(21.5),
-    // byte6 union EXCLUDED -> stays segment default 0x00, byte7 segment default 0xAB.
-    expect(img.toString("hex")).toBe("0164fffb0c3300ab");
+    // byte0 enum=1 (2-bit, MSB-first big-endian bit order -> 1<<6 = 0x40), byte1 u8=100,
+    // byte2-3 s16=-5, byte4-5 dpt9(21.5), byte6 union EXCLUDED -> stays segment default
+    // 0x00, byte7 segment default 0xAB.
+    expect(img.toString("hex")).toBe("4064fffb0c3300ab");
   });
 
   test("decode round-trips the placed numeric/float params, skips the excluded union ref", () => {
@@ -79,5 +80,47 @@ describe("unified parse -> image projection", () => {
     const img = buildParameterImage(model, 4, new Map([["P-u8_R-1", "200"]]));
     expect(img[1]).toBe(200);
     expect(decodeParameterImage(model, 4, img).get("P-u8_R-1")).toBe("200");
+  });
+});
+
+// Union parameters whose memory lives on the <Union> element (the MV-0705 model):
+// the parameter's own Offset/BitOffset are RELATIVE to the union's shared base. This
+// pins the base+relative arithmetic and the includeUnions opt-in that the
+// absolute-segment build (deviceimage) relies on.
+const unionXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0001"><ApplicationPrograms>
+<ApplicationProgram Id="M-0001_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Union Test">
+<Static>
+<ParameterTypes><ParameterType Id="M-0001_A-0001-01-0001_PT-2"><TypeRestriction Base="Value" SizeInBit="2">
+<Enumeration Text="A" Value="0" Id="M-0001_A-0001-01-0001_PT-2_EN-0" DisplayOrder="0"/>
+<Enumeration Text="B" Value="3" Id="M-0001_A-0001-01-0001_PT-2_EN-3" DisplayOrder="1"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Union SizeInBit="2">
+<Memory CodeSegment="M-0001_A-0001-01-0001_AS-1" Offset="2" BitOffset="3"/>
+<Parameter Id="M-0001_A-0001-01-0001_UP-1" ParameterType="M-0001_A-0001-01-0001_PT-2" Text="U1" Value="0" DefaultUnionParameter="true"/>
+<Parameter Id="M-0001_A-0001-01-0001_UP-2" ParameterType="M-0001_A-0001-01-0001_PT-2" Text="U2" Value="0" Offset="1" BitOffset="2"/>
+</Union></Parameters>
+<ParameterRefs>
+<ParameterRef Id="M-0001_A-0001-01-0001_UP-1_R-1" RefId="M-0001_A-0001-01-0001_UP-1"/>
+<ParameterRef Id="M-0001_A-0001-01-0001_UP-2_R-1" RefId="M-0001_A-0001-01-0001_UP-2"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0001_A-0001-01-0001_AS-1" Address="100" Size="4"><Data>AAAAAA==</Data></AbsoluteSegment></Code>
+</Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+describe("union parameters with shared <Union> memory (MV-0705)", () => {
+  const U1 = "M-0001_A-0001-01-0001_UP-1", U2 = "M-0001_A-0001-01-0001_UP-2";
+
+  test("places union children at union-base + their relative offset/bit", () => {
+    const app = parseAppConfig(unionXml);
+    // UP-1: no own Offset/Bit -> sits at the union base (2, bit3).
+    expect(app.params.get(U1)).toMatchObject({ union: true, offset: 2, bitOffset: 3, codeSegment: "M-0001_A-0001-01-0001_AS-1" });
+    // UP-2: relative Offset 1 / BitOffset 2 add to the base -> (3, bit5).
+    expect(app.params.get(U2)).toMatchObject({ union: true, offset: 3, bitOffset: 5 });
+  });
+
+  test("toAppModel drops union params by default, keeps them with includeUnions", () => {
+    const app = parseAppConfig(unionXml);
+    expect(toAppModel(app).params.has(U1)).toBe(false);
+    const m = toAppModel(app, { includeUnions: true });
+    expect(m.params.get(U1)).toMatchObject({ offset: 2, bitOffset: 3 });
+    expect(m.params.get(U2)).toMatchObject({ offset: 3, bitOffset: 5 });
   });
 });

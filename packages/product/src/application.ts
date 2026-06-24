@@ -44,7 +44,12 @@ function imageBase(base: CfgType["base"]): ParamBase {
 // parameters/types/refs are dropped: the legacy image parser only read the top-level
 // Static, and modules are not byte-placed (their per-instance offsets are unresolved,
 // so the flash path still refuses them via unmappedParamRefs).
-export function toAppModel(app: AppConfig): AppModel {
+// `includeUnions` keeps union parameters (overlapping-memory branches) in the model.
+// Default OFF so the proven RelativeSegment image path (buildParameterImage) and its
+// golden snapshot stay byte-identical to the legacy parser, which never placed them.
+// The MV-0705 absolute-segment build opts in: union branches are real parameter
+// memory there, and visibility resolution writes only the active branch.
+export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean } = {}): AppModel {
   const types = new Map<string, ParamType>();
   for (const t of app.types.values()) {
     if (t.moduleDefId) continue;
@@ -52,7 +57,7 @@ export function toAppModel(app: AppConfig): AppModel {
   }
   const params = new Map<string, Param>();
   for (const p of app.params.values()) {
-    if (p.moduleDefId || p.union) continue;
+    if (p.moduleDefId || (p.union && !opts.includeUnions)) continue;
     params.set(p.id, { id: p.id, typeId: p.typeId, value: p.value, codeSegment: p.codeSegment, offset: p.offset, bitOffset: p.bitOffset ?? 0 });
   }
   const refs = new Map<string, ParamRef>();
