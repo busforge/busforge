@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 612" font-family="'Archivo', system-ui, sans-serif">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap');
+      .title  { font-family: 'Instrument Serif', Georgia, serif; }
+      .name   { font-family: 'Archivo', system-ui, sans-serif; font-weight: 600; }
+      .mono   { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+      .aside  { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; }
+    </style>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(229,232,235,0.06)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#8d9399"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#f3a44a"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="612" fill="#090e12"/>
+  <rect width="920" height="612" fill="url(#dots)"/>
+
+  <!-- header -->
+  <text x="48" y="52" class="mono" fill="#f3a44a" font-size="11" letter-spacing="0.22em">VERIFICATION</text>
+  <text x="48" y="92" class="title" fill="#e5e8eb" font-size="34">Computed, then checked three ways</text>
+  <text x="48" y="118" class="name" fill="#8d9399" font-size="13" font-weight="400">The flashed image is built from the recipe plus your values, never stored in the file. Three independent checks cover different things.</text>
+
+  <!-- ============ compute strip (arrows first) ============ -->
+  <line x1="176" y1="174" x2="222" y2="174" stroke="#8d9399" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <line x1="336" y1="174" x2="382" y2="174" stroke="#8d9399" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <line x1="532" y1="174" x2="588" y2="174" stroke="#f3a44a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <rect x="540" y="146" width="40" height="13" rx="2" fill="#090e12"/>
+  <text x="560" y="156" class="mono" fill="#f3a44a" font-size="8" text-anchor="middle" letter-spacing="0.08em">FLASH</text>
+
+  <!-- .knxproj (store) -->
+  <rect x="48" y="152" width="128" height="44" rx="6" fill="#090e12"/>
+  <rect x="48" y="152" width="128" height="44" rx="6" fill="rgba(229,232,235,0.05)" stroke="#8d9399" stroke-width="1"/>
+  <text x="112" y="172" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">.knxproj</text>
+  <text x="112" y="186" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">recipe + values</text>
+
+  <!-- BUILD (step) -->
+  <rect x="222" y="152" width="114" height="44" rx="6" fill="#090e12"/>
+  <rect x="222" y="152" width="114" height="44" rx="6" fill="#13181d" stroke="#3a4248" stroke-width="1"/>
+  <text x="279" y="172" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">build</text>
+  <text x="279" y="186" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">layout + defaults</text>
+
+  <!-- image bytes (focal) -->
+  <rect x="382" y="152" width="150" height="44" rx="6" fill="#090e12"/>
+  <rect x="382" y="152" width="150" height="44" rx="6" fill="rgba(243,164,74,0.08)" stroke="#f3a44a" stroke-width="1.2"/>
+  <text x="457" y="172" class="name" fill="#f3a44a" font-size="12.5" text-anchor="middle">parameter image</text>
+  <text x="457" y="186" class="mono" fill="#c79152" font-size="8.5" text-anchor="middle">the bytes (computed)</text>
+
+  <!-- device (external, dashed) -->
+  <rect x="592" y="152" width="128" height="44" rx="6" fill="#090e12"/>
+  <rect x="592" y="152" width="128" height="44" rx="6" fill="rgba(229,232,235,0.03)" stroke="#3a4248" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="656" y="172" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">device memory</text>
+  <text x="656" y="186" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">on the bus</text>
+
+  <!-- ============ section label ============ -->
+  <line x1="48" y1="242" x2="872" y2="242" stroke="rgba(229,232,235,0.10)" stroke-width="0.8"/>
+  <text x="48" y="262" class="mono" fill="#8d9399" font-size="9" letter-spacing="0.18em">WHAT EACH CHECK COMPARES THE BUILT IMAGE AGAINST</text>
+
+  <!-- ===== Band 1: hardware byte-match (focal / ground truth) ===== -->
+  <rect x="48" y="280" width="824" height="72" rx="8" fill="rgba(243,164,74,0.07)" stroke="#f3a44a" stroke-width="1.2"/>
+  <text x="68" y="306" class="mono" fill="#f3a44a" font-size="9" letter-spacing="0.16em">1 · GROUND TRUTH</text>
+  <text x="68" y="328" class="name" fill="#e5e8eb" font-size="15">Hardware byte-match</text>
+  <text x="68" y="344" class="mono" fill="#8d9399" font-size="9.5">built image  ==  bytes read back from the real device over the bus</text>
+  <rect x="700" y="300" width="152" height="32" rx="5" fill="rgba(243,164,74,0.12)" stroke="#f3a44a" stroke-width="1"/>
+  <text x="776" y="320" class="name" fill="#f3a44a" font-size="12.5" text-anchor="middle">covers 1 of 13</text>
+
+  <!-- ===== Band 2: spec conformance ===== -->
+  <rect x="48" y="364" width="824" height="72" rx="8" fill="rgba(229,232,235,0.04)" stroke="#3a4248" stroke-width="1"/>
+  <text x="68" y="390" class="mono" fill="#8d9399" font-size="9" letter-spacing="0.16em">2 · SPEC</text>
+  <text x="68" y="412" class="name" fill="#e5e8eb" font-size="15">Codec conformance</text>
+  <text x="68" y="428" class="mono" fill="#8d9399" font-size="9.5">encoder  ==  KNX reference vectors  (DPT-9, big-endian, two's complement)</text>
+  <rect x="700" y="384" width="152" height="32" rx="5" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/>
+  <text x="776" y="404" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">the codec math</text>
+
+  <!-- ===== Band 3: stability ===== -->
+  <rect x="48" y="448" width="824" height="72" rx="8" fill="rgba(229,232,235,0.04)" stroke="#3a4248" stroke-width="1"/>
+  <text x="68" y="474" class="mono" fill="#8d9399" font-size="9" letter-spacing="0.16em">3 · STABILITY</text>
+  <text x="68" y="496" class="name" fill="#e5e8eb" font-size="15">Golden-master regression</text>
+  <text x="68" y="512" class="mono" fill="#8d9399" font-size="9.5">rebuilt image hash  ==  our own committed snapshot  (golden.json)</text>
+  <rect x="700" y="468" width="152" height="32" rx="5" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/>
+  <text x="776" y="488" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">all 13, unchanged</text>
+
+  <!-- editorial aside -->
+  <text x="48" y="556" class="aside" fill="#c79152" font-size="15">Stability guards every device. Only ground truth proves correctness, and today it covers one.</text>
+  <text x="48" y="584" class="mono" fill="#8d9399" font-size="9">"unchanged" is not "correct" · before flashing a new device type, read it back first to promote it from band 3 to band 1</text>
+</svg>

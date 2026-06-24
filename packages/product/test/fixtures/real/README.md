@@ -15,6 +15,10 @@ group-address, or other personal data: that lives in the encrypted project insta
 (`0.xml`), which is never included here. Each file was verified free of topology /
 device-instance / group-address content before committing.
 
+This golden-master is the **stability** check (one of three). It proves the output
+is unchanged, not that it is correct. See [`docs/verification.md`](../../../../../docs/verification.md)
+for the full model and the honest per-device coverage.
+
 ## Regenerating the golden
 
 `golden.json` is a content snapshot (model shape, a hash of the byte-relevant image
