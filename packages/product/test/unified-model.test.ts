@@ -65,6 +65,19 @@ describe("unified parse -> image projection", () => {
   test("an instance value overrides the default at its offset", () => {
     const model = parseApplication(xml);
     const img = buildParameterImage(model, 4, new Map([["P-u8_R-1", "5"]]));
-    expect(img[1]).toBe(5); // was 200
+    expect(img[1]).toBe(5); // was the default
+  });
+
+  test("unsigned TypeNumber is not misdetected as signed (read-back of high values)", () => {
+    const app = parseAppConfig(xml);
+    // "unsignedInt" must not match a naive includes("signed"); "signedInt" must.
+    expect(app.types.get("T-u8")?.signed).toBe(false);
+    expect(app.types.get("T-s16")?.signed).toBe(true);
+    // A high unsigned value: encode is unchanged (byte 200), and decode now reads
+    // it back as 200 rather than the signed -56 the substring bug produced.
+    const model = parseApplication(xml);
+    const img = buildParameterImage(model, 4, new Map([["P-u8_R-1", "200"]]));
+    expect(img[1]).toBe(200);
+    expect(decodeParameterImage(model, 4, img).get("P-u8_R-1")).toBe("200");
   });
 });

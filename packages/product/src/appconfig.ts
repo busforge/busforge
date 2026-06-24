@@ -231,10 +231,14 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
     else if (tag === "TypeFloat") base = "Float";
     else if (tag === "TypeText") base = "Text";
     else if (tag === "TypeColor") base = "Color";
+    // KNX TypeNumber@Type is "signedInt" / "unsignedInt". Test for signedness
+    // exactly: a naive includes("signed") also matches "unsignedInt", which would
+    // mis-decode every unsigned value >= 128 as negative on read-back.
+    const typeAttr = String(ia.Type ?? "").toLowerCase();
     out.set(id, {
       id, base, kind: tag,
       sizeInBit: Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
-      signed: String(ia.Type ?? "").toLowerCase().includes("signed"),
+      signed: typeAttr.includes("signed") && !typeAttr.includes("unsigned"),
       enums,
       min: num(ia.minInclusive),
       max: num(ia.maxInclusive),
