@@ -17,11 +17,12 @@ const fixtures = listRealFixtures();
 
 describe("real catalogue (per-manufacturer regression)", () => {
   test("fixtures and golden stay in lock-step", () => {
-    expect(fixtures.length).toBeGreaterThanOrEqual(6); // one per manufacturer
+    // Every distinct application program across all of the owner's projects.
+    expect(fixtures.length).toBeGreaterThanOrEqual(13);
     expect(Object.keys(golden).sort()).toEqual(fixtures);
-    // distinct manufacturers (M-XXXX prefix) are actually distinct
+    // covering several manufacturers (M-XXXX prefix)
     const manus = new Set(fixtures.map((f) => f.split("_")[0]));
-    expect(manus.size).toBe(fixtures.length);
+    expect(manus.size).toBeGreaterThanOrEqual(6);
   });
 
   for (const name of fixtures) {

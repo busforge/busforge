@@ -11,6 +11,30 @@
     "modelHash": "cf0ac2c19123c9bb",
     "lsms": {}
   },
+  "M-0048_A-107E-12-5B58.xml.gz": {
+    "shape": {
+      "types": 70,
+      "params": 882,
+      "refs": 1246,
+      "comObjects": 117,
+      "segments": 0,
+      "hasModules": false
+    },
+    "modelHash": "3ba2e26f6ec2dda4",
+    "lsms": {}
+  },
+  "M-0048_A-140C-14-EB70.xml.gz": {
+    "shape": {
+      "types": 99,
+      "params": 1318,
+      "refs": 3639,
+      "comObjects": 182,
+      "segments": 0,
+      "hasModules": false
+    },
+    "modelHash": "6b68064d14d459a3",
+    "lsms": {}
+  },
   "M-0048_A-493B-21-B471.xml.gz": {
     "shape": {
       "types": 391,
@@ -28,6 +52,23 @@
       }
     }
   },
+  "M-0048_A-9071-20-F258-O00EF.xml.gz": {
+    "shape": {
+      "types": 75,
+      "params": 3078,
+      "refs": 3433,
+      "comObjects": 1342,
+      "segments": 1,
+      "hasModules": false
+    },
+    "modelHash": "44706736554097c5",
+    "lsms": {
+      "4": {
+        "build": "d242761159f667d2",
+        "decodeHash": "c729f9a1f25438fc"
+      }
+    }
+  },
   "M-0081_A-FE01-11-75D9.xml.gz": {
     "shape": {
       "types": 27,
@@ -38,6 +79,42 @@
       "hasModules": false
     },
     "modelHash": "f59bfdbc0d1291ee",
+    "lsms": {}
+  },
+  "M-0081_A-FF31-31-D6FF.xml.gz": {
+    "shape": {
+      "types": 60,
+      "params": 567,
+      "refs": 1208,
+      "comObjects": 171,
+      "segments": 0,
+      "hasModules": false
+    },
+    "modelHash": "cd3dc845a1306858",
+    "lsms": {}
+  },
+  "M-0083_A-00B4-32-3919.xml.gz": {
+    "shape": {
+      "types": 99,
+      "params": 11,
+      "refs": 11,
+      "comObjects": 16,
+      "segments": 0,
+      "hasModules": true
+    },
+    "modelHash": "46bf535f4dd57fd2",
+    "lsms": {}
+  },
+  "M-0083_A-00B6-32-9642.xml.gz": {
+    "shape": {
+      "types": 99,
+      "params": 9,
+      "refs": 9,
+      "comObjects": 16,
+      "segments": 0,
+      "hasModules": true
+    },
+    "modelHash": "e41f2a7b92e86da1",
     "lsms": {}
   },
   "M-0083_A-0137-20-7EB2.xml.gz": {
@@ -56,6 +133,18 @@
         "decodeHash": "d05b514736a4199c"
       }
     }
+  },
+  "M-0083_A-0138-21-F18E-O0072.xml.gz": {
+    "shape": {
+      "types": 5,
+      "params": 5,
+      "refs": 5,
+      "comObjects": 0,
+      "segments": 0,
+      "hasModules": false
+    },
+    "modelHash": "87bc45c6bd669d2f",
+    "lsms": {}
   },
   "M-008E_A-7079-10-9C41.xml.gz": {
     "shape": {

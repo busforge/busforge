@@ -1,9 +1,11 @@
 # Real catalogue fixtures
 
-One manufacturer `ApplicationProgram` per manufacturer, gzipped, used by
-`real-catalogue.test.ts` to pin the parser and the image projection against real
-catalogue data (7 manufacturers, every parameter type kind, unions, modules,
-bitfields, segment layouts).
+Every distinct manufacturer `ApplicationProgram` across the owner's KNX projects
+(13 products, 6 manufacturers), gzipped, used by `real-catalogue.test.ts` to pin
+the parser and the image projection against real catalogue data: every parameter
+type kind, unions, modules, bitfields, and segment layouts the real hardware uses.
+The full device set is small enough (~1.2 MB gzipped) to cover completely rather
+than sample, so every product the owner actually has is a regression guard.
 
 ## No personal data
 
@@ -25,8 +27,9 @@ bun run packages/product/test/real-catalogue.gen.ts
 
 and review the diff: a changed hash is a changed parse/image output.
 
-## Adding a manufacturer
+## Adding a device
 
 Drop another `<id>.xml.gz` here (gzip the plaintext ApplicationProgram XML), confirm
-it carries no personal data, and run the generator. The test asserts the fixture set
+it carries no personal data (no `<DeviceInstance>` / `<GroupAddress>` / `<Topology>`
+elements and no owner name), and run the generator. The test asserts the fixture set
 and the golden stay in lock-step, so a new fixture without a regenerated golden fails.
