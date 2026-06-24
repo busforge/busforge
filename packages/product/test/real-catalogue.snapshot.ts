@@ -24,7 +24,7 @@ export const CONFIG_BASES = new Set(["Value", "BinaryValue", "Number", "Float", 
 export interface AppSnapshot {
   shape: { types: number; params: number; refs: number; comObjects: number; segments: number; hasModules: boolean };
   modelHash: string;
-  lsms: Record<string, { build: string; decodeHash: string | null }>;
+  lsms: Record<string, { build: string; decodeHash: string }>;
 }
 
 export function listRealFixtures(): string[] {
@@ -45,18 +45,14 @@ export function snapshot(xml: string): AppSnapshot {
   const segs = model.segments.map((s) => `${s.id}|${s.lsm}|${s.size}|${sha(s.data.toString("base64"))}`).sort();
   const modelHash = sha(JSON.stringify({ types, params, refs, segs }));
 
+  // Build a default image per segment and pin its bytes + read-back. A throw here is
+  // a real defect (the codec cannot place a real parameter), so it is NOT swallowed:
+  // the test fails loudly rather than recording the failure as the expected state.
   const lsms: AppSnapshot["lsms"] = {};
   for (const lsm of [...new Set(model.segments.map((s) => s.lsm))].sort((a, b) => a - b)) {
-    try {
-      const img = buildParameterImage(model, lsm, new Map());
-      const decodeHash = sha(JSON.stringify([...decodeParameterImage(model, lsm, img)].sort()));
-      lsms[String(lsm)] = { build: sha(img.toString("hex")), decodeHash };
-    } catch {
-      // A param the image codec cannot place today (e.g. a 64-bit integer) throws;
-      // record that so the golden documents current behavior. Hardening image.ts to
-      // skip such params instead of throwing will change this to a real hash.
-      lsms[String(lsm)] = { build: "throws", decodeHash: null };
-    }
+    const img = buildParameterImage(model, lsm, new Map());
+    const decodeHash = sha(JSON.stringify([...decodeParameterImage(model, lsm, img)].sort()));
+    lsms[String(lsm)] = { build: sha(img.toString("hex")), decodeHash };
   }
   return { shape: { types: model.types.size, params: model.params.size, refs: model.refs.size, comObjects: app.comObjects.size, segments: model.segments.length, hasModules: app.hasModules }, modelHash, lsms };
 }

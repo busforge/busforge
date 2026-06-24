@@ -93,6 +93,23 @@ describe("types not represented in the image are neither written nor decoded", (
     expect(decoded.has("R-Ptext")).toBe(false);
     expect(decoded.has("R-Pother")).toBe(false);
   });
+
+  // Regression for the MDT IP-interface crash: a Text param whose value coerces to a
+  // finite number (the empty string -> 0, or a numeric-looking string) must NOT be
+  // integer-encoded. The old encoder did Number("")===0 and tried to write a wide
+  // integer (e.g. 30 bytes for a 240-bit text), throwing and aborting the flash.
+  test("a Text param with a numeric-looking or empty value is never integer-encoded (no crash)", () => {
+    const big = mk(
+      { Ttext240: { base: "Text", sizeInBit: 240 } },
+      { Pempty: { type: "Ttext240", offset: 0, value: "" }, Pnum: { type: "Ttext240", offset: 30, value: "123" } },
+      [{ id: "S", lsm: 4, size: SEG, data: Buffer.alloc(SEG).fill(0xcd) }],
+    );
+    let img!: Buffer;
+    expect(() => { img = buildParameterImage(big, 4, new Map()); }).not.toThrow();
+    // both text fields stay at the segment default; neither value leaked into bytes
+    expect(img.subarray(0, 60).every((b) => b === 0xcd)).toBe(true);
+    expect(decodeParameterImage(big, 4, img).size).toBe(0);
+  });
 });
 
 describe("multi-segment routing", () => {
@@ -111,6 +128,35 @@ describe("multi-segment routing", () => {
     const dec4 = decodeParameterImage(m, 4, built4);
     expect(dec4.has("R-Pb")).toBe(true);
     expect(dec4.has("R-Pa")).toBe(false);
+  });
+});
+
+describe("malformed or unsupported layouts degrade safely (no silent corruption)", () => {
+  const seg = (data = Buffer.alloc(4)) => [{ id: "S", lsm: 4, size: data.length, data }];
+  test("a non-finite type size is skipped, leaving the bytes untouched", () => {
+    const m = mk({ Tbad: { sizeInBit: NaN as unknown as number } }, { P: { type: "Tbad", offset: 0, value: "5" } }, seg(Buffer.alloc(4).fill(0xaa)));
+    const img = buildParameterImage(m, 4, new Map());
+    expect(img.toString("hex")).toBe("aaaaaaaa");
+    expect(decodeParameterImage(m, 4, img).size).toBe(0);
+  });
+  test("a non-finite offset is skipped, not crashing", () => {
+    const m = mk({ Tu8: { sizeInBit: 8 } }, { P: { type: "Tu8", offset: NaN as unknown as number, value: "5" } }, seg());
+    expect(() => buildParameterImage(m, 4, new Map())).not.toThrow();
+  });
+  test("a malformed segment size is a clear error, not a cryptic Buffer crash", () => {
+    const m = mk({ Tu8: { sizeInBit: 8 } }, { P: { type: "Tu8", offset: 0 } }, [{ id: "S", lsm: 4, size: NaN as unknown as number, data: Buffer.alloc(0) }]);
+    expect(() => buildParameterImage(m, 4, new Map())).toThrow(/malformed segment size/);
+  });
+  // ETS never allocates a sub-byte field across a byte boundary; refuse loudly rather
+  // than silently truncate the high bits (a wrong-bytes flash). This is a by-design
+  // refusal of an impossible input, not a deferred bug.
+  test("a straddling bit field is refused, not silently truncated", () => {
+    const m = mk({ Tb3: { base: "Value", sizeInBit: 3 } }, { P: { type: "Tb3", offset: 0, bit: 6 } }, seg());
+    expect(() => buildParameterImage(m, 4, new Map([["R-P", "5"]]))).toThrow(/byte boundary/);
+  });
+  test("an integer type wider than 48 bits is refused rather than emitting cryptic/truncated bytes", () => {
+    const m = mk({ Tw: { base: "Number", sizeInBit: 64 } }, { P: { type: "Tw", offset: 0 } }, seg(Buffer.alloc(16)));
+    expect(() => buildParameterImage(m, 4, new Map([["R-P", "1"]]))).toThrow(/wider than 48 bits/);
   });
 });
 

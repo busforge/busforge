@@ -6,6 +6,7 @@ import type { AppModel, ParamType } from "./application.ts";
 export function buildParameterImage(model: AppModel, lsm: number, instanceValues: Map<string, string>): Buffer {
   const seg = model.segments.find((s) => s.lsm === lsm);
   if (!seg) throw new Error(`no segment for LSM ${lsm}`);
+  if (!Number.isInteger(seg.size) || seg.size < 0) throw new Error(`malformed segment size for LSM ${lsm}: ${seg.size}`);
   const img = Buffer.alloc(seg.size);
   seg.data.copy(img); // start from manufacturer defaults
 
@@ -18,7 +19,7 @@ export function buildParameterImage(model: AppModel, lsm: number, instanceValues
     const v = instanceValues.get(ref.id) ?? param.value;
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
-    if (!type || type.sizeInBit === 0) continue;
+    if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     encode(img, param.offset, param.bitOffset, type, v);
   }
   return img;
@@ -36,7 +37,7 @@ export function decodeParameterImage(model: AppModel, lsm: number, img: Buffer):
     if (!param || param.offset === undefined) continue;
     if (param.codeSegment && model.segments.find((s) => s.id === param.codeSegment)?.lsm !== lsm) continue;
     const type = model.types.get(param.typeId);
-    if (!type || type.sizeInBit === 0) continue;
+    if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     const v = decode(img, param.offset, param.bitOffset, type);
     if (v === undefined) continue; // text/other: not represented in the image
     out.set(ref.id, v);
@@ -65,29 +66,46 @@ export function decodeDpt9(raw: number): number {
 }
 
 function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string) {
-  const v = Number(valStr);
-  if (!Number.isFinite(v)) return; // text/other params: skip for now
+  if (!Number.isFinite(offset)) return; // malformed memory (no/garbage Offset): no location to write
   if (type.base === "Float") {
+    const v = Number(valStr);
+    if (!Number.isFinite(v)) return;
     if (type.sizeInBit === 32) { if (offset + 4 <= img.length) img.writeFloatBE(v, offset); return; } // DPT 14 (IEEE-754)
     if (offset + 2 <= img.length) img.writeUInt16BE(encodeDpt9(v), offset); // DPT 9
     return;
   }
+  // Only Value (enum/restriction) and Number are integer-coded into the image. Text,
+  // Time, Color, IPAddress and other types are NOT represented in the parameter image,
+  // so they must not be written here. Keeping this symmetric with decode is what
+  // prevents a numeric-looking text value (e.g. "" -> 0, or "123") from being written
+  // as a bogus integer, which for a wide text type also overflows the byte writer.
+  if (type.base !== "Value" && type.base !== "Number") return;
+  const v = Number(valStr);
+  if (!Number.isFinite(v)) return;
   const sizeInBit = type.sizeInBit;
   if (sizeInBit >= 8) {
     const bytes = sizeInBit >> 3;
     if (offset + bytes > img.length) return;
+    // writeUIntBE/IntBE cap at 6 bytes. No manufacturer numeric type exceeds that in
+    // practice; refuse loudly rather than emit truncated/cryptic bytes if one appears.
+    if (bytes > 6) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
     if (type.signed && v < 0) img.writeIntBE(v, offset, bytes);
     else img.writeUIntBE(v, offset, bytes);
   } else {
     if (offset >= img.length) return;
+    // A sub-byte field crossing a byte boundary; ETS never allocates these, so refuse
+    // rather than silently truncate the high bits into one byte.
+    if (bit + sizeInBit > 8) throw new Error(`bit field crossing a byte boundary not supported (${sizeInBit} bits at bit ${bit})`);
     const mask = (1 << sizeInBit) - 1;
     img[offset] = (img[offset] & ~(mask << bit)) | ((v & mask) << bit);
   }
 }
 
 // Inverse of encode. Returns the decoded value as a string, or undefined for
-// types not represented in the image (text/time/other).
+// anything not represented in the image (text/time/other, or a layout the encoder
+// would refuse). Read-back is best-effort, so it skips rather than throws.
 function decode(img: Buffer, offset: number, bit: number, type: ParamType): string | undefined {
+  if (!Number.isFinite(offset)) return undefined;
   if (type.base === "Float") {
     if (type.sizeInBit === 32) return offset + 4 > img.length ? undefined : String(img.readFloatBE(offset));
     return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
@@ -96,10 +114,10 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   const sizeInBit = type.sizeInBit;
   if (sizeInBit >= 8) {
     const bytes = sizeInBit >> 3;
-    if (offset + bytes > img.length) return undefined;
+    if (bytes > 6 || offset + bytes > img.length) return undefined; // mirror encode's refusal
     return String(type.signed ? img.readIntBE(offset, bytes) : img.readUIntBE(offset, bytes));
   }
-  if (offset >= img.length) return undefined;
+  if (offset >= img.length || bit + sizeInBit > 8) return undefined;
   const mask = (1 << sizeInBit) - 1;
   let v = (img[offset] >> bit) & mask;
   if (type.signed && v & (1 << (sizeInBit - 1))) v -= 1 << sizeInBit; // two's complement

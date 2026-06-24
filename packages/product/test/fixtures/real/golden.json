@@ -52,8 +52,8 @@
     "modelHash": "4ab9953947ee5f72",
     "lsms": {
       "4": {
-        "build": "throws",
-        "decodeHash": null
+        "build": "813ee6c5eeb163e2",
+        "decodeHash": "d05b514736a4199c"
       }
     }
   },
