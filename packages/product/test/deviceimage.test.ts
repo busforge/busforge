@@ -151,3 +151,33 @@ test("imageValues resolves choose/Assign in document order, independent of the U
   expect(view.imageValues.get("M-0003_A-0001-01-0001_P-A_R")).toBe("10");
   expect(view.imageValues.has("M-0003_A-0001-01-0001_P-B_R")).toBe(false);
 });
+
+// Some devices (e.g. Steinel M-008E) declare AbsoluteSegments WITHOUT a <Data>
+// default. There the segment's unwritten bytes are the device's erased EEPROM state
+// (0xFF), not 0x00. The build must initialise such a segment to 0xFF before laying
+// down parameter values. Hardware-verified: a Data-less 256-byte segment went from
+// 256 byte diffs to 2 once initialised to 0xFF.
+const noDataXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0004"><ApplicationPrograms>
+<ApplicationProgram Id="M-0004_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="No Data">
+<Static>
+<ParameterTypes><ParameterType Id="M-0004_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
+<Parameters>
+<Parameter Id="M-0004_A-0001-01-0001_P-1" ParameterType="M-0004_A-0001-01-0001_PT-8" Text="V" Value="0"><Memory CodeSegment="M-0004_A-0001-01-0001_AS-1" Offset="0" BitOffset="0"/></Parameter>
+</Parameters>
+<ParameterRefs><ParameterRef Id="M-0004_A-0001-01-0001_P-1_R" RefId="M-0004_A-0001-01-0001_P-1" Value="5"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0004_A-0001-01-0001_AS-1" Address="100" Size="3" MemoryType="EEPROM"/></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0004_A-0001-01-0001_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="M-0004_A-0001-01-0001_P-1_R"/></ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("a Data-less segment initialises to 0xFF (erased EEPROM), then overlays params", () => {
+  const app = parseAppConfig(noDataXml);
+  const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-1"));
+  expect(seg!.data.length).toBe(0); // no <Data>
+  const img = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
+  expect(img.length).toBe(3);
+  expect(img[0]).toBe(5); // parameter value laid over the blank
+  expect(img[1]).toBe(0xff); // unwritten -> erased EEPROM state, not 0x00
+  expect(img[2]).toBe(0xff);
+});

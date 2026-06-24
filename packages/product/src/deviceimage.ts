@@ -41,8 +41,13 @@ export function buildAbsoluteSegmentImages(
   const out: DeviceSegmentImage[] = [];
   for (const segId of targeted) {
     const seg = bySeg.get(segId)!;
-    const img = Buffer.alloc(seg.size);
-    seg.data.copy(img); // manufacturer default image
+    // Start from the EEPROM blank state (0xFF), then lay the manufacturer default
+    // image over it. Most segments carry a full-size <Data> so the 0xFF never shows;
+    // but some (e.g. Steinel M-008E) omit <Data> entirely, and there the unwritten
+    // bytes are the device's erased 0xFF, not 0x00. Hardware-verified: a Data-less
+    // 256-byte segment went from 256 byte diffs to 2 once initialised to 0xFF.
+    const img = Buffer.alloc(seg.size, 0xff);
+    seg.data.copy(img); // manufacturer default image (covers [0, data.length))
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
