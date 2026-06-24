@@ -6,14 +6,19 @@
 //
 //   bun run tools/verify-images.ts [corpus-dir]
 //
-// Absolute-segment (MV-0705) devices build via buildAbsoluteSegmentImages; LSM4
-// (RelativeSegment) devices via buildParameterImage. Values come from the project
-// DB. Reports per-device byte-match and, for context, the union-parameter count
-// (the known residual until union placement lands).
+// Absolute-segment (MV-0705) devices build via buildAbsoluteSegmentTargets; LSM4
+// (RelativeSegment) devices via buildParameterImage. Values come from the project DB.
+//
+// The match is OWNED-SCOPED: a segment passes when its CONFIG bytes (owned, i.e. the
+// bytes we derive from active parameters and would actually flash) equal the device.
+// Unowned bytes (manufacturer defaults, erased gaps, inactive-branch parameters) are
+// reported as "+Nu" for context but never fail a device: we do not write them, and a
+// mismatch there is not config drift (it may even be device-internal runtime state).
+// See docs/mv0705-visibility-model.md. Also reports the union-parameter count.
 import { Database } from "bun:sqlite";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppConfig, parseApplication, buildParameterImage, buildAbsoluteSegmentImages } from "../packages/product/src/index.ts";
+import { parseAppConfig, parseApplication, buildParameterImage, buildAbsoluteSegmentTargets } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
 
 const corpus = process.argv[2] ?? "apps/server/data/readback/parammem";
@@ -23,8 +28,6 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
 const db = new Database("apps/server/data/busforge.db", { readonly: true });
 const projectId = (db.query("SELECT id FROM projects LIMIT 1").get() as any).id;
-
-const cmp = (a: Buffer, b: Buffer) => { let diff = 0, first = -1; const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) if (a[i] !== b[i]) { diff++; if (first < 0) first = i; } return { diff: diff + Math.abs(a.length - b.length), first, match: a.equals(b) }; };
 
 let okDevices = 0, totalDevices = 0, okSegments = 0, totalSegments = 0;
 const fails: any[] = [];
@@ -39,15 +42,20 @@ for (const m of manifest.devices) {
   const values = new Map<string, string>();
   for (const r of db.query("SELECT param_ref_id, value FROM device_parameters WHERE project_id=? AND device_id=?").all(projectId, dev.instance_id) as any[]) values.set(r.param_ref_id, r.value);
 
-  // Build the images Busforge would produce for this device.
-  const built = new Map<string, Buffer>(); // keyed by segId tail / "LSM4"
+  // Build the images Busforge would produce for this device. `owned` marks the bytes
+  // we positively derive from an active parameter (and would actually flash); null
+  // means "treat every byte as owned" (LSM4 ships a full authoritative <Data>, so the
+  // whole image is meaningful). For absolute segments, unowned bytes are defaults,
+  // gaps, or inactive-branch values we never write, so a mismatch there is not config
+  // drift (it may even be device-internal runtime state we must not touch).
+  const built = new Map<string, { bytes: Buffer; owned: boolean[] | null }>(); // keyed by segId tail / "LSM4"
   if (m.mask === "MV-07B0" || m.mask === "MV-0701") {
     const model = parseApplication(row.xml);
     for (const lsm of [...new Set(model.segments.map((s) => s.lsm))]) {
-      if (model.segments.find((s) => s.lsm === lsm)) { try { built.set("LSM4", buildParameterImage(model, lsm, values)); } catch {} }
+      if (model.segments.find((s) => s.lsm === lsm)) { try { built.set("LSM4", { bytes: buildParameterImage(model, lsm, values), owned: null }); } catch {} }
     }
   } else {
-    try { const app = parseAppConfig(row.xml); for (const img of buildAbsoluteSegmentImages(app, values)) built.set(img.id.split("_").pop()!, img.bytes); }
+    try { const app = parseAppConfig(row.xml); for (const t of buildAbsoluteSegmentTargets(app, values)) built.set(t.id.split("_").pop()!, { bytes: t.bytes, owned: t.owned }); }
     catch (e) { console.log(`${m.ia} build error: ${(e as Error).message}`); } // record as NO-BUILD below, do not abort the run
   }
 
@@ -59,11 +67,23 @@ for (const m of manifest.devices) {
     totalSegments++;
     const key = seg.kind === "relative" ? "LSM4" : seg.segId.split("_").pop();
     const device = readFileSync(join(corpus, seg.file));
-    const b = built.get(key);
-    if (!b) { devMatch = false; parts.push(`${key}:NO-BUILD`); continue; }
-    const r = cmp(b, device);
-    if (r.match) { okSegments++; parts.push(`${key}:OK`); }
-    else { devMatch = false; parts.push(`${key}:diff${r.diff}@${r.first}`); }
+    const entry = built.get(key);
+    if (!entry) { devMatch = false; parts.push(`${key}:NO-BUILD`); continue; }
+    // Owned-scoped comparison. A segment "matches" when the CONFIG bytes (owned, i.e.
+    // what we would flash) equal the device. Unowned diffs are surfaced for context but
+    // never fail the device: they are defaults/gaps/inactive, possibly runtime state.
+    const { bytes: b, owned } = entry;
+    let oDiff = 0, uDiff = 0, first = -1;
+    const n = Math.min(b.length, device.length);
+    for (let i = 0; i < n; i++) {
+      if (b[i] === device[i]) continue;
+      if (!owned || owned[i]) { oDiff++; if (first < 0) first = i; }
+      else uDiff++;
+    }
+    oDiff += Math.abs(b.length - device.length); // a length mismatch is a real (owned) problem
+    const note = uDiff ? ` +${uDiff}u` : "";
+    if (oDiff === 0) { okSegments++; parts.push(`${key}:OK${note}`); }
+    else { devMatch = false; parts.push(`${key}:cfg-diff${oDiff}@${first}${note}`); }
   }
   totalDevices++;
   if (devMatch) okDevices++;
@@ -72,7 +92,7 @@ for (const m of manifest.devices) {
   if (!devMatch) fails.push({ ia: m.ia, mask: m.mask, app: appId, unionParams, parts });
 }
 
-console.log(`\nDevices fully byte-matched: ${okDevices}/${totalDevices}   Segments: ${okSegments}/${totalSegments}`);
+console.log(`\nDevices config-matched (owned bytes): ${okDevices}/${totalDevices}   Segments: ${okSegments}/${totalSegments}   ("+Nu" = unowned bytes differ but are never written)`);
 const cleanFails = fails.filter((f) => f.unionParams === 0);
 if (cleanFails.length) { console.log(`\nUNION-FREE devices that still fail (real defects to chase):`); for (const f of cleanFails) console.log(`  ${f.ia} ${f.app}  [${f.parts.join("  ")}]`); }
 else console.log(`\nAll union-free devices byte-match. Remaining failures all have union params (the known residual).`);
