@@ -31,6 +31,11 @@ export interface CfgType {
 export interface CfgParam {
   id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
+  // ETS LegacyPatchAlways: an internal marker ETS itself patches during download (e.g. a
+  // "Download erfolgt" flag), not a user parameter. We must NOT author or own its byte:
+  // its on-device value is whatever ETS' patch computed, which our static default does not
+  // reproduce. The image build skips it so the flash never overwrites it.
+  patchAlways?: boolean;
   // For a module-def parameter: the Argument id its <Memory> Offset is relative to
   // (Memory@BaseOffset). The effective device offset is `offset + <instance value of
   // that argument>`; the per-instance base is resolved either from the project 0.xml
@@ -314,7 +319,13 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
       offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,
       bitOffset: unionMem ? Number(unionMem.BitOffset ?? 0) + Number(a.BitOffset ?? 0) : ma ? Number(ma.BitOffset ?? 0) : undefined,
       codeSegment: unionMem ? unionMem.CodeSegment : ma?.CodeSegment,
-      baseOffsetArg: ma?.BaseOffset,
+      // A union member's per-instance BaseOffset lives on the UNION's shared <Memory>,
+      // not on the member (which has no own <Memory>). Reading it from `ma` would drop it,
+      // placing every module union parameter at its static offset without the instance
+      // base, colliding with another channel's memory. Take the union's BaseOffset, exactly
+      // as offset/bitOffset/codeSegment above already do.
+      baseOffsetArg: unionMem ? unionMem.BaseOffset : ma?.BaseOffset,
+      patchAlways: a.LegacyPatchAlways === "true" || undefined,
       union: union || undefined,
     });
   };

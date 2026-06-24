@@ -125,11 +125,33 @@ export function buildDeviceConfig(
   // else the module-def ref default else the parameter default. `e` is the working
   // value map; it defaults to the UI walk's `env`, but the image pass passes its own
   // so its Assigns resolve in document order independently of the UI pass.
+  // A "Merker": an Access=None parameter with no memory, used purely as a visibility
+  // flag in choose conditions. ETS does NOT give it its static default; it is UNSET
+  // until a ParameterRefRef placing it is reached in an active branch (which assigns the
+  // ref's value). So a never-placed Merker reads as unset, its choose tests fail, and the
+  // blocks it gates stay hidden, exactly as ETS leaves their parameter memory at the
+  // segment default. Hardware-verified on the Theben HMG6T Notprogramm block (gated by a
+  // Merker that is only placed when its real switch P-6 = 1; with P-6 = 0 the device
+  // keeps those bytes at 0, which only this rule reproduces). Memory-backed or visible
+  // parameters are unaffected and keep their default.
+  const isMerker = (paramId: string): boolean => {
+    const p = app.params.get(paramId);
+    return !!p && p.access === "None" && !p.hasMemory;
+  };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
     if (e.has(instId)) return e.get(instId);
     const ref = app.refs.get(defRefId);
-    return ref?.value ?? (ref ? app.params.get(ref.paramId)?.value : undefined);
+    if (!ref) return undefined;
+    if (isMerker(ref.paramId)) return undefined; // unplaced Merker: no static default for choose evaluation
+    return ref.value ?? app.params.get(ref.paramId)?.value;
+  };
+  // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
+  // or the parameter default), so a later choose on that ref sees it as set. Document-order
+  // walk guarantees the assignment precedes the read.
+  const assignIfMerker = (defRefId: string, scope: Scope, e: Map<string, string>) => {
+    const ref = app.refs.get(defRefId);
+    if (ref && isMerker(ref.paramId)) e.set(scope.rewrite(defRefId), ref.value ?? app.params.get(ref.paramId)?.value ?? "");
   };
   // Some manufacturer texts carry escaped numeric entities (e.g. "&#xA;" for a
   // layout newline); decode them so labels read cleanly.
@@ -245,7 +267,7 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint }); break;
-        case "paramRef": { const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; items.push(it); } break; }
+        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) collect(w.children, items, scope); break; }
@@ -347,7 +369,7 @@ export function buildDeviceConfig(
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": { const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         case "assign": imgEnv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, imgEnv) ?? "" : "")); break;
         case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope, imgEnv); if (w) imgCollect(w.children, scope); break; }
         case "container": case "block": imgCollect(n.children, scope); break;

@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
+import { buildDeviceConfig } from "../src/config.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
 // The Theben M-0048_A-493B channel device (HMG/RMG/JMG heating actuators) is the
@@ -71,5 +72,23 @@ describe("module instances (Theben 493B channel device)", () => {
     expect(unmappedParamRefs(model, storedModuleValues)).toEqual([]);
     // And without materialization those same refs would be refused.
     expect(unmappedParamRefs(toAppModel(app), storedModuleValues).length).toBe(storedModuleValues.size);
+  });
+
+  test("Merker-gated block is hidden until its real switch is set (assignment by placement)", () => {
+    // The HMG6T Notprogramm block (P-55..P-58) is gated by an Access=None Merker (P-7)
+    // that is only placed when its real switch P-6 = 1. With P-6 at its default 0, ETS
+    // leaves those parameter bytes at 0; our resolver must do the same (the Merker reads
+    // as unset, so the block's params are not active). Hardware-verified on a device.
+    const instances = resolveModuleInstances(app, new Map([[`${APP}_P-57_R-57`, "6"]]));
+    const mi1 = `${APP}_MD-7_M-19_MI-1`;
+    const setpoint = `${mi1}_P-57_R-71`; // Maximale Stellgroesse im Notprogramm (default 40)
+
+    // P-6 default (0): Notprogramm hidden, the setpoint is NOT in the active image set.
+    const off = buildDeviceConfig(app, new Map([[`${APP}_P-57_R-57`, "6"]]), undefined, instances);
+    expect(off.imageValues.has(setpoint)).toBe(false);
+
+    // P-6 = 1 for channel 1: the Merker gets placed, the block activates, setpoint appears.
+    const on = buildDeviceConfig(app, new Map([[`${APP}_P-57_R-57`, "6"], [`${mi1}_P-6_R-6`, "1"]]), undefined, instances);
+    expect(on.imageValues.get(setpoint)).toBe("40");
   });
 });
