@@ -124,3 +124,24 @@ describe("union parameters with shared <Union> memory (MV-0705)", () => {
     expect(m.params.get(U2)).toMatchObject({ offset: 3, bitOffset: 5 });
   });
 });
+
+// TypeTime (durations/periods) carries no float or enum semantics; ETS stores it in
+// the parameter image as a plain unsigned integer. The config layer keeps it as
+// "Other" (unsupported UI row) but the image projection must encode it as Number.
+// Hardware-verified on M-008E (a 16-bit TypeTime value 60 -> 0x003C matched).
+const timeXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
+<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Time">
+<Static>
+<ParameterTypes><ParameterType Id="M-0005_A-0001-01-0001_PT-t"><TypeTime SizeInBit="16" Unit="s"/></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="M-0005_A-0001-01-0001_P-1" ParameterType="M-0005_A-0001-01-0001_PT-t" Text="Delay" Value="0"><Memory CodeSegment="M-0005_A-0001-01-0001_AS-1" Offset="0" BitOffset="0"/></Parameter></Parameters>
+<ParameterRefs><ParameterRef Id="M-0005_A-0001-01-0001_P-1_R" RefId="M-0005_A-0001-01-0001_P-1" Value="60"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0005_A-0001-01-0001_AS-1" Address="100" Size="2"/></Code>
+</Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("TypeTime projects to a Number base in the image model (config keeps it Other)", () => {
+  const app = parseAppConfig(timeXml);
+  expect(app.types.get("M-0005_A-0001-01-0001_PT-t")?.base).toBe("Other"); // UI/config unchanged
+  const model = toAppModel(app);
+  expect(model.types.get("M-0005_A-0001-01-0001_PT-t")?.base).toBe("Number"); // image encodes as int
+});

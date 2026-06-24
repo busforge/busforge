@@ -25,18 +25,24 @@ export interface AppModel {
 
 const hex = (s: string) => parseInt(s, 16);
 
-// Map the config layer's richer type base to the image codec's base. Only
-// Float / Value / Number drive the codec (Float = DPT codec; Value/Number =
-// integer; everything else is not represented in the image). The mapping must
-// preserve those exact distinctions, in particular BinaryValue -> Value (an
-// integer-decodable enum), to keep images byte-identical.
-function imageBase(base: CfgType["base"]): ParamBase {
-  switch (base) {
+// Map the config layer's richer type to the image codec's base. Only Float / Value
+// / Number drive the codec (Float = DPT codec; Value/Number = integer; everything
+// else is not represented in the image). The mapping must preserve those exact
+// distinctions, in particular BinaryValue -> Value (an integer-decodable enum), to
+// keep images byte-identical.
+function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
+  // TypeTime (durations/periods) has no float or enum semantics: ETS stores it in the
+  // parameter image as a plain unsigned integer, so encode it as Number. The config
+  // layer keeps it as "Other" (still surfaced as an unsupported row in the UI) until
+  // proper Time editing exists; only the image projection treats it numerically.
+  // Hardware-verified on M-008E (a 16-bit TypeTime value 60 -> 0x003C matched).
+  if (t.kind === "TypeTime") return "Number";
+  switch (t.base) {
     case "Float": return "Float";
     case "Number": return "Number";
     case "Value": case "BinaryValue": return "Value";
     case "Text": return "Text";
-    default: return "Other"; // Color / Other (and the config layer folds Time into Other)
+    default: return "Other"; // Color / Other
   }
 }
 
@@ -53,7 +59,7 @@ export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean } = {
   const types = new Map<string, ParamType>();
   for (const t of app.types.values()) {
     if (t.moduleDefId) continue;
-    types.set(t.id, { id: t.id, base: imageBase(t.base), sizeInBit: t.sizeInBit, signed: t.signed });
+    types.set(t.id, { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed });
   }
   const params = new Map<string, Param>();
   for (const p of app.params.values()) {
