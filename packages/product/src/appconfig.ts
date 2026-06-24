@@ -31,6 +31,11 @@ export interface CfgType {
 export interface CfgParam {
   id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
+  // For a module-def parameter: the Argument id its <Memory> Offset is relative to
+  // (Memory@BaseOffset). The effective device offset is `offset + <instance value of
+  // that argument>`; the per-instance base is resolved either from the project 0.xml
+  // (ModuleInstance args) or, for a from-scratch device, by re-running the allocators.
+  baseOffsetArg?: string;
 }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; }
 export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; }
@@ -53,20 +58,36 @@ export interface CfgComObjectRef {
 
 export type DynNode =
   | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; children: DynNode[] }
-  | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; children: DynNode[] }
+  // `repeatCount` is set only for a <Repeat> (its literal Count): the from-scratch
+  // instance resolver replays the children that many times to allocate per-instance.
+  | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; repeatCount?: number; children: DynNode[] }
   | { kind: "separator"; id: string; text: string; uiHint: string }
   | { kind: "unsupported"; tag: string }
   | { kind: "paramRef"; refId: string; indent?: number }
   | { kind: "comObjRef"; refId: string }
   | { kind: "choose"; paramRefId: string; whens: DynWhen[] }
   | { kind: "assign"; target: string; source?: string; value?: string }
-  | { kind: "module"; refId: string; id: string };
+  // A module instantiation point. `numArgs`/`textArgs` bind the module-def arguments
+  // either to a literal value or (numeric) to an allocator, the inputs the from-scratch
+  // resolver needs to compute per-instance base offsets without a project 0.xml.
+  | { kind: "module"; refId: string; id: string; numArgs: ModuleNumArg[]; textArgs: ModuleTextArg[] };
+export interface ModuleNumArg { argId: string; allocatorRefId?: string; value?: string }
+export interface ModuleTextArg { argId: string; value: string }
 export interface DynWhen { test?: string; isDefault: boolean; children: DynNode[] }
 
 export type Translations = Map<string, Map<string, Map<string, string>>>; // lang -> elemId -> attr -> text
 
-export interface ModuleArg { id: string; name: string; type: string; }
+// A module-def argument. `allocates` (ETS Allocates) is the count this argument
+// consumes from its allocator per instance: re-running the allocators hands each
+// successive instance `allocator.start + cumulative allocates`, which is the value a
+// memory BaseOffset adds. Text arguments (names) have no Allocates.
+export interface ModuleArg { id: string; name: string; type: string; allocates?: number; }
 export interface ModuleDefModel { id: string; args: ModuleArg[]; dynamic: DynNode[]; }
+
+// A from-scratch allocator (Static/Allocators): a counter that hands out the
+// per-instance base values the project 0.xml otherwise pins. `start` is the first
+// value; each consuming instance advances it by the argument's `allocates`.
+export interface Allocator { id: string; start: number; maxInclusive: number; }
 
 // A device's module instances (from 0.xml), pinning each instance's resolved
 // argument values. id/refId are prefix-stripped as ETS stores them.
@@ -111,6 +132,7 @@ export interface AppConfig {
   translations: Translations;
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
+  allocators: Map<string, Allocator>; // Static/Allocators, for from-scratch instance resolution
   hasModules: boolean;
   dca?: DcaInfo;
 }
@@ -163,6 +185,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const comObjectRefs = parseComObjectRefs(staticKids);
   const segments = parseSegments(staticKids);
   const absoluteSegments = parseAbsoluteSegments(staticKids);
+  const allocators = parseAllocators(staticKids);
 
   // Module definitions: merge each def's Static (its ids are globally unique,
   // prefixed with the MD id) into the shared maps, and keep its Arguments +
@@ -183,7 +206,7 @@ export function parseAppConfig(xml: string): AppConfig {
     merge(comObjects, parseComObjects(mdStaticKids));
     merge(comObjectRefs, parseComObjectRefs(mdStaticKids));
     const args: ModuleArg[] = childrenByTag(firstByTag(mdKids, "Arguments") ? kidsOf(firstByTag(mdKids, "Arguments")!) : [], "Argument")
-      .map((a) => { const aa = attrsOf(a); return { id: aa.Id, name: aa.Name ?? "", type: aa.Type ?? "Numeric" }; });
+      .map((a) => { const aa = attrsOf(a); return { id: aa.Id, name: aa.Name ?? "", type: aa.Type ?? "Numeric", allocates: aa.Allocates !== undefined ? Number(aa.Allocates) : undefined }; });
     const mdDynamic = firstByTag(mdKids, "Dynamic");
     const dyn = mdDynamic ? kidsOf(mdDynamic).map(parseDyn).filter(Boolean) as DynNode[] : [];
     moduleDefs.set(mdId, { id: mdId, args, dynamic: dyn });
@@ -214,8 +237,21 @@ export function parseAppConfig(xml: string): AppConfig {
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, translations, dynamic, moduleDefs, hasModules, dca,
+    types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, translations, dynamic, moduleDefs, allocators, hasModules, dca,
   };
+}
+
+// Allocators (Static/Allocators): named counters used to hand out per-instance base
+// offsets / object numbers when ETS compiles a project. Parsed so a from-scratch
+// device (no 0.xml) can re-run them; an imported device reads the pinned results.
+function parseAllocators(staticKids: ONode[]): Map<string, Allocator> {
+  const out = new Map<string, Allocator>();
+  const container = firstByTag(staticKids, "Allocators");
+  for (const a of container ? childrenByTag(kidsOf(container), "Allocator") : []) {
+    const aa = attrsOf(a);
+    out.set(aa.Id, { id: aa.Id, start: Number(aa.Start), maxInclusive: Number(aa.maxInclusive) });
+  }
+  return out;
 }
 
 function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
@@ -278,6 +314,7 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
       offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,
       bitOffset: unionMem ? Number(unionMem.BitOffset ?? 0) + Number(a.BitOffset ?? 0) : ma ? Number(ma.BitOffset ?? 0) : undefined,
       codeSegment: unionMem ? unionMem.CodeSegment : ma?.CodeSegment,
+      baseOffsetArg: ma?.BaseOffset,
       union: union || undefined,
     });
   };
@@ -403,7 +440,7 @@ function parseDyn(n: ONode): DynNode | null {
     // instance lookup expand each one; without this the whole repeated block (a
     // large part of channel devices) silently disappears.
     case "Repeat":
-      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, repeatCount: a.Count !== undefined ? Number(a.Count) : undefined, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock":
       return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, access: a.Access, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterSeparator":
@@ -414,8 +451,14 @@ function parseDyn(n: ONode): DynNode | null {
       return { kind: "comObjRef", refId: a.RefId };
     case "Assign":
       return { kind: "assign", target: a.TargetParamRefRef, source: a.SourceParamRefRef, value: a.Value };
-    case "Module":
-      return { kind: "module", refId: a.RefId, id: a.Id ?? "" };
+    case "Module": {
+      // ETS binds each module argument as a child <NumericArg> (literal Value or an
+      // AllocatorRefId) or <TextArg> (literal name). Capture both so the from-scratch
+      // resolver can allocate per-instance base offsets.
+      const numArgs: ModuleNumArg[] = childrenByTag(kidsOf(n), "NumericArg").map((x) => { const xa = attrsOf(x); return { argId: xa.RefId, allocatorRefId: xa.AllocatorRefId, value: xa.Value }; });
+      const textArgs: ModuleTextArg[] = childrenByTag(kidsOf(n), "TextArg").map((x) => { const xa = attrsOf(x); return { argId: xa.RefId, value: xa.Value ?? "" }; });
+      return { kind: "module", refId: a.RefId, id: a.Id ?? "", numArgs, textArgs };
+    }
     case "choose": {
       const whens: DynWhen[] = childrenByTag(kidsOf(n), "when").map((w) => {
         const wa = attrsOf(w);

@@ -339,7 +339,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           return readDeviceState({
             ia: dev.ia, appXml,
             interfaceIp: iface.interfaceIp, port: iface.port,
-            liveParams: getDeviceParams(db, id, deviceId), relevantRefs, onProgress: progress, signal,
+            liveParams: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
           });
         },
       );
@@ -396,7 +396,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           return flashDeviceParameters({
             projectId: id, deviceId, ia: dev.ia, appXml,
             interfaceIp: iface.interfaceIp, port: iface.port,
-            params: getDeviceParams(db, id, deviceId), dataDir: state.dataDir,
+            params: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), dataDir: state.dataDir,
             dryRun: dryParams, onProgress: progress,
           });
         },

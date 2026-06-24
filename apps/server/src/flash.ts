@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
-import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type ComObjectLink } from "@busforge/product";
+import { toAppModel, buildParameterImage, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -9,6 +9,25 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
 };
+
+// Resolve a device's module instances and build a module-aware image model plus the
+// values to write. Instances come from the imported project (0.xml) when present, else
+// the allocators are re-run for a from-scratch device (resolveModuleInstances) so its
+// per-instance memory offsets match what ETS would compute. Module parameters are then
+// placed at those offsets; the values written are the VISIBILITY-RESOLVED active set
+// (an inactive branch's param stays at the segment default, as ETS leaves it), while
+// top-level parameters keep the stored values so the proven non-module relative path
+// stays byte-for-byte unchanged. A non-module device gets the unchanged flat model.
+function moduleAwareImage(cfg: AppConfig, params: Map<string, string>, provided: ModuleInstance[], lang?: string): { model: AppModel; writeValues: Map<string, string> } {
+  if (!cfg.hasModules) return { model: toAppModel(cfg), writeValues: params };
+  const instances = provided.length ? provided : resolveModuleInstances(cfg, params);
+  const model = toAppModel(cfg, { instances });
+  const view = buildDeviceConfig(cfg, params, lang, instances);
+  const writeValues = new Map<string, string>();
+  for (const [k, v] of params) if (!k.includes("_MI-")) writeValues.set(k, v);
+  for (const [k, v] of view.imageValues) if (k.includes("_MI-")) writeValues.set(k, v);
+  return { model, writeValues };
+}
 
 // Read a device's group tables (address, association, com-object), detecting the
 // long vs short association format. `skipComObj` omits the com-object table (the
@@ -68,6 +87,7 @@ export async function flashDeviceParameters(opts: {
   interfaceIp: string;
   port: number;
   params: Map<string, string>;
+  moduleInstances?: ModuleInstance[];
   dataDir: string;
   dryRun: boolean;
   onProgress?: ProgressFn;
@@ -79,22 +99,23 @@ export async function flashDeviceParameters(opts: {
     return flashAbsoluteParameters(opts, cfg);
   }
 
-  const model = parseApplication(opts.appXml);
-  // SAFETY: the image builder reads only static parameter refs; it does not yet
-  // expand channel/module instances. Any stored value keyed to an instance
-  // (…_MI-…) has no matching ref, so it would be silently dropped and that
-  // channel written back at its manufacturer default. Refuse rather than wipe a
-  // configured channel device. (Removed once the image path expands modules.)
+  // Build the image model with this device's module instances expanded and placed at
+  // their per-instance memory offsets (see moduleAwareImage). `writeValues` is the
+  // visibility-gated value source for module params plus the stored top-level values.
+  const { model, writeValues } = moduleAwareImage(cfg, opts.params, opts.moduleInstances ?? []);
+  // SAFETY: any stored value whose ref the image model still cannot place (e.g. a
+  // not-yet-supported nested-module case) would be silently dropped and that region
+  // written back at its default. Refuse rather than wipe a configured channel.
   const unmapped = unmappedParamRefs(model, opts.params);
   if (unmapped.length) {
     throw new ApiError(
       "CHANNEL_MODULES_UNSUPPORTED",
-      `parameter programming does not support this device's channel modules yet: ` +
-      `${unmapped.length} stored value(s) would be dropped and those channels reset to defaults ` +
-      `(e.g. ${unmapped[0]}). Refusing to flash to protect the device configuration.`,
+      `parameter programming cannot place ${unmapped.length} stored value(s) for this device ` +
+      `(e.g. ${unmapped[0]}); they would be dropped and that region reset to defaults. ` +
+      `Refusing to flash to protect the device configuration.`,
     );
   }
-  const image = buildParameterImage(model, LSM, opts.params);
+  const image = buildParameterImage(model, LSM, writeValues);
   if (image.length === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
@@ -161,7 +182,8 @@ async function flashAbsoluteParameters(opts: Parameters<typeof flashDeviceParame
   if (proc.style === "DefaultProcedure" || proc.blocks.length === 0) {
     throw new ApiError("LOAD_PROCEDURE_UNSUPPORTED", `device declares no usable load procedure (style ${proc.style}); cannot flash safely`);
   }
-  const targets = buildAbsoluteSegmentTargets(cfg, opts.params).filter((t) => t.size > 0);
+  const moduleInstances = opts.moduleInstances;
+  const targets = buildAbsoluteSegmentTargets(cfg, opts.params, { moduleInstances }).filter((t) => t.size > 0);
   const totalBytes = targets.reduce((n, t) => n + t.size, 0);
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
@@ -190,7 +212,7 @@ async function flashAbsoluteParameters(opts: Parameters<typeof flashDeviceParame
     }
     const backup = join(backupDir, `${opts.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`);
 
-    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, opts.params, proc, current);
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, opts.params, proc, current, { moduleInstances });
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be
     // programmed; refuse rather than flash the rest and report success.
     if (unplaceable.length) {
@@ -313,6 +335,7 @@ export async function readDeviceState(opts: {
   interfaceIp: string;
   port: number;
   liveParams: Map<string, string>;
+  moduleInstances?: ModuleInstance[];
   // The parameter refs that are actually part of this device's configuration (the
   // config view's keys). Drift is only recorded for these, so module devices,
   // whose real params are instance-expanded and not in the flat model, don't
@@ -321,7 +344,10 @@ export async function readDeviceState(opts: {
   onProgress?: ProgressFn;
   signal?: AbortSignal;
 }): Promise<DeviceReadback> {
-  const model = parseApplication(opts.appXml);
+  // Module-aware image model so a channel device's instance params are decoded from
+  // device memory and compared against the project (drift detection covers modules).
+  const cfg = parseAppConfig(opts.appXml);
+  const { model, writeValues } = moduleAwareImage(cfg, opts.liveParams, opts.moduleInstances ?? []);
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
   opts.onProgress?.("connect");
@@ -342,7 +368,7 @@ export async function readDeviceState(opts: {
     if (seg) {
       const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
       const deviceVals = decodeParameterImage(model, LSM, img);
-      const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, opts.liveParams));
+      const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
       for (const [refId, devVal] of deviceVals) {
         if (opts.relevantRefs && !opts.relevantRefs.has(refId)) continue; // not part of this device's config
         if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal); // device drifted from project

@@ -7,3 +7,4 @@ export * from "./grouptables.ts";
 export * from "./deviceimage.ts";
 export * from "./deviceflash.ts";
 export * from "./loadproc.ts";
+export * from "./modules.ts";

@@ -1,6 +1,7 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig } from "./config.ts";
+import { resolveModuleInstances } from "./modules.ts";
 import { encode } from "./image.ts";
 
 // Build the parameter memory image for the MV-0705 (absolute-segment) device model.
@@ -43,12 +44,17 @@ export function buildAbsoluteSegmentTargets(
   values: Map<string, string>,
   opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
 ): DeviceSegmentTarget[] {
-  const model = toAppModel(app, { includeUnions: true });
+  // Module instances: the imported project's set when given, else re-run the allocators
+  // for a from-scratch device so its channel parameters are placed at the same offsets
+  // ETS would compute. Threaded into BOTH the image model (to materialise the per-instance
+  // params) and the config view (to resolve which of them are active).
+  const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
+  const model = toAppModel(app, { includeUnions: true, instances });
   // Effective value of every parameter reached in the active dynamic tree, keyed by
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
   // to memory but hides from the UI, so it is the right source for the image (the
   // visible blocks alone would miss them).
-  const view = buildDeviceConfig(app, values, opts.lang, opts.moduleInstances ?? []);
+  const view = buildDeviceConfig(app, values, opts.lang, instances);
   const active = view.imageValues;
 
   // Which absolute segments do <Memory> parameters target?

@@ -1,4 +1,5 @@
 import type { AppConfig, CfgType, ComObjFlags, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import { resolveModuleInstances } from "./modules.ts";
 
 // A human label for a datapoint type the engine cannot edit yet, shown on the
 // "not supported" row so the gap is explicit (never a blank/empty control).
@@ -113,6 +114,11 @@ export function buildDeviceConfig(
   moduleInstances: ModuleInstance[] = [],
 ): DeviceConfigView {
   const language = resolveLanguage(app, lang);
+  // A from-scratch device (placed from the catalogue, no imported 0.xml) has no pinned
+  // module instances. Re-run the allocators to synthesise the same set ETS would compile,
+  // so its channel blocks render and its per-instance offsets resolve. An imported device
+  // keeps its 0.xml instances. See resolveModuleInstances.
+  const instances = moduleInstances.length || !app.hasModules ? moduleInstances : resolveModuleInstances(app, overrides);
   const env = new Map(overrides); // working values; Assign mutates this
 
   // Effective value: device instance value (keyed by the rewritten instance id)
@@ -230,7 +236,7 @@ export function buildDeviceConfig(
       argValue: (argId) => argMap.get(argId) ?? 0,
     };
   };
-  const instancesFor = (moduleNodeId: string) => moduleInstances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
+  const instancesFor = (moduleNodeId: string) => instances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
 
   // Walk a node sequence in order, appending items to the current block. Active
   // choose branches inline their items; Assign mutates env; Module nodes expand

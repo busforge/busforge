@@ -51,7 +51,7 @@ a surgical flash for them; see `docs/mv0705-spike-findings.md`.
 | **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes | hardware-proven on MV-07B0 (1.1.x, 1.1.x) |
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
 | **Parameter flashing** (LSM4 image) | yes, but only non-module, memory-image, non-secure | hardware-proven on **1.1.x** (one device) |
-| Parameter flashing for **module/channel** devices | **no** (per-instance memory offsets unresolved) | the differing bytes are captured for this work |
+| **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | 19/32 reachable devices byte-match the read-back corpus |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
@@ -73,7 +73,18 @@ small, finite set the image builder cares about:
 1. **Relative segment** (LSM4, allocator-addressed) - MV-07B0, MV-0701.
 2. **Absolute segment** (fixed EEPROM address) - MV-0705.
 3. **Module / channel placement** - not a separate storage class, a per-instance
-   offset modifier on (1)/(2).
+   offset modifier on (1)/(2). The effective device offset of a module parameter is
+   `its static offset in the ModuleDef + the per-instance value of the Memory@BaseOffset
+   argument`. That per-instance base comes from one of two interchangeable sources:
+   ETS pins it into the project 0.xml (`<ModuleInstance>` arguments) for an imported
+   device, and for a from-scratch device (placed from the catalogue, no project) we
+   re-run the application's `<Allocators>` to compute the identical value (counter =
+   `Start + cumulative Allocates`, walked over the visibility-resolved active tree, a
+   `<Repeat Count="k">` instantiating k copies). The allocator re-run was validated
+   against the real Theben 493B devices: it reproduced all 67 of their 0.xml module
+   instances exactly. Placement is byte-verified against the device read-back; the
+   residual diff vs that particular read-back is dominated by project-device drift, so
+   a clean ETS re-flash + re-read is the pending step before claiming module flash.
 4. **Property / interface-object** - the genuine "property-based" model: parameters
    load via interface-object property writes, not a memory image.
 
