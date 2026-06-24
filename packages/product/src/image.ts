@@ -65,34 +65,39 @@ export function decodeDpt9(raw: number): number {
   return Math.round(mant * (1 << exp)) / 100; // 0.01 resolution, no fp noise
 }
 
-export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string) {
-  if (!Number.isFinite(offset)) return; // malformed memory (no/garbage Offset): no location to write
+// Returns true iff bytes were actually written. The flash path relies on this to
+// decide which bytes a parameter OWNS (may be written to the device): a type the
+// image does not represent (text/time/color/other) or a malformed value writes
+// nothing and must not claim any bytes. See deviceflash.ts.
+export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string): boolean {
+  if (!Number.isFinite(offset)) return false; // malformed memory (no/garbage Offset): no location to write
   if (type.base === "Float") {
     const v = Number(valStr);
-    if (!Number.isFinite(v)) return;
-    if (type.sizeInBit === 32) { if (offset + 4 <= img.length) img.writeFloatBE(v, offset); return; } // DPT 14 (IEEE-754)
-    if (offset + 2 <= img.length) img.writeUInt16BE(encodeDpt9(v), offset); // DPT 9
-    return;
+    if (!Number.isFinite(v)) return false;
+    if (type.sizeInBit === 32) { if (offset + 4 <= img.length) { img.writeFloatBE(v, offset); return true; } return false; } // DPT 14 (IEEE-754)
+    if (offset + 2 <= img.length) { img.writeUInt16BE(encodeDpt9(v), offset); return true; } // DPT 9
+    return false;
   }
   // Only Value (enum/restriction) and Number are integer-coded into the image. Text,
   // Time, Color, IPAddress and other types are NOT represented in the parameter image,
   // so they must not be written here. Keeping this symmetric with decode is what
   // prevents a numeric-looking text value (e.g. "" -> 0, or "123") from being written
   // as a bogus integer, which for a wide text type also overflows the byte writer.
-  if (type.base !== "Value" && type.base !== "Number") return;
+  if (type.base !== "Value" && type.base !== "Number") return false;
   const v = Number(valStr);
-  if (!Number.isFinite(v)) return;
+  if (!Number.isFinite(v)) return false;
   const sizeInBit = type.sizeInBit;
   if (sizeInBit >= 8) {
     const bytes = sizeInBit >> 3;
-    if (offset + bytes > img.length) return;
+    if (offset + bytes > img.length) return false;
     // writeUIntBE/IntBE cap at 6 bytes. No manufacturer numeric type exceeds that in
     // practice; refuse loudly rather than emit truncated/cryptic bytes if one appears.
     if (bytes > 6) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
     if (type.signed && v < 0) img.writeIntBE(v, offset, bytes);
     else img.writeUIntBE(v, offset, bytes);
+    return true;
   } else {
-    if (offset >= img.length) return;
+    if (offset >= img.length) return false;
     // A sub-byte field crossing a byte boundary; ETS never allocates these, so refuse
     // rather than silently truncate the high bits into one byte.
     if (bit + sizeInBit > 8) throw new Error(`bit field crossing a byte boundary not supported (${sizeInBit} bits at bit ${bit})`);
@@ -103,6 +108,7 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     const shift = 8 - bit - sizeInBit;
     const mask = (1 << sizeInBit) - 1;
     img[offset] = (img[offset] & ~(mask << shift)) | ((v & mask) << shift);
+    return true;
   }
 }
 

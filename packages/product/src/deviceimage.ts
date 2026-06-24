@@ -20,11 +20,29 @@ import { encode } from "./image.ts";
 
 export interface DeviceSegmentImage { id: string; address: number; size: number; bytes: Buffer; }
 
+// Like DeviceSegmentImage, but also reports which bytes the image OWNS, i.e. bytes
+// whose value was positively derived from an active (visible/resolved) parameter.
+// The remaining bytes are modelled (manufacturer <Data> default, the zero-init of a
+// Data-less segment's parameter regions, or erased-EEPROM gaps) so the whole image
+// can be COMPARED against a device read-back, but the model is not authoritative for
+// them: a Data-less segment cannot reconstruct ETS's precomputed non-zero defaults
+// (see the M-008E 4-byte residual in docs/mv0705-spike-findings.md). The flash path
+// must only WRITE owned bytes; see planAbsoluteSegmentFlash.
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: boolean[]; }
+
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
   values: Map<string, string>,
   opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
 ): DeviceSegmentImage[] {
+  return buildAbsoluteSegmentTargets(app, values, opts).map(({ id, address, size, bytes }) => ({ id, address, size, bytes }));
+}
+
+export function buildAbsoluteSegmentTargets(
+  app: AppConfig,
+  values: Map<string, string>,
+  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+): DeviceSegmentTarget[] {
   const model = toAppModel(app, { includeUnions: true });
   // Effective value of every parameter reached in the active dynamic tree, keyed by
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
@@ -38,7 +56,7 @@ export function buildAbsoluteSegmentImages(
   const targeted = new Set<string>();
   for (const p of model.params.values()) if (p.codeSegment && bySeg.has(p.codeSegment)) targeted.add(p.codeSegment);
 
-  const out: DeviceSegmentImage[] = [];
+  const out: DeviceSegmentTarget[] = [];
   for (const segId of targeted) {
     const seg = bySeg.get(segId)!;
     // Initialise to the EEPROM blank state (0xFF). A segment that ships a <Data>
@@ -60,6 +78,7 @@ export function buildAbsoluteSegmentImages(
         for (let b = 0; b < bytes && p.offset + b < seg.size; b++) img[p.offset + b] = 0;
       }
     }
+    const owned = new Array<boolean>(seg.size).fill(false);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -67,9 +86,19 @@ export function buildAbsoluteSegmentImages(
       if (v === undefined) continue; // not visible / not active: keep the <Data> default
       const type = model.types.get(param.typeId);
       if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
-      encode(img, param.offset, param.bitOffset, type, v);
+      // Only mark bytes owned if encode ACTUALLY wrote them. A text/time/color/other
+      // type (or a malformed value) writes nothing, so it must not claim authority over
+      // its bytes: the flash path would otherwise push the segment's init/default value
+      // over device memory the parameter never derived. Gating on the real write keeps
+      // ownership exactly symmetric with the image, with no duplicated type gate.
+      const wrote = encode(img, param.offset, param.bitOffset, type, v);
+      if (!wrote) continue;
+      // This parameter's value is authoritative: mark its byte(s) owned so the flash
+      // path may write them. A sub-byte parameter owns the single byte it shares.
+      const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
+      for (let b = 0; b < bytes && param.offset + b < seg.size; b++) owned[param.offset + b] = true;
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img });
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned });
   }
   return out.sort((a, b) => a.address - b.address);
 }

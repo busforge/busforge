@@ -30,12 +30,17 @@ distinguishable by mask version:
 
 | Model | Masks (seen here) | Parameters live in | Busforge support |
 | --- | --- | --- | --- |
-| **Memory image** | MV-07B0, MV-0701 | An LSM4 `RelativeSegment` (the parameter image) | **read + flash** (the proven path) |
-| **Property based** | MV-0705 | Interface-object properties, no LSM4 image | **not supported** (neither read nor flash) |
+| **Relative segment** | MV-07B0, MV-0701 | An LSM4 `RelativeSegment`, allocator-addressed | **read + flash** (the proven path) |
+| **Absolute segment** | MV-0705 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + build/verify + flash planned** (see below) |
 
-In the reference installation, **8 of 34 devices** use the memory-image model; the
-other **26** (most push-button sensors, presence detectors) are property based. So a
-large share of a real installation's parameters is **out of scope today**.
+In the reference installation, **8 of 34 devices** use the relative-segment model; the
+other **26** (most push-button sensors, presence detectors) use the absolute-segment
+model. The absolute-segment model was originally thought to be opaque "property based"
+storage; it is not. These devices keep their parameters in fixed-address segments, and
+the correct image is the manufacturer `<Data>` default (or a cleared parameter region
+for `<Data>`-less segments) overlaid with the visibility-resolved active parameter set.
+Busforge reads, builds, and byte-verifies these images against real hardware, and plans
+a surgical flash for them; see `docs/mv0705-spike-findings.md`.
 
 ## Support matrix (honest)
 
@@ -47,7 +52,8 @@ large share of a real installation's parameters is **out of scope today**.
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
 | **Parameter flashing** (LSM4 image) | yes, but only non-module, memory-image, non-secure | hardware-proven on **1.1.x** (one device) |
 | Parameter flashing for **module/channel** devices | **no** (per-instance memory offsets unresolved) | the differing bytes are captured for this work |
-| Parameter model for **property-based** devices (MV-0705) | **no** | 26 of 34 devices |
+| Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | 19/32 reachable devices byte-match the read-back corpus |
+| **Parameter flashing** for MV-0705 | planned, not on-bus yet | surgical plan proven safe+convergent offline on 71 segments; bus exec needs hardware sign-off |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |
 | **KNX Secure** devices | **no** (opaque: descriptor MV-FFFF, no plain access) | 2 MDT IP interfaces |
