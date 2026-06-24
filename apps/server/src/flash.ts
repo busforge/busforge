@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
-import { toAppModel, buildParameterImage, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
+import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -99,10 +99,9 @@ export async function flashDeviceParameters(opts: {
     return flashAbsoluteParameters(opts, cfg);
   }
 
-  // Build the image model with this device's module instances expanded and placed at
-  // their per-instance memory offsets (see moduleAwareImage). `writeValues` is the
-  // visibility-gated value source for module params plus the stored top-level values.
-  const { model, writeValues } = moduleAwareImage(cfg, opts.params, opts.moduleInstances ?? []);
+  // moduleAwareImage's model is still used for the mask/app id and the unmapped-ref
+  // safety refusal (a stored value the image model cannot place would be reset).
+  const { model } = moduleAwareImage(cfg, opts.params, opts.moduleInstances ?? []);
   // SAFETY: any stored value whose ref the image model still cannot place (e.g. a
   // not-yet-supported nested-module case) would be silently dropped and that region
   // written back at its default. Refuse rather than wipe a configured channel.
@@ -115,8 +114,13 @@ export async function flashDeviceParameters(opts: {
       `Refusing to flash to protect the device configuration.`,
     );
   }
-  const image = buildParameterImage(model, LSM, writeValues);
-  if (image.length === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+  // Surgical RelativeSegment (System B) flash: the owned-byte target says which bytes we
+  // may write and their values. We then write ONLY owned bytes over the device's current
+  // memory, preserving everything ETS computes that we cannot reproduce (the Theben
+  // "Objektlink" union tables, patch-always markers, defaults we already match). See
+  // buildRelativeSegmentTarget.
+  const target = buildRelativeSegmentTarget(cfg, opts.params, LSM, { moduleInstances: opts.moduleInstances });
+  if (!target || target.size === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
   const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
   opts.onProgress?.("connect");
@@ -132,7 +136,7 @@ export async function flashDeviceParameters(opts: {
     if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     const addr = await dev.tableAddr(LSM);
-    const current = await dev.memRead(addr, image.length, 12, (d, t) => opts.onProgress?.("backup", d, t));
+    const current = await dev.memRead(addr, target.size, 12, (d, t) => opts.onProgress?.("backup", d, t));
 
     // Backup the current segment before touching anything.
     const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
@@ -140,8 +144,11 @@ export async function flashDeviceParameters(opts: {
     const backup = join(backupDir, `${opts.deviceId}-LSM${LSM}-${Date.now()}.bin`);
     writeFileSync(backup, current);
 
-    let diffBytes = 0;
-    for (let i = 0; i < image.length; i++) if (image[i] !== current[i]) diffBytes++;
+    // The image to write = the device's current segment with ONLY owned bytes overlaid.
+    // A System B download rewrites the whole segment after realloc, so we must supply
+    // every byte; sourcing the unowned ones from the live read preserves them across the
+    // unload/load (rather than the seg.data zero/default approximation a full build uses).
+    const { image, diffBytes } = mergeRelativeTarget(current, target);
 
     if (diffBytes === 0) {
       await dev.disconnect(); await tun.disconnect();
@@ -154,12 +161,13 @@ export async function flashDeviceParameters(opts: {
 
     await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => opts.onProgress?.("write", d, t));
 
-    // The device restarts after load-completed; reconnect and read the segment
-    // back to confirm it matches the intended image.
+    // The device restarts after load-completed; reconnect and read the segment back. Verify
+    // ONLY the owned bytes: a System B reload can recompute unowned regions (the channel
+    // "Objektlink" tables), so full-buffer equality would flag a correct flash as failed.
     await sleep(3000);
     await dev.connect();
     const back = await dev.memRead(await dev.tableAddr(LSM), image.length, 12, (d, t) => opts.onProgress?.("verify", d, t));
-    const verified = back.equals(image);
+    const verified = verifyRelativeOwned(back, target);
 
     await dev.disconnect(); await tun.disconnect();
     return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: true, verified, backup };

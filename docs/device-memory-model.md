@@ -42,6 +42,29 @@ for `<Data>`-less segments) overlaid with the visibility-resolved active paramet
 Busforge reads, builds, and byte-verifies these images against real hardware, and plans
 a surgical flash for them; see `docs/mv0705-spike-findings.md`.
 
+### Relative-segment flash is surgical too (owned-byte overlay)
+
+The relative (System B) flash does NOT write a from-scratch full image. A System B download
+rewrites the whole LSM4 segment after reallocation, but Busforge supplies that image by
+reading the live segment and overlaying ONLY the bytes it OWNS, carrying every other byte
+over from the device unchanged. Ownership (`buildRelativeSegmentTarget`, owned mask):
+
+- a plain top-level memory parameter is owned at its effective default. ETS writes every
+  such default and the device holds it (the freshly ETS-flashed PSU M-0162 byte-matches the
+  full image only with this default fallback; gating it off regressed 51 bytes);
+- a `<Union>` member or a module-instance (`…_MI-…`) parameter is owned only when it is the
+  ACTIVE branch (visibility-resolved). Overlapping union branches must not all be written;
+- an `Access="None"` parameter that is NOT active is NOT owned. Its on-device value is
+  computed by ETS, not derived from a static default. The Theben channel devices carry a
+  928-bit `<Union>` of `Access="None"` "Objektlink" (com-object link) tables that ETS
+  generates from the channel/link allocation; Busforge cannot reproduce those bytes, so it
+  leaves them untouched rather than zeroing them with a full-image write.
+
+Consequence and scope: re-configuring an already-commissioned device (changing parameters)
+is safe, because the ETS-computed regions are preserved. Initial commissioning of a complex
+module device from scratch still needs ETS to lay down the object-link allocation once. The
+post-flash verify compares only owned bytes, since a reload can recompute the unowned ones.
+
 ## Support matrix (honest)
 
 | Capability | State | Proven on |
@@ -50,7 +73,7 @@ a surgical flash for them; see `docs/mv0705-spike-findings.md`.
 | Read group tables (LSM1/2/3) | yes | 32 non-secure devices (read-back corpus) |
 | **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes | hardware-proven on MV-07B0 (1.1.x, 1.1.x) |
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
-| **Parameter flashing** (LSM4 image) | yes, but only non-module, memory-image, non-secure | hardware-proven on **1.1.x** (one device) |
+| **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
 | **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | 19/32 reachable devices byte-match the read-back corpus |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |

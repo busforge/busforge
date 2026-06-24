@@ -108,3 +108,94 @@ export function buildAbsoluteSegmentTargets(
   }
   return out.sort((a, b) => a.address - b.address);
 }
+
+// The RelativeSegment (System B) parameter image as a SURGICAL target: the bytes plus
+// an `owned` mask of which bytes we may write. Unlike buildParameterImage (which writes
+// every memory-backed ref over the <Data> default and is used unchanged for the proven
+// full-image semantics), this gates ownership so the flash path can preserve bytes ETS
+// computes that we cannot reproduce.
+//
+// Ownership rule, hardware-derived (see docs/device-memory-model.md):
+//  - A plain top-level memory parameter: OWNED, value = effective default (device
+//    instance value, else parameter default). System B writes every such default and
+//    the device holds it (PSU M-0162 read-back: full-image byte-match only with the
+//    default fallback; gating it off regressed 51 bytes). So these are authoritative.
+//  - A <Union> member or a module-instance (…_MI-…) parameter: OWNED only when ACTIVE
+//    (present in the visibility-resolved image set). Union members overlap one region,
+//    so only the selected branch may be written; an inactive branch must keep the
+//    device byte. The Theben channel devices' "Objektlink" unions are Access="None"
+//    Value="0" placeholders whose real content ETS computes from the channel/link
+//    allocation: they are never active in our resolver, so they stay UNOWNED and the
+//    flash preserves the device's computed table rather than zeroing it.
+//  - LegacyPatchAlways params: dropped by toAppModel, so never owned (ETS patches them).
+// Ownership is gated on encode() ACTUALLY writing, exactly like the absolute path, so a
+// text/time/malformed value claims no bytes.
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: boolean[]; }
+
+export function buildRelativeSegmentTarget(
+  app: AppConfig,
+  values: Map<string, string>,
+  lsm: number,
+  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+): RelativeSegmentTarget | null {
+  const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
+  const model = toAppModel(app, { includeUnions: true, instances });
+  const seg = model.segments.find((s) => s.lsm === lsm);
+  if (!seg) return null;
+  const active = buildDeviceConfig(app, values, opts.lang, instances).imageValues;
+
+  const img = Buffer.alloc(seg.size);
+  seg.data.copy(img); // manufacturer default image (overwritten where owned)
+  const owned = new Array<boolean>(seg.size).fill(false);
+
+  for (const ref of model.refs.values()) {
+    const param = model.params.get(ref.paramId);
+    if (!param || param.offset === undefined) continue;
+    if (param.codeSegment && model.segments.find((s) => s.id === param.codeSegment)?.lsm !== lsm) continue;
+    const cfgParam = app.params.get(ref.paramId);
+    // Value source / ownership, in priority order:
+    //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
+    //  - any active param: own, use its resolved value.
+    //  - inactive plain param that is user-facing (Access != None): own at its default;
+    //    System B writes every such default and the device holds it (PSU byte-match).
+    //  - inactive Access="None" param: NOT owned. Its on-device value is ETS-computed
+    //    (e.g. the channel "Objektlink"/count tables), which our static default does not
+    //    reproduce; leave the device byte untouched. Hardware-checked on the Theben HMG
+    //    (writing the default 0 over those computed bytes would corrupt the config).
+    const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
+    let v: string | undefined;
+    if (gated || active.has(ref.id)) v = active.get(ref.id);
+    else if (cfgParam?.access !== "None") v = values.get(ref.id) ?? param.value;
+    if (v === undefined) continue;
+    const type = model.types.get(param.typeId);
+    if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+    if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
+    const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
+    for (let b = 0; b < bytes && param.offset + b < seg.size; b++) owned[param.offset + b] = true;
+  }
+  return { lsm, size: seg.size, bytes: img, owned };
+}
+
+// Merge a surgical relative target onto the live segment for a System B download: write
+// ONLY owned bytes, carry every unowned byte over from the device read. Returns the full
+// image to flash (the protocol rewrites the whole segment after realloc) and the count of
+// bytes that differ from `current` (== owned bytes we are actually changing; 0 means a
+// no-op reconfiguration). `current` is the device read, guaranteed `target.size` long.
+export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarget): { image: Buffer; diffBytes: number } {
+  const image = Buffer.from(current);
+  let diffBytes = 0;
+  for (let i = 0; i < target.size; i++) {
+    if (target.owned[i]) image[i] = target.bytes[i];
+    if (image[i] !== current[i]) diffBytes++;
+  }
+  return { image, diffBytes };
+}
+
+// Verify a relative flash by comparing ONLY owned bytes against the intended values. The
+// unowned bytes are not under our authority: a System B reload can recompute them on the
+// device (the channel "Objektlink" tables), so a full-buffer equality check would report a
+// correct flash as failed. Mirrors the absolute path's owned-only verify.
+export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
+  for (let i = 0; i < target.size; i++) if (target.owned[i] && back[i] !== target.bytes[i]) return false;
+  return true;
+}

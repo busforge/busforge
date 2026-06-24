@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig } from "../src/index.ts";
-import { buildAbsoluteSegmentImages } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
+import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
 // M-0081 is a real MV-0705 (absolute-segment) device. Its image build is hardware
@@ -187,4 +188,85 @@ test("a Data-less segment: param bytes default to 0, gaps stay 0xFF, active over
   expect(img[1]).toBe(0); // P-2 owns this byte but is not active -> cleared to 0, NOT its 9 default and NOT 0xFF
   expect(img[2]).toBe(0xff); // gap (no parameter) -> erased EEPROM state
   expect(img[3]).toBe(0xff);
+});
+
+// RelativeSegment (System B) surgical target ownership. The relative path writes EVERY
+// non-union default (hardware: the PSU M-0162 full-image byte-match needs them), so a
+// visible param is owned even when inactive. But an Access="None" inactive param is NOT
+// owned (its on-device value is ETS-computed, e.g. the Theben "Objektlink" union tables;
+// our static default would corrupt it), and a union member is owned only when active.
+const relXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
+<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Relative Owned">
+<Static>
+<ParameterTypes><ParameterType Id="M-0005_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
+<Parameters>
+<Parameter Id="M-0005_A-0001-01-0001_P-1" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Visible active" Value="1"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="0" BitOffset="0"/></Parameter>
+<Parameter Id="M-0005_A-0001-01-0001_P-2" ParameterType="M-0005_A-0001-01-0001_PT-8" Access="None" Text="Internal inactive" Value="9"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="1" BitOffset="0"/></Parameter>
+<Parameter Id="M-0005_A-0001-01-0001_P-3" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Visible inactive" Value="3"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="2" BitOffset="0"/></Parameter>
+<Union SizeInBit="8"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="3" BitOffset="0"/>
+<Parameter Id="M-0005_A-0001-01-0001_P-A" ParameterType="M-0005_A-0001-01-0001_PT-8" Access="None" Text="Union A" Value="0" Offset="0" BitOffset="0"/>
+<Parameter Id="M-0005_A-0001-01-0001_P-B" ParameterType="M-0005_A-0001-01-0001_PT-8" Access="None" Text="Union B" Value="0" Offset="0" BitOffset="0"/></Union>
+</Parameters>
+<ParameterRefs>
+<ParameterRef Id="M-0005_A-0001-01-0001_P-1_R" RefId="M-0005_A-0001-01-0001_P-1" Value="7"/>
+<ParameterRef Id="M-0005_A-0001-01-0001_P-2_R" RefId="M-0005_A-0001-01-0001_P-2"/>
+<ParameterRef Id="M-0005_A-0001-01-0001_P-3_R" RefId="M-0005_A-0001-01-0001_P-3"/>
+<ParameterRef Id="M-0005_A-0001-01-0001_P-A_R" RefId="M-0005_A-0001-01-0001_P-A" Value="5"/>
+<ParameterRef Id="M-0005_A-0001-01-0001_P-B_R" RefId="M-0005_A-0001-01-0001_P-B" Value="6"/></ParameterRefs>
+<Code><RelativeSegment Id="M-0005_A-0001-01-0001_RS-1" LoadStateMachine="4" Size="5"><Data>AAAAAAA=</Data></RelativeSegment></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0005_A-0001-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R"/>
+<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("relative target: visible owned (active+inactive), Access=None-inactive preserved, union active-only", () => {
+  const app = parseAppConfig(relXml);
+  const t = buildRelativeSegmentTarget(app, new Map(), 4)!;
+  expect(t.size).toBe(5);
+  // P-1 visible + active: owned, value from its active ref (7), not the 1 default.
+  expect(t.owned[0]).toBe(true);
+  expect(t.bytes[0]).toBe(7);
+  // P-2 Access=None and inactive: NOT owned -> the byte is left at the <Data> default,
+  // and the flash will preserve whatever the device computed there.
+  expect(t.owned[1]).toBe(false);
+  // P-3 visible but inactive: still owned at its default (System B writes every default).
+  expect(t.owned[2]).toBe(true);
+  expect(t.bytes[2]).toBe(3);
+  // Union: only the active member (P-A=5) is owned; the overlapping inactive P-B is not.
+  expect(t.owned[3]).toBe(true);
+  expect(t.bytes[3]).toBe(5);
+  // Trailing gap owned by no parameter.
+  expect(t.owned[4]).toBe(false);
+});
+
+// The flash merge writes only owned bytes over the live device read and preserves the
+// rest; diffBytes counts only the owned bytes that actually change.
+const relTarget = (owned: boolean[], bytes: number[]): RelativeSegmentTarget =>
+  ({ lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned });
+
+test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
+  const current = Buffer.from([10, 20, 30, 40]);
+  // own bytes 0 and 2; byte 0 changes (10->7), byte 2 unchanged (30->30), bytes 1/3 unowned.
+  const target = relTarget([true, false, true, false], [7, 99, 30, 99]);
+  const { image, diffBytes } = mergeRelativeTarget(current, target);
+  expect([...image]).toEqual([7, 20, 30, 40]); // owned 0 written, unowned 1/3 preserved, owned-but-equal 2 kept
+  expect(diffBytes).toBe(1); // only byte 0 actually changed
+});
+
+test("mergeRelativeTarget on an unchanged config is a no-op (diffBytes 0)", () => {
+  const current = Buffer.from([5, 6, 7]);
+  const target = relTarget([true, false, true], [5, 0, 7]); // owned values already match the device
+  const { diffBytes } = mergeRelativeTarget(current, target);
+  expect(diffBytes).toBe(0);
+});
+
+test("verifyRelativeOwned checks only owned bytes; unowned drift does not fail it", () => {
+  const target = relTarget([true, false, true], [7, 0, 9]);
+  // back: owned bytes match (7, 9); unowned byte 1 differs (device recomputed it) -> still OK.
+  expect(verifyRelativeOwned(Buffer.from([7, 123, 9]), target)).toBe(true);
+  // an owned byte differs -> fails.
+  expect(verifyRelativeOwned(Buffer.from([7, 0, 8]), target)).toBe(false);
 });
