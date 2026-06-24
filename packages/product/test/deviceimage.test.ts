@@ -153,10 +153,13 @@ test("imageValues resolves choose/Assign in document order, independent of the U
 });
 
 // Some devices (e.g. Steinel M-008E) declare AbsoluteSegments WITHOUT a <Data>
-// default. There the segment's unwritten bytes are the device's erased EEPROM state
-// (0xFF), not 0x00. The build must initialise such a segment to 0xFF before laying
-// down parameter values. Hardware-verified: a Data-less 256-byte segment went from
-// 256 byte diffs to 2 once initialised to 0xFF.
+// default. Such a segment has no precomputed default image: ETS clears the parameter
+// memory before download, so a PARAMETER-owned byte starts at 0x00 (a disabled
+// feature's params read back as 0) while the GAPS between parameters stay at the
+// erased 0xFF. Active parameter values overlay that. Hardware-verified on M-008E (a
+// 1024-byte Data-less segment went from 339 byte diffs to 4 with this model). Here
+// P-1 is active (offset 0), P-2 is present in memory but not referenced in the active
+// tree (offset 1), and offsets 2-3 are gaps owned by no parameter.
 const noDataXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0004"><ApplicationPrograms>
 <ApplicationProgram Id="M-0004_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="No Data">
@@ -164,20 +167,24 @@ const noDataXml = `<?xml version="1.0" encoding="utf-8"?>
 <ParameterTypes><ParameterType Id="M-0004_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
 <Parameter Id="M-0004_A-0001-01-0001_P-1" ParameterType="M-0004_A-0001-01-0001_PT-8" Text="V" Value="0"><Memory CodeSegment="M-0004_A-0001-01-0001_AS-1" Offset="0" BitOffset="0"/></Parameter>
+<Parameter Id="M-0004_A-0001-01-0001_P-2" ParameterType="M-0004_A-0001-01-0001_PT-8" Text="Inactive" Value="9"><Memory CodeSegment="M-0004_A-0001-01-0001_AS-1" Offset="1" BitOffset="0"/></Parameter>
 </Parameters>
-<ParameterRefs><ParameterRef Id="M-0004_A-0001-01-0001_P-1_R" RefId="M-0004_A-0001-01-0001_P-1" Value="5"/></ParameterRefs>
-<Code><AbsoluteSegment Id="M-0004_A-0001-01-0001_AS-1" Address="100" Size="3" MemoryType="EEPROM"/></Code>
+<ParameterRefs>
+<ParameterRef Id="M-0004_A-0001-01-0001_P-1_R" RefId="M-0004_A-0001-01-0001_P-1" Value="5"/>
+<ParameterRef Id="M-0004_A-0001-01-0001_P-2_R" RefId="M-0004_A-0001-01-0001_P-2"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0004_A-0001-01-0001_AS-1" Address="100" Size="4" MemoryType="EEPROM"/></Code>
 </Static>
 <Dynamic><ParameterBlock Id="M-0004_A-0001-01-0001_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="M-0004_A-0001-01-0001_P-1_R"/></ParameterBlock></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
-test("a Data-less segment initialises to 0xFF (erased EEPROM), then overlays params", () => {
+test("a Data-less segment: param bytes default to 0, gaps stay 0xFF, active overlays", () => {
   const app = parseAppConfig(noDataXml);
   const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-1"));
   expect(seg!.data.length).toBe(0); // no <Data>
   const img = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
-  expect(img.length).toBe(3);
-  expect(img[0]).toBe(5); // parameter value laid over the blank
-  expect(img[1]).toBe(0xff); // unwritten -> erased EEPROM state, not 0x00
-  expect(img[2]).toBe(0xff);
+  expect(img.length).toBe(4);
+  expect(img[0]).toBe(5); // P-1 active -> its value
+  expect(img[1]).toBe(0); // P-2 owns this byte but is not active -> cleared to 0, NOT its 9 default and NOT 0xFF
+  expect(img[2]).toBe(0xff); // gap (no parameter) -> erased EEPROM state
+  expect(img[3]).toBe(0xff);
 });

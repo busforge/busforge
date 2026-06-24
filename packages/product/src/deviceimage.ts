@@ -41,13 +41,25 @@ export function buildAbsoluteSegmentImages(
   const out: DeviceSegmentImage[] = [];
   for (const segId of targeted) {
     const seg = bySeg.get(segId)!;
-    // Start from the EEPROM blank state (0xFF), then lay the manufacturer default
-    // image over it. Most segments carry a full-size <Data> so the 0xFF never shows;
-    // but some (e.g. Steinel M-008E) omit <Data> entirely, and there the unwritten
-    // bytes are the device's erased 0xFF, not 0x00. Hardware-verified: a Data-less
-    // 256-byte segment went from 256 byte diffs to 2 once initialised to 0xFF.
+    // Initialise to the EEPROM blank state (0xFF). A segment that ships a <Data>
+    // default image lays that over the blank (it usually covers the whole segment).
+    // A segment WITHOUT <Data> (e.g. Steinel M-008E) has no precomputed default
+    // image; there ETS clears the parameter memory before downloading, so every
+    // PARAMETER-owned byte starts at 0 (a disabled feature's params read back as 0)
+    // while the gaps between parameters stay at the erased 0xFF. We then overlay the
+    // active parameter values. Hardware-verified on M-008E: a 1024-byte Data-less
+    // segment went from 339 byte diffs to 4 with this model.
     const img = Buffer.alloc(seg.size, 0xff);
-    seg.data.copy(img); // manufacturer default image (covers [0, data.length))
+    if (seg.data.length) {
+      seg.data.copy(img); // manufacturer default image (covers [0, data.length))
+    } else {
+      for (const p of model.params.values()) {
+        if (p.codeSegment !== seg.id || p.offset === undefined) continue;
+        const t = model.types.get(p.typeId);
+        const bytes = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
+        for (let b = 0; b < bytes && p.offset + b < seg.size; b++) img[p.offset + b] = 0;
+      }
+    }
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
