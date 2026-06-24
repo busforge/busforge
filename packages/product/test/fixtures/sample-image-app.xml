@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <Manufacturer RefId="M-00FA">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-00FA_A-1234-01-ABCD" ApplicationNumber="4660" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Image Test">
+          <Static>
+            <ParameterTypes>
+              <ParameterType Id="T-enum"><TypeRestriction Base="Value" SizeInBit="2">
+                <Enumeration Text="Off" Value="0" Id="T-enum_EN-0" DisplayOrder="0"/>
+                <Enumeration Text="On" Value="1" Id="T-enum_EN-1" DisplayOrder="1"/>
+              </TypeRestriction></ParameterType>
+              <ParameterType Id="T-u8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>
+              <ParameterType Id="T-s16"><TypeNumber SizeInBit="16" Type="signedInt" minInclusive="-100" maxInclusive="100"/></ParameterType>
+              <ParameterType Id="T-float"><TypeFloat Encoding="DPT 9"/></ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="P-enum" ParameterType="T-enum" Text="Mode" Value="1"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="0" BitOffset="0"/></Parameter>
+              <Parameter Id="P-u8" ParameterType="T-u8" Text="Level" Value="100"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="1" BitOffset="0"/></Parameter>
+              <Parameter Id="P-s16" ParameterType="T-s16" Text="Trim" Value="-5"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="2" BitOffset="0"/></Parameter>
+              <Parameter Id="P-float" ParameterType="T-float" Text="Setpoint" Value="21.5"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="4" BitOffset="0"/></Parameter>
+              <Union SizeInBit="8">
+                <Parameter Id="P-union" ParameterType="T-u8" Text="Overlapped" Value="99"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="6" BitOffset="0"/></Parameter>
+              </Union>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="P-enum_R-1" RefId="P-enum"/>
+              <ParameterRef Id="P-u8_R-1" RefId="P-u8"/>
+              <ParameterRef Id="P-s16_R-1" RefId="P-s16"/>
+              <ParameterRef Id="P-float_R-1" RefId="P-float"/>
+              <ParameterRef Id="P-union_R-1" RefId="P-union"/>
+            </ParameterRefs>
+            <Code>
+              <RelativeSegment Id="M-00FA_A-1234-01-ABCD_RS-04-00000" LoadStateMachine="4" Size="8"><Data>AAAAAAAAAKs=</Data></RelativeSegment>
+            </Code>
+          </Static>
+          <ModuleDefs>
+            <ModuleDef Id="M-00FA_A-1234-01-ABCD_MD-1">
+              <Static>
+                <ParameterTypes>
+                  <ParameterType Id="M-00FA_A-1234-01-ABCD_MD-1_T-1"><TypeNumber SizeInBit="8" Type="unsignedInt"/></ParameterType>
+                </ParameterTypes>
+                <Parameters>
+                  <Parameter Id="M-00FA_A-1234-01-ABCD_MD-1_P-1" ParameterType="M-00FA_A-1234-01-ABCD_MD-1_T-1" Text="Channel level" Value="10"><Memory CodeSegment="M-00FA_A-1234-01-ABCD_RS-04-00000" Offset="7" BitOffset="0"/></Parameter>
+                </Parameters>
+                <ParameterRefs>
+                  <ParameterRef Id="M-00FA_A-1234-01-ABCD_MD-1_P-1_R-1" RefId="M-00FA_A-1234-01-ABCD_MD-1_P-1"/>
+                </ParameterRefs>
+              </Static>
+              <Arguments>
+                <Argument Id="M-00FA_A-1234-01-ABCD_MD-1_A-1" Name="channel" Type="Numeric"/>
+              </Arguments>
+            </ModuleDef>
+          </ModuleDefs>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>

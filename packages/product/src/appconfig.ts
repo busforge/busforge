@@ -21,9 +21,19 @@ export interface CfgType {
   increment?: number; // TypeNumber spinner step (ETS Increment)
   uiHint?: string;    // ETS UIHint on the type (e.g. "Slider" for a numeric range)
   colorSpace?: string; // TypeColor Space ("RGB" | "HSV")
+  moduleDefId?: string; // set when merged in from a ModuleDef Static
 }
-export interface CfgParam { id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean; }
-export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; }
+// A parameter. The memory fields (offset/bitOffset/codeSegment) and the `union`
+// flag feed the image projection (toAppModel); `moduleDefId` records that this
+// entry was merged in from a ModuleDef's Static (so the image projection, which
+// mirrors the flat static model, can drop module-def and union entries to stay
+// byte-identical to the legacy image parser).
+export interface CfgParam {
+  id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
+  offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
+}
+export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; }
+export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
@@ -81,6 +91,7 @@ export interface AppConfig {
   id: string;
   mask: string;
   appVersion: number;
+  appNumber: number;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -88,6 +99,7 @@ export interface AppConfig {
   refs: Map<string, CfgParamRef>;
   comObjects: Map<string, CfgComObject>;
   comObjectRefs: Map<string, CfgComObjectRef>;
+  segments: CfgSegment[]; // memory segments (Code/RelativeSegment), for the image projection
   translations: Translations;
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
@@ -102,6 +114,18 @@ const attrsOf = (n: ONode): Record<string, string> => n[":@"] ?? {};
 const kidsOf = (n: ONode): ONode[] => (Array.isArray(n[tagOf(n)]) ? n[tagOf(n)] : []);
 const childrenByTag = (nodes: ONode[], tag: string): ONode[] => nodes.filter((n) => tagOf(n) === tag);
 const firstByTag = (nodes: ONode[], tag: string): ONode | undefined => nodes.find((n) => tagOf(n) === tag);
+// The order-preserving parser splits attributes (under ":@") from child elements,
+// unlike the merged parser. ETS authors most fields as attributes but large payloads
+// (a segment's base64 Data, long texts) as child-element text. Read either form
+// uniformly, so a field authored as an element instead of an attribute still resolves
+// (this is what the legacy merged parser did implicitly).
+const concatText = (n: ONode): string => kidsOf(n).map((k) => k["#text"]).filter((t) => t !== undefined).join("");
+function attrOrText(n: ONode, name: string): string | undefined {
+  const a = attrsOf(n)[name];
+  if (a !== undefined) return a;
+  const child = firstByTag(kidsOf(n), name);
+  return child ? concatText(child) : undefined;
+}
 function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
   for (const n of nodes) {
     if (tagOf(n) === tag) return n;
@@ -129,21 +153,24 @@ export function parseAppConfig(xml: string): AppConfig {
   const refs = parseRefs(staticKids);
   const comObjects = parseComObjects(staticKids);
   const comObjectRefs = parseComObjectRefs(staticKids);
+  const segments = parseSegments(staticKids);
 
   // Module definitions: merge each def's Static (its ids are globally unique,
   // prefixed with the MD id) into the shared maps, and keep its Arguments +
-  // Dynamic tree for instantiation.
+  // Dynamic tree for instantiation. Merged entries are tagged with the def id so
+  // the image projection can exclude them (modules are not byte-placed).
   const moduleDefs = new Map<string, ModuleDefModel>();
   const defsContainer = firstByTag(appKids, "ModuleDefs");
   const merge = <V,>(target: Map<string, V>, src: Map<string, V>) => { for (const [k, v] of src) target.set(k, v); };
+  const tagMod = <V extends { moduleDefId?: string }>(m: Map<string, V>, mdId: string) => { for (const v of m.values()) v.moduleDefId = mdId; return m; };
   for (const md of defsContainer ? childrenByTag(kidsOf(defsContainer), "ModuleDef") : []) {
     const mdId = attrsOf(md).Id;
     const mdKids = kidsOf(md);
     const mdStatic = firstByTag(mdKids, "Static");
     const mdStaticKids = mdStatic ? kidsOf(mdStatic) : [];
-    merge(types, parseTypes(mdStaticKids));
-    merge(params, parseParams(mdStaticKids).params);
-    merge(refs, parseRefs(mdStaticKids));
+    merge(types, tagMod(parseTypes(mdStaticKids), mdId));
+    merge(params, tagMod(parseParams(mdStaticKids).params, mdId));
+    merge(refs, tagMod(parseRefs(mdStaticKids), mdId));
     merge(comObjects, parseComObjects(mdStaticKids));
     merge(comObjectRefs, parseComObjectRefs(mdStaticKids));
     const args: ModuleArg[] = childrenByTag(firstByTag(mdKids, "Arguments") ? kidsOf(firstByTag(mdKids, "Arguments")!) : [], "Argument")
@@ -175,9 +202,10 @@ export function parseAppConfig(xml: string): AppConfig {
     id: appAttrs.Id,
     mask: appAttrs.MaskVersion ?? "",
     appVersion: Number(appAttrs.ApplicationVersion ?? 0),
+    appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, translations, dynamic, moduleDefs, hasModules, dca,
+    types, params, refs, comObjects, comObjectRefs, segments, translations, dynamic, moduleDefs, hasModules, dca,
   };
 }
 
@@ -221,17 +249,41 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
 function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   const params = new Map<string, CfgParam>();
   const container = firstByTag(staticKids, "Parameters");
-  const add = (pa: ONode) => {
+  const add = (pa: ONode, union: boolean) => {
     const a = attrsOf(pa);
-    const hasMemory = !!firstByTag(kidsOf(pa), "Memory");
-    params.set(a.Id, { id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access, hasMemory });
+    const mem = firstByTag(kidsOf(pa), "Memory");
+    const ma = mem ? attrsOf(mem) : undefined;
+    params.set(a.Id, {
+      id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access,
+      hasMemory: !!mem,
+      offset: ma ? Number(ma.Offset) : undefined,
+      bitOffset: ma ? Number(ma.BitOffset ?? 0) : undefined,
+      codeSegment: ma?.CodeSegment,
+      union: union || undefined,
+    });
   };
-  for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa);
-  // Union children are parameters too (overlapping memory); include them.
+  for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa, false);
+  // Union children are parameters too (overlapping memory); include them for the UI,
+  // tagged so the image projection can drop them (the legacy image parser ignored them).
   for (const u of container ? childrenByTag(kidsOf(container), "Union") : []) {
-    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa);
+    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true);
   }
   return { params };
+}
+
+// Memory segments (Code/RelativeSegment): the default image plus its size, keyed by
+// the load-state-machine. Parsed once here so the image projection does not re-read
+// the XML.
+function parseSegments(staticKids: ONode[]): CfgSegment[] {
+  const code = firstByTag(staticKids, "Code");
+  const out: CfgSegment[] = [];
+  for (const s of code ? childrenByTag(kidsOf(code), "RelativeSegment") : []) {
+    const a = attrsOf(s);
+    // Default image: ETS authors it as a <Data> child element, older catalogues as a
+    // Data attribute; attrOrText resolves either form.
+    out.push({ id: a.Id, lsm: Number(a.LoadStateMachine), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
+  }
+  return out;
 }
 
 function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {

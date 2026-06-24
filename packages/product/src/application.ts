@@ -1,8 +1,12 @@
-import { XMLParser } from "fast-xml-parser";
+import { parseAppConfig, type AppConfig, type CfgType } from "./appconfig.ts";
 
-// Parse a KNX ApplicationProgram (.knxprod manufacturer XML) into the model needed
-// to build a parameter memory image: parameter types (sizes), parameters (with
-// memory location), parameter refs, and the default parameter segment.
+// The memory-image model used to build/decode a parameter image: parameter types
+// (sizes), parameters (with memory location), parameter refs, and the default
+// segments. This is now a PROJECTION of the single unified parse (parseAppConfig):
+// the flat static layer the image path needs, with module-def and union entries
+// dropped so it stays byte-identical to the legacy standalone parser it replaced.
+// One parser feeds both the UI (visibility/i18n) and the image (bytes); see
+// docs/ets-coverage.md "unify the model".
 
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
@@ -19,54 +23,49 @@ export interface AppModel {
   segments: Segment[];
 }
 
-const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 const hex = (s: string) => parseInt(s, 16);
 
-export function parseApplication(xml: string): AppModel {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const doc = p.parse(xml);
-  // find the ApplicationProgram node (under KNX > ManufacturerData > Manufacturer > Applications)
-  const ap = findFirst(doc, "ApplicationProgram");
-  if (!ap) throw new Error("no ApplicationProgram");
-  const idParts = String(ap.Id).split("_"); // M-0162_A-0004-11-F245
-  const manufacturer = hex(idParts[0].replace("M-", ""));
-  const appNumber = Number(ap.ApplicationNumber);
-  const version = Number(ap.ApplicationVersion);
-  const mask = String(ap.MaskVersion);
-  const st = ap.Static ?? {};
+// Map the config layer's richer type base to the image codec's base. Only
+// Float / Value / Number drive the codec (Float = DPT codec; Value/Number =
+// integer; everything else is not represented in the image). The mapping must
+// preserve those exact distinctions, in particular BinaryValue -> Value (an
+// integer-decodable enum), to keep images byte-identical.
+function imageBase(base: CfgType["base"]): ParamBase {
+  switch (base) {
+    case "Float": return "Float";
+    case "Number": return "Number";
+    case "Value": case "BinaryValue": return "Value";
+    case "Text": return "Text";
+    default: return "Other"; // Color / Other (and the config layer folds Time into Other)
+  }
+}
 
+// Project the unified config model onto the flat image model. Module-def and union
+// parameters/types/refs are dropped: the legacy image parser only read the top-level
+// Static, and modules are not byte-placed (their per-instance offsets are unresolved,
+// so the flash path still refuses them via unmappedParamRefs).
+export function toAppModel(app: AppConfig): AppModel {
   const types = new Map<string, ParamType>();
-  for (const t of arr<any>(st.ParameterTypes?.ParameterType)) {
-    const base: ParamBase = t.TypeFloat ? "Float" : t.TypeNumber ? "Number" : t.TypeText ? "Text"
-      : t.TypeTime ? "Time" : t.TypeRestriction ? "Value" : "Other";
-    const tr = t.TypeRestriction ?? t.TypeNumber ?? t.TypeText ?? t.TypeFloat ?? t.TypeTime ?? {};
-    // A DPT-9 float is 16 bits; the manufacturer XML may omit SizeInBit on TypeFloat.
-    const sizeInBit = Number(tr.SizeInBit ?? (base === "Float" ? 16 : 0));
-    const signed = String(t.TypeNumber?.Type ?? tr.Type ?? "").toLowerCase().includes("signed");
-    types.set(t.Id, { id: t.Id, base, sizeInBit, signed });
+  for (const t of app.types.values()) {
+    if (t.moduleDefId) continue;
+    types.set(t.id, { id: t.id, base: imageBase(t.base), sizeInBit: t.sizeInBit, signed: t.signed });
   }
-
   const params = new Map<string, Param>();
-  for (const pa of arr<any>(st.Parameters?.Parameter)) {
-    const mem = pa.Memory;
-    params.set(pa.Id, {
-      id: pa.Id, typeId: pa.ParameterType, value: pa.Value,
-      codeSegment: mem?.CodeSegment, offset: mem ? Number(mem.Offset) : undefined,
-      bitOffset: mem ? Number(mem.BitOffset ?? 0) : 0,
-    });
+  for (const p of app.params.values()) {
+    if (p.moduleDefId || p.union) continue;
+    params.set(p.id, { id: p.id, typeId: p.typeId, value: p.value, codeSegment: p.codeSegment, offset: p.offset, bitOffset: p.bitOffset ?? 0 });
   }
-
   const refs = new Map<string, ParamRef>();
-  for (const r of arr<any>(st.ParameterRefs?.ParameterRef)) {
-    refs.set(r.Id, { id: r.Id, paramId: r.RefId, value: r.Value });
+  for (const r of app.refs.values()) {
+    if (r.moduleDefId) continue;
+    refs.set(r.id, { id: r.id, paramId: r.paramId, value: r.value });
   }
+  const manufacturer = hex(String(app.id).split("_")[0].replace("M-", "")); // "M-0162_A-..." -> 0x162
+  return { mask: app.mask, manufacturer, appNumber: app.appNumber, version: app.appVersion, types, params, refs, segments: app.segments };
+}
 
-  const segments: Segment[] = [];
-  for (const s of arr<any>(st.Code?.RelativeSegment)) {
-    segments.push({ id: s.Id, lsm: Number(s.LoadStateMachine), size: Number(s.Size), data: Buffer.from(String(s.Data ?? ""), "base64") });
-  }
-
-  return { mask, manufacturer, appNumber, version, types, params, refs, segments };
+export function parseApplication(xml: string): AppModel {
+  return toAppModel(parseAppConfig(xml));
 }
 
 // Stored parameter refs the static image model cannot place (no matching
@@ -76,11 +75,4 @@ export function parseApplication(xml: string): AppModel {
 // the configuration the UI shows and the image we build must cover the same refs.
 export function unmappedParamRefs(model: AppModel, values: Map<string, string>): string[] {
   return [...values.keys()].filter((k) => !model.refs.has(k));
-}
-
-function findFirst(node: any, key: string): any {
-  if (node == null || typeof node !== "object") return undefined;
-  if (node[key]) return Array.isArray(node[key]) ? node[key][0] : node[key];
-  for (const k of Object.keys(node)) { const r = findFirst(node[k], key); if (r) return r; }
-  return undefined;
 }

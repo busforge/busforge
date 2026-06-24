@@ -162,13 +162,23 @@ model. The plan, in three stages:
    flash path refuses to program when the stored configuration contains
    parameters the image builder cannot place (`unmappedParamRefs`). A mismatch is
    now always either visible or blocked, never silent.
-2. **One model (the real fix, planned).** A single parse + a single
-   module-instance expander that yields the fully-resolved per-instance parameter
-   set: id, value, **memory offset**, type, visibility. The UI becomes a
-   visibility-filtered, localized projection of that set; the image becomes the
-   byte projection. Same parameters, same expansion, consistent by construction.
-   The missing technical piece is per-instance memory-offset resolution
-   (allocators / 0.xml). Once it exists, delete the second parser.
+2. **One parse, two projections (done).** There is now a single parser
+   (`parseAppConfig`): it reads the memory layout (parameter offsets, segments) in
+   the same pass as the visibility/i18n data, tagging each entry's provenance
+   (module-def / union). `parseApplication` is no longer a parser, it is a thin
+   projection (`toAppModel`) onto the flat image model, dropping module-def and
+   union entries so it stays **byte-identical** to the standalone parser it
+   replaced (verified old-vs-new on every real catalogue app program, including the
+   ones flashed on hardware; the regression is pinned by `sample-image-app.xml`).
+   A field authored as a child element rather than an attribute (a segment's base64
+   `Data`) is read uniformly via `attrOrText`, restoring the transparency the merged
+   parser had. The UI is the visibility-filtered, localized projection; the image is
+   the byte projection; both read one model.
+   - **Still open (the hard part):** per-instance **memory-offset** resolution for
+     module instances (allocators / 0.xml). Until it exists, module instances are
+     not byte-placed, so the flash path still refuses them via `unmappedParamRefs`
+     (stage 1). Once it lands, module devices become flashable and the projection's
+     module-def exclusion is lifted.
 3. **Lock it in CI (planned).** A coverage test per catalogue/device asserting the
    UI-exposed param-ref set equals the image-placeable set; today that would fail
    for module devices (they genuinely diverge), so the enforced form today is the
