@@ -88,6 +88,8 @@ const en = {
     EMPTY_IMAGE: "The parameter image came out empty. Refusing to flash.",
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",
+    LOAD_PROCEDURE_UNSUPPORTED: "This device declares no usable load procedure (legacy or unknown style). It cannot be flashed safely yet.",
+    FLASH_SEGMENT_UNPLACEABLE: "Some changed parameters live in a memory segment the device's load procedure does not declare. Refusing to flash so nothing is silently dropped.",
     READ_ABORTED: "Read aborted.",
     INTERNAL: "Something went wrong.",
   },
@@ -226,7 +228,7 @@ const en = {
   flash: {
     titleParams: "Program parameters on {{device}}",
     titleGAs: "Program group addresses on {{device}}",
-    descParams: "Writes the parameter segment (LSM4) to {{ia}} over the bus. The addressing and group tables are not touched. A backup is taken first and the result is read back and verified.",
+    descParams: "Writes the parameter settings to {{ia}} over the bus, following the device's own load procedure. The addressing and group tables are not touched. A backup is taken first and the result is read back and verified.",
     descGAs: "Writes the address and association tables to {{ia}} over the bus. The com-object flags are read from the device and kept unchanged. A backup is taken first and the result is read back and verified.",
     checking: "Connecting and checking for changes…",
     connHint: "Could not reach the interface. Check that it is online and that no other client (ETS or a running bus monitor) is holding the connection, then retry.",

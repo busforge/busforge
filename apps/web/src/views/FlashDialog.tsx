@@ -9,9 +9,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
 
-// Program a device's parameter segment. Previews the change with a dry-run
-// before writing, then flashes and reports the verified result. Only the
-// parameter segment (LSM4) is written; a backup is taken server-side.
+// Program a device's parameters. Previews the change with a dry-run before
+// writing, then flashes and reports the verified result. Only the parameter
+// memory is written, following the device's own load procedure (relative LSM4
+// or absolute MV-0705 segments); a backup is taken server-side.
 export function FlashDialog({ open, onOpenChange, projectId, device, target, onFlashed }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;

@@ -1,0 +1,66 @@
+import { KnxDevice } from "./device.ts";
+import { lsmEvent, lsmState, allocSegment, LSM, STATE } from "./flash.ts";
+
+// Generic executor for a device's load procedure, expressed as a flat list of typed
+// operations (a LoadPlan). The PLANNER (which turns a parsed <LoadProcedure> + built
+// segment images + a device read into this list) lives one layer up; this module only
+// EXECUTES, so the same runner drives an absolute-segment (MV-0705) or relative-segment
+// (System B) download. It reuses the proven LSM helpers in flash.ts.
+//
+// Every load/loadCompleted asserts the resulting LSM state, so a refused or desynced
+// transition stops before the next step instead of writing into a half-open machine.
+// Memory writes verify by read-back (memWrite default). On any throw the device is left
+// addressable and recoverable (re-run, or ETS full download); the caller backs up first.
+
+export type LoadStep =
+  | { op: "connect" }
+  | { op: "disconnect" }
+  | { op: "restart" }
+  | { op: "unload"; lsm: number }
+  | { op: "load"; lsm: number }
+  | { op: "loadCompleted"; lsm: number }
+  | { op: "alloc"; lsm: number; size: number }          // relative-segment allocate
+  | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
+  | { op: "writeProp"; obj: number; pid: number; data: Buffer }
+  | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
+
+export type LoadPlan = LoadStep[];
+
+const stateName = (s: number) => Object.keys(STATE).find((k) => (STATE as any)[k] === s) ?? `?${s}`;
+
+export interface RunOpts {
+  onStep?: (i: number, step: LoadStep, total: number) => void;
+  // re-read pause after restart is the caller's concern; the runner just fires restart
+}
+
+export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
+  for (let i = 0; i < plan.length; i++) {
+    const step = plan[i];
+    opts.onStep?.(i, step, plan.length);
+    switch (step.op) {
+      case "connect": await dev.connect(); break;
+      case "disconnect": await dev.disconnect(); break;
+      case "restart": await dev.restart(); break;
+      case "unload": {
+        await lsmEvent(dev, step.lsm, LSM.UNLOAD);
+        break;
+      }
+      case "load": {
+        await lsmEvent(dev, step.lsm, LSM.LOAD);
+        const s = await lsmState(dev, step.lsm);
+        if (s !== STATE.LOADING) throw new Error(`LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
+        break;
+      }
+      case "alloc": await allocSegment(dev, step.lsm, step.size); break;
+      case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
+      case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
+      case "stampAppId": await dev.propWrite(step.lsm, 13, step.data); break;
+      case "loadCompleted": {
+        await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED);
+        const s = await lsmState(dev, step.lsm);
+        if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+        break;
+      }
+    }
+  }
+}

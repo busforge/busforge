@@ -88,6 +88,8 @@ const de: Messages = {
     EMPTY_IMAGE: "Das Parameter-Image ist leer. Flashen abgelehnt.",
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",
+    LOAD_PROCEDURE_UNSUPPORTED: "Dieses Gerät deklariert keine nutzbare Ladeprozedur (Legacy oder unbekannter Stil). Es kann noch nicht sicher geflasht werden.",
+    FLASH_SEGMENT_UNPLACEABLE: "Einige geänderte Parameter liegen in einem Speichersegment, das die Ladeprozedur des Geräts nicht deklariert. Flashen abgelehnt, damit nichts still verloren geht.",
     READ_ABORTED: "Lesen abgebrochen.",
     INTERNAL: "Etwas ist schiefgelaufen.",
   },
@@ -226,7 +228,7 @@ const de: Messages = {
   flash: {
     titleParams: "Parameter auf {{device}} programmieren",
     titleGAs: "Gruppenadressen auf {{device}} programmieren",
-    descParams: "Schreibt das Parametersegment (LSM4) über den Bus auf {{ia}}. Die Adress- und Gruppentabellen bleiben unangetastet. Vorher wird ein Backup erstellt und das Ergebnis zurückgelesen und verifiziert.",
+    descParams: "Schreibt die Parameter-Einstellungen über den Bus auf {{ia}}, gemäß der geräteeigenen Ladeprozedur. Die Adress- und Gruppentabellen bleiben unangetastet. Vorher wird ein Backup erstellt und das Ergebnis zurückgelesen und verifiziert.",
     descGAs: "Schreibt die Adress- und Assoziationstabellen über den Bus auf {{ia}}. Die Com-Objekt-Flags werden vom Gerät gelesen und unverändert übernommen. Vorher wird ein Backup erstellt und das Ergebnis zurückgelesen und verifiziert.",
     checking: "Verbinde und prüfe auf Änderungen…",
     connHint: "Die Schnittstelle ist nicht erreichbar. Prüfe, ob sie online ist und keine andere Verbindung (ETS oder ein laufender Busmonitor) sie blockiert, und versuche es erneut.",

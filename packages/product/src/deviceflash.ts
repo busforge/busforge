@@ -1,5 +1,7 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
+import type { LoadProcedures } from "./loadproc.ts";
+import type { LoadPlan } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
 //
@@ -77,4 +79,75 @@ export function planAbsoluteSegmentFlash(
   }
   segments.sort((a, b) => a.address - b.address);
   return { segments, totalWrittenBytes: segments.reduce((n, s) => n + s.writtenBytes, 0) };
+}
+
+// Turn the surgical segment plan into an executable LoadPlan by wrapping it in the
+// device's declared LSM load bracket. The procedure (parsed from the app program) tells
+// us which AbsoluteSegment lives under which LSM (by address) and the order LSMs load;
+// we emit the minimal "par" download proven on hardware: for each LSM that owns a
+// changed segment, Load -> write its changed owned runs -> LoadCompleted, wrapped in
+// connect/restart/disconnect. Byte selection is delegated to planAbsoluteSegmentFlash,
+// so the owned-byte authority lives in exactly one place.
+//
+// `unplaceable` lists segments that have changed owned bytes but are NOT declared in the
+// load procedure (so we have no LSM to load them under). They are reported, never
+// silently dropped: the caller must refuse the flash rather than report a partial write
+// as success.
+
+export interface AbsParFlashPlan {
+  plan: LoadPlan;
+  changedBytes: number;
+  segments: { id: string; address: number; lsm: number; changed: number }[];
+  unplaceable: { id: string; address: number; changed: number }[];
+}
+
+export function planAbsoluteParFlash(
+  app: AppConfig,
+  values: Map<string, string>,
+  procedure: LoadProcedures,
+  current: Map<string, Buffer>, // AbsoluteSegment Id -> live device bytes
+  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+): AbsParFlashPlan {
+  const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current });
+
+  // From the procedure: which LSM owns each absolute segment (by address), and the
+  // order LSMs are loaded (the LdCtrlLoad sequence).
+  const lsmByAddress = new Map<number, number>();
+  const lsmOrder: number[] = [];
+  for (const b of procedure.blocks) for (const s of b.steps) {
+    if (s.verb === "LdCtrlAbsSegment" && s.attrs.Address !== undefined && s.attrs.LsmIdx !== undefined) lsmByAddress.set(Number(s.attrs.Address), Number(s.attrs.LsmIdx));
+    if (s.verb === "LdCtrlLoad" && s.attrs.LsmIdx !== undefined) { const l = Number(s.attrs.LsmIdx); if (!lsmOrder.includes(l)) lsmOrder.push(l); }
+  }
+  const has = (verb: string) => procedure.blocks.some((b) => b.steps.some((s) => s.verb === verb));
+
+  const runsByLsm = new Map<number, FlashRun[]>();
+  const segments: AbsParFlashPlan["segments"] = [];
+  const unplaceable: AbsParFlashPlan["unplaceable"] = [];
+  let changedBytes = 0;
+  for (const seg of fp.segments) {
+    if (!seg.runs.length) continue; // no changed owned bytes in this segment
+    const lsm = lsmByAddress.get(seg.address);
+    if (lsm === undefined) { unplaceable.push({ id: seg.id, address: seg.address, changed: seg.writtenBytes }); continue; }
+    changedBytes += seg.writtenBytes;
+    segments.push({ id: seg.id, address: seg.address, lsm, changed: seg.writtenBytes });
+    runsByLsm.set(lsm, [...(runsByLsm.get(lsm) ?? []), ...seg.runs]);
+  }
+
+  // The plan is the LSM bracket only. Connection lifecycle (T_Connect/T_Disconnect) is
+  // the CALLER's job: it must already be connected (it read the live segment to diff),
+  // and a second T_Connect here would reset the local sequence counter while the device
+  // keeps counting, after which the device stops answering ("no reliable response").
+  // So we do NOT emit connect/disconnect even though the procedure declares them.
+  const plan: LoadPlan = [];
+  if (changedBytes > 0) {
+    for (const lsm of lsmOrder) {
+      const runs = runsByLsm.get(lsm);
+      if (!runs?.length) continue;
+      plan.push({ op: "load", lsm });
+      for (const r of runs) plan.push({ op: "writeMem", address: r.address, bytes: r.bytes });
+      plan.push({ op: "loadCompleted", lsm });
+    }
+    if (has("LdCtrlRestart")) plan.push({ op: "restart" });
+  }
+  return { plan, changedBytes, segments, unplaceable };
 }

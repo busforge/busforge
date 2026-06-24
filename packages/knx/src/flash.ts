@@ -58,28 +58,6 @@ export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer,
   await dev.restart();
 }
 
-// MV-0705 (absolute-segment) parameter download. Unlike the System-B relative-segment
-// path above, these BCU2-class devices keep parameters at FIXED EEPROM addresses, so
-// there is no allocate step and no property-object load state machine: the bytes are
-// written directly to memory. The runs come from planAbsoluteSegmentFlash, which is
-// SURGICAL: it only writes parameter-owned bytes, never the manufacturer default or
-// inactive-branch bytes whose true value an absolute segment cannot reconstruct. Each
-// run is written and read-back-verified (memWrite's default).
-//
-// NOT YET HARDWARE-VERIFIED, and no caller invokes it. memWrite itself (with verify)
-// is proven on the bus, but the bracketing these masks expect around a download (a
-// run-state/system-state toggle, an EEPROM checksum update, or none) is not yet
-// established. Confirm the full procedure on a real MV-0705 device, with backup and
-// revert, before wiring this into the app. See docs/mv0705-spike-findings.md.
-export async function flashAbsoluteSegments(
-  dev: KnxDevice,
-  runs: { address: number; bytes: Buffer }[],
-  onProgress?: (done: number, total: number) => void,
-) {
-  let done = 0;
-  for (const run of runs) {
-    await dev.memWrite(run.address, run.bytes, { verify: true });
-    onProgress?.(++done, runs.length);
-  }
-  await dev.restart();
-}
+// MV-0705 (absolute-segment) parameter downloads are driven by the device's declared
+// LoadProcedure: the planner (planAbsoluteParFlash) turns it into a LoadPlan and the
+// generic executor (runLoadPlan, loadrunner.ts) runs it. See docs/load-procedures.md.

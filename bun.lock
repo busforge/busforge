@@ -62,6 +62,7 @@
       "name": "@busforge/product",
       "version": "0.0.1",
       "dependencies": {
+        "@busforge/knx": "*",
         "fast-xml-parser": "*",
       },
     },

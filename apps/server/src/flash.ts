@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId } from "@busforge/knx";
-import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, type ComObjectLink } from "@busforge/product";
+import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
+import { parseApplication, buildParameterImage, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -72,6 +72,13 @@ export async function flashDeviceParameters(opts: {
   dryRun: boolean;
   onProgress?: ProgressFn;
 }): Promise<FlashResult> {
+  // Absolute-segment (MV-0705) devices keep parameters at fixed EEPROM addresses and
+  // are flashed by driving their declared LoadProcedure, not the LSM4 relative path.
+  const cfg = parseAppConfig(opts.appXml);
+  if (buildAbsoluteSegmentTargets(cfg, opts.params).some((t) => t.size > 0)) {
+    return flashAbsoluteParameters(opts, cfg);
+  }
+
   const model = parseApplication(opts.appXml);
   // SAFETY: the image builder reads only static parameter refs; it does not yet
   // expand channel/module instances. Any stored value keyed to an instance
@@ -135,6 +142,83 @@ export async function flashDeviceParameters(opts: {
 
     await dev.disconnect(); await tun.disconnect();
     return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: true, verified, backup };
+  } catch (e) {
+    try { await dev.disconnect(); } catch {}
+    try { await tun.disconnect(); } catch {}
+    throw e;
+  }
+}
+
+// Program an absolute-segment (MV-0705) device's parameters by driving its own
+// declared LoadProcedure (parsed from the app program). Surgical "par" download: only
+// owned bytes that differ from the live device are written, inside the device's LSM
+// load bracket (Load -> write -> LoadCompleted -> Restart). Same safety contract as the
+// relative path: mask check, segment backup, dry-run, post-flash read-back verify.
+//
+// Hardware-verified on M-0081 (LED feedback change applied + reverted, LSM3 LOADED).
+async function flashAbsoluteParameters(opts: Parameters<typeof flashDeviceParameters>[0], cfg: AppConfig): Promise<FlashResult> {
+  const proc = parseLoadProcedures(opts.appXml);
+  if (proc.style === "DefaultProcedure" || proc.blocks.length === 0) {
+    throw new ApiError("LOAD_PROCEDURE_UNSUPPORTED", `device declares no usable load procedure (style ${proc.style}); cannot flash safely`);
+  }
+  const targets = buildAbsoluteSegmentTargets(cfg, opts.params).filter((t) => t.size > 0);
+  const totalBytes = targets.reduce((n, t) => n + t.size, 0);
+
+  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  opts.onProgress?.("connect");
+  await tun.connect();
+  const dev = new KnxDevice(tun, opts.ia);
+  try {
+    await dev.connect();
+    const mask = await dev.deviceDescriptor();
+    const wantMask = cfg.mask.replace(/^MV-/, "");
+    if (!wantMask) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing to flash");
+    if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+
+    // Read each parameter segment at its fixed address; this is the backup and the
+    // diff source (we write only owned bytes that actually differ).
+    const current = new Map<string, Buffer>();
+    const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
+    mkdirSync(backupDir, { recursive: true });
+    const stamp = Date.now();
+    let read = 0;
+    for (const t of targets) {
+      const onDev = await dev.memRead(t.address, t.size, 12, (d, n) => opts.onProgress?.("backup", read + d, totalBytes));
+      read += t.size;
+      current.set(t.id, onDev);
+      writeFileSync(join(backupDir, `${opts.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`), onDev);
+    }
+    const backup = join(backupDir, `${opts.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`);
+
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, opts.params, proc, current);
+    // No-silent-drop: a changed segment with no LSM in the load procedure cannot be
+    // programmed; refuse rather than flash the rest and report success.
+    if (unplaceable.length) {
+      throw new ApiError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
+    }
+    if (changedBytes === 0) {
+      await dev.disconnect(); await tun.disconnect();
+      return { mask, imageBytes: totalBytes, diffBytes: 0, changed: false, flashed: false, backup };
+    }
+    if (opts.dryRun) {
+      await dev.disconnect(); await tun.disconnect();
+      return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: false, backup };
+    }
+
+    let wrote = 0;
+    await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") opts.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
+
+    // The device restarts after load-completed; reconnect and confirm each segment's
+    // owned bytes now match the target image.
+    await sleep(3000);
+    await dev.connect();
+    let verified = true;
+    for (const t of targets) {
+      const back = await dev.memRead(t.address, t.size, 12, (d, n) => opts.onProgress?.("verify", d, n));
+      for (let i = 0; i < t.size; i++) if (t.owned[i] && back[i] !== t.bytes[i]) { verified = false; break; }
+    }
+    await dev.disconnect(); await tun.disconnect();
+    return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: true, verified, backup };
   } catch (e) {
     try { await dev.disconnect(); } catch {}
     try { await tun.disconnect(); } catch {}

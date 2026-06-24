@@ -109,12 +109,26 @@ device to defaults. Full detail and roadmap: [`docs/ets-coverage.md`](docs/ets-c
 | Float / Time / IP address / Binary | 🔶 shown read-only with a "not supported yet" badge |
 | TypeNone (display) | 🔶 named ones shown; empty spacers omitted |
 
-**Programming (image build)**
+**Programming, by device memory / load model**
 
-| Path | Status |
-|---|---|
-| Single-block / non-module devices | ✅ verified on the bus |
-| Channel/module devices (per-instance offsets) | ⛔ not supported; parameter flash is refused to protect the config |
+ETS does not hand-author a recipe per device. It applies a small, finite set of
+memory layouts and load procedures, selected by the device's **mask version**, on top
+of the manufacturer data the project already carries. Busforge follows the same model.
+Where a device sits in that set is what determines how far we can program it today.
+Full detail and the per-axis gap analysis: [`docs/device-memory-model.md`](docs/device-memory-model.md).
+
+| Memory model | Masks | Config UI (read + edit) | Image build + byte-match | On-bus flash |
+|---|---|---|---|---|
+| Relative segment (LSM4, allocator) | MV-07B0, MV-0701 | ✅ | ✅ | ✅ verified on the bus (1 device) |
+| Absolute segment (fixed EEPROM) | MV-0705 | ✅ | ✅ 19/32 byte-match offline | ✅ verified on the bus (M-0081); driven by the device's declared load procedure |
+| Module / channel placement | (offset modifier) | ✅ | ⛔ per-instance offsets unresolved | ⛔ flash refused to protect the config |
+| Property / interface-object | System B / IP | 🔶 standard params only | ⛔ not a memory image | ⛔ property-write download not implemented |
+
+**Not covered yet (gaps beyond the four layouts):** true property-based loading,
+legacy System 1 / BCU1 (MV-001x), full first-time commissioning (com-object flag
+table LSM3 authoring + application code LSM5), KNX Secure, and non-TP media (RF/PL).
+None require per-device code; each is a generic, mask-version-keyed capability still to
+add. See [`docs/device-memory-model.md`](docs/device-memory-model.md).
 
 ---
 
