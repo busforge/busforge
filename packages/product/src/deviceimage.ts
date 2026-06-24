@@ -26,10 +26,12 @@ export function buildAbsoluteSegmentImages(
   opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
 ): DeviceSegmentImage[] {
   const model = toAppModel(app, { includeUnions: true });
-  // Effective value of every visible parameter, keyed by ParameterRef id.
+  // Effective value of every parameter reached in the active dynamic tree, keyed by
+  // ParameterRef id. This includes Access="None" internal parameters that ETS writes
+  // to memory but hides from the UI, so it is the right source for the image (the
+  // visible blocks alone would miss them).
   const view = buildDeviceConfig(app, values, opts.lang, opts.moduleInstances ?? []);
-  const active = new Map<string, string>();
-  for (const block of view.blocks) for (const item of block.items) if (item.kind === "param") active.set(item.param.refId, item.param.value);
+  const active = view.imageValues;
 
   // Which absolute segments do <Memory> parameters target?
   const bySeg = new Map(app.absoluteSegments.map((s) => [s.id, s]));

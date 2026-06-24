@@ -55,7 +55,16 @@ export type CfgItem =
   | { kind: "comObject"; comObject: CfgComObjView }
   | { kind: "unsupported"; label: string }; // an ETS dynamic element the engine does not handle yet
 export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
+export interface DeviceConfigView {
+  blocks: CfgBlock[];
+  hasModules: boolean;
+  dca?: DcaInfo;
+  // Resolved effective value of every parameter reached in the active dynamic tree,
+  // keyed by (rewritten) ParameterRef id. Unlike `blocks` this INCLUDES Access="None"
+  // internal parameters, which ETS writes to the memory image even though they are
+  // hidden from the UI; the image build needs them. See buildDeviceConfig.
+  imageValues: Map<string, string>;
+}
 
 interface Scope {
   rewrite: (id: string) => string;     // module-def id -> device instance id (identity at top level)
@@ -107,10 +116,12 @@ export function buildDeviceConfig(
   const env = new Map(overrides); // working values; Assign mutates this
 
   // Effective value: device instance value (keyed by the rewritten instance id)
-  // else the module-def ref default else the parameter default.
-  const resolve = (defRefId: string, scope: Scope): string | undefined => {
+  // else the module-def ref default else the parameter default. `e` is the working
+  // value map; it defaults to the UI walk's `env`, but the image pass passes its own
+  // so its Assigns resolve in document order independently of the UI pass.
+  const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
-    if (env.has(instId)) return env.get(instId);
+    if (e.has(instId)) return e.get(instId);
     const ref = app.refs.get(defRefId);
     return ref?.value ?? (ref ? app.params.get(ref.paramId)?.value : undefined);
   };
@@ -131,8 +142,8 @@ export function buildDeviceConfig(
   // the catalogue's language (some texts are authored lower-case).
   const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
-  const selectWhen = (defParamRefId: string, whens: DynWhen[], scope: Scope): DynWhen | undefined => {
-    const v = Number(resolve(defParamRefId, scope) ?? 0);
+  const selectWhen = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen | undefined => {
+    const v = Number(resolve(defParamRefId, scope, e) ?? 0);
     for (const w of whens) if (!w.isDefault && w.test !== undefined && matchTest(w.test, v)) return w;
     return whens.find((w) => w.isDefault);
   };
@@ -315,6 +326,32 @@ export function buildDeviceConfig(
   const roots: Node[] = [];
   walk(app.dynamic, TOP, roots);
 
+  // Image values: the value ETS writes for EVERY parameter reached in the active
+  // dynamic tree, including Access="None" internal params (hidden from the UI walk
+  // above, but still written to memory) and the params inside Access="None" blocks.
+  // Same choose/when selection and value resolution as the UI; no Access filtering.
+  // Internal params often select their value through which ParameterRef the active
+  // branch references (refs carry distinct Value attributes), so this must visit the
+  // reachable paramRef nodes, not just the displayed ones.
+  // Its own working map (not the UI walk's `env`): Assigns and choose conditions must
+  // resolve in this pass's own document order, not against the already-fully-mutated
+  // UI env (which would mis-select branches controlled by a later Assign).
+  const imageValues = new Map<string, string>();
+  const imgEnv = new Map(overrides);
+  const imgCollect = (nodes: DynNode[], scope: Scope) => {
+    for (const n of nodes) {
+      switch (n.kind) {
+        case "paramRef": { const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "assign": imgEnv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, imgEnv) ?? "" : "")); break;
+        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope, imgEnv); if (w) imgCollect(w.children, scope); break; }
+        case "container": case "block": imgCollect(n.children, scope); break;
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
+        default: break;
+      }
+    }
+  };
+  imgCollect(app.dynamic, TOP);
+
   // Stable sort each sibling list by DisplayOrder (equal/missing keeps document order).
   const blocks: CfgBlock[] = [];
   const emit = (nodes: Node[], level: number, parentId?: string) => {
@@ -328,5 +365,5 @@ export function buildDeviceConfig(
   };
   emit(roots, 0);
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca };
+  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues };
 }
