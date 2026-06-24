@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 612" font-family="'Archivo', system-ui, sans-serif">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap');
+      .title  { font-family: 'Instrument Serif', Georgia, serif; }
+      .name   { font-family: 'Archivo', system-ui, sans-serif; font-weight: 600; }
+      .mono   { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+      .aside  { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; }
+    </style>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(229,232,235,0.06)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#8d9399"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#f3a44a"/>
+    </marker>
+  </defs>
+
+  <rect width="920" height="612" fill="#090e12"/>
+  <rect width="920" height="612" fill="url(#dots)"/>
+
+  <!-- header -->
+  <text x="48" y="52" class="mono" fill="#f3a44a" font-size="11" letter-spacing="0.22em">VISIBILITY MODEL</text>
+  <text x="48" y="92" class="title" fill="#e5e8eb" font-size="32">From a setting to a byte, and what we leave alone</text>
+  <text x="48" y="118" class="name" fill="#8d9399" font-size="13" font-weight="400">A choose/when gate decides which parameters are active. Inactive branches are left untouched on the device.</text>
+
+  <!-- ============ decision flow (arrows first) ============ -->
+  <!-- values -> choose -->
+  <line x1="198" y1="200" x2="236" y2="200" stroke="#8d9399" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <!-- choose -> active (accent: the path that writes) -->
+  <path d="M 382 184 C 410 170, 414 168, 436 168" fill="none" stroke="#f3a44a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+  <!-- choose -> inactive (muted dashed: not taken) -->
+  <path d="M 382 216 C 410 232, 414 236, 436 236" fill="none" stroke="#5a6168" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <!-- active -> encode (accent) -->
+  <line x1="624" y1="168" x2="662" y2="168" stroke="#f3a44a" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+
+  <!-- active controlling values (input) -->
+  <rect x="48" y="176" width="150" height="48" rx="6" fill="#090e12"/>
+  <rect x="48" y="176" width="150" height="48" rx="6" fill="rgba(229,232,235,0.05)" stroke="#8d9399" stroke-width="1"/>
+  <text x="123" y="197" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">your settings</text>
+  <text x="123" y="212" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">constant light = OFF</text>
+
+  <!-- choose / when gate (focal) -->
+  <rect x="236" y="168" width="146" height="64" rx="6" fill="#090e12"/>
+  <rect x="236" y="168" width="146" height="64" rx="6" fill="rgba(243,164,74,0.08)" stroke="#f3a44a" stroke-width="1.2"/>
+  <text x="309" y="192" class="name" fill="#f3a44a" font-size="12.5" text-anchor="middle">choose / when</text>
+  <text x="309" y="208" class="mono" fill="#c79152" font-size="8.5" text-anchor="middle">read the controlling</text>
+  <text x="309" y="220" class="mono" fill="#c79152" font-size="8.5" text-anchor="middle">parameter, pick a branch</text>
+
+  <!-- active branch (ok) -->
+  <rect x="436" y="146" width="188" height="44" rx="6" fill="#090e12"/>
+  <rect x="436" y="146" width="188" height="44" rx="6" fill="rgba(84,197,122,0.08)" stroke="#54c57a" stroke-width="1"/>
+  <text x="530" y="165" class="name" fill="#54c57a" font-size="12" text-anchor="middle">matched branch -&gt; active</text>
+  <text x="530" y="180" class="mono" fill="#7fbf95" font-size="8.5" text-anchor="middle">params reached, value resolved</text>
+
+  <!-- inactive branch (muted dashed) -->
+  <rect x="436" y="214" width="188" height="44" rx="6" fill="#090e12"/>
+  <rect x="436" y="214" width="188" height="44" rx="6" fill="rgba(229,232,235,0.03)" stroke="#3a4248" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="530" y="233" class="name" fill="#8d9399" font-size="12" text-anchor="middle">untaken branch -&gt; inactive</text>
+  <text x="530" y="248" class="mono" fill="#6f767c" font-size="8.5" text-anchor="middle">params never reached</text>
+
+  <!-- encode -> owned bytes (step) -->
+  <rect x="662" y="146" width="162" height="44" rx="6" fill="#090e12"/>
+  <rect x="662" y="146" width="162" height="44" rx="6" fill="#13181d" stroke="#3a4248" stroke-width="1"/>
+  <text x="743" y="165" class="name" fill="#e5e8eb" font-size="12" text-anchor="middle">encode @ memory offset</text>
+  <text x="743" y="180" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">these bytes are OWNED</text>
+
+  <!-- inactive caption -->
+  <text x="662" y="233" class="mono" fill="#6f767c" font-size="9">no bytes claimed</text>
+  <text x="662" y="246" class="mono" fill="#6f767c" font-size="9">(value unknown to us)</text>
+
+  <!-- ============ resulting segment image ============ -->
+  <line x1="48" y1="296" x2="872" y2="296" stroke="rgba(229,232,235,0.10)" stroke-width="0.8"/>
+  <text x="48" y="316" class="mono" fill="#8d9399" font-size="9" letter-spacing="0.16em">THE RESULTING ABSOLUTE-SEGMENT IMAGE  ·  WHAT WE ACTUALLY WRITE TO THE DEVICE</text>
+
+  <!-- byte cells: pattern of owned (amber, written) / inactive (slate, left) / gap (dashed FF, left) -->
+  <!-- row at y=332, cell w=40, pitch 44, 16 cells from x=48 -->
+  <!-- owned -->
+  <g>
+    <!-- 0: owned -->
+    <rect x="48"  y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="68"  y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">02</text>
+    <!-- 1: owned -->
+    <rect x="92"  y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="112" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">01</text>
+    <!-- 2: inactive -->
+    <rect x="136" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/><text x="156" y="357" class="mono" fill="#6f767c" font-size="11" text-anchor="middle">2C</text>
+    <!-- 3: gap -->
+    <rect x="180" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.02)" stroke="#3a4248" stroke-width="1" stroke-dasharray="3,3"/><text x="200" y="357" class="mono" fill="#5a6168" font-size="11" text-anchor="middle">FF</text>
+    <!-- 4: owned -->
+    <rect x="224" y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="244" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">14</text>
+    <!-- 5: inactive -->
+    <rect x="268" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/><text x="288" y="357" class="mono" fill="#6f767c" font-size="11" text-anchor="middle">01</text>
+    <!-- 6: inactive -->
+    <rect x="312" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/><text x="332" y="357" class="mono" fill="#6f767c" font-size="11" text-anchor="middle">2C</text>
+    <!-- 7: gap -->
+    <rect x="356" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.02)" stroke="#3a4248" stroke-width="1" stroke-dasharray="3,3"/><text x="376" y="357" class="mono" fill="#5a6168" font-size="11" text-anchor="middle">FF</text>
+    <!-- 8: owned -->
+    <rect x="400" y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="420" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">00</text>
+    <!-- 9: owned -->
+    <rect x="444" y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="464" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">05</text>
+    <!-- 10: inactive -->
+    <rect x="488" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/><text x="508" y="357" class="mono" fill="#6f767c" font-size="11" text-anchor="middle">96</text>
+    <!-- 11: gap -->
+    <rect x="532" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.02)" stroke="#3a4248" stroke-width="1" stroke-dasharray="3,3"/><text x="552" y="357" class="mono" fill="#5a6168" font-size="11" text-anchor="middle">FF</text>
+    <!-- 12: inactive -->
+    <rect x="576" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/><text x="596" y="357" class="mono" fill="#6f767c" font-size="11" text-anchor="middle">01</text>
+    <!-- 13: owned -->
+    <rect x="620" y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="640" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">03</text>
+    <!-- 14: gap -->
+    <rect x="664" y="332" width="40" height="40" rx="4" fill="rgba(229,232,235,0.02)" stroke="#3a4248" stroke-width="1" stroke-dasharray="3,3"/><text x="684" y="357" class="mono" fill="#5a6168" font-size="11" text-anchor="middle">FF</text>
+    <!-- 15: owned -->
+    <rect x="708" y="332" width="40" height="40" rx="4" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/><text x="728" y="357" class="mono" fill="#f3a44a" font-size="11" text-anchor="middle">0A</text>
+  </g>
+
+  <!-- legend -->
+  <line x1="48" y1="404" x2="872" y2="404" stroke="rgba(229,232,235,0.10)" stroke-width="0.8"/>
+  <rect x="48" y="420" width="14" height="14" rx="3" fill="rgba(243,164,74,0.16)" stroke="#f3a44a" stroke-width="1"/>
+  <text x="70" y="431" class="name" fill="#e5e8eb" font-size="11">we write</text>
+  <text x="70" y="446" class="mono" fill="#8d9399" font-size="8.5">owned by an active parameter</text>
+
+  <rect x="300" y="420" width="14" height="14" rx="3" fill="rgba(229,232,235,0.05)" stroke="#3a4248" stroke-width="1"/>
+  <text x="322" y="431" class="name" fill="#e5e8eb" font-size="11">left as-is &#183; inactive</text>
+  <text x="322" y="446" class="mono" fill="#8d9399" font-size="8.5">untaken branch, firmware never reads it</text>
+
+  <rect x="620" y="420" width="14" height="14" rx="3" fill="rgba(229,232,235,0.02)" stroke="#3a4248" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="642" y="431" class="name" fill="#e5e8eb" font-size="11">left as-is &#183; gap</text>
+  <text x="642" y="446" class="mono" fill="#8d9399" font-size="8.5">no parameter, erased 0xFF</text>
+
+  <!-- editorial aside -->
+  <text x="48" y="500" class="aside" fill="#c79152" font-size="15">The firmware routes through the same choose gate we do.</text>
+  <text x="48" y="528" class="mono" fill="#8d9399" font-size="9.5">An untaken branch's bytes are never consulted, so whether they hold 0, 300, or leftover junk cannot change behavior.</text>
+  <text x="48" y="544" class="mono" fill="#8d9399" font-size="9.5">We write only owned bytes; everything else stays exactly as the device already holds it. That is why "can't reconstruct it" never means "flash it wrong".</text>
+</svg>
