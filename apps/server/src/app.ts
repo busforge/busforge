@@ -512,6 +512,32 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   return json(view);
 }
 
+// Choose which stored com-object links to program into the device's association
+// table. A link is flashed only when its com-object is in the active view
+// (visible under the current parameter values); every other stored link is
+// skipped. This matches ETS, which drops a hidden object's group address from
+// the device. The skipped link stays in the project (device_links) and returns
+// to the device the next time the parameters re-activate the object, so nothing
+// is lost. We deliberately do not try to tell a "hidden" link from a corrupt one
+// and block the flash on it: that distinction is not reliably computable here
+// (module com-objects use synthetic per-instance ref ids absent from the flat
+// com-object tables, and objects behind an inactive choose branch are never
+// enumerated), and the safe default for any unresolved link is to leave it
+// stored and unflashed, never to abort the whole flash. `stored` keys are
+// stripped ref ids; `numByRef` is keyed by the full `${appId}_${refId}` form.
+export function selectFlashLinks(
+  stored: Map<string, number[]>,
+  numByRef: Map<string, number>,
+  appId: string,
+): ComObjectLink[] {
+  const links: ComObjectLink[] = [];
+  for (const [refId, gaRaws] of stored) {
+    const num = numByRef.get(`${appId}_${refId}`);
+    if (num !== undefined) links.push({ comObjNum: num, gaRaws });
+  }
+  return links;
+}
+
 // Resolve a device's stored links to (comObjNum -> GAs) for flashing the group
 // tables. Com-object numbers come from the (module-resolved) config view.
 function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string): { mask: string; links: ComObjectLink[] } | null {
@@ -521,18 +547,7 @@ function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
   const numByRef = new Map<string, number>();
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
-  // Resolve com-object numbers for EVERY stored link: from the view (covers
-  // module-resolved numbers), else directly from the app (covers com-objects
-  // hidden by the current parameter values). Never drop a link silently, or the
-  // flashed association table would lose that GA assignment.
-  const links: ComObjectLink[] = [];
-  for (const [refId, gaRaws] of getDeviceLinks(db, projectId, deviceId)) {
-    const full = `${app.id}_${refId}`;
-    const direct = app.comObjects.get(app.comObjectRefs.get(full)?.refId ?? "")?.number;
-    const num = numByRef.get(full) ?? direct;
-    if (num === undefined) throw new ApiError("COMOBJ_UNRESOLVED", `cannot resolve com-object ${refId} for flashing; refusing to avoid dropping its group address`);
-    links.push({ comObjNum: num, gaRaws });
-  }
+  const links = selectFlashLinks(getDeviceLinks(db, projectId, deviceId), numByRef, app.id);
   return { mask: app.mask, links };
 }
 

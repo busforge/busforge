@@ -30,6 +30,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
+      // Sonner renders the description in its own dimmed default colour, which is
+      // barely legible on our dark popover. Pin it to the theme's muted token so
+      // every toast description stays readable in both themes.
+      toastOptions={{ classNames: { description: "!text-muted-foreground" } }}
       {...props}
     />
   )

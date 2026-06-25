@@ -57,6 +57,20 @@ function countChanged(view: DeviceConfigView): number {
   return n;
 }
 
+// How many com-objects that held a group address before a parameter edit are no
+// longer visible after it. Their links are preserved server-side and return on
+// revert, so when this is non-zero we reassure the user instead of letting the
+// rows look deleted (ETS, by contrast, drops the assignment outright).
+function hiddenAssignedCount(before: DeviceConfigView, after: DeviceConfigView): number {
+  const nowVisible = new Set<string>();
+  for (const b of after.blocks) for (const it of b.items)
+    if (it.kind === "comObject") nowVisible.add(it.comObject.refId);
+  let n = 0;
+  for (const b of before.blocks) for (const it of b.items)
+    if (it.kind === "comObject" && it.comObject.gaRaw != null && !nowVisible.has(it.comObject.refId)) n++;
+  return n;
+}
+
 const flagWords = (f: CfgComObjView["flags"], t: TFn) =>
   [f.comm && t("device.flagCommunication"), f.read && t("device.flagRead"), f.write && t("device.flagWrite"), f.transmit && t("device.flagTransmit"), f.update && t("device.flagUpdate"), f.readOnInit && t("device.flagReadOnInit")]
     .filter(Boolean).join(", ");
@@ -285,7 +299,16 @@ export function DeviceConfig() {
     return (
       <ParamRow
         key={key} param={item.param} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
-        onChange={(v) => setParam.mutate({ refId: item.param.refId, value: v }, { onError })}
+        onChange={(v) => {
+          const before = view;
+          setParam.mutate({ refId: item.param.refId, value: v }, {
+            onError,
+            onSuccess: (next) => {
+              const n = before ? hiddenAssignedCount(before, next) : 0;
+              if (n > 0) toast.info(t("device.gaHidden", { count: n }), { description: t("device.gaHiddenHint") });
+            },
+          });
+        }}
         onRevert={() => revertParam.mutate(item.param.refId, { onError })}
       />
     );

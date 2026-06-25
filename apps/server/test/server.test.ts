@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
-import { createState, handleApi, mergeLinkBaseline, type AppState } from "../src/app.ts";
+import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, type AppState } from "../src/app.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
@@ -47,6 +47,32 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
     const live = m({ A: [1], B: [2] });
     expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), false))).toEqual({ A: [1], B: [2] });
     expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), true))).toEqual({ A: [1], B: [2] });
+  });
+});
+
+describe("selectFlashLinks (ETS-parity hidden-object handling)", () => {
+  const APP = "M-0083_A-AAAA-1-0001";
+  const stored = new Map<string, number[]>([["O-0", [6]], ["O-2", [262]]]);
+
+  test("visible com-object -> flashed with its active number", () => {
+    const numByRef = new Map([[`${APP}_O-0`, 0], [`${APP}_O-2`, 2]]);
+    const links = selectFlashLinks(stored, numByRef, APP);
+    expect(links).toEqual([{ comObjNum: 0, gaRaws: [6] }, { comObjNum: 2, gaRaws: [262] }]);
+  });
+
+  test("com-object hidden by parameters -> its GA is dropped from the flash", () => {
+    // O-0 is no longer in the active view (parameter hid it); O-2 stays visible.
+    const numByRef = new Map([[`${APP}_O-2`, 2]]);
+    const links = selectFlashLinks(stored, numByRef, APP);
+    expect(links).toEqual([{ comObjNum: 2, gaRaws: [262] }]);
+  });
+
+  test("a stored link with no active com-object (hidden module instance) -> skipped, never throws", () => {
+    // Module com-objects use synthetic per-instance ref ids absent from the flat
+    // tables; a hidden one resolves to no active number. It must be skipped (its
+    // GA stays in the project), not abort the whole flash.
+    const moduleLinks = new Map<string, number[]>([["MD-1_M-1_MI-1_O-0_R-1", [6]]]);
+    expect(selectFlashLinks(moduleLinks, new Map<string, number>(), APP)).toEqual([]);
   });
 });
 
