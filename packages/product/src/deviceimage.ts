@@ -128,6 +128,13 @@ export function buildAbsoluteSegmentTargets(
 //    allocation: they are never active in our resolver, so they stay UNOWNED and the
 //    flash preserves the device's computed table rather than zeroing it.
 //  - LegacyPatchAlways params: dropped by toAppModel, so never owned (ETS patches them).
+//  - A plain top-level param that is INACTIVE and whose memory falls inside an active
+//    module instance's region: NOT owned. That byte belongs to the channel the module
+//    placed there; the top-level param is the displaced channel variant (e.g. the relay
+//    "Sammelrueckmeldung" params overlapping a channel configured as a JME blind module).
+//    ETS writes the module's value, not the inactive variant's default; owning it would
+//    push that default into the channel memory. Hardware-mapped on HMG 6T (offsets 617,
+//    1129 are the inactive "Zeit fuer zykl. Senden" param sitting in MD-12/MD-6 regions).
 // Ownership is gated on encode() ACTUALLY writing, exactly like the absolute path, so a
 // text/time/malformed value claims no bytes.
 export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: boolean[]; }
@@ -143,6 +150,30 @@ export function buildRelativeSegmentTarget(
   const seg = model.segments.find((s) => s.lsm === lsm);
   if (!seg) return null;
   const active = buildDeviceConfig(app, values, opts.lang, instances).imageValues;
+
+  // Memory span [min, max] of each module instance's placed params: the contiguous
+  // channel region the allocator assigned. A non-module param inside one of these is a
+  // displaced channel variant and must not be owned (see the doc comment).
+  const moduleSpans: { min: number; max: number }[] = [];
+  const spanByInst = new Map<string, { min: number; max: number }>();
+  for (const ref of model.refs.values()) {
+    if (!ref.id.includes("_MI-")) continue;
+    const p = model.params.get(ref.paramId);
+    if (!p || p.offset === undefined) continue;
+    // Offsets are segment-relative; only count module params in THIS segment, else a
+    // module in another LSM would pollute the span and exclude unrelated offsets here.
+    if (p.codeSegment && model.segments.find((s) => s.id === p.codeSegment)?.lsm !== lsm) continue;
+    const t = model.types.get(p.typeId);
+    const n = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
+    const key = ref.id.match(/MD-\d+_M-\d+_MI-\d+/)?.[0];
+    if (!key) continue;
+    const s = spanByInst.get(key) ?? { min: Infinity, max: -Infinity };
+    s.min = Math.min(s.min, p.offset);
+    s.max = Math.max(s.max, p.offset + n - 1);
+    spanByInst.set(key, s);
+  }
+  for (const s of spanByInst.values()) moduleSpans.push(s);
+  const inModuleRegion = (offset: number) => moduleSpans.some((s) => offset >= s.min && offset <= s.max);
 
   const img = Buffer.alloc(seg.size);
   seg.data.copy(img); // manufacturer default image (overwritten where owned)
@@ -165,7 +196,7 @@ export function buildRelativeSegmentTarget(
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
-    else if (cfgParam?.access !== "None") v = values.get(ref.id) ?? param.value;
+    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset)) v = values.get(ref.id) ?? param.value;
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;

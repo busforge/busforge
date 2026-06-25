@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig } from "../src/index.ts";
 import { buildAbsoluteSegmentImages, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
+import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
 // M-0081 is a real MV-0705 (absolute-segment) device. Its image build is hardware
@@ -269,4 +270,28 @@ test("verifyRelativeOwned checks only owned bytes; unowned drift does not fail i
   expect(verifyRelativeOwned(Buffer.from([7, 123, 9]), target)).toBe(true);
   // an owned byte differs -> fails.
   expect(verifyRelativeOwned(Buffer.from([7, 0, 8]), target)).toBe(false);
+});
+
+// A channel configured as a module replaces a top-level channel variant whose parameter
+// memory the module instance now occupies. Those displaced top-level params are inactive,
+// and writing their static default would corrupt the channel the module placed there. The
+// surgical target must NOT own them. Real Theben HMG 6T fixture (hardware-mapped: offsets
+// 617/1129 on the unit were exactly this, the inactive "Zeit fuer zykl. Senden" param inside
+// the JME channel-module region; owning its default 2 was the spurious 2-byte "drift").
+const APP = "M-0048_A-493B-21-B471";
+
+test("a top-level param displaced by an active module instance is not owned", () => {
+  const app = parseAppConfig(readRealFixture(`${APP}.xml.gz`));
+  // HMG 6 T: P-57 = 6 instantiates six MD-7 channel modules over the parameter memory.
+  const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
+  const instances = resolveModuleInstances(app, env);
+  const target = buildRelativeSegmentTarget(app, env, 4, { moduleInstances: instances })!;
+  // MD-7_M-19_MI-1 occupies bytes 74..105. The top-level relay param at offset 105
+  // ("Schaltverzoegerung der Relais") sits inside that channel region but belongs to the
+  // relay variant, inactive here; its memory is the module's, so it must stay UNOWNED.
+  expect(target.owned[105]).toBe(false);
+  // Sanity: an ACTIVE module-instance param's own byte (channel 1 P-1 at offset 74) IS owned.
+  const model = toAppModel(app, { includeUnions: true, instances });
+  const ch1 = model.params.get(model.refs.get(`${APP}_MD-7_M-19_MI-1_P-1_R-1`)!.paramId)!;
+  expect(target.owned[ch1.offset!]).toBe(true);
 });
