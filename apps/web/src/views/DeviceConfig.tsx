@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
-import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4 } from "@/lib/paramFormat.ts";
+import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "@/lib/paramFormat.ts";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -532,26 +532,25 @@ export function DeviceConfig() {
 
 function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; onChange: (value: string) => void; onRevert: () => void }) {
   const { t } = useTranslation();
-  // For a seconds-based TypeTime the input holds the hh:mm:ss text; for every other
-  // control `local` is the raw value string.
+  // The displayed string for the current value: hh:mm:ss for a seconds-based TypeTime,
+  // a plain decimal for a TypeFloat (ETS stores those in scientific notation), else raw.
   const isDuration = param.control === "time" && isSecondsUnit(param.unit);
-  const [local, setLocal] = useState(() => (isDuration ? formatDuration(Number(param.value) || 0) : param.value));
-  useEffect(() => setLocal(isDuration ? formatDuration(Number(param.value) || 0) : param.value), [param.value, isDuration]);
+  const display = (v: string) => (isDuration ? formatDuration(Number(v) || 0) : param.float ? normalizeFloat(v) : v);
+  const [local, setLocal] = useState(() => display(param.value));
+  useEffect(() => setLocal(display(param.value)), [param.value, isDuration, param.float]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Read-only params are informational displays (e.g. "Info: ..."); render them
   // as plain text instead of disabled form controls, which read as broken.
   const readOnlyText = param.control === "enum"
     ? (param.options?.find((o) => String(o.value) === param.value)?.text ?? param.value)
-    : isDuration
-    ? formatDuration(Number(param.value) || 0)
-    : param.value;
+    : display(param.value);
 
   // Commit a typed number: the native input does not enforce min/max on typed
   // input, so clamp to the range and snap to the ETS step grid (anchored at min)
   // before persisting. Empty/non-numeric input reverts to the current value.
   const commitNumber = () => {
     const raw = local.trim();
-    if (raw === "" || Number.isNaN(Number(raw))) { setLocal(param.value); return; }
+    if (raw === "" || Number.isNaN(Number(raw))) { setLocal(display(param.value)); return; }
     let n = Number(raw);
     const base = param.min ?? 0;
     if (param.step && param.step > 1) n = base + Math.round((n - base) / param.step) * param.step;
@@ -559,7 +558,10 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
     if (param.max !== undefined) n = Math.min(param.max, n);
     const s = String(n);
     setLocal(s);
-    if (s !== param.value) onChange(s);
+    // Compare numerically for floats: the stored default is scientific notation
+    // ("1.5E+001"), so a string compare would mark an unchanged float as drifted on blur.
+    const same = param.float ? Number(s) === Number(param.value) : s === param.value;
+    if (!same) onChange(s);
   };
 
   // Commit an hh:mm:ss duration: parse to seconds, clamp to the raw min/max, store the
@@ -630,7 +632,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           </span>
         ) : param.control === "number" ? (
           <Input
-            type="number" value={local} min={param.min} max={param.max} step={param.step}
+            type="number" value={local} min={param.min} max={param.max} step={param.float ? "any" : param.step}
             onChange={(e) => setLocal(e.target.value)}
             onBlur={commitNumber}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}

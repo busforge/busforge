@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4 } from "./paramFormat.ts";
+import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "./paramFormat.ts";
 
 describe("isSecondsUnit", () => {
   test("treats undefined and Seconds as second-based (duration-editable)", () => {
@@ -61,5 +61,20 @@ describe("isValidIPv4", () => {
     expect(isValidIPv4("1.2.3.4.5")).toBe(false);
     expect(isValidIPv4("a.b.c.d")).toBe(false);
     expect(isValidIPv4("")).toBe(false);
+  });
+});
+
+describe("normalizeFloat", () => {
+  test("renders ETS scientific-notation floats as plain decimals", () => {
+    expect(normalizeFloat("1.500000000000000E+001")).toBe("15");
+    expect(normalizeFloat("2.150000000000000E+001")).toBe("21.5");
+    expect(normalizeFloat("0.000000000000000E+000")).toBe("0");
+    expect(normalizeFloat("-3.200000000000000E+004")).toBe("-32000");
+  });
+  test("leaves plain numbers unchanged and passes through empty/non-numeric", () => {
+    expect(normalizeFloat("15")).toBe("15");
+    expect(normalizeFloat("21.5")).toBe("21.5");
+    expect(normalizeFloat("")).toBe("");
+    expect(normalizeFloat("n/a")).toBe("n/a");
   });
 });

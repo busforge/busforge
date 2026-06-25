@@ -9,6 +9,15 @@ export function getDeviceParams(db: Database, projectId: string, deviceId: strin
   return new Map(rows.map((r) => [r.refId, r.value]));
 }
 
+// The programmed baseline values (set at import/flash). Used to distinguish a real
+// edit from a textual-only difference (e.g. a float stored in scientific notation in
+// the baseline vs the UI's canonical decimal).
+export function getDeviceParamBase(db: Database, projectId: string, deviceId: string): Map<string, string> {
+  const rows = db.query("SELECT param_ref_id AS refId, value FROM device_param_base WHERE project_id = ? AND device_id = ?")
+    .all(projectId, deviceId) as { refId: string; value: string }[];
+  return new Map(rows.map((r) => [r.refId, r.value]));
+}
+
 export function setDeviceParam(db: Database, projectId: string, deviceId: string, refId: string, value: string): void {
   db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)")
     .run(projectId, deviceId, refId, value);

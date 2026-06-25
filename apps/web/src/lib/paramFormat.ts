@@ -30,3 +30,10 @@ export function isValidIPv4(s: string): boolean {
   const parts = s.trim().split(".");
   return parts.length === 4 && parts.every((p) => /^\d+$/.test(p) && Number(p) <= 255);
 }
+
+// ETS stores float defaults in scientific notation (e.g. "1.500000000000000E+001").
+// Render them as a plain decimal ("15") for editing; leave non-numeric/empty as-is.
+export function normalizeFloat(v: string): string {
+  const n = Number(v);
+  return v.trim() !== "" && Number.isFinite(n) ? String(n) : v;
+}

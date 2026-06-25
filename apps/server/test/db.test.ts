@@ -7,7 +7,7 @@ import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -211,6 +211,25 @@ describe("projects", () => {
     revertDeviceLink(db, "p1", dev, "O-1_R-1");
     expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual([9]);
     expect(getDeviceChangedKeys(db, "p1", dev).links.size).toBe(0);
+  });
+
+  test("getDeviceParamBase exposes the baseline; a float differs from its canonical form only textually", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    const ref = "M-X_A-1_P-9_R-1";
+    // ETS stores a float baseline in scientific notation; the UI writes the canonical
+    // decimal. The string-based change detection flags this as drift, which the config
+    // view suppresses by comparing the baseline (from getDeviceParamBase) numerically.
+    const base = new Map(getDeviceParams(db, "p1", dev));
+    base.set(ref, "1.500000000000000E+001");
+    replaceParamBase(db, "p1", dev, base);
+    setDeviceParam(db, "p1", dev, ref, "15");
+
+    expect(getDeviceParamBase(db, "p1", dev).get(ref)).toBe("1.500000000000000E+001");
+    // string compare flags it changed; numeric compare (what the config view does) does not
+    expect(getDeviceChangedKeys(db, "p1", dev).params.has(ref)).toBe(true);
+    expect(Number("15")).toBe(Number("1.500000000000000E+001"));
   });
 
   test("device searchText indexes text params, skips numbers", () => {

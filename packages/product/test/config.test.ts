@@ -297,10 +297,11 @@ describe("localization", () => {
     expect(unknown).toMatchObject({ kind: "unsupported", label: "FancyVendorWidget" });
     // Types we cannot edit keep a row with control "unsupported" and a label.
     const byName = (n: string) => items.find((i) => i.kind === "param" && i.param.name === n) as { param: CfgParamView };
-    // TypeFloat is still unsupported (editable UI not built yet).
-    expect(byName("Temperature").param).toMatchObject({ control: "unsupported", typeLabel: "Float" });
-    // Supported types render normally.
-    expect(byName("Level").param.control).toBe("number");
+    // TypeFloat is editable: a number control flagged float (decimal entry, step="any").
+    expect(byName("Temperature").param).toMatchObject({ control: "number", float: true, value: "21" });
+    // Supported integer types render as a plain number control (no float flag).
+    expect(byName("Level").param).toMatchObject({ control: "number", value: "5" });
+    expect(byName("Level").param.float).toBeUndefined();
     // TypeTime is editable: a "time" control that carries the Unit (seconds) for the
     // hh:mm:ss frontend; the value stays the raw integer.
     expect(byName("Switch time").param).toMatchObject({ control: "time", unit: "Seconds", value: "0" });

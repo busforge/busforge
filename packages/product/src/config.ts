@@ -39,6 +39,7 @@ export interface CfgParamView {
   step?: number; // number spinner step (ETS Increment)
   slider?: boolean; // ETS UIHint="Slider": render a range slider (needs min+max)
   unit?: string; // for control "time": the TypeTime Unit (e.g. "Seconds") the raw value counts
+  float?: boolean; // control "number" backing a TypeFloat: accept decimal input (step="any")
   readOnly?: boolean;
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
@@ -209,6 +210,10 @@ export function buildDeviceConfig(
       control = "enum";
       options = type.enums.map((e) => ({ value: e.value, text: tr(e.id, "Text", e.text) }));
     } else if (type?.base === "Number") control = "number";
+    // TypeFloat (KNX 2-byte DPT-9 / 4-byte DPT-14): a decimal number. Reuse the number
+    // control but allow decimal entry (frontend uses step="any"); the image codec already
+    // encodes it as a float. Clamp to the type's min/max like any number.
+    else if (type?.base === "Float") control = "number";
     else if (type?.base === "Text") control = "text";
     // TypeColor stores an #RRGGBB hex. Only the RGB space maps directly to the
     // native sRGB colour picker; HSV (and any other space) stays unsupported
@@ -231,7 +236,10 @@ export function buildDeviceConfig(
     const step = control === "number" ? type?.increment : undefined;
     const slider = control === "number" && type?.uiHint === "Slider" && type.min !== undefined && type.max !== undefined;
     const unit = control === "time" ? type?.unit : undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, readOnly: access === "Read" || control === "display", defaultValue, typeLabel } };
+    // A float number accepts decimals; the frontend uses step="any" so the browser does
+    // not reject a fractional value against an integer step grid.
+    const float = type?.base === "Float" || undefined;
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display", defaultValue, typeLabel } };
   };
 
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {

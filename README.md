@@ -105,9 +105,9 @@ device to defaults. Full detail and roadmap: [`docs/ets-coverage.md`](docs/ets-c
 
 | Type | Status |
 |---|---|
-| Enumeration (TypeRestriction) / Number / Text / Color (RGB) | ✅ editable |
+| Enumeration (TypeRestriction) / Number / Float / Text / Color (RGB) | ✅ editable |
 | Time (hh:mm:ss duration for second-based units) / IP address (validated dotted quad) | ✅ editable |
-| Float / Binary | 🔶 shown read-only with a "not supported yet" badge |
+| Color (HSV) / Picture | 🔶 shown read-only with a "not supported yet" badge |
 | TypeNone (display) | ✅ named ones shown as a read-only label; empty spacers omitted |
 
 **Programming, by device memory / load model**

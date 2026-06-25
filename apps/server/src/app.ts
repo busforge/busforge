@@ -15,7 +15,7 @@ import { exportProject } from "./db/exportProject.ts";
 import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
@@ -357,9 +357,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const value = String(body.value);
       // If the value equals the parameter's default, drop the override instead of
       // storing it, so restoring the default clears the "changed" marker (the
-      // sparse baseline has no row for default-valued params).
-      const def = resolveParamDefault(state, id, deviceId, body.paramRefId);
-      if (def !== undefined && value === def) deleteDeviceParam(db, id, deviceId, body.paramRefId);
+      // sparse baseline has no row for default-valued params). A float default is
+      // stored in scientific notation; compare it numerically so the canonical decimal
+      // the UI sends still collapses to it.
+      const pv = resolveParamForEdit(state, id, deviceId, body.paramRefId);
+      const def = pv?.defaultValue;
+      const isDefault = def !== undefined && (value === def || (pv?.float === true && Number(value) === Number(def)));
+      if (isDefault) deleteDeviceParam(db, id, deviceId, body.paramRefId);
       else setDeviceParam(db, id, deviceId, body.paramRefId, value);
       return deviceConfig(state, id, deviceId, body.lang);
     }
@@ -571,11 +575,11 @@ function loadApp(state: AppState, projectId: string, deviceId: string): AppConfi
 
 // The default value of a parameter (ref/param default, ignoring user overrides),
 // resolved from the built config view so module-instance params work too.
-function resolveParamDefault(state: AppState, projectId: string, deviceId: string, refId: string): string | undefined {
+function resolveParamForEdit(state: AppState, projectId: string, deviceId: string, refId: string): { defaultValue?: string; float?: boolean } | undefined {
   const app = loadApp(state, projectId, deviceId);
   if (!app) return undefined;
   const view = buildDeviceConfig(app, getDeviceParams(state.db, projectId, deviceId), undefined, getDeviceModules(state.db, projectId, deviceId));
-  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param" && it.param.refId === refId) return it.param.defaultValue;
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param" && it.param.refId === refId) return { defaultValue: it.param.defaultValue, float: it.param.float };
   return undefined;
 }
 
@@ -591,9 +595,20 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   if (module) view.dca = { ...(view.dca ?? { hint: "" }), module };
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
+  // For float params the override/baseline strings can differ purely in form (the UI
+  // writes a canonical decimal, ETS stored scientific notation), which the string-based
+  // change detection flags as drift. Compare those numerically so an unchanged float is
+  // not shown as edited.
+  const overrides = getDeviceParams(db, projectId, deviceId);
+  const baseline = getDeviceParamBase(db, projectId, deviceId);
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind === "param") {
-      it.param.changed = changed.params.has(it.param.refId);
+      let isChanged = changed.params.has(it.param.refId);
+      if (isChanged && it.param.float) {
+        const o = overrides.get(it.param.refId), bv = baseline.get(it.param.refId);
+        if (o !== undefined && bv !== undefined && Number(o) === Number(bv)) isChanged = false;
+      }
+      it.param.changed = isChanged;
     } else if (it.kind === "comObject") {
       const key = it.comObject.refId.slice(app.id.length + 1);
       it.comObject.gaRaw = links.get(key)?.[0] ?? null;
