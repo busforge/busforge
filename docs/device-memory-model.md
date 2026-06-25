@@ -93,6 +93,33 @@ any parameter the integer codec cannot represent (> 6 bytes wide) and preserves 
 bytes. Small `Access="None"` members that DO carry a real default (e.g. a 2-bit hidden
 behaviour setting) are still owned, because ETS writes their default like any other.
 
+### `<Assign>` targets are written, even when placed only in an inactive branch
+
+An `<Assign TargetParamRefRef="T" SourceParamRefRef="S">` sets parameter T's value to S's.
+ETS writes T's memory with that value. A common manufacturer pattern assigns a hidden
+`Access="None"` parameter from a visible one in the ACTIVE branch and places T's own
+`<ParameterRef>` only in a different (inactive) branch, e.g. Steinel M-0083:
+
+```
+<choose ParamRefId="P-38">
+  <when test="0"> place P-1; <Assign Target="P-26" Source="P-1"/> </when>   (active: P-38=0)
+  <when test="1"> ... place P-26 ... </when>                                (inactive)
+</choose>
+```
+
+The image set (`imageValues`) is built by visiting reached `<ParameterRef>` nodes, so an
+assigned-but-not-placed target would be missed and its byte left at the default. It is
+written by ETS, so `buildDeviceConfig` records each `<Assign>` target's value in `imageValues`
+directly (non-memory Merker targets have no offset and are ignored by the image build).
+Hardware-confirmed on 1.1.56: `P-26` (SendFallingOnInit) assigned from `P-1`
+(SendRisingOnInit) and written to bit 4.
+
+One exception keeps the union-overlap invariant: a `<Union>`-member assign target is NOT
+recorded. Union branches share one region and the image build owns a union byte only for the
+actively-placed branch; injecting an assigned alternative would let two members claim the
+same byte (the relative builder iterates refs unordered). The active branch's own placement
+still writes it. M-0083 has ten such union-member assigns, all left to their active branch.
+
 ## Support matrix (honest)
 
 | Capability | State | Proven on |
@@ -104,7 +131,7 @@ behaviour setting) are still owned, because ETS writes their default like any ot
 | **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
 | **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
-| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **27/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 5: absolute-segment union placement (1.1.x, 1.1.56), an MV-0701 build gap, and 2 single-byte stale-device drifts (1.1.x, 1.1.x). The relative module-internal union case is fixed: see "ETS evaluates every matching when" below. See [`drift-forensics.md`](drift-forensics.md) |
+| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps: an MV-0701 build wiring gap and 3 single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |

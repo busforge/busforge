@@ -151,6 +151,63 @@ describe("choose evaluates all matching whens (overlapping tests)", () => {
   });
 });
 
+// ETS writes an <Assign> target's value to its memory even when the target's own
+// ParameterRef is only placed in an inactive branch. A hidden Access="None" param assigned
+// from a visible one in the ACTIVE branch must therefore land in imageValues (the image
+// set), not only imgEnv. Hardware-confirmed on 1.1.56 (Steinel M-0083).
+describe("assign target lands in imageValues (written to memory)", () => {
+  const assignXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-8" ApplicationNumber="8" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Assign" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-8_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-8_P-1" Name="Src" ParameterType="M-TEST_A-8_PT-N" Text="Src" Value="1"><Memory CodeSegment="M-TEST_A-8_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-8_P-2" Name="Hidden" ParameterType="M-TEST_A-8_PT-N" Access="None" Text="Hidden" Value="9"><Memory CodeSegment="M-TEST_A-8_RS-4" Offset="1" BitOffset="0" /></Parameter>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-8_P-1_R-1" RefId="M-TEST_A-8_P-1" />
+      <ParameterRef Id="M-TEST_A-8_P-2_R-2" RefId="M-TEST_A-8_P-2" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-8_PB-1" Name="m" Text="Main">
+      <ParameterRefRef RefId="M-TEST_A-8_P-1_R-1" />
+      <choose ParamRefId="M-TEST_A-8_P-1_R-1">
+        <when test="1"><Assign TargetParamRefRef="M-TEST_A-8_P-2_R-2" SourceParamRefRef="M-TEST_A-8_P-1_R-1" /></when>
+        <when test="0"><ParameterRefRef RefId="M-TEST_A-8_P-2_R-2" /></when>
+      </choose>
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const assignApp = parseAppConfig(assignXml);
+
+  test("Src=1: P-2 is assigned from P-1 (not placed) yet is written with that value", () => {
+    const v = buildDeviceConfig(assignApp, new Map([["M-TEST_A-8_P-1_R-1", "1"]]));
+    // P-2's own ref sits in the inactive when test="0"; only the Assign in when test="1" runs.
+    expect(v.imageValues.get("M-TEST_A-8_P-2_R-2")).toBe("1");
+    // It stays hidden from the UI (Access="None").
+    expect(params(v).map((p) => p.param.name)).toEqual(["Src"]);
+  });
+
+  // A UNION-member assign target is NOT injected into imageValues: union branches overlap one
+  // byte and only the actively-placed branch may own it, else two members would claim it.
+  const unionAssignXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-7" ApplicationNumber="7" ApplicationVersion="1" MaskVersion="MV-07B0" Name="UA" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-7_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-7_P-1" Name="Src" ParameterType="M-TEST_A-7_PT-N" Text="Src" Value="1"><Memory CodeSegment="M-TEST_A-7_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Union SizeInBit="8"><Memory CodeSegment="M-TEST_A-7_RS-4" Offset="1" BitOffset="0" />
+        <Parameter Id="M-TEST_A-7_P-U" ParameterType="M-TEST_A-7_PT-N" Access="None" Text="U" Value="0" Offset="0" BitOffset="0" /></Union>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-7_P-1_R-1" RefId="M-TEST_A-7_P-1" />
+      <ParameterRef Id="M-TEST_A-7_P-U_R-U" RefId="M-TEST_A-7_P-U" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-7_PB-1" Name="m" Text="Main">
+      <ParameterRefRef RefId="M-TEST_A-7_P-1_R-1" />
+      <Assign TargetParamRefRef="M-TEST_A-7_P-U_R-U" SourceParamRefRef="M-TEST_A-7_P-1_R-1" />
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const unionAssignApp = parseAppConfig(unionAssignXml);
+
+  test("a union-member assign target is NOT recorded in imageValues (overlap-safe)", () => {
+    const v = buildDeviceConfig(unionAssignApp, new Map());
+    expect(v.imageValues.has("M-TEST_A-7_P-U_R-U")).toBe(false);
+  });
+});
+
 describe("module instantiation", () => {
   test("parses module defs and detects modules", () => {
     expect(moduleApp.hasModules).toBe(true);

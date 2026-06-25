@@ -379,7 +379,24 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
-        case "assign": imgEnv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, imgEnv) ?? "" : "")); break;
+        // An <Assign> sets the target parameter's value, and ETS writes that value to the
+        // target's memory even if the target's own ParameterRef is only placed in an
+        // inactive branch (a common pattern: assign a hidden Access="None" param from a
+        // visible one in branch A, place it in branch B). So the assigned value belongs in
+        // imageValues, not just imgEnv. Non-memory targets (Merker) have no offset and are
+        // ignored by the image build. Hardware-confirmed on 1.1.56 (Steinel M-0083): P-26
+        // SendFallingOnInit is assigned from P-1 SendRisingOnInit and written to bit 4.
+        // A UNION-member target is NOT recorded: union branches overlap one region and the
+        // image build owns a union byte only for the actively-placed branch, so injecting an
+        // assigned alternative would let two members claim the same byte (the relative
+        // builder iterates refs unordered). The active branch's own placement still writes it.
+        case "assign": {
+          const tid = scope.rewrite(n.target);
+          const av = n.value ?? (n.source ? resolve(n.source, scope, imgEnv) ?? "" : "");
+          imgEnv.set(tid, av);
+          if (!app.params.get(app.refs.get(n.target)?.paramId ?? "")?.union) imageValues.set(tid, av);
+          break;
+        }
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope, imgEnv)) imgCollect(w.children, scope); break; }
         case "container": case "block": imgCollect(n.children, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
