@@ -167,6 +167,8 @@ docs/
   ui.md             current architecture and features (start here)
   findings.md       the protocol knowledge: formats, load procedure, gotchas
   ets-coverage.md   ETS parity tracking and roadmap
+  device-memory-model.md   segment families, the owned-byte flash, support matrix
+  drift-forensics.md   how to trace a byte-level diff to its cause (bug vs drift vs preserve)
   dca-plugin-architecture.md   how native DCA-replacement plugins are wired
   design-system.md  brand and visual language (also the diagram style handoff)
   storage-and-snapshots-design.md   DB, catalog and snapshot model

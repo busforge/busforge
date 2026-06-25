@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" font-family="'Archivo', system-ui, sans-serif">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap');
+      .title  { font-family: 'Instrument Serif', Georgia, serif; }
+      .name   { font-family: 'Archivo', system-ui, sans-serif; font-weight: 600; }
+      .mono   { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+      .aside  { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; }
+    </style>
+    <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="0.9" fill="rgba(229,232,235,0.06)"/>
+    </pattern>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#8d9399"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#f3a44a"/>
+    </marker>
+    <marker id="arrow-coral" markerWidth="9" markerHeight="7" refX="7" refY="3.5" orient="auto">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#db6b4f"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="600" fill="#090e12"/>
+  <rect width="960" height="600" fill="url(#dots)"/>
+
+  <!-- header -->
+  <text x="48" y="52" class="mono" fill="#f3a44a" font-size="11" letter-spacing="0.22em">DRIFT FORENSICS</text>
+  <text x="48" y="92" class="title" fill="#e5e8eb" font-size="32">A byte differs. Where does it come from?</text>
+  <text x="48" y="118" class="name" fill="#8d9399" font-size="13" font-weight="400">Map the byte to its parameter, classify it, then own it or leave it. A diff is a question, not a verdict.</text>
+
+  <!-- ===== top flow ===== -->
+  <line x1="244" y1="184" x2="284" y2="184" stroke="#8d9399" stroke-width="1.4" marker-end="url(#arrow)"/>
+  <line x1="484" y1="184" x2="524" y2="184" stroke="#8d9399" stroke-width="1.4" marker-end="url(#arrow)"/>
+
+  <rect x="48" y="156" width="196" height="56" rx="6" fill="#090e12"/>
+  <rect x="48" y="156" width="196" height="56" rx="6" fill="rgba(229,232,235,0.05)" stroke="#8d9399" stroke-width="1"/>
+  <text x="146" y="180" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">a diff byte</text>
+  <text x="146" y="196" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">offset N · device X vs built Y</text>
+
+  <rect x="284" y="156" width="200" height="56" rx="6" fill="#090e12"/>
+  <rect x="284" y="156" width="200" height="56" rx="6" fill="rgba(229,232,235,0.05)" stroke="#8d9399" stroke-width="1"/>
+  <text x="384" y="180" class="name" fill="#e5e8eb" font-size="12.5" text-anchor="middle">map to parameter(s)</text>
+  <text x="384" y="196" class="mono" fill="#8d9399" font-size="8.5" text-anchor="middle">offset+bit -&gt; ref, name, type</text>
+
+  <rect x="524" y="156" width="200" height="56" rx="6" fill="#090e12"/>
+  <rect x="524" y="156" width="200" height="56" rx="6" fill="rgba(243,164,74,0.08)" stroke="#f3a44a" stroke-width="1.2"/>
+  <text x="624" y="180" class="name" fill="#f3a44a" font-size="12.5" text-anchor="middle">classify the field</text>
+  <text x="624" y="196" class="mono" fill="#c79152" font-size="8.5" text-anchor="middle">active? access? union? module?</text>
+
+  <!-- fan to the four verdicts -->
+  <path d="M 600 212 C 380 250, 200 250, 150 292" fill="none" stroke="#f3a44a" stroke-width="1.3" marker-end="url(#arrow-amber)"/>
+  <path d="M 615 212 C 470 252, 400 256, 372 292" fill="none" stroke="#f3a44a" stroke-width="1.3" marker-end="url(#arrow-amber)"/>
+  <path d="M 636 212 C 560 252, 580 256, 591 292" fill="none" stroke="#8d9399" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <path d="M 660 212 C 780 250, 800 252, 813 292" fill="none" stroke="#db6b4f" stroke-width="1.3" marker-end="url(#arrow-coral)"/>
+
+  <!-- ===== four verdict cards (y=300, h=206) ===== -->
+  <!-- card 1: active -> owned -->
+  <rect x="48" y="300" width="198" height="206" rx="7" fill="#090e12"/>
+  <rect x="48" y="300" width="198" height="206" rx="7" fill="rgba(243,164,74,0.10)" stroke="#f3a44a" stroke-width="1.1"/>
+  <text x="64" y="324" class="mono" fill="#f3a44a" font-size="8.5" letter-spacing="0.14em">OWNED · WE WRITE</text>
+  <text x="64" y="350" class="name" fill="#e5e8eb" font-size="13.5">Active parameter</text>
+  <text x="64" y="372" class="mono" fill="#8d9399" font-size="9">in imageValues, the</text>
+  <text x="64" y="385" class="mono" fill="#8d9399" font-size="9">resolved active set</text>
+  <text x="64" y="408" class="mono" fill="#c0c5ca" font-size="9">our value is</text>
+  <text x="64" y="421" class="mono" fill="#c0c5ca" font-size="9">authoritative</text>
+  <text x="64" y="452" class="mono" fill="#8d9399" font-size="9">mismatch =</text>
+  <text x="64" y="465" class="mono" fill="#8d9399" font-size="9">real config change,</text>
+  <text x="64" y="478" class="mono" fill="#8d9399" font-size="9">or a codec bug to fix</text>
+
+  <!-- card 2: visible + inactive -> owned -->
+  <rect x="270" y="300" width="198" height="206" rx="7" fill="#090e12"/>
+  <rect x="270" y="300" width="198" height="206" rx="7" fill="rgba(243,164,74,0.10)" stroke="#f3a44a" stroke-width="1.1"/>
+  <text x="286" y="324" class="mono" fill="#f3a44a" font-size="8.5" letter-spacing="0.14em">OWNED · WE WRITE</text>
+  <text x="286" y="350" class="name" fill="#e5e8eb" font-size="13.5">Visible + inactive</text>
+  <text x="286" y="372" class="mono" fill="#8d9399" font-size="9">not in a module region</text>
+  <text x="286" y="395" class="mono" fill="#c0c5ca" font-size="9">ETS writes inactive</text>
+  <text x="286" y="408" class="mono" fill="#c0c5ca" font-size="9">defaults too</text>
+  <text x="286" y="421" class="mono" fill="#7fbf95" font-size="9">(PSU: 46/46 hold default)</text>
+  <text x="286" y="452" class="mono" fill="#8d9399" font-size="9">mismatch =</text>
+  <text x="286" y="465" class="mono" fill="#8d9399" font-size="9">stale device drift,</text>
+  <text x="286" y="478" class="mono" fill="#8d9399" font-size="9">re-flash to settle</text>
+
+  <!-- card 3: access=none computed -> preserve -->
+  <rect x="492" y="300" width="198" height="206" rx="7" fill="#090e12"/>
+  <rect x="492" y="300" width="198" height="206" rx="7" fill="rgba(229,232,235,0.04)" stroke="#3a4248" stroke-width="1"/>
+  <text x="508" y="324" class="mono" fill="#8d9399" font-size="8.5" letter-spacing="0.14em">PRESERVE · LEAVE</text>
+  <text x="508" y="350" class="name" fill="#e5e8eb" font-size="13.5">Access=None,</text>
+  <text x="508" y="367" class="name" fill="#e5e8eb" font-size="13.5">computed</text>
+  <text x="508" y="389" class="mono" fill="#8d9399" font-size="9">Objektlink / allocation</text>
+  <text x="508" y="402" class="mono" fill="#8d9399" font-size="9">tables ETS computes</text>
+  <text x="508" y="415" class="mono" fill="#8d9399" font-size="9">from the channel set</text>
+  <text x="508" y="446" class="mono" fill="#c0c5ca" font-size="9">we cannot reproduce</text>
+  <text x="508" y="459" class="mono" fill="#c0c5ca" font-size="9">them -&gt; keep the</text>
+  <text x="508" y="472" class="mono" fill="#c0c5ca" font-size="9">device's bytes</text>
+
+  <!-- card 4: displaced by module -> preserve (the bug) -->
+  <rect x="714" y="300" width="198" height="206" rx="7" fill="#090e12"/>
+  <rect x="714" y="300" width="198" height="206" rx="7" fill="rgba(219,107,79,0.10)" stroke="#db6b4f" stroke-width="1.2"/>
+  <text x="730" y="324" class="mono" fill="#db6b4f" font-size="8.5" letter-spacing="0.14em">PRESERVE · LEAVE</text>
+  <text x="730" y="350" class="name" fill="#e5e8eb" font-size="13.5">Inside an active</text>
+  <text x="730" y="367" class="name" fill="#e5e8eb" font-size="13.5">module region</text>
+  <text x="730" y="389" class="mono" fill="#8d9399" font-size="9">displaced channel variant:</text>
+  <text x="730" y="402" class="mono" fill="#8d9399" font-size="9">the module owns this</text>
+  <text x="730" y="415" class="mono" fill="#8d9399" font-size="9">memory, not us</text>
+  <text x="730" y="446" class="mono" fill="#e0a08f" font-size="9">writing our default</text>
+  <text x="730" y="459" class="mono" fill="#e0a08f" font-size="9">corrupts the channel</text>
+  <text x="730" y="478" class="mono" fill="#db6b4f" font-size="9">(HMG 6T 617 / 1129 bug)</text>
+
+  <!-- editorial aside -->
+  <text x="48" y="552" class="aside" fill="#c79152" font-size="15">Owned vs preserve is the whole game.</text>
+  <text x="48" y="578" class="mono" fill="#8d9399" font-size="9.5">Trace every diff byte to the side of that line it belongs on. The boundary moves only when a clean reference device proves it should.</text>
+</svg>

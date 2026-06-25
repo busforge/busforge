@@ -65,6 +65,12 @@ is safe, because the ETS-computed regions are preserved. Initial commissioning o
 module device from scratch still needs ETS to lay down the object-link allocation once. The
 post-flash verify compares only owned bytes, since a reload can recompute the unowned ones.
 
+Getting the owned set right is subtle: a top-level param whose memory a module instance now
+occupies is a displaced channel variant and must NOT be owned (writing its default would
+corrupt the channel). For the repeatable method that finds these, see
+[`drift-forensics.md`](drift-forensics.md): trace every byte-level diff to its parameter,
+classify it, and decide own-vs-preserve before flashing.
+
 ## Support matrix (honest)
 
 | Capability | State | Proven on |
