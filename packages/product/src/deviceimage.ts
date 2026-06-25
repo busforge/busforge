@@ -184,6 +184,15 @@ export function buildRelativeSegmentTarget(
     if (!param || param.offset === undefined) continue;
     if (param.codeSegment && model.segments.find((s) => s.id === param.codeSegment)?.lsm !== lsm) continue;
     const cfgParam = app.params.get(ref.paramId);
+    // A parameter the integer codec cannot represent (more than 6 bytes wide) is an
+    // ETS-COMPUTED table, not a static default: the per-channel "Objektlink" link unions
+    // are hundreds of bits. We cannot reproduce them, so never own them; the device byte is
+    // preserved. This guard matters because ETS evaluates EVERY matching <when>, so an
+    // overlapping active branch can now reach such a union member (encode() would otherwise
+    // throw on it). Small Access="None" members with a real default (e.g. a 2-bit hidden
+    // behaviour setting) are NOT computed and stay ownable below. Threshold mirrors encode().
+    const wType = model.types.get(param.typeId);
+    if (wType && Number.isFinite(wType.sizeInBit) && (wType.sizeInBit >= 8 ? wType.sizeInBit >> 3 : 1) > 6) continue;
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.

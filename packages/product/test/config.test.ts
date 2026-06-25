@@ -106,6 +106,51 @@ describe("buildDeviceConfig visibility", () => {
   });
 });
 
+// ETS evaluates EVERY matching <when> of a <choose>, not just the first. A single choose
+// can drive two independent overlapping placements (the Theben RMG 8 S contact block does
+// this for a param + a union member sharing one byte). First-match-wins left the second
+// placement unwritten; this is the hardware-confirmed fix. See config.ts selectWhens.
+describe("choose evaluates all matching whens (overlapping tests)", () => {
+  const overlapXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-9" ApplicationNumber="9" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Overlap" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-9_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-9_P-1" Name="Sel" ParameterType="M-TEST_A-9_PT-N" Text="Sel" Value="1"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-9_P-2" Name="A" ParameterType="M-TEST_A-9_PT-N" Text="A" Value="0"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="1" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-9_P-3" Name="B" ParameterType="M-TEST_A-9_PT-N" Text="B" Value="0"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="2" BitOffset="0" /></Parameter>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-9_P-1_R-1" RefId="M-TEST_A-9_P-1" />
+      <ParameterRef Id="M-TEST_A-9_P-2_R-2" RefId="M-TEST_A-9_P-2" />
+      <ParameterRef Id="M-TEST_A-9_P-3_R-3" RefId="M-TEST_A-9_P-3" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-9_PB-1" Name="m" Text="Main">
+      <choose ParamRefId="M-TEST_A-9_P-1_R-1">
+        <when test="0 1"><ParameterRefRef RefId="M-TEST_A-9_P-2_R-2" /></when>
+        <when test="1 2"><ParameterRefRef RefId="M-TEST_A-9_P-3_R-3" /></when>
+      </choose>
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const overlapApp = parseAppConfig(overlapXml);
+
+  test("Sel=1 matches both overlapping whens: A and B are both placed", () => {
+    const v = buildDeviceConfig(overlapApp, new Map([["M-TEST_A-9_P-1_R-1", "1"]]));
+    expect(params(v).map((p) => p.param.name)).toEqual(["A", "B"]);
+    expect(v.imageValues.has("M-TEST_A-9_P-2_R-2")).toBe(true);
+    expect(v.imageValues.has("M-TEST_A-9_P-3_R-3")).toBe(true);
+  });
+
+  test("Sel=0 matches only the first when: A placed, B not", () => {
+    const v = buildDeviceConfig(overlapApp, new Map([["M-TEST_A-9_P-1_R-1", "0"]]));
+    expect(params(v).map((p) => p.param.name)).toEqual(["A"]);
+    expect(v.imageValues.has("M-TEST_A-9_P-3_R-3")).toBe(false);
+  });
+
+  test("Sel=2 matches only the second when: B placed, A not", () => {
+    const v = buildDeviceConfig(overlapApp, new Map([["M-TEST_A-9_P-1_R-1", "2"]]));
+    expect(params(v).map((p) => p.param.name)).toEqual(["B"]);
+    expect(v.imageValues.has("M-TEST_A-9_P-2_R-2")).toBe(false);
+  });
+});
+
 describe("module instantiation", () => {
   test("parses module defs and detects modules", () => {
     expect(moduleApp.hasModules).toBe(true);

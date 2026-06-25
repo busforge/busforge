@@ -71,6 +71,28 @@ corrupt the channel). For the repeatable method that finds these, see
 [`drift-forensics.md`](drift-forensics.md): trace every byte-level diff to its parameter,
 classify it, and decide own-vs-preserve before flashing.
 
+### ETS evaluates every matching `<when>`, not just the first
+
+A `<choose ParamRefId="X">` selects branches by testing X against each `<when test="...">`.
+It is tempting to read this as a switch (first match wins, then break), but ETS evaluates
+**every** `<when>` whose test matches; the `default` branch fires only when none match. This
+only differs from first-match when tests OVERLAP, which manufacturers use deliberately to
+drive two independent placements from one selector. The Theben RMG 8 S contact block is the
+canonical case: one choose on the channel-function param places the contact-type field (bits
+0-1) under whens `0 1 3`/`2 4` AND a union member (bits 2-3) under whens `0 1`/`2 3 4`, so
+every value matches exactly two whens and both fields get written. First-match left the union
+bits unwritten; the device read-back disproved it (channel-function 0 -> union default 2,
+channel-function 2 -> union default 0). The resolver (`config.ts` `selectWhens`) and the
+module allocator (`modules.ts`) both walk all matching whens so the config view, the image
+build, and the from-scratch instance set stay consistent with ETS.
+
+A consequence for the surgical image: an active branch can now reach a member of the wide
+`Access="None"` "Objektlink" union (the per-channel link tables ETS computes, hundreds of
+bits). Those are never authored from a static default, so the relative build refuses to own
+any parameter the integer codec cannot represent (> 6 bytes wide) and preserves the device
+bytes. Small `Access="None"` members that DO carry a real default (e.g. a 2-bit hidden
+behaviour setting) are still owned, because ETS writes their default like any other.
+
 ## Support matrix (honest)
 
 | Capability | State | Proven on |
@@ -82,7 +104,7 @@ classify it, and decide own-vs-preserve before flashing.
 | **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
 | **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
-| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **26/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 6: union placement (1.1.x, 1.1.x, 1.1.56), an MV-0701 build gap, and 2 single-byte stale-device drifts (1.1.x, 1.1.x). See [`drift-forensics.md`](drift-forensics.md) |
+| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **27/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 5: absolute-segment union placement (1.1.x, 1.1.56), an MV-0701 build gap, and 2 single-byte stale-device drifts (1.1.x, 1.1.x). The relative module-internal union case is fixed: see "ETS evaluates every matching when" below. See [`drift-forensics.md`](drift-forensics.md) |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |

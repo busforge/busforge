@@ -295,3 +295,15 @@ test("a top-level param displaced by an active module instance is not owned", ()
   const ch1 = model.params.get(model.refs.get(`${APP}_MD-7_M-19_MI-1_P-1_R-1`)!.paramId)!;
   expect(target.owned[ch1.offset!]).toBe(true);
 });
+
+test("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does not crash the build)", () => {
+  const app = parseAppConfig(readRealFixture(`${APP}.xml.gz`));
+  // The 928-bit "Objektlink" union sits at offset 842 (CodeSegment RS-04). Since ETS
+  // evaluates every matching <when>, an active branch can reach one of its members; the
+  // integer codec cannot represent >48 bits, so the build must skip it (preserve the bytes)
+  // rather than throw. Build a configured device and confirm both: no throw, byte unowned.
+  const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
+  const instances = resolveModuleInstances(app, env);
+  const target = buildRelativeSegmentTarget(app, env, 4, { moduleInstances: instances })!;
+  expect(target.owned[842]).toBe(false); // computed link table: preserved, not authored
+});

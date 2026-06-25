@@ -170,10 +170,19 @@ export function buildDeviceConfig(
   // the catalogue's language (some texts are authored lower-case).
   const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
-  const selectWhen = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen | undefined => {
+  // ETS evaluates EVERY matching <when> of a <choose>, not just the first. The
+  // default branch fires only when no non-default test matches. This matters where a
+  // single choose drives two independent overlapping placements: e.g. the Theben RMG 8 S
+  // contact block has one choose on P-1 whose whens "0 1 3"/"2 4" place the contact-type
+  // param (bits 0-1) AND whose whens "0 1"/"2 3 4" place a union member (bits 2-3), so
+  // every P-1 value matches two whens and ETS places both. First-match-wins left the
+  // union bits unwritten (hardware-confirmed: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
+  const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
     const v = Number(resolve(defParamRefId, scope, e) ?? 0);
-    for (const w of whens) if (!w.isDefault && w.test !== undefined && matchTest(w.test, v)) return w;
-    return whens.find((w) => w.isDefault);
+    const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
+    if (matched.length) return matched;
+    const def = whens.find((w) => w.isDefault);
+    return def ? [def] : [];
   };
 
   const buildParam = (defRefId: string, scope: Scope): CfgItem | null => {
@@ -270,7 +279,7 @@ export function buildDeviceConfig(
         case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) collect(w.children, items, scope); break; }
+        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) collect(w.children, items, scope); break; }
         case "container": collect(n.children, items, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
         case "unsupported": items.push({ kind: "unsupported", label: n.tag }); break; // surface, never drop
@@ -345,7 +354,7 @@ export function buildDeviceConfig(
           }
           break;
         }
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope); if (w) walk(w.children, scope, into); break; }
+        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) walk(w.children, scope, into); break; }
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into); break; }
         default: break;
       }
@@ -371,7 +380,7 @@ export function buildDeviceConfig(
       switch (n.kind) {
         case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         case "assign": imgEnv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, imgEnv) ?? "" : "")); break;
-        case "choose": { const w = selectWhen(n.paramRefId, n.whens, scope, imgEnv); if (w) imgCollect(w.children, scope); break; }
+        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope, imgEnv)) imgCollect(w.children, scope); break; }
         case "container": case "block": imgCollect(n.children, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
         default: break;

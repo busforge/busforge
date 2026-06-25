@@ -51,9 +51,14 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           else walk(n.children, rewrite);
           break;
         case "choose": {
+          // ETS evaluates EVERY matching <when>, not just the first (see config.ts
+          // selectWhens); the default fires only when none match. Allocation must walk the
+          // same branches the config/image walk does, or a from-scratch device's instance
+          // set would diverge from ETS's.
           const v = effVal(n.paramRefId, rewrite);
-          const w = n.whens.find((x) => x.test !== undefined && matchTest(x.test, v)) ?? n.whens.find((x) => x.isDefault);
-          if (w) walk(w.children, rewrite);
+          const matched = n.whens.filter((x) => !x.isDefault && x.test !== undefined && matchTest(x.test, v));
+          const branches = matched.length ? matched : n.whens.filter((x) => x.isDefault);
+          for (const w of branches) walk(w.children, rewrite);
           break;
         }
         case "module": {
