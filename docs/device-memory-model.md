@@ -81,7 +81,8 @@ classify it, and decide own-vs-preserve before flashing.
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
 | **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
 | **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
-| Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | 19/32 reachable devices byte-match the read-back corpus |
+| Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
+| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **26/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 6: union placement (1.1.x, 1.1.x, 1.1.56), an MV-0701 build gap, and 2 single-byte stale-device drifts (1.1.x, 1.1.x). See [`drift-forensics.md`](drift-forensics.md) |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |

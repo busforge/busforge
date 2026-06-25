@@ -7,7 +7,8 @@
 //   bun run tools/verify-images.ts [corpus-dir]
 //
 // Absolute-segment (MV-0705) devices build via buildAbsoluteSegmentTargets; LSM4
-// (RelativeSegment) devices via buildParameterImage. Values come from the project DB.
+// (RelativeSegment) devices via buildRelativeSegmentTarget (the surgical owned-mask
+// path the flash uses). Both are owned-scoped. Values come from the project DB.
 //
 // The match is OWNED-SCOPED: a segment passes when its CONFIG bytes (owned, i.e. the
 // bytes we derive from active parameters and would actually flash) equal the device.
@@ -18,7 +19,8 @@
 import { Database } from "bun:sqlite";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppConfig, parseApplication, buildParameterImage, buildAbsoluteSegmentTargets } from "../packages/product/src/index.ts";
+import { parseAppConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
+import type { ModuleInstance } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
 
 const corpus = process.argv[2] ?? "apps/server/data/readback/parammem";
@@ -50,10 +52,18 @@ for (const m of manifest.devices) {
   // drift (it may even be device-internal runtime state we must not touch).
   const built = new Map<string, { bytes: Buffer; owned: boolean[] | null }>(); // keyed by segId tail / "LSM4"
   if (m.mask === "MV-07B0" || m.mask === "MV-0701") {
-    const model = parseApplication(row.xml);
-    for (const lsm of [...new Set(model.segments.map((s) => s.lsm))]) {
-      if (model.segments.find((s) => s.lsm === lsm)) { try { built.set("LSM4", { bytes: buildParameterImage(model, lsm, values), owned: null }); } catch {} }
-    }
+    // Relative (System B): the SURGICAL target, owned-masked exactly like the flash path
+    // (buildRelativeSegmentTarget). This is what makes module devices verify honestly: the
+    // ETS-computed "Objektlink" tables and module-displaced channel-variant params are
+    // unowned, so a difference there is preserved, never a failure. Module instances come
+    // from the project DB (the same source the flash uses).
+    try {
+      const app = parseAppConfig(row.xml);
+      const mi = db.query("SELECT instances FROM device_modules WHERE project_id=? AND device_id=?").get(projectId, dev.instance_id) as any;
+      const moduleInstances: ModuleInstance[] = mi ? JSON.parse(mi.instances) : [];
+      const target = buildRelativeSegmentTarget(app, values, 4, { moduleInstances });
+      if (target) built.set("LSM4", { bytes: target.bytes, owned: target.owned });
+    } catch (e) { console.log(`${m.ia} build error: ${(e as Error).message}`); }
   } else {
     try { const app = parseAppConfig(row.xml); for (const t of buildAbsoluteSegmentTargets(app, values)) built.set(t.id.split("_").pop()!, { bytes: t.bytes, owned: t.owned }); }
     catch (e) { console.log(`${m.ia} build error: ${(e as Error).message}`); } // record as NO-BUILD below, do not abort the run
