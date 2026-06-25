@@ -17,8 +17,8 @@ export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; dev
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 export interface CfgParamView {
-  refId: string; name: string; control: "enum" | "number" | "text" | "color" | "unsupported";
-  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; readOnly?: boolean;
+  refId: string; name: string; control: "enum" | "number" | "text" | "color" | "time" | "ip" | "display" | "unsupported";
+  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; unit?: string; readOnly?: boolean;
   changed?: boolean; defaultValue?: string; typeLabel?: string; indent?: number;
 }
 export interface CfgComObjView {

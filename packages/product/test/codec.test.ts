@@ -162,6 +162,24 @@ describe("malformed or unsupported layouts degrade safely (no silent corruption)
   });
 });
 
+describe("IPAddress codec (4-byte host address)", () => {
+  const m = mk({ Tip: { base: "IPAddress", sizeInBit: 32 } }, { P: { type: "Tip", offset: 2 } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]);
+  test("encodes a dotted quad as 4 big-endian bytes at the offset", () => {
+    expect(buildHex(m, { "R-P": "203.0.113.1" }).slice(4, 12)).toBe("cb007101");
+    expect(buildHex(m, { "R-P": "255.255.255.0" }).slice(4, 12)).toBe("ffffff00");
+  });
+  test("round-trips dotted-quad values", () => {
+    expect(roundtrip(m, { "R-P": "203.0.113.255" })).toEqual({ "R-P": "203.0.113.255" });
+    expect(roundtrip(m, { "R-P": "0.0.0.0" })).toEqual({ "R-P": "0.0.0.0" });
+  });
+  test("a malformed address writes nothing (owns no bytes)", () => {
+    // Octet out of range, wrong part count, and non-numeric all leave the segment blank.
+    for (const bad of ["256.0.0.1", "1.2.3", "1.2.3.4.5", "a.b.c.d", ""]) {
+      expect(buildHex(m, { "R-P": bad })).toBe("0000000000000000");
+    }
+  });
+});
+
 describe("multiple refs to one param", () => {
   const m = mk({ Tu8: { sizeInBit: 8 } }, { P: { type: "Tu8", offset: 0 } });
   m.refs.set("R-b", { id: "R-b", paramId: "P" }); // a second ref to the same param

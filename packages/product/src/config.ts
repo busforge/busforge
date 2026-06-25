@@ -30,7 +30,7 @@ function unsupportedTypeLabel(type: CfgType | undefined): string {
 export interface CfgParamView {
   refId: string;
   name: string;
-  control: "enum" | "number" | "text" | "color" | "unsupported";
+  control: "enum" | "number" | "text" | "color" | "time" | "ip" | "display" | "unsupported";
   value: string;
   options?: { value: number; text: string }[];
   min?: number;
@@ -38,6 +38,7 @@ export interface CfgParamView {
   suffix?: string;
   step?: number; // number spinner step (ETS Increment)
   slider?: boolean; // ETS UIHint="Slider": render a range slider (needs min+max)
+  unit?: string; // for control "time": the TypeTime Unit (e.g. "Seconds") the raw value counts
   readOnly?: boolean;
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
@@ -213,6 +214,15 @@ export function buildDeviceConfig(
     // native sRGB colour picker; HSV (and any other space) stays unsupported
     // until its encoding is verified, so we never write a wrong colour back.
     else if (type?.base === "Color" && type.colorSpace === "RGB") control = "color";
+    // TypeTime: a raw integer count of `unit` (e.g. Seconds), encoded as an integer in
+    // the image. The frontend renders an hh:mm:ss duration for second-based units, else a
+    // number + unit input.
+    else if (type?.base === "Time") control = "time";
+    // TypeIPAddress: a dotted-quad host address; validated text input, 4-byte codec.
+    else if (type?.base === "IPAddress") control = "ip";
+    // A named TypeNone is a display-only caption/heading (no datapoint): show it as a
+    // read-only label, not an "unsupported" warning. Nameless ones are dropped above.
+    else if (type?.kind === "TypeNone") control = "display";
 
     const defaultValue = ref.value ?? param.value ?? "";
     const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
@@ -220,7 +230,8 @@ export function buildDeviceConfig(
     // bounded range to render, so fall back to the plain number input without one.
     const step = control === "number" ? type?.increment : undefined;
     const slider = control === "number" && type?.uiHint === "Slider" && type.min !== undefined && type.max !== undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, readOnly: access === "Read", defaultValue, typeLabel } };
+    const unit = control === "time" ? type?.unit : undefined;
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, readOnly: access === "Read" || control === "display", defaultValue, typeLabel } };
   };
 
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {

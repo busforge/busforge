@@ -297,10 +297,17 @@ describe("localization", () => {
     expect(unknown).toMatchObject({ kind: "unsupported", label: "FancyVendorWidget" });
     // Types we cannot edit keep a row with control "unsupported" and a label.
     const byName = (n: string) => items.find((i) => i.kind === "param" && i.param.name === n) as { param: CfgParamView };
+    // TypeFloat is still unsupported (editable UI not built yet).
     expect(byName("Temperature").param).toMatchObject({ control: "unsupported", typeLabel: "Float" });
-    expect(byName("Switch time").param).toMatchObject({ control: "unsupported", typeLabel: "Time" });
-    // Supported types still render normally.
+    // Supported types render normally.
     expect(byName("Level").param.control).toBe("number");
+    // TypeTime is editable: a "time" control that carries the Unit (seconds) for the
+    // hh:mm:ss frontend; the value stays the raw integer.
+    expect(byName("Switch time").param).toMatchObject({ control: "time", unit: "Seconds", value: "0" });
+    // TypeIPAddress is editable: an "ip" control carrying the dotted-quad value.
+    expect(byName("DNS server").param).toMatchObject({ control: "ip", value: "203.0.113.1" });
+    // A named TypeNone is a read-only display label, not an "unsupported" warning.
+    expect(byName("Section heading").param).toMatchObject({ control: "display", readOnly: true });
     // TypeColor RGB is editable: a colour control carrying the stored #RRGGBB value.
     expect(byName("Strip colour").param).toMatchObject({ control: "color", value: "#FF0000" });
     // TypeColor HSV stays unsupported (encoding unverified) with a labelled badge.

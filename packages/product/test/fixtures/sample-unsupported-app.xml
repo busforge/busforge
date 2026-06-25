@@ -7,10 +7,12 @@
           <Static>
             <ParameterTypes>
               <ParameterType Id="M-TEST_A-9_PT-Float"><TypeFloat SizeInBit="16" /></ParameterType>
-              <ParameterType Id="M-TEST_A-9_PT-Time"><TypeTime /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Time"><TypeTime SizeInBit="16" Unit="Seconds" minInclusive="0" maxInclusive="65535" UIHint="Duration_hhmmss" /></ParameterType>
               <ParameterType Id="M-TEST_A-9_PT-Num"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
               <ParameterType Id="M-TEST_A-9_PT-Color"><TypeColor Space="RGB" /></ParameterType>
               <ParameterType Id="M-TEST_A-9_PT-ColorHsv"><TypeColor Space="HSV" /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Ip"><TypeIPAddress AddressType="HostAddress" /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Disp"><TypeNone /></ParameterType>
             </ParameterTypes>
             <Parameters>
               <Parameter Id="M-TEST_A-9_P-1" Name="Temp" ParameterType="M-TEST_A-9_PT-Float" Text="Temperature" Value="21">
@@ -28,6 +30,10 @@
               <Parameter Id="M-TEST_A-9_P-5" Name="Mood" ParameterType="M-TEST_A-9_PT-ColorHsv" Text="Mood colour" Value="#FF0000">
                 <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="8" BitOffset="0" />
               </Parameter>
+              <Parameter Id="M-TEST_A-9_P-6" Name="Dns" ParameterType="M-TEST_A-9_PT-Ip" Text="DNS server" Value="203.0.113.1">
+                <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="11" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-9_P-7" Name="Heading" ParameterType="M-TEST_A-9_PT-Disp" Text="Section heading" Value="" />
             </Parameters>
             <ParameterRefs>
               <ParameterRef Id="M-TEST_A-9_P-1_R-1" RefId="M-TEST_A-9_P-1" />
@@ -35,6 +41,8 @@
               <ParameterRef Id="M-TEST_A-9_P-3_R-3" RefId="M-TEST_A-9_P-3" />
               <ParameterRef Id="M-TEST_A-9_P-4_R-4" RefId="M-TEST_A-9_P-4" />
               <ParameterRef Id="M-TEST_A-9_P-5_R-5" RefId="M-TEST_A-9_P-5" />
+              <ParameterRef Id="M-TEST_A-9_P-6_R-6" RefId="M-TEST_A-9_P-6" />
+              <ParameterRef Id="M-TEST_A-9_P-7_R-7" RefId="M-TEST_A-9_P-7" />
             </ParameterRefs>
           </Static>
           <Dynamic>
@@ -45,6 +53,8 @@
                 <ParameterRefRef RefId="M-TEST_A-9_P-3_R-3" />
                 <ParameterRefRef RefId="M-TEST_A-9_P-4_R-4" />
                 <ParameterRefRef RefId="M-TEST_A-9_P-5_R-5" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-6_R-6" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-7_R-7" />
                 <FancyVendorWidget Id="M-TEST_A-9_FW-1" />
               </ParameterBlock>
             </ChannelIndependentBlock>

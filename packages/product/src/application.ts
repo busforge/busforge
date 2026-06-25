@@ -10,7 +10,7 @@ import { parseAppConfig, type AppConfig, type CfgType, type ModuleInstance } fro
 
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
-export type ParamBase = "Value" | "Number" | "Float" | "Text" | "Time" | "Other";
+export type ParamBase = "Value" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
 export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
@@ -42,7 +42,10 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
     case "Number": return "Number";
     case "Value": case "BinaryValue": return "Value";
     case "Text": return "Text";
-    default: return "Other"; // Color / Other
+    // TypeIPAddress is a 4-byte host address; the image codec encodes the dotted-quad
+    // string as 4 big-endian bytes (see image.ts encode).
+    case "IPAddress": return "IPAddress";
+    default: return "Other"; // Color / Other / Time(handled above)
   }
 }
 

@@ -16,10 +16,11 @@ import { buildParameterImage, decodeParameterImage } from "../src/image.ts";
 export const REAL_DIR = join(import.meta.dir, "fixtures", "real");
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
 
-// The image-model bases a healthy projection can produce (Time is folded into Other).
-export const IMAGE_BASES = new Set(["Value", "Number", "Float", "Text", "Other"]);
+// The image-model bases a healthy projection can produce (TypeTime is folded into
+// Number; IPAddress is a 4-byte host address).
+export const IMAGE_BASES = new Set(["Value", "Number", "Float", "Text", "IPAddress", "Other"]);
 // The config-layer bases the parser can produce.
-export const CONFIG_BASES = new Set(["Value", "BinaryValue", "Number", "Float", "Color", "Text", "Other"]);
+export const CONFIG_BASES = new Set(["Value", "BinaryValue", "Number", "Float", "Color", "Text", "Time", "IPAddress", "Other"]);
 
 export interface AppSnapshot {
   shape: { types: number; params: number; refs: number; comObjects: number; segments: number; hasModules: boolean };

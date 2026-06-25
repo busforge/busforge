@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
+import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4 } from "@/lib/paramFormat.ts";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -531,13 +532,18 @@ export function DeviceConfig() {
 
 function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; onChange: (value: string) => void; onRevert: () => void }) {
   const { t } = useTranslation();
-  const [local, setLocal] = useState(param.value);
-  useEffect(() => setLocal(param.value), [param.value]);
+  // For a seconds-based TypeTime the input holds the hh:mm:ss text; for every other
+  // control `local` is the raw value string.
+  const isDuration = param.control === "time" && isSecondsUnit(param.unit);
+  const [local, setLocal] = useState(() => (isDuration ? formatDuration(Number(param.value) || 0) : param.value));
+  useEffect(() => setLocal(isDuration ? formatDuration(Number(param.value) || 0) : param.value), [param.value, isDuration]);
 
   // Read-only params are informational displays (e.g. "Info: ..."); render them
   // as plain text instead of disabled form controls, which read as broken.
   const readOnlyText = param.control === "enum"
     ? (param.options?.find((o) => String(o.value) === param.value)?.text ?? param.value)
+    : isDuration
+    ? formatDuration(Number(param.value) || 0)
     : param.value;
 
   // Commit a typed number: the native input does not enforce min/max on typed
@@ -554,6 +560,25 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
     const s = String(n);
     setLocal(s);
     if (s !== param.value) onChange(s);
+  };
+
+  // Commit an hh:mm:ss duration: parse to seconds, clamp to the raw min/max, store the
+  // raw integer. Invalid input reverts the field to the current value.
+  const commitDuration = () => {
+    const secs = parseDuration(local);
+    if (secs === undefined) { setLocal(formatDuration(Number(param.value) || 0)); return; }
+    let n = secs;
+    if (param.min !== undefined) n = Math.max(param.min, n);
+    if (param.max !== undefined) n = Math.min(param.max, n);
+    setLocal(formatDuration(n));
+    if (String(n) !== param.value) onChange(String(n));
+  };
+
+  // Commit an IP address: persist only a valid dotted quad, else revert the field.
+  const commitIp = () => {
+    const v = local.trim();
+    if (!isValidIPv4(v)) { setLocal(param.value); return; }
+    if (v !== param.value) onChange(v);
   };
 
   return (
@@ -626,6 +651,39 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
             />
             <span className="font-mono text-sm text-muted-foreground">{local}</span>
           </span>
+        ) : param.control === "time" ? (
+          // TypeTime: seconds-based units edit as hh:mm:ss with a live raw-seconds hint;
+          // any other unit edits the raw integer count with the unit as suffix.
+          isDuration ? (
+            <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
+              <Input
+                type="text" value={local}
+                onChange={(e) => setLocal(e.target.value)}
+                onBlur={commitDuration}
+                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                className="w-full font-mono"
+              />
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">= {param.value} s</span>
+            </span>
+          ) : (
+            <Input
+              type="number" value={local} min={param.min} max={param.max} step={param.step}
+              onChange={(e) => setLocal(e.target.value)}
+              onBlur={commitNumber}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              className="w-full font-mono" data-testid={`param-${param.refId}`}
+            />
+          )
+        ) : param.control === "ip" ? (
+          // TypeIPAddress: validated dotted quad; invalid input reverts on blur.
+          <Input
+            value={local}
+            onChange={(e) => setLocal(e.target.value)}
+            onBlur={commitIp}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            aria-invalid={local.trim() !== "" && !isValidIPv4(local)}
+            className="w-full font-mono" data-testid={`param-${param.refId}`}
+          />
         ) : (
           // Type we cannot edit yet: show the value read-only with an explicit
           // "not supported" badge so the gap is visible, never a blank control.

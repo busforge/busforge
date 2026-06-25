@@ -69,8 +69,24 @@ export function decodeDpt9(raw: number): number {
 // decide which bytes a parameter OWNS (may be written to the device): a type the
 // image does not represent (text/time/color/other) or a malformed value writes
 // nothing and must not claim any bytes. See deviceflash.ts.
+// Parse a dotted-quad IPv4 string into its 4 octets, or undefined if malformed.
+// Strict: exactly four 0-255 integers, no extra parts. Used by the IPAddress codec.
+function parseIPv4(s: string): [number, number, number, number] | undefined {
+  const parts = s.trim().split(".");
+  if (parts.length !== 4) return undefined;
+  const octets = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return undefined;
+  return octets as [number, number, number, number];
+}
+
 export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string): boolean {
   if (!Number.isFinite(offset)) return false; // malformed memory (no/garbage Offset): no location to write
+  if (type.base === "IPAddress") {
+    const octets = parseIPv4(valStr);
+    if (!octets || offset + 4 > img.length) return false; // malformed/short: own nothing
+    for (let i = 0; i < 4; i++) img[offset + i] = octets[i]; // 4 bytes, big-endian (a.b.c.d)
+    return true;
+  }
   if (type.base === "Float") {
     const v = Number(valStr);
     if (!Number.isFinite(v)) return false;
@@ -117,6 +133,10 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
 // would refuse). Read-back is best-effort, so it skips rather than throws.
 function decode(img: Buffer, offset: number, bit: number, type: ParamType): string | undefined {
   if (!Number.isFinite(offset)) return undefined;
+  if (type.base === "IPAddress") {
+    if (offset + 4 > img.length) return undefined;
+    return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
+  }
   if (type.base === "Float") {
     if (type.sizeInBit === 32) return offset + 4 > img.length ? undefined : String(img.readFloatBE(offset));
     return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));

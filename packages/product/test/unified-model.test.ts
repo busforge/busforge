@@ -126,8 +126,8 @@ describe("union parameters with shared <Union> memory (MV-0705)", () => {
 });
 
 // TypeTime (durations/periods) carries no float or enum semantics; ETS stores it in
-// the parameter image as a plain unsigned integer. The config layer keeps it as
-// "Other" (unsupported UI row) but the image projection must encode it as Number.
+// the parameter image as a plain unsigned integer. The config layer tags it "Time"
+// (editable as an hh:mm:ss duration) but the image projection must encode it as Number.
 // Hardware-verified on M-008E (a 16-bit TypeTime value 60 -> 0x003C matched).
 const timeXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
@@ -139,9 +139,9 @@ const timeXml = `<?xml version="1.0" encoding="utf-8"?>
 <Code><AbsoluteSegment Id="M-0005_A-0001-01-0001_AS-1" Address="100" Size="2"/></Code>
 </Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
-test("TypeTime projects to a Number base in the image model (config keeps it Other)", () => {
+test("TypeTime projects to a Number base in the image model (config tags it Time)", () => {
   const app = parseAppConfig(timeXml);
-  expect(app.types.get("M-0005_A-0001-01-0001_PT-t")?.base).toBe("Other"); // UI/config unchanged
+  expect(app.types.get("M-0005_A-0001-01-0001_PT-t")?.base).toBe("Time"); // config: editable duration
   const model = toAppModel(app);
   expect(model.types.get("M-0005_A-0001-01-0001_PT-t")?.base).toBe("Number"); // image encodes as int
 });

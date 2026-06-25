@@ -11,7 +11,7 @@ import { XMLParser } from "fast-xml-parser";
 export interface EnumOption { value: number; text: string; id: string; displayOrder: number; }
 export interface CfgType {
   id: string;
-  base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Other";
+  base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Time" | "IPAddress" | "Other";
   kind: string; // the raw ETS inner tag (TypeFloat, TypeTime, ...), for labelling unsupported types
   sizeInBit: number;
   signed: boolean;
@@ -21,6 +21,7 @@ export interface CfgType {
   increment?: number; // TypeNumber spinner step (ETS Increment)
   uiHint?: string;    // ETS UIHint on the type (e.g. "Slider" for a numeric range)
   colorSpace?: string; // TypeColor Space ("RGB" | "HSV")
+  unit?: string;      // TypeTime Unit ("Seconds", "Milliseconds", ...): how to read the raw integer
   moduleDefId?: string; // set when merged in from a ModuleDef Static
 }
 // A parameter. The memory fields (offset/bitOffset/codeSegment) and the `union`
@@ -281,13 +282,19 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
     else if (tag === "TypeFloat") base = "Float";
     else if (tag === "TypeText") base = "Text";
     else if (tag === "TypeColor") base = "Color";
+    // TypeTime is a raw unsigned integer (a count of Unit, e.g. Seconds); the image
+    // codec already encodes it as Number (see imageBase). TypeIPAddress is a 4-byte
+    // host address stored as a dotted-quad string; ETS omits SizeInBit, so pin it to 32.
+    else if (tag === "TypeTime") base = "Time";
+    else if (tag === "TypeIPAddress") base = "IPAddress";
     // KNX TypeNumber@Type is "signedInt" / "unsignedInt". Test for signedness
     // exactly: a naive includes("signed") also matches "unsignedInt", which would
     // mis-decode every unsigned value >= 128 as negative on read-back.
     const typeAttr = String(ia.Type ?? "").toLowerCase();
     out.set(id, {
       id, base, kind: tag,
-      sizeInBit: Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
+      // IP host address is 4 bytes; ETS leaves SizeInBit unset, so pin it to 32.
+      sizeInBit: base === "IPAddress" ? 32 : Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
       signed: typeAttr.includes("signed") && !typeAttr.includes("unsigned"),
       enums,
       min: num(ia.minInclusive),
@@ -295,6 +302,7 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
       increment: num(ia.Increment),
       uiHint: ia.UIHint,
       colorSpace: ia.Space,
+      unit: ia.Unit,
     });
   }
   return out;
