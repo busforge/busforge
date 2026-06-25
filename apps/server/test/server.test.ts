@@ -5,7 +5,22 @@ import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, type AppState } from "../src/app.ts";
+import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
+import { readGroupTables } from "../src/flash.ts";
+import type { KnxDevice } from "@busforge/knx";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+
+// Export is a POST that returns the binary .busforge artifact (gzip, AES-sealed
+// with a password). These helpers POST the export and decode it back to the JSON.
+const exportReq = (path: string, password?: string) =>
+  new Request(`http://x${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
+async function exportArtifact(state: AppState, id: string, password?: string): Promise<{ res: Response; bytes: Buffer }> {
+  const res = (await handleApi(exportReq(`/api/projects/${id}/export`, password), state))!;
+  const bytes = res.ok ? Buffer.from(await res.arrayBuffer()) : Buffer.alloc(0);
+  return { res, bytes };
+}
+const exportJson = async (state: AppState, id: string, password?: string): Promise<any> =>
+  unpackBusforge((await exportArtifact(state, id, password)).bytes, password); // returns a Promise; callers await
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const encFixture = readFileSync(join(fixtures, "sample-encrypted.knxproj"));
@@ -440,6 +455,32 @@ describe("busforge re-import (export round-trip)", () => {
     return handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state);
   };
 
+  test("analyze previews a file's metadata without persisting it", async () => {
+    const state = freshState();
+
+    // A .knxproj analyzes to its kind/name/counts, and nothing is stored.
+    const kform = new FormData();
+    kform.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
+    kform.set("password", "tester12");
+    const ka = (await (await handleApi(req("/api/projects/analyze", { method: "POST", body: kform }), state))!.json()) as any;
+    expect(ka).toMatchObject({ kind: "knxproj", name: "ConfigDemo", snapshotCount: 0, modifiedAt: null });
+    expect(ka.deviceCount).toBeGreaterThan(0);
+    expect((await (await handleApi(req("/api/projects"), state))!.json()) as any[]).toHaveLength(0); // persisted nothing
+
+    // A .busforge artifact analyzes to busforge with its export timestamp and the
+    // restore-point count carried inside it.
+    const a = await importCfg(state);
+    state.db.prepare("INSERT INTO snapshots (id, project_id, label, kind, reason, created_at, schema_version, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("snap-x", a.id, "rp", "manual", "manual", 900, 1, "{}");
+    const { bytes } = await exportArtifact(state, a.id);
+    const bform = new FormData();
+    bform.set("file", new File([bytes], "p.busforge"));
+    const ba = (await (await handleApi(req("/api/projects/analyze", { method: "POST", body: bform }), state))!.json()) as any;
+    expect(ba).toMatchObject({ kind: "busforge", name: "ConfigDemo", snapshotCount: 1 });
+    expect(ba.modifiedAt).toBeGreaterThan(0);
+    expect((await (await handleApi(req("/api/projects"), state))!.json()) as any[]).toHaveLength(1); // only the real import
+  });
+
   test("export then re-import recreates an independent, equivalent project", async () => {
     const state = freshState();
     const a = await importCfg(state);
@@ -449,10 +490,17 @@ describe("busforge re-import (export round-trip)", () => {
     await handleApi(req(`/api/projects/${a.id}/devices/${dev}/params`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId: "M-TEST_A-1_P-1_R-1", value: "1" }),
     }), state);
+    // Seed a restore point and a bus-log entry so the round-trip must carry them too.
+    state.db.prepare("INSERT INTO snapshots (id, project_id, label, kind, reason, created_at, schema_version, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("snap-1", a.id, "before edit", "manual", "manual", 900, 1, JSON.stringify({ ok: true }));
+    state.db.prepare("INSERT INTO telegrams (project_id, ts, src, dst_raw, kind, data) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(a.id, 950, "1.1.1", 1, "GroupValueWrite", "01");
 
-    const exported = await (await handleApi(req(`/api/projects/${a.id}/export`), state))!.json();
-
-    const res = await reimport(state, exported);
+    // Round-trip the real binary artifact: export (gzip) -> import those bytes.
+    const { bytes } = await exportArtifact(state, a.id);
+    const form = new FormData();
+    form.set("file", new File([bytes], "p.busforge"));
+    const res = await handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state);
     expect(res!.status).toBe(201);
     const b = (await res!.json()) as any;
     expect(b.id).not.toBe(a.id);
@@ -476,6 +524,40 @@ describe("busforge re-import (export round-trip)", () => {
     const cfg = await handleApi(req(`/api/projects/${b.id}/devices/${projB.devices[0].id}/config`), state);
     expect(cfg!.status).toBe(200);
     expect(((await cfg!.json()) as any).blocks.length).toBeGreaterThan(0);
+
+    // The restore point and the bus log travelled with the project.
+    const snaps = (await (await handleApi(req(`/api/projects/${b.id}/snapshots`), state))!.json()) as any[];
+    expect(snaps.map((s) => s.label)).toEqual(["before edit"]);
+    const tel = (await (await handleApi(req(`/api/projects/${b.id}/telegrams`), state))!.json()) as any[];
+    expect(tel).toHaveLength(1);
+    expect(tel[0]).toMatchObject({ src: "1.1.1", kind: "GroupValueWrite" });
+  });
+
+  test("encrypted export round-trips through the endpoints; wrong/absent password is rejected", async () => {
+    const state = freshState();
+    const a = await importCfg(state);
+    const { res, bytes } = await exportArtifact(state, a.id, "s3cret-pass");
+    expect(res.status).toBe(200);
+    expect(bytes.subarray(0, 4).toString("ascii")).toBe("BF1E"); // encrypted container, not gzip
+
+    const imp = (pw?: string) => {
+      const form = new FormData();
+      form.set("file", new File([bytes], "p.busforge"));
+      if (pw) form.set("password", pw);
+      return handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state);
+    };
+
+    const noPw = await imp();
+    expect(noPw!.status).toBe(400);
+    expect(((await noPw!.json()) as any).error.code).toBe("BUSFORGE_PASSWORD_REQUIRED");
+
+    const wrong = await imp("nope");
+    expect(wrong!.status).toBe(400);
+    expect(((await wrong!.json()) as any).error.code).toBe("BUSFORGE_WRONG_PASSWORD");
+
+    const ok = await imp("s3cret-pass");
+    expect(ok!.status).toBe(201);
+    expect(((await ok!.json()) as any).deviceCount).toBeGreaterThan(0);
   });
 
   test("malformed and wrong-version artifacts are rejected", async () => {
@@ -688,10 +770,11 @@ describe("device configuration", () => {
   test("export returns a self-contained project artifact with the referenced catalog", async () => {
     const state = freshState();
     const { projectId } = await importConfig(state);
-    const res = await handleApi(req(`/api/projects/${projectId}/export`), state);
-    expect(res!.status).toBe(200);
-    expect(res!.headers.get("content-disposition")).toContain(".busforge.json");
-    const data = (await res!.json()) as any;
+    const { res, bytes } = await exportArtifact(state, projectId);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain('.busforge"');
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    const data = await unpackBusforge(bytes) as any;
     expect(data.busforgeExport).toBe(1);
     expect(data.devices).toHaveLength(1);
     expect(Object.keys(data.catalog)).toEqual(["M-TEST_A-1"]); // referenced program bundled
@@ -699,7 +782,7 @@ describe("device configuration", () => {
   });
 
   test("export of an unknown project -> 404", async () => {
-    const res = await handleApi(req(`/api/projects/ghost/export`), freshState());
+    const res = await handleApi(exportReq(`/api/projects/ghost/export`), freshState());
     expect(res!.status).toBe(404);
   });
 
@@ -715,7 +798,7 @@ describe("device configuration", () => {
     state.db.query("UPDATE projects SET source_file = ? WHERE id = ?").run(sourceFile, projectId);
     state.appCache.clear();
 
-    const data = (await (await handleApi(req(`/api/projects/${projectId}/export`), state))!.json()) as any;
+    const data = await exportJson(state, projectId);
     expect(Object.keys(data.catalog)).toEqual(["M-TEST_A-1"]); // resolved from the file and bundled
   });
 
@@ -723,8 +806,8 @@ describe("device configuration", () => {
     const state = freshState();
     const { projectId } = await importConfig(state);
     state.db.query("UPDATE projects SET name = ? WHERE id = ?").run('Wohn "Z"/A\r\nx', projectId);
-    const cd = (await handleApi(req(`/api/projects/${projectId}/export`), state))!.headers.get("content-disposition")!;
-    expect(cd).toContain('filename="Wohn_Z_A_x.busforge.json"');
+    const cd = (await exportArtifact(state, projectId)).res.headers.get("content-disposition")!;
+    expect(cd).toContain('filename="Wohn_Z_A_x.busforge"');
     expect(cd.includes("\n")).toBe(false); // CR/LF collapsed, no header break
   });
 
@@ -740,5 +823,38 @@ describe("device configuration", () => {
     const out = (await res!.json()) as Record<string, string>;
     expect(Object.keys(out)).toEqual([`${deviceId}_Dalie64.bin`]);
     expect(Buffer.from(out[`${deviceId}_Dalie64.bin`], "base64").toString()).toBe("legacy");
+  });
+});
+
+// readGroupTables decodes a 2-byte entry count from the device, then reads count*width bytes.
+// The count must be bounded: an absolute-segment (MV-0705) device's table pointer lands in
+// parameter memory, so those 2 bytes are garbage that decode to thousands of entries, which
+// would read tens of KB one 12-byte chunk at a time over the bus (a multi-minute hang).
+describe("readGroupTables entry-count bound", () => {
+  // Minimal device stub: tableAddr returns a per-object base, memRead returns a 2-byte count
+  // header for 2-byte reads (the count) and zeros for the bulk reads. `calls` records which
+  // table objects were addressed.
+  const stub = (count: number, calls: number[] = []) => ({
+    tableAddr: async (obj: number) => { calls.push(obj); return obj * 0x1000; },
+    memRead: async (_addr: number, len: number) =>
+      len === 2 ? Buffer.from([(count >> 8) & 0xff, count & 0xff]) : Buffer.alloc(len),
+  }) as unknown as KnxDevice;
+
+  test("refuses an implausible count with a coded error instead of reading the table", async () => {
+    await expect(readGroupTables(stub(2833))).rejects.toMatchObject({ code: "GROUP_TABLE_UNREADABLE" });
+  });
+
+  test("accepts a plausible count", async () => {
+    const r = await readGroupTables(stub(2));
+    expect(r.addr).toBeInstanceOf(Buffer);
+    expect(r.assoc).toBeInstanceOf(Buffer);
+  });
+
+  test("skipComObj (the dry-run preview) does not read the com-object table", async () => {
+    const calls: number[] = [];
+    await readGroupTables(stub(2, calls), undefined, true);
+    expect(calls).toContain(1);     // address table read
+    expect(calls).toContain(2);     // association table read
+    expect(calls).not.toContain(3); // com-object table (object 3) skipped
   });
 });

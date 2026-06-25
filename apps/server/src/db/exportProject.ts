@@ -4,11 +4,12 @@ import { getAppProgram } from "./catalog.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
 // (every instance table, including the programmed baselines and module instances)
-// plus the referenced catalog application programs and DCA baggage. This is a
-// superset of the snapshot serializer (which captures only the config layer).
-// It is our own format, NOT KNX: we are import-only for .knxproj and do not
-// re-export it. The bus log and snapshots are deliberately excluded (history,
-// not project state). The exported artifact itself is a restore point.
+// plus the referenced catalog application programs and DCA baggage, the restore
+// points (snapshots) and the recorded bus log. Everything that makes up the
+// project travels with it. It is our own format, NOT KNX: we are import-only for
+// .knxproj and do not re-export it. Local-only metadata (source_file path,
+// imported_at) and the derived catalog_products rows are not carried; the latter
+// are rebuilt from the devices on import.
 
 export const EXPORT_VERSION = 1;
 
@@ -26,6 +27,10 @@ export interface ProjectExport {
   deviceModules: { deviceId: string; instances: unknown }[];
   catalog: Record<string, string>; // appProgramId -> application-program XML
   baggage: { name: string; dataBase64: string }[];
+  // Restore points and the recorded bus log. Optional so an artifact from before
+  // these were added (a plain .busforge.json) still imports.
+  snapshots?: { label: string; kind: string; reason: string; createdAt: number; schemaVersion: number; payload: string }[];
+  telegrams?: { ts: number; src: string; dstRaw: number; kind: string; data: string }[];
 }
 
 const paramRows = (db: Database, table: string, projectId: string) =>
@@ -67,6 +72,13 @@ export function exportProject(db: Database, projectId: string, now: number): Pro
     .all(projectId) as { name: string; data: Uint8Array }[])
     .map((r) => ({ name: r.name, dataBase64: Buffer.from(r.data).toString("base64") }));
 
+  // Restore points (full config-layer payloads) and the recorded bus log, in
+  // chronological order so the re-imported project keeps the same history.
+  const snapshots = db.query("SELECT label, kind, reason, created_at AS createdAt, schema_version AS schemaVersion, payload FROM snapshots WHERE project_id = ? ORDER BY created_at, rowid")
+    .all(projectId) as ProjectExport["snapshots"];
+  const telegrams = db.query("SELECT ts, src, dst_raw AS dstRaw, kind, data FROM telegrams WHERE project_id = ? ORDER BY ts, id")
+    .all(projectId) as ProjectExport["telegrams"];
+
   return {
     busforgeExport: EXPORT_VERSION,
     exportedAt: now,
@@ -81,5 +93,7 @@ export function exportProject(db: Database, projectId: string, now: number): Pro
     deviceModules,
     catalog,
     baggage,
+    snapshots,
+    telegrams,
   };
 }

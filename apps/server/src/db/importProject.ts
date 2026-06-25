@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage } from "./baggage.ts";
@@ -32,6 +33,11 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "baggage"]) {
     if (!Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `missing ${key}`);
+  }
+  // Optional arrays: absent is fine, but a present non-array must fail cleanly as
+  // a 400 rather than throwing mid-insert and surfacing as a generic 500.
+  for (const key of ["snapshots", "telegrams"]) {
+    if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
 }
@@ -70,5 +76,13 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
 
     for (const [cid, xml] of Object.entries(data.catalog)) putAppProgram(db, cid, xml);
     for (const b of data.baggage) putBaggage(db, id, b.name, Buffer.from(b.dataBase64, "base64"));
+
+    // Restore points and the recorded bus log. Snapshot ids are regenerated (the
+    // column is a global primary key, so reusing them would collide if the same
+    // artifact is imported twice); telegram ids are autoincremented.
+    const insSnap = db.prepare("INSERT INTO snapshots (id, project_id, label, kind, reason, created_at, schema_version, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    for (const s of data.snapshots ?? []) insSnap.run(randomUUID(), id, s.label, s.kind, s.reason, s.createdAt, s.schemaVersion, s.payload);
+    const insTel = db.prepare("INSERT INTO telegrams (project_id, ts, src, dst_raw, kind, data) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const tg of data.telegrams ?? []) insTel.run(id, tg.ts, tg.src, tg.dstRaw, tg.kind, tg.data);
   })();
 }

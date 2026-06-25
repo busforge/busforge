@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronLeft, Cpu, Download, Info, Loader2, Network, Puzzle, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, Puzzle, RotateCcw, Search, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { FlashDialog } from "./FlashDialog.tsx";
+import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { GaCombobox, type GaOption } from "./GaCombobox.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
@@ -103,10 +106,15 @@ export function DeviceConfig() {
   const { data: view, isLoading, error } = useDeviceConfig(projectId, deviceId);
   const { setParam, setLink, revert, revertParam, revertLink, readBack } = useDeviceEdit(projectId, deviceId);
   const saving = setParam.isPending || setLink.isPending || revert.isPending || revertParam.isPending || revertLink.isPending;
-  const [flashOpen, setFlashOpen] = useState(false);
-  const [flashGaOpen, setFlashGaOpen] = useState(false);
+  // Which targets the flash dialog is open for (null = closed). One "Flashen" button
+  // programs whatever applies (config and/or group addresses); the split dropdown narrows
+  // it to a single target, and only appears when both targets apply to this device.
+  const [flashTargets, setFlashTargets] = useState<FlashTarget[] | null>(null);
   const [revertOpen, setRevertOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
+  const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
+  const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
+  const flashTargetsAvail: FlashTarget[] = [...(hasParams ? ["params" as const] : []), ...(hasComObjects ? ["ga" as const] : [])];
 
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
   const relink = (comObjRefId: string, gaRaw: number | null) =>
@@ -348,13 +356,38 @@ export function DeviceConfig() {
           {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
           {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving, testId: "read-back" })}
-          {actionBtn("device.programGAs", <Network className="size-4" />, () => setFlashGaOpen(true), { testId: "program-ga" })}
-          {actionBtn("device.programDevice", <Cpu className="size-4" />, () => setFlashOpen(true), { testId: "program-device" })}
+          {flashTargetsAvail.length > 0 && (
+            <div className="flex">
+              <Button
+                onClick={() => setFlashTargets(flashTargetsAvail)} data-testid="program-device"
+                className={cn("gap-1.5", flashTargetsAvail.length > 1 && "rounded-r-none")}
+              >
+                <Cpu className="size-4" /> {t("device.flash")}
+              </Button>
+              {flashTargetsAvail.length > 1 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button className="rounded-l-none border-l border-primary-foreground/20 px-1.5" aria-label={t("device.flashChoose")} data-testid="flash-menu">
+                      <ChevronDown className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setFlashTargets(["params"])} data-testid="flash-only-params">{t("device.flashOnlyParams")}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setFlashTargets(["ga"])} data-testid="flash-only-ga">{t("device.flashOnlyGAs")}</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {device && <FlashDialog open={flashOpen} onOpenChange={setFlashOpen} projectId={projectId} device={device} target="params" onFlashed={afterFlash} />}
-      {device && <FlashDialog open={flashGaOpen} onOpenChange={setFlashGaOpen} projectId={projectId} device={device} target="ga" onFlashed={afterFlash} />}
+      {device && flashTargets && (
+        <FlashDialog
+          open onOpenChange={(o) => { if (!o) setFlashTargets(null); }}
+          projectId={projectId} device={device} targets={flashTargets} onFlashed={afterFlash}
+        />
+      )}
 
       <AlertDialog open={revertOpen} onOpenChange={setRevertOpen}>
         <AlertDialogContent>

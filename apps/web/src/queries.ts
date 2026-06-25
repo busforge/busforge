@@ -14,12 +14,21 @@ export const qk = {
   // catalogue text in that language; the server maps it to the nearest
   // available catalogue language.
   deviceConfig: (id: string, deviceId: string, lang: string) => ["deviceConfig", id, deviceId, lang] as const,
+  gaDevices: (id: string, raw: number, lang: string) => ["gaDevices", id, raw, lang] as const,
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
 };
 
-export const useProjects = () => useQuery({ queryKey: qk.projects, queryFn: api.listProjects });
+// The dashboard must reflect each project's current counts (devices, GAs, restore
+// points) whenever you return to it. Those change while you are inside a project,
+// so refetch on every mount and on window refocus rather than trusting staleTime.
+export const useProjects = () => useQuery({
+  queryKey: qk.projects,
+  queryFn: api.listProjects,
+  refetchOnMount: "always",
+  refetchOnWindowFocus: true,
+});
 
 // The device catalog is global and rarely changes within a session; cache it
 // (refetched on demand when the picker opens via staleTime expiry).
@@ -57,10 +66,14 @@ export const useSnapshots = (id: string) =>
 
 // Snapshot create/restore/delete. Restore rewrites the whole config layer, so it
 // invalidates the project (device list + change counts) and every device config
-// view; create/delete only refresh the snapshot list.
+// view. All three also bump the dashboard's project list, whose restore-point
+// count changes.
 export function useSnapshotActions(projectId: string) {
   const qc = useQueryClient();
-  const refreshList = () => qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+  const refreshList = () => {
+    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+    qc.invalidateQueries({ queryKey: qk.projects }); // dashboard restore-point count
+  };
   const create = useMutation({
     mutationFn: (label: string) => api.createSnapshot(projectId, label),
     onSuccess: refreshList,
@@ -84,6 +97,15 @@ export const useDeviceConfig = (id: string, deviceId: string) => {
   const { i18n } = useTranslation();
   const lang = i18n.language;
   return useQuery({ queryKey: qk.deviceConfig(id, deviceId, lang), queryFn: () => api.deviceConfig(id, deviceId, lang) });
+};
+
+// Devices linked to a group address, fetched only when the details overlay opens
+// (enabled). Language-keyed so com-object names match the UI; cached briefly so
+// reopening the same GA is instant.
+export const useGaDevices = (id: string, raw: number, enabled: boolean) => {
+  const { i18n } = useTranslation();
+  const lang = i18n.language;
+  return useQuery({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 });
 };
 
 // Invalidate everything that a device edit can change: its config view and the

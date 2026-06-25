@@ -3,17 +3,18 @@ import { mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:f
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts, appProgramId, readBaggage } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
-import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, getInterface, setInterface } from "./db/projects.ts";
+import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, getInterface, setInterface, getGaMeta } from "./db/projects.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
 import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { exportProject } from "./db/exportProject.ts";
 import { importProjectExport, validateExport } from "./db/importProject.ts";
+import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "./db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
@@ -114,7 +115,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const form = await req.formData();
       const file = form.get("file");
       if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
-      const password = (form.get("password") as string) || undefined;
+      const password = (form.get("password") as string)?.trim() || undefined; // trim to match /analyze, else a previewed file fails on import
       const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
       const bytes = Buffer.from(await file.arrayBuffer());
       const project = loadKnxproj(bytes, password, name);
@@ -146,13 +147,34 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length });
     }
 
+    // /api/projects/analyze  (POST: parse a file's metadata for an import preview,
+    // persisting nothing). Sniffs by magic: a "PK" zip is a .knxproj, anything else
+    // a .busforge artifact. The client confirms with /import or /import-busforge.
+    if (seg.length === 3 && seg[2] === "analyze" && req.method === "POST") {
+      const form = await req.formData();
+      const file = form.get("file");
+      if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
+      const password = (form.get("password") as string)?.trim() || undefined;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const isZip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
+      if (isZip) {
+        const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
+        const project = loadKnxproj(bytes, password, name);
+        return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, modifiedAt: null });
+      }
+      const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
+      validateExport(data);
+      return json({ kind: "busforge", name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, snapshotCount: data.snapshots?.length ?? 0, modifiedAt: data.exportedAt ?? null });
+    }
+
     // /api/projects/import-busforge  (POST: re-import a .busforge project artifact)
     if (seg.length === 3 && seg[2] === "import-busforge" && req.method === "POST") {
       const form = await req.formData();
       const file = form.get("file");
       if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
-      let data: unknown;
-      try { data = JSON.parse(await file.text()); } catch { return err("BUSFORGE_INVALID", "not a valid busforge artifact"); }
+      const password = (form.get("password") as string)?.trim() || undefined;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const data = await unpackBusforge(bytes, password); // sniffs gzip/encrypted/legacy; throws a coded ApiError
       validateExport(data); // throws a coded ImportError on a bad shape/version
       const id = randomUUID();
       importProjectExport(db, data, id, state.now());
@@ -201,8 +223,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     }
 
     // /api/projects/:id/export  -> download the whole project + referenced catalog
-    // as a portable .busforge JSON (our own format, not KNX).
-    if (seg.length === 4 && seg[3] === "export" && req.method === "GET") {
+    // as a portable .busforge artifact (our own format, not KNX): gzip of the
+    // export JSON, AES-256-GCM sealed when a password is given. POST (not GET) so
+    // the password rides in the body, never the URL/history. See busforgeArtifact.ts.
+    if (seg.length === 4 && seg[3] === "export" && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as { password?: string };
       // Ensure every referenced app program is in the catalog (backfills a legacy
       // project from its file) so the export is self-contained.
       const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices WHERE project_id = ?").all(id) as { appRef: string }[];
@@ -210,8 +235,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const data = exportProject(db, id, state.now());
       if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";
-      return new Response(JSON.stringify(data, null, 2), {
-        headers: { "content-type": "application/json", "content-disposition": `attachment; filename="${safe}.busforge.json"` },
+      const artifact = await packBusforge(data, body.password?.trim() || undefined);
+      return new Response(artifact, {
+        headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${safe}.busforge"` },
       });
     }
 
@@ -241,6 +267,12 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // /api/projects/:id/devices/:deviceId/config?lang=
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {
       return deviceConfig(state, id, decodeURIComponent(seg[4]), url.searchParams.get("lang") ?? undefined);
+    }
+    // /api/projects/:id/group-addresses/:raw/devices?lang=  -> which devices use this GA
+    if (seg.length === 6 && seg[3] === "group-addresses" && seg[5] === "devices" && req.method === "GET") {
+      const raw = Number(decodeURIComponent(seg[4]));
+      if (!Number.isInteger(raw)) return err("GA_NOT_FOUND", "group address not found", 404);
+      return gaDevices(state, id, raw, url.searchParams.get("lang") ?? undefined);
     }
     // /api/projects/:id/devices/:deviceId/baggage  -> DCA config blobs for this
     // device (base64), consumed by native DCA-replacement modules.
@@ -510,6 +542,85 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
     }
   }
   return json(view);
+}
+
+// One device's communication object on a group address, for the GA details
+// overlay. `flags` carries the KNX read/write/transmit semantics so the UI can
+// split senders (transmit) from receivers (write).
+interface GaComObj {
+  deviceId: string; deviceName: string; ia: string;
+  comObjName: string; functionText: string; comObjNumber: number;
+  flags: ComObjFlags;
+}
+export interface GaDevicesView {
+  address: string; name: string; dpt: string; path: string[];
+  senders: GaComObj[];
+  receivers: GaComObj[];
+}
+
+// A device's com-objects keyed by their stored (stripped) ref id, carrying the
+// resolved name and read/write flags. Built from the flat application model so
+// hidden objects are covered too, then overridden by the module-resolved config
+// view (translated names, module-instance numbering). Mirrors deviceConfig's key
+// stripping (`refId.slice(app.id.length + 1)`).
+function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
+  const out = new Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }>();
+  for (const [full, ref] of app.comObjectRefs) {
+    const obj = app.comObjects.get(ref.refId);
+    if (!obj) continue;
+    out.set(full.slice(app.id.length + 1), {
+      name: ref.text ?? obj.text ?? obj.name,
+      functionText: ref.functionText ?? obj.functionText,
+      number: obj.number,
+      flags: { ...obj.flags, ...ref.flags },
+    });
+  }
+  for (const b of view.blocks) for (const it of b.items) {
+    if (it.kind !== "comObject") continue;
+    out.set(it.comObject.refId.slice(app.id.length + 1), {
+      name: it.comObject.name, functionText: it.comObject.functionText, number: it.comObject.number, flags: it.comObject.flags,
+    });
+  }
+  return out;
+}
+
+// Which devices use a group address, split by role. A linked com-object is a
+// sender when it has the transmit flag (it writes the address on change) and a
+// receiver when it has the write flag (it consumes writes); an object with both
+// appears in both lists. Links whose com-object resolves to neither flag fall
+// back to the receiver list (e.g. a read-only responder), so nothing is dropped.
+function gaDevices(state: AppState, projectId: string, raw: number, lang?: string): Response {
+  const { db } = state;
+  if (!getInterface(db, projectId)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+  const meta = getGaMeta(db, projectId, raw);
+  if (!meta) return err("GA_NOT_FOUND", "group address not found", 404);
+
+  // Group the project-wide links by device, so each device's app is built once.
+  const byDevice = new Map<string, string[]>();
+  for (const l of getGaLinks(db, projectId, raw)) {
+    const a = byDevice.get(l.deviceId) ?? [];
+    a.push(l.comObjRefId);
+    byDevice.set(l.deviceId, a);
+  }
+
+  const senders: GaComObj[] = [];
+  const receivers: GaComObj[] = [];
+  for (const [deviceId, refIds] of byDevice) {
+    const dev = getDeviceForFlash(db, projectId, deviceId);
+    const app = loadApp(state, projectId, deviceId);
+    if (!dev || !app) continue; // a stale link to a removed device/app: skip, don't fail the overlay
+    const comObjs = comObjsByKey(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId)));
+    for (const refId of refIds) {
+      const co = comObjs.get(refId);
+      if (!co) continue; // link to a com-object absent from the app model: skip
+      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags };
+      if (co.flags.transmit) senders.push(entry);
+      if (co.flags.write) receivers.push(entry);
+      else if (!co.flags.transmit) receivers.push(entry);
+    }
+  }
+  const byIa = (a: GaComObj, b: GaComObj) => a.ia.localeCompare(b.ia, undefined, { numeric: true });
+  return json({ address: meta.address, name: meta.name, dpt: meta.dpt, path: meta.path, senders: senders.sort(byIa), receivers: receivers.sort(byIa) } satisfies GaDevicesView);
 }
 
 // Choose which stored com-object links to program into the device's association

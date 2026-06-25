@@ -34,11 +34,23 @@ function moduleAwareImage(cfg: AppConfig, params: Map<string, string>, provided:
 // largest, often dozens of objects): the read-back path only needs address +
 // association to reverse the links, while flashing reads it to write it back
 // unchanged. Skipping it removes many bus round-trips.
-async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
+// A group/association table starts with a 2-byte entry count followed by the entries. The
+// count is device-supplied, so it must be bounded before reading `count * width` bytes: if
+// the device does not store its tables in this System B format (e.g. an MV-0705 absolute
+// device, whose table pointer lands in parameter memory), those 2 bytes are not a count and
+// decode to thousands of entries, which would otherwise read tens of KB one 12-byte chunk at
+// a time over the bus and manifest as a multi-minute hang. No real TP device has this many.
+const MAX_TABLE_ENTRIES = 2048;
+export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
+  const boundCount = (count: number, what: string): number => {
+    if (count > MAX_TABLE_ENTRIES) throw new ApiError("GROUP_TABLE_UNREADABLE", `${what} reports ${count} entries (implausible); this device's group tables are not in the expected System B format`);
+    return count;
+  };
   const counted = async (obj: number, width: number) => {
     const base = await dev.tableAddr(obj);
     const h = await dev.memRead(base, 2);
-    return dev.memRead(base, 2 + (((h[0] << 8) | h[1]) * width));
+    const count = boundCount((h[0] << 8) | h[1], `group object ${obj} table`);
+    return dev.memRead(base, 2 + count * width);
   };
   const total = skipComObj ? 2 : 3;
   const addr = await counted(1, 2);
@@ -46,7 +58,7 @@ async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: nu
   const gcount = (addr[0] << 8) | addr[1];
   const a2 = await dev.tableAddr(2);
   const ah = await dev.memRead(a2, 2);
-  const acount = (ah[0] << 8) | ah[1];
+  const acount = boundCount((ah[0] << 8) | ah[1], "association table");
   let assoc = await dev.memRead(a2, 2 + acount * 4);
   let long = true;
   for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
@@ -285,14 +297,18 @@ export async function flashDeviceGroupAddresses(opts: {
     if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     opts.onProgress?.("read");
-    const cur = await readGroupTables(dev);
+    // The dry-run preview compares only the address + association tables. The com-object
+    // table is often the largest, and is read here only to write it back unchanged on a real
+    // flash, so skip it when previewing: otherwise "checking for changes" is dominated by a
+    // long chunked read of a table this path does not use.
+    const cur = await readGroupTables(dev, undefined, opts.dryRun);
     const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
     mkdirSync(backupDir, { recursive: true });
     const stamp = Date.now();
     const backup = join(backupDir, `${opts.deviceId}-GA-${stamp}`);
     writeFileSync(`${backup}-addr.bin`, cur.addr);
     writeFileSync(`${backup}-assoc.bin`, cur.assoc);
-    writeFileSync(`${backup}-comobj.bin`, cur.comObj);
+    if (!opts.dryRun) writeFileSync(`${backup}-comobj.bin`, cur.comObj);
 
     const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
     const imageBytes = addr.length + assoc.length;

@@ -45,6 +45,15 @@ export function getDeviceLinks(db: Database, projectId: string, deviceId: string
   return out;
 }
 
+// Every (device, com-object) pair linked to one group address, across the whole
+// project. Used by the GA details overlay to show which devices use the address;
+// the com-object's read/write role is resolved from its application program by
+// the caller. Keys are stored (stripped) com-object ref ids.
+export function getGaLinks(db: Database, projectId: string, raw: number): { deviceId: string; comObjRefId: string }[] {
+  return db.query("SELECT DISTINCT device_id AS deviceId, com_obj_ref_id AS comObjRefId FROM device_links WHERE project_id = ? AND ga_raw = ? ORDER BY device_id")
+    .all(projectId, raw) as { deviceId: string; comObjRefId: string }[];
+}
+
 // Re-point a com-object to a set of group addresses (replaces its links).
 export function setDeviceLink(db: Database, projectId: string, deviceId: string, comObjRefId: string, gaRaws: number[]): void {
   db.transaction(() => {

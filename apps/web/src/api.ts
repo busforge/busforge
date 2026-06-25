@@ -7,9 +7,13 @@ export interface Device { id: string; ia: string; name: string; productRef: stri
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
 export interface ProjectInterface { interfaceIp: string; port: number; }
-export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; importedAt: number; }
+export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
 export interface Project { id: string; name: string; interface: ProjectInterface; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
+// Metadata from analyzing an import file without persisting it (the preview step).
+// `modifiedAt` is the export timestamp for a .busforge artifact, null for a
+// .knxproj (the UI falls back to the picked file's last-modified date).
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; modifiedAt: number | null; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 export interface CfgParamView {
@@ -35,6 +39,15 @@ export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: n
 export interface DcaModuleInfo { id: string; displayName: string; category: string; compatible: boolean; deviceVersion: number; supportedVersions: number[] }
 export interface DcaInfo { hint: string; module?: DcaModuleInfo }
 export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
+// One device's communication object on a group address, for the GA details overlay.
+export interface GaComObj {
+  deviceId: string; deviceName: string; ia: string;
+  comObjName: string; functionText: string; comObjNumber: number;
+  flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
+}
+// Which devices use a group address, split into senders (transmit) and receivers
+// (write), plus the address's readable range path.
+export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
 export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
 
 export type TaskKind = "read" | "flash-params" | "flash-ga";
@@ -87,6 +100,15 @@ export const api = {
     return jsonOrThrow<ImportResult>(await fetch("/api/projects/import", { method: "POST", body: form }));
   },
 
+  // Parse an import file's metadata (for the preview card) without persisting it.
+  // Works for both .knxproj and .busforge; a password is used when the file needs it.
+  async analyzeImport(file: File, password?: string): Promise<AnalyzeResult> {
+    const form = new FormData();
+    form.set("file", file);
+    if (password) form.set("password", password);
+    return jsonOrThrow<AnalyzeResult>(await fetch("/api/projects/analyze", { method: "POST", body: form }));
+  },
+
   // Create a blank project (no devices), to be populated from the catalog.
   createProject: (name: string): Promise<ProjectSummary> =>
     fetch("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<ProjectSummary>(r)),
@@ -106,9 +128,11 @@ export const api = {
     fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
 
   // Re-import a .busforge project artifact (the export's inverse) as a new project.
-  async importBusforge(file: File): Promise<ImportResult> {
+  // A password is only needed for an encrypted artifact (ignored otherwise).
+  async importBusforge(file: File, password?: string): Promise<ImportResult> {
     const form = new FormData();
     form.set("file", file);
+    if (password) form.set("password", password);
     return jsonOrThrow<ImportResult>(await fetch("/api/projects/import-busforge", { method: "POST", body: form }));
   },
 
@@ -116,9 +140,28 @@ export const api = {
 
   deleteProject: (id: string): Promise<{ ok: true }> => fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
 
-  // Download URL for the portable project export (.busforge JSON). Used directly
-  // as an anchor href so the browser handles the download (Content-Disposition).
-  exportUrl: (id: string): string => `/api/projects/${id}/export`,
+  // Download the portable project export (.busforge). POSTs so an optional
+  // password rides in the body, not the URL; triggers a browser download from
+  // the returned binary (filename taken from Content-Disposition).
+  async exportProject(id: string, password?: string): Promise<void> {
+    const res = await fetch(`/api/projects/${id}/export`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: password || undefined }),
+    });
+    if (!res.ok) { await jsonOrThrow<never>(res); return; } // throws a localized ApiError
+    const blob = await res.blob();
+    const cd = res.headers.get("content-disposition") ?? "";
+    const filename = /filename="([^"]+)"/.exec(cd)?.[1] ?? "project.busforge";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 
   saveInterface: (id: string, iface: ProjectInterface): Promise<ProjectInterface> =>
     fetch(`/api/projects/${id}/interface`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(iface) }).then((r) => jsonOrThrow<ProjectInterface>(r)),
@@ -128,6 +171,10 @@ export const api = {
 
   deviceConfig: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/config${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  // Which devices use a group address (senders/receivers) + its readable path.
+  gaDevices: (id: string, raw: number, lang?: string): Promise<GaDevicesView> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}/devices${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<GaDevicesView>(r)),
 
   // DCA config blobs for a device (name -> base64), consumed by native DCA modules.
   deviceBaggage: (id: string, deviceId: string): Promise<Record<string, string>> =>

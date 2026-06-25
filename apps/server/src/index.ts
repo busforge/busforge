@@ -16,6 +16,12 @@ const monitorMatch = (path: string) => /^\/api\/projects\/([^/]+)\/bus\/monitor$
 
 const server = Bun.serve<WsData>({
   port: PORT,
+  // Bus operations (reading group/parameter tables, flashing with read-back verify) hold a
+  // request open for tens of seconds while the device responds, with no data flowing in the
+  // meantime. Bun's default idleTimeout is 10s, which severed slower reads (e.g. a push
+  // sensor's group tables) mid-operation -> the client saw an empty reply. Raise it well
+  // past the longest single bus exchange. Max allowed is 255s.
+  idleTimeout: 240,
   async fetch(req, server) {
     const url = new URL(req.url);
 

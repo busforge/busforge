@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { GaLabel } from "@/components/GaLabel.tsx";
+import { GaPill } from "@/components/GaPill.tsx";
 import { cn } from "@/lib/utils";
 
 interface GaInfo { name: string; dpt: string; }
@@ -129,7 +130,7 @@ export function MonitorView() {
                     <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted-foreground">{time(t.ts)}</td>
                     <td className="px-3 py-1.5"><DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="max-w-48" /></td>
                     <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
-                    <td className="px-3 py-1.5"><GaLabel name={ga?.name} address={t.dst} fallback={unknownLabel} className="max-w-56" /></td>
+                    <td className="px-3 py-1.5">{ga ? <GaPill projectId={projectId} raw={t.dstRaw} name={ga.name} address={t.dst} className="max-w-56" /> : <GaLabel address={t.dst} fallback={unknownLabel} className="max-w-56" />}</td>
                     <td className="px-3 py-1.5 font-mono text-foreground" title={`0x${t.raw}`}>{value}</td>
                   </tr>
                 );
@@ -150,7 +151,7 @@ export function MonitorView() {
                       <DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="text-sm" />
                       <KindChip kind={t.kind} />
                     </div>
-                    <GaLabel name={ga?.name} address={t.dst} fallback={unknownLabel} className="text-xs" />
+                    {ga ? <GaPill projectId={projectId} raw={t.dstRaw} name={ga.name} address={t.dst} className="text-xs" /> : <GaLabel address={t.dst} fallback={unknownLabel} className="text-xs" />}
                     <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · {t.src} → {t.dst}</div>
                   </div>
                   <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>

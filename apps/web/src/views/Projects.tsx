@@ -1,10 +1,10 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { api, type ProjectSummary } from "../api.ts";
+import { api, type ProjectSummary, type AnalyzeResult } from "../api.ts";
 import { qk, useProjects } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +27,26 @@ import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+// The shared project card body: name, the device/GA/restore-point counts, and a
+// date. Used both on the dashboard (per project) and in the import preview, so
+// the two stay visually identical.
+function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, date }: {
+  name: string; deviceCount: number; gaCount: number; snapshotCount: number; date: number;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-lg font-bold">{name}</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
+        <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
+        <Badge variant="secondary" className="gap-1 font-mono" title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
+      </div>
+      <div className="mt-2 font-mono text-[11px] text-muted-foreground">{fmtDate(date)}</div>
+    </div>
+  );
+}
 
 export function ProjectsScreen() {
   const { t } = useTranslation();
@@ -81,14 +101,7 @@ export function ProjectsScreen() {
           {projects.map((p) => (
             <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
               <CardContent className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-lg font-bold">{p.name}</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Badge variant="secondary" className="gap-1 font-mono"><Cpu className="size-3" />{p.deviceCount}</Badge>
-                    <Badge variant="secondary" className="gap-1 font-mono"><Network className="size-3" />{p.gaCount}</Badge>
-                  </div>
-                  <div className="mt-2 font-mono text-[11px] text-muted-foreground">{fmtDate(p.importedAt)}</div>
-                </div>
+                <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} date={p.importedAt} />
                 <Button
                   variant="ghost" size="icon"
                   className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
@@ -211,16 +224,24 @@ function ImportDialog({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  function pick(f: File | null) { setFile(f); setError(null); }
-  function reset() { setFile(null); setPassword(""); setError(null); setDrag(false); }
+  // Picking a new file invalidates any earlier analysis (back to the file step).
+  function pick(f: File | null) { setFile(f); setAnalysis(null); setError(null); }
+  function reset() { setFile(null); setPassword(""); setError(null); setDrag(false); setAnalysis(null); }
 
-  // A .busforge(.json) artifact is re-imported (no password); a .knxproj is parsed.
-  const isBusforge = !!file && /\.busforge\.json$|\.json$/i.test(file.name);
+  // Step 1: analyze the file (parse metadata, persist nothing) for the preview.
+  const analyzeMut = useMutation({
+    mutationFn: () => api.analyzeImport(file!, password || undefined),
+    onSuccess: (res) => { setAnalysis(res); setError(null); },
+    onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("import.analyzeFailed"), { description: msg }); },
+  });
 
+  // Step 2: confirm. Route by the analyzed kind (more robust than the extension);
+  // the same picked file is re-sent, so nothing is stored server-side until now.
   const importMut = useMutation({
-    mutationFn: () => (isBusforge ? api.importBusforge(file!) : api.importProject(file!, password)),
+    mutationFn: () => (analysis!.kind === "busforge" ? api.importBusforge(file!, password || undefined) : api.importProject(file!, password)),
     onSuccess: (res) => {
       toast.success(t("import.imported", { name: res.name }), { description: t("import.importedDesc", { devices: res.deviceCount, gas: res.gaCount }) });
       reset();
@@ -230,50 +251,78 @@ function ImportDialog({
     onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("import.failed"), { description: msg }); },
   });
 
+  const busy = analyzeMut.isPending || importMut.isPending;
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><FolderUp className="size-4 text-primary" /> {t("import.title")}</DialogTitle>
-          <DialogDescription>{t("import.description")}</DialogDescription>
+          <DialogDescription>{analysis ? t("import.previewHint") : t("import.description")}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>{t("import.fileLabel")}</Label>
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-              onDragLeave={() => setDrag(false)}
-              onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files?.[0] ?? null); }}
-              className={cn(
-                "flex h-20 w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed text-sm transition-colors",
-                drag ? "border-primary bg-primary/5" : "border-border bg-secondary/30 hover:border-primary/60 hover:bg-secondary/50",
-              )}
-            >
-              {file
-                ? <span className="font-mono text-foreground">{file.name}</span>
-                : <span className="text-muted-foreground">{t("import.dropHint")}</span>}
-            </button>
-            <input ref={inputRef} type="file" accept=".knxproj,.busforge.json,.json" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
-          </div>
+        {analysis ? (
+          // Step 2: the same project card as the dashboard, as a confirmation preview.
+          <Card data-testid="import-preview">
+            <CardContent>
+              <ProjectCardBody
+                name={analysis.name}
+                deviceCount={analysis.deviceCount}
+                gaCount={analysis.gaCount}
+                snapshotCount={analysis.snapshotCount}
+                date={analysis.modifiedAt ?? file?.lastModified ?? Date.now()}
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          // Step 1: pick a file and (if needed) its password, then analyze.
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>{t("import.fileLabel")}</Label>
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+                onDragLeave={() => setDrag(false)}
+                onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files?.[0] ?? null); }}
+                className={cn(
+                  "flex h-20 w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed text-sm transition-colors",
+                  drag ? "border-primary bg-primary/5" : "border-border bg-secondary/30 hover:border-primary/60 hover:bg-secondary/50",
+                )}
+              >
+                {file
+                  ? <span className="font-mono text-foreground">{file.name}</span>
+                  : <span className="text-muted-foreground">{t("import.dropHint")}</span>}
+              </button>
+              <input ref={inputRef} type="file" accept=".knxproj,.busforge,.busforge.json,.json" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+            </div>
 
-          {!isBusforge && (
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5"><KeyRound className="size-3.5" /> {t("import.password")}</Label>
-              <Input type="password" value={password} placeholder={t("import.passwordPlaceholder")} onChange={(e) => setPassword(e.target.value)} />
+              <Input type="password" value={password} placeholder={t("import.passwordPlaceholder")} onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && file && !busy) analyzeMut.mutate(); }} />
             </div>
-          )}
+          </div>
+        )}
 
-          {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
-        </div>
+        {error && <p className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
-          <Button onClick={() => importMut.mutate()} disabled={!file || importMut.isPending} data-testid="import-submit">
-            {importMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("import.importing")}</> : t("import.submit")}
-          </Button>
+          {analysis ? (
+            <>
+              <Button variant="outline" onClick={() => { setAnalysis(null); setError(null); }} disabled={busy}>{t("import.back")}</Button>
+              <Button onClick={() => importMut.mutate()} disabled={busy} data-testid="import-submit">
+                {importMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("import.importing")}</> : t("import.submit")}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button>
+              <Button onClick={() => analyzeMut.mutate()} disabled={!file || busy} data-testid="import-analyze">
+                {analyzeMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("import.analyzing")}</> : t("import.analyze")}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
