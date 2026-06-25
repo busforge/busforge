@@ -192,7 +192,9 @@ module/channel gap as the parameter-image path.
 ## Notes
 
 - Mask versions (MV-0012/0701/0705/07B0) are intentionally irrelevant to the
-  config view; masks only matter in the flash/image path, which is validated
+  config view. They also do not select the flash/image path: that is chosen by the
+  app's segment structure (`RelativeSegment` vs `AbsoluteSegment`), so e.g. MV-0701
+  uses the absolute path despite the low number. The image path is validated
   byte-for-byte against real hardware.
 - The config language follows the UI language, mapped to the nearest catalogue
   language (exact, then primary subtag, then the catalogue's base text).

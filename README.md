@@ -117,10 +117,15 @@ of the manufacturer data the project already carries. Busforge follows the same 
 Where a device sits in that set is what determines how far we can program it today.
 Full detail and the per-axis gap analysis: [`docs/device-memory-model.md`](docs/device-memory-model.md).
 
-| Memory model | Masks | Config UI (read + edit) | Image build + byte-match | On-bus flash |
+The model is decided by the device's **segment structure** (does the app declare a
+`RelativeSegment` or an `AbsoluteSegment`), not by the mask number. The masks below are
+just the ones seen in the reference installation; e.g. MV-0701 ships absolute segments and
+is handled by the absolute path, despite the lower number.
+
+| Memory model | Masks (seen here) | Config UI (read + edit) | Image build + byte-match | On-bus flash |
 |---|---|---|---|---|
-| Relative segment (LSM4, allocator) | MV-07B0, MV-0701 | ✅ | ✅ | ✅ verified on the bus (1 device) |
-| Absolute segment (fixed EEPROM) | MV-0705 | ✅ | ✅ 19/32 byte-match offline | ✅ verified on the bus (M-0081); driven by the device's declared load procedure |
+| Relative segment (LSM4, allocator) | MV-07B0 | ✅ | ✅ | ✅ verified on the bus (1 device) |
+| Absolute segment (fixed EEPROM) | MV-0705, MV-0701 | ✅ | ✅ owned-byte match (corpus 28/32) | ✅ verified on the bus (M-0081, MV-0705); MV-0701 offline-matched, not yet bus-verified. Driven by the device's declared load procedure |
 | Module / channel placement | (offset modifier) | ✅ | ⛔ per-instance offsets unresolved | ⛔ flash refused to protect the config |
 | Property / interface-object | System B / IP | 🔶 standard params only | ⛔ not a memory image | ⛔ property-write download not implemented |
 

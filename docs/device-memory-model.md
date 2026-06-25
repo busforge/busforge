@@ -26,12 +26,15 @@ You can reconfigure one without the other.
 ## Two parameter models
 
 Not every device stores parameters in an LSM4 memory image. There are two families,
-distinguishable by mask version:
+distinguished by the **segment structure the app declares** (a `RelativeSegment` vs an
+`AbsoluteSegment`), not by the mask number. The masks below are simply the ones seen here;
+the build picks the path by structure (`app.absoluteSegments` non-empty -> absolute), so a
+low-numbered mask like MV-0701 still lands on the absolute path:
 
 | Model | Masks (seen here) | Parameters live in | Busforge support |
 | --- | --- | --- | --- |
-| **Relative segment** | MV-07B0, MV-0701 | An LSM4 `RelativeSegment`, allocator-addressed | **read + flash** (the proven path) |
-| **Absolute segment** | MV-0705 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + build/verify + flash planned** (see below) |
+| **Relative segment** | MV-07B0 | An LSM4 `RelativeSegment`, allocator-addressed | **read + flash** (the proven path) |
+| **Absolute segment** | MV-0705, MV-0701 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + build/verify + flash planned** (see below) |
 
 In the reference installation, **8 of 34 devices** use the relative-segment model; the
 other **26** (most push-button sensors, presence detectors) use the absolute-segment
@@ -131,7 +134,7 @@ still writes it. M-0083 has ten such union-member assigns, all left to their act
 | **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
 | **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
-| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps: an MV-0701 build wiring gap and 3 single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
+| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps. The MV-0701 device (1.1.x, M-0048 A-140C) is built correctly by the generic absolute path (structure-detected, not mask-gated): its only owned diff is the internal download-recognition marker P-2228 ("Wert $AA, Downloaderkennung", Access="None", default 0xAA; the device reads 0), and its second segment (AS-4C00) is unused erased EEPROM (0xFF) that the surgical flash leaves untouched. The other 3 are single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |
@@ -149,8 +152,9 @@ what made the parameter work feel open-ended.
 **Axis A: parameter memory layout** (how the image bytes are arranged). This is the
 small, finite set the image builder cares about:
 
-1. **Relative segment** (LSM4, allocator-addressed) - MV-07B0, MV-0701.
-2. **Absolute segment** (fixed EEPROM address) - MV-0705.
+1. **Relative segment** (LSM4, allocator-addressed) - MV-07B0.
+2. **Absolute segment** (fixed EEPROM address) - MV-0705, MV-0701. Chosen by the app's
+   segment structure (`AbsoluteSegment` present), not the mask number.
 3. **Module / channel placement** - not a separate storage class, a per-instance
    offset modifier on (1)/(2). The effective device offset of a module parameter is
    `its static offset in the ModuleDef + the per-instance value of the Memory@BaseOffset
