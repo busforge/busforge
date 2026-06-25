@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Search, X } from "lucide-react";
+import { FolderPlus, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import type { GroupAddress, GroupRangeNode } from "../api.ts";
 import { useProject } from "../queries.ts";
 import { GaPill } from "@/components/GaPill.tsx";
 import { DptBadge } from "@/components/DptBadge.tsx";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { GroupEditor, type Editor, type Levels } from "./GroupEditDialogs.tsx";
 import { cn } from "@/lib/utils";
 
 // The bright orange group number shown in front of each range name. Lets you read
@@ -16,9 +18,19 @@ function NumTag({ value, className }: { value: string; className?: string }) {
   return <span className={cn("shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono font-semibold text-primary", className)}>{value}</span>;
 }
 
-// First group address found anywhere under a range, used to derive its display
-// number from a real address (style-agnostic: works for two- and three-level
-// projects without having to know the project's address style).
+// A small ghost icon button for the row/heading edit affordances.
+function IconBtn({ label, onClick, children, danger }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean }) {
+  return (
+    <button
+      type="button" aria-label={label} title={label}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={cn("rounded p-1 text-muted-foreground hover:bg-secondary", danger ? "hover:text-destructive" : "hover:text-foreground")}
+    >
+      {children}
+    </button>
+  );
+}
+
 function firstGaAddress(node: GroupRangeNode): string | undefined {
   if (node.addresses[0]) return node.addresses[0].address;
   for (const c of node.children) { const a = firstGaAddress(c); if (a) return a; }
@@ -37,8 +49,6 @@ function rangeNumber(node: GroupRangeNode, depth: number): string | undefined {
 
 const matchesGa = (g: GroupAddress, filter: string) => !filter || `${g.address} ${g.name} ${g.dpt}`.toLowerCase().includes(filter);
 
-// Prune a range to what matches the filter: only matching addresses and ranges
-// that still have something to show survive. Returns null when nothing remains.
 function filterNode(node: GroupRangeNode, filter: string): GroupRangeNode | null {
   if (!filter) return node;
   const addresses = node.addresses.filter((g) => matchesGa(g, filter));
@@ -53,6 +63,31 @@ function countGas(nodes: GroupRangeNode[]): number {
   return n;
 }
 
+// Detect the project's level count (two/three) from any address's segment count.
+function detectLevels(ranges: GroupRangeNode[]): Levels {
+  let max = 0;
+  const scan = (n: GroupRangeNode) => { for (const a of n.addresses) max = Math.max(max, a.address.split("/").length); n.children.forEach(scan); };
+  ranges.forEach(scan);
+  return max === 2 ? 2 : 3;
+}
+
+// Smallest number in 0..max not already taken.
+function nextFree(used: Set<number>, max: number): number {
+  for (let i = 0; i <= max; i++) if (!used.has(i)) return i;
+  return 0;
+}
+
+// Handlers the headings and rows call to open the right editor dialog.
+interface Actions {
+  levels: Levels;
+  addMiddle: (main: GroupRangeNode) => void;
+  addGa: (range: GroupRangeNode) => void;
+  renameRange: (node: GroupRangeNode) => void;
+  deleteRange: (node: GroupRangeNode) => void;
+  editGa: (g: GroupAddress) => void;
+  deleteGa: (g: GroupAddress) => void;
+}
+
 export function GroupAddressesView() {
   const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
@@ -65,12 +100,58 @@ export function GroupAddressesView() {
   const setQ = (val: string) => navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true });
   const filter = q.trim().toLowerCase();
 
+  const [editor, setEditor] = useState<Editor>(null);
+  const levels = useMemo(() => detectLevels(project?.groupRanges ?? []), [project]);
+  const block = levels === 3 ? 256 : 2048;
+
+  // Datalist suggestions for the DPT field: the datapoint types already in use.
+  const dptSuggestions = useMemo(() => {
+    const set = new Set<string>();
+    const scan = (n: GroupRangeNode) => { for (const a of n.addresses) if (a.dpt) set.add(a.dpt); n.children.forEach(scan); };
+    (project?.groupRanges ?? []).forEach(scan);
+    return [...set].sort();
+  }, [project]);
+
   // The (filtered) main groups, each rendered as its own card.
   const sections = useMemo(
     () => (project?.groupRanges ?? []).map((r) => filterNode(r, filter)).filter((r): r is GroupRangeNode => r !== null),
     [project, filter],
   );
   const matched = useMemo(() => countGas(sections), [sections]);
+
+  // Look up nodes in the UNFILTERED tree so the "next free" defaults and used-set
+  // validation are correct even while a search filter hides siblings/addresses.
+  const nodeById = useMemo(() => {
+    const m = new Map<string, GroupRangeNode>();
+    const walk = (n: GroupRangeNode) => { m.set(n.id, n); n.children.forEach(walk); };
+    (project?.groupRanges ?? []).forEach(walk);
+    return m;
+  }, [project]);
+
+  // Editor openers (compute a sensible default number from what is already used).
+  const actions: Actions = {
+    levels,
+    addMiddle: (mainArg) => {
+      const main = nodeById.get(mainArg.id) ?? mainArg;
+      const usedNumbers = main.children.map((c) => (c.rangeStart >> 8) & 7);
+      setEditor({ kind: "range-create", parentId: Number(main.id), isMain: false, defaultNumber: nextFree(new Set(usedNumbers), 7), parentMain: main.rangeStart >> 11, usedNumbers });
+    },
+    addGa: (rangeArg) => {
+      const range = nodeById.get(rangeArg.id) ?? rangeArg;
+      const base = Math.floor(range.rangeStart / block) * block;
+      const usedSubs = range.addresses.map((a) => a.raw - base);
+      setEditor({ kind: "ga-create", rangeId: Number(range.id), rangeStart: range.rangeStart, defaultSub: nextFree(new Set(usedSubs), block - 1), usedSubs });
+    },
+    renameRange: (node) => setEditor({ kind: "range-rename", rangeId: Number(node.id), name: node.name }),
+    deleteRange: (node) => setEditor({ kind: "range-delete", rangeId: Number(node.id), name: node.name }),
+    editGa: (g) => setEditor({ kind: "ga-edit", raw: g.raw, name: g.name, dpt: g.dpt }),
+    deleteGa: (g) => setEditor({ kind: "ga-delete", raw: g.raw, name: g.name, address: g.address }),
+  };
+
+  const addMainGroup = () => {
+    const usedNumbers = (project?.groupRanges ?? []).map((r) => r.rangeStart >> 11);
+    setEditor({ kind: "range-create", parentId: null, isMain: true, defaultNumber: nextFree(new Set(usedNumbers), 31), usedNumbers });
+  };
 
   // Section index for the sidebar: main groups plus their direct middle groups.
   const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -119,9 +200,15 @@ export function GroupAddressesView() {
 
   const gaRows = (addresses: GroupAddress[]) =>
     addresses.map((g) => (
-      <div key={g.raw} className="flex items-center justify-between gap-3 rounded px-2 py-1 text-sm hover:bg-secondary/50">
-        <GaPill projectId={projectId} raw={g.raw} name={g.name} address={g.address} className="min-w-0" />
-        <DptBadge dpt={g.dpt} />
+      <div key={g.raw} className="group flex items-center justify-between gap-3 rounded px-2 py-1 text-sm hover:bg-secondary/50">
+        <GaPill projectId={projectId} raw={g.raw} name={g.name} address={g.address} className="min-w-0" onEdit={() => actions.editGa(g)} />
+        <div className="flex items-center gap-2">
+          <DptBadge dpt={g.dpt} />
+          <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <IconBtn label={t("groupEdit.edit")} onClick={() => actions.editGa(g)}><Pencil className="size-3.5" /></IconBtn>
+            <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteGa(g)}><Trash2 className="size-3.5" /></IconBtn>
+          </div>
+        </div>
       </div>
     ));
 
@@ -140,11 +227,18 @@ export function GroupAddressesView() {
             </button>
           )}
         </div>
-        <span className="font-mono text-xs text-muted-foreground" data-testid="group-count">{t("groups.count", { shown: matched, total: project.gaCount })}</span>
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xs text-muted-foreground" data-testid="group-count">{t("groups.count", { shown: matched, total: project.gaCount })}</span>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={addMainGroup} data-testid="add-main-group">
+            <Plus className="size-4" /> {t("groupEdit.addMainGroup")}
+          </Button>
+        </div>
       </div>
 
-      {matched === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="groups-empty">{filter ? t("groups.emptySearch") : t("groups.empty")}</p>
+      {project.groupRanges.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="groups-empty">{t("groups.empty")}</p>
+      ) : matched === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="groups-empty">{t("groups.emptySearch")}</p>
       ) : (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
@@ -185,9 +279,16 @@ export function GroupAddressesView() {
               const num = rangeNumber(main, 0);
               return (
                 <section key={main.id} className="space-y-2">
-                  <h2 id={`sec-${main.id}`} ref={registerRef(`sec-${main.id}`)} className="flex scroll-mt-24 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                  <h2 id={`sec-${main.id}`} ref={registerRef(`sec-${main.id}`)} className="group flex scroll-mt-24 items-center gap-2 px-1 text-lg font-semibold text-foreground">
                     {num && <NumTag value={num} className="text-sm" />}
                     <span className="min-w-0 truncate">{main.name || t("groups.unnamedRange")}</span>
+                    <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      {levels === 3
+                        ? <IconBtn label={t("groupEdit.addMiddleGroup")} onClick={() => actions.addMiddle(main)}><FolderPlus className="size-4" /></IconBtn>
+                        : <IconBtn label={t("groupEdit.addGa")} onClick={() => actions.addGa(main)}><Plus className="size-4" /></IconBtn>}
+                      <IconBtn label={t("groupEdit.rename")} onClick={() => actions.renameRange(main)}><Pencil className="size-4" /></IconBtn>
+                      <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteRange(main)}><Trash2 className="size-4" /></IconBtn>
+                    </div>
                   </h2>
                   <Card>
                     <CardContent className="space-y-1 py-4">
@@ -196,7 +297,7 @@ export function GroupAddressesView() {
                       )}
                       {gaRows(main.addresses)}
                       {main.children.map((mid) => (
-                        <SubRange key={mid.id} node={mid} depth={1} registerRef={registerRef} gaRows={gaRows} unnamed={t("groups.unnamedRange")} />
+                        <SubRange key={mid.id} node={mid} depth={1} registerRef={registerRef} gaRows={gaRows} actions={actions} unnamed={t("groups.unnamedRange")} t={t} />
                       ))}
                     </CardContent>
                   </Card>
@@ -206,18 +307,22 @@ export function GroupAddressesView() {
           </div>
         </div>
       )}
+
+      <GroupEditor editor={editor} onClose={() => setEditor(null)} projectId={projectId} levels={levels} dptSuggestions={dptSuggestions} />
     </div>
   );
 }
 
 // A middle group (and any deeper nesting) inside a main-group card: a heading
 // with its number tag, its addresses, then any sub-ranges, indented further.
-function SubRange({ node, depth, registerRef, gaRows, unnamed }: {
+function SubRange({ node, depth, registerRef, gaRows, actions, unnamed, t }: {
   node: GroupRangeNode;
   depth: number;
   registerRef: (id: string) => (el: HTMLElement | null) => void;
   gaRows: (addresses: GroupAddress[]) => ReactNode;
+  actions: Actions;
   unnamed: string;
+  t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const num = rangeNumber(node, depth);
   const deep = depth >= 2;
@@ -227,13 +332,18 @@ function SubRange({ node, depth, registerRef, gaRows, unnamed }: {
       ref={depth === 1 ? registerRef(`sec-${node.id}`) : undefined}
       className={cn("scroll-mt-24 pt-2", deep && "pl-3")}
     >
-      <h4 className={cn("mt-2 mb-1 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold", deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
+      <h4 className={cn("group mt-2 mb-1 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold", deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
         {num && <NumTag value={num} className="px-1 py-0 text-[10px]" />}
         <span className="min-w-0 truncate">{node.name || unnamed}</span>
+        <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <IconBtn label={t("groupEdit.addGa")} onClick={() => actions.addGa(node)}><Plus className="size-3.5" /></IconBtn>
+          <IconBtn label={t("groupEdit.rename")} onClick={() => actions.renameRange(node)}><Pencil className="size-3.5" /></IconBtn>
+          <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteRange(node)}><Trash2 className="size-3.5" /></IconBtn>
+        </div>
       </h4>
       {gaRows(node.addresses)}
       {node.children.map((c) => (
-        <SubRange key={c.id} node={c} depth={depth + 1} registerRef={registerRef} gaRows={gaRows} unnamed={unnamed} />
+        <SubRange key={c.id} node={c} depth={depth + 1} registerRef={registerRef} gaRows={gaRows} actions={actions} unnamed={unnamed} t={t} />
       ))}
     </section>
   );

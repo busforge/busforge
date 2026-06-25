@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, Loader2 } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, Loader2, Pencil } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import type { GaComObj } from "../api.ts";
@@ -16,13 +16,16 @@ import { cn } from "@/lib/utils";
 // into senders (transmit) and receivers (write). Each device links to its
 // configuration. Wraps GaLabel so the resting appearance is unchanged; used
 // wherever a GA is shown standalone (group list, bus monitor).
-export function GaPill({ projectId, raw, name, address, fallback, className }: {
+export function GaPill({ projectId, raw, name, address, fallback, className, onEdit }: {
   projectId: string;
   raw: number;
   name?: string;
   address: string;
   fallback?: string;
   className?: string;
+  // When set, an edit pencil appears in the overlay's top-right; clicking it
+  // closes the overlay and invokes this (the caller opens the GA edit dialog).
+  onEdit?: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -40,8 +43,20 @@ export function GaPill({ projectId, raw, name, address, fallback, className }: {
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-0">
         <div className="border-b px-4 py-3">
-          <div className="truncate text-sm font-medium" title={crumbs.join(" / ")}>
-            {crumbs.length ? crumbs.join(" / ") : <span className="text-muted-foreground">{t("common.unnamed")}</span>}
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1 truncate text-sm font-medium" title={crumbs.join(" / ")}>
+              {crumbs.length ? crumbs.join(" / ") : <span className="text-muted-foreground">{t("common.unnamed")}</span>}
+            </div>
+            {onEdit && (
+              <button
+                type="button" aria-label={t("groupEdit.edit")} title={t("groupEdit.edit")}
+                onClick={() => { setOpen(false); onEdit(); }}
+                className="-mr-1 -mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                data-testid="ga-overlay-edit"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            )}
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className="font-mono text-xs text-primary">{address}</span>

@@ -176,6 +176,24 @@ export const api = {
   gaDevices: (id: string, raw: number, lang?: string): Promise<GaDevicesView> =>
     fetch(`/api/projects/${id}/group-addresses/${raw}/devices${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<GaDevicesView>(r)),
 
+  // --- group-address structure editing. All return the refreshed project. ---
+  createGroupRange: (id: string, parentId: number | null, name: string, number: number): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-ranges`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ parentId, name, number }) }).then((r) => jsonOrThrow<Project>(r)),
+  renameGroupRange: (id: string, rangeId: number, name: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-ranges/${rangeId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<Project>(r)),
+  deleteGroupRange: (id: string, rangeId: number): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-ranges/${rangeId}`, { method: "DELETE" }).then((r) => jsonOrThrow<Project>(r)),
+  rangeImpact: (id: string, rangeId: number): Promise<{ links: number }> =>
+    fetch(`/api/projects/${id}/group-ranges/${rangeId}/impact`).then((r) => jsonOrThrow<{ links: number }>(r)),
+  createGroupAddress: (id: string, rangeId: number, sub: number, name: string, dpt: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-addresses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rangeId, sub, name, dpt }) }).then((r) => jsonOrThrow<Project>(r)),
+  updateGroupAddress: (id: string, raw: number, name: string, dpt: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, dpt }) }).then((r) => jsonOrThrow<Project>(r)),
+  deleteGroupAddress: (id: string, raw: number): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "DELETE" }).then((r) => jsonOrThrow<Project>(r)),
+  gaImpact: (id: string, raw: number): Promise<{ links: number }> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}/impact`).then((r) => jsonOrThrow<{ links: number }>(r)),
+
   // DCA config blobs for a device (name -> base64), consumed by native DCA modules.
   deviceBaggage: (id: string, deviceId: string): Promise<Record<string, string>> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/baggage`).then((r) => jsonOrThrow<Record<string, string>>(r)),

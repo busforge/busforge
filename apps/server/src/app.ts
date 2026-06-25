@@ -8,6 +8,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, getInterface, setInterface, getGaMeta } from "./db/projects.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
+import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddress, updateGroupAddress, deleteGroupAddress, rangeLinkImpact, countLinksForRaws } from "./db/groupedit.ts";
 import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { exportProject } from "./db/exportProject.ts";
@@ -273,6 +274,64 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const raw = Number(decodeURIComponent(seg[4]));
       if (!Number.isInteger(raw)) return err("GA_NOT_FOUND", "group address not found", 404);
       return gaDevices(state, id, raw, url.searchParams.get("lang") ?? undefined);
+    }
+
+    // --- group-address structure editing -------------------------------------
+    // /api/projects/:id/group-ranges  -> create a main/middle range
+    if (seg.length === 4 && seg[3] === "group-ranges" && req.method === "POST") {
+      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; name?: string; number?: number };
+      if (typeof body.number !== "number") return err("GA_NUMBER_INVALID", "number required");
+      createGroupRange(db, id, body.parentId ?? null, (body.name ?? "").trim(), body.number);
+      return json(getProject(db, id), 201);
+    }
+    // /api/projects/:id/group-ranges/:rangeId/impact  -> live links lost if deleted
+    if (seg.length === 6 && seg[3] === "group-ranges" && seg[5] === "impact" && req.method === "GET") {
+      return json({ links: rangeLinkImpact(db, id, Number(decodeURIComponent(seg[4]))) });
+    }
+    // /api/projects/:id/group-ranges/:rangeId  -> rename, or delete (deletes
+    // capture an undo snapshot first, but only once the target is known to exist).
+    if (seg.length === 5 && seg[3] === "group-ranges") {
+      const rangeId = Number(decodeURIComponent(seg[4]));
+      if (req.method === "PATCH") {
+        const body = (await req.json().catch(() => ({}))) as { name?: string };
+        if (!renameGroupRange(db, id, rangeId, (body.name ?? "").trim())) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
+        return json(getProject(db, id));
+      }
+      if (req.method === "DELETE") {
+        if (!db.query("SELECT 1 FROM group_ranges WHERE id = ? AND project_id = ?").get(rangeId, id)) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
+        createSnapshot(db, id, { kind: "auto", reason: "before-ga-edit" }, state.now());
+        deleteGroupRange(db, id, rangeId);
+        return json(getProject(db, id));
+      }
+    }
+    // /api/projects/:id/group-addresses  -> create a group address in a range
+    if (seg.length === 4 && seg[3] === "group-addresses" && req.method === "POST") {
+      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { rangeId?: number; sub?: number; name?: string; dpt?: string };
+      if (typeof body.rangeId !== "number" || typeof body.sub !== "number") return err("GA_FIELDS_REQUIRED", "rangeId and sub required");
+      createGroupAddress(db, id, body.rangeId, body.sub, (body.name ?? "").trim(), (body.dpt ?? "").trim());
+      return json(getProject(db, id), 201);
+    }
+    // /api/projects/:id/group-addresses/:raw/impact  -> live links lost if deleted
+    if (seg.length === 6 && seg[3] === "group-addresses" && seg[5] === "impact" && req.method === "GET") {
+      return json({ links: countLinksForRaws(db, id, [Number(decodeURIComponent(seg[4]))]) });
+    }
+    // /api/projects/:id/group-addresses/:raw  -> edit name+dpt, or delete (deletes
+    // capture an undo snapshot first, but only once the target is known to exist).
+    if (seg.length === 5 && seg[3] === "group-addresses") {
+      const raw = Number(decodeURIComponent(seg[4]));
+      if (req.method === "PATCH") {
+        const body = (await req.json().catch(() => ({}))) as { name?: string; dpt?: string };
+        if (!updateGroupAddress(db, id, raw, (body.name ?? "").trim(), (body.dpt ?? "").trim())) return err("GA_NOT_FOUND", "group address not found", 404);
+        return json(getProject(db, id));
+      }
+      if (req.method === "DELETE") {
+        if (!db.query("SELECT 1 FROM group_addresses WHERE project_id = ? AND raw = ?").get(id, raw)) return err("GA_NOT_FOUND", "group address not found", 404);
+        createSnapshot(db, id, { kind: "auto", reason: "before-ga-edit" }, state.now());
+        deleteGroupAddress(db, id, raw);
+        return json(getProject(db, id));
+      }
     }
     // /api/projects/:id/devices/:deviceId/baggage  -> DCA config blobs for this
     // device (base64), consumed by native DCA-replacement modules.

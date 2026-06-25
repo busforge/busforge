@@ -99,6 +99,29 @@ export const useDeviceConfig = (id: string, deviceId: string) => {
   return useQuery({ queryKey: qk.deviceConfig(id, deviceId, lang), queryFn: () => api.deviceConfig(id, deviceId, lang) });
 };
 
+// Group-address structure edits (ranges + addresses). Each returns the refreshed
+// project, applied immediately; deletes capture an undo snapshot server-side and
+// can drop device links, so the project (change counts), device configs, the
+// dashboard counts, the snapshot list and any open GA overlay are all refreshed.
+export function useGroupEdit(projectId: string) {
+  const qc = useQueryClient();
+  const after = (project: Awaited<ReturnType<typeof api.getProject>>) => {
+    qc.setQueryData(qk.project(projectId), project);
+    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
+    qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
+    qc.invalidateQueries({ queryKey: qk.projects });
+    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+  };
+  return {
+    createRange: useMutation({ mutationFn: (v: { parentId: number | null; name: string; number: number }) => api.createGroupRange(projectId, v.parentId, v.name, v.number), onSuccess: after }),
+    renameRange: useMutation({ mutationFn: (v: { rangeId: number; name: string }) => api.renameGroupRange(projectId, v.rangeId, v.name), onSuccess: after }),
+    deleteRange: useMutation({ mutationFn: (rangeId: number) => api.deleteGroupRange(projectId, rangeId), onSuccess: after }),
+    createGa: useMutation({ mutationFn: (v: { rangeId: number; sub: number; name: string; dpt: string }) => api.createGroupAddress(projectId, v.rangeId, v.sub, v.name, v.dpt), onSuccess: after }),
+    updateGa: useMutation({ mutationFn: (v: { raw: number; name: string; dpt: string }) => api.updateGroupAddress(projectId, v.raw, v.name, v.dpt), onSuccess: after }),
+    deleteGa: useMutation({ mutationFn: (raw: number) => api.deleteGroupAddress(projectId, raw), onSuccess: after }),
+  };
+}
+
 // Devices linked to a group address, fetched only when the details overlay opens
 // (enabled). Language-keyed so com-object names match the UI; cached briefly so
 // reopening the same GA is instant.
