@@ -1,15 +1,14 @@
-import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, X } from "lucide-react";
+import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, Usb, X } from "lucide-react";
 import { toast } from "sonner";
-import type { BusStatus, Task, TaskKind } from "../api.ts";
+import type { BusStatus, ConnectionType, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
-import { qk, useBusStatus, useProject, useTasks } from "../queries.ts";
+import { qk, useBusStatus, useConnections, useProject, useTasks } from "../queries.ts";
+import { ConnectionManager, connDetail } from "../views/ConnectionManager.tsx";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { errMsg, localizeError } from "../lib/apiError.ts";
@@ -80,31 +79,30 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   );
 }
 
-// Interface configuration + connection control, living at the top of the bus
-// popover. Disconnected: the IP/port fields are editable and the primary button
-// saves them and connects. Connected/connecting: the configured endpoint is shown
-// read-only and the button disconnects. Replaces the former standalone Interface tab.
+const ConnIcon = ({ type, className }: { type: ConnectionType; className?: string }) =>
+  type === "usb" ? <Usb className={className} /> : <Network className={className} />;
+
+// Connection control at the top of the bus popover. You pick which SAVED
+// connection a project uses (the details are configured in the connection
+// manager), then connect/disconnect. Single source of truth: the project just
+// references a connection from the global library.
 function ConnectionPanel({ projectId, status }: { projectId: string; status: BusStatus }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
-
-  const [ip, setIp] = useState("");
-  const [port, setPort] = useState("3671");
-  // Seed the fields once the project loads (and when switching projects).
-  useEffect(() => {
-    if (project) { setIp(project.interface.interfaceIp); setPort(String(project.interface.port)); }
-  }, [project?.id]);
+  const { data: saved = [] } = useConnections();
+  const selectedId = project?.connectionId ?? null;
+  const selected = saved.find((c) => c.id === selectedId) ?? null;
 
   const refreshStatus = () => qc.invalidateQueries({ queryKey: qk.busStatus(projectId) });
 
+  const selectMut = useMutation({
+    mutationFn: (cid: string) => api.setProjectConnection(projectId, cid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.project(projectId) }),
+    onError: (e) => toast.error(errMsg(t, e)),
+  });
   const connectMut = useMutation({
-    mutationFn: async () => {
-      const saved = await api.saveInterface(projectId, { interfaceIp: ip, port: Number(port) });
-      setIp(saved.interfaceIp); setPort(String(saved.port));
-      qc.invalidateQueries({ queryKey: qk.project(projectId) });
-      return api.busConnect(projectId);
-    },
+    mutationFn: () => api.busConnect(projectId),
     onSuccess: () => { refreshStatus(); toast.success(t("iface.connected")); },
     onError: (e) => { toast.error(t("iface.connectFailed"), { description: errMsg(t, e) }); refreshStatus(); },
   });
@@ -130,7 +128,7 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
         <Button
           size="sm"
           onClick={() => (connected ? disconnectMut.mutate() : connectMut.mutate())}
-          disabled={busy || (!connected && !ip.trim())}
+          disabled={busy || (!connected && !selected)}
           variant={connected ? "destructive" : "default"}
           data-testid="connect"
         >
@@ -140,21 +138,37 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
       </div>
 
       {editable ? (
-        <div className="grid grid-cols-3 gap-2 px-1">
-          <div className="col-span-2 space-y-1">
-            <Label className="text-[11px] text-muted-foreground">{t("iface.ipLabel")}</Label>
-            <Input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="198.51.100.10" className="h-8 font-mono text-sm" data-testid="ip" />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">{t("iface.portLabel")}</Label>
-            <Input value={port} onChange={(e) => setPort(e.target.value)} className="h-8 font-mono text-sm" />
-          </div>
+        <div className="space-y-2 px-1">
+          {saved.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{t("iface.noConnections")}</p>
+          ) : (
+            <Select value={selectedId ?? undefined} onValueChange={(v) => selectMut.mutate(v)}>
+              <SelectTrigger className="h-8 w-full text-sm" data-testid="connection-select">
+                <SelectValue placeholder={t("iface.savedPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                {saved.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    <span className="flex items-center gap-2">
+                      <ConnIcon type={c.type} className="size-3.5 text-muted-foreground" />
+                      <span>{c.name}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{connDetail(c)}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <div className="flex justify-end"><ConnectionManager /></div>
         </div>
       ) : (
-        <div className="flex items-center gap-2 px-1 font-mono text-xs text-muted-foreground">
-          <Network className="size-3.5 shrink-0" />
-          <span className="truncate">{ip || "—"}:{port}</span>
-        </div>
+        selected && (
+          <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+            <ConnIcon type={selected.type} className="size-3.5 shrink-0" />
+            <span className="truncate">{selected.name}</span>
+            <span className="truncate font-mono text-[11px]">{connDetail(selected)}</span>
+          </div>
+        )
       )}
     </div>
   );

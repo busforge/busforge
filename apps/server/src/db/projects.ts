@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct } from "@busforge/project";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
+import { getConnection, type Connection } from "./connections.ts";
 
 // searchText is a server-built, lowercased blob (comment + user-entered text
 // parameter values like channel/actuator names) so the device list can search
@@ -9,11 +10,10 @@ import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
-export interface ProjectInterface { interfaceIp: string; port: number; }
 export interface StoredProject {
   id: string;
   name: string;
-  interface: ProjectInterface;
+  connectionId: string | null; // id of the saved connection in use, or null
   devices: DeviceWithChanges[];
   groupRanges: GroupRangeNode[];
   gaCount: number;
@@ -91,8 +91,8 @@ export function listProjects(db: Database): ProjectSummary[] {
 }
 
 export function getProject(db: Database, id: string): StoredProject | null {
-  const p = db.query("SELECT id, name, interface_ip AS ip, interface_port AS port FROM projects WHERE id = ?").get(id) as
-    | { id: string; name: string; ip: string; port: number } | null;
+  const p = db.query("SELECT id, name, connection_id AS connectionId FROM projects WHERE id = ?").get(id) as
+    | { id: string; name: string; connectionId: string | null } | null;
   if (!p) return null;
 
   const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
@@ -133,7 +133,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
     nodes.get(g.rangeId)?.addresses.push({ raw: g.raw, address: g.address, name: g.name, dpt: g.dpt });
   }
 
-  return { id: p.id, name: p.name, interface: { interfaceIp: p.ip, port: p.port }, devices, groupRanges: roots, gaCount: gaRows.length };
+  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, gaCount: gaRows.length };
 }
 
 export function deleteProject(db: Database, id: string): boolean {
@@ -161,11 +161,21 @@ export function getGaMeta(db: Database, projectId: string, raw: number): GaMeta 
   return { address: ga.address, name: ga.name, dpt: ga.dpt, path: path.reverse() };
 }
 
-export function getInterface(db: Database, id: string): ProjectInterface | null {
-  const r = db.query("SELECT interface_ip AS interfaceIp, interface_port AS port FROM projects WHERE id = ?").get(id) as ProjectInterface | null;
-  return r ?? null;
+// Does the project exist? (cheap existence check used by route guards.)
+export function projectExists(db: Database, id: string): boolean {
+  return !!db.query("SELECT 1 FROM projects WHERE id = ?").get(id);
 }
 
-export function setInterface(db: Database, id: string, interfaceIp: string, port: number): boolean {
-  return db.prepare("UPDATE projects SET interface_ip = ?, interface_port = ? WHERE id = ?").run(interfaceIp, port, id).changes > 0;
+// Resolve a project's active connection (the saved connection it references), or
+// null when none is set or the referenced connection was deleted.
+export function getProjectConnection(db: Database, id: string): Connection | null {
+  const row = db.query("SELECT connection_id AS cid FROM projects WHERE id = ?").get(id) as { cid: string | null } | null;
+  if (!row?.cid) return null;
+  return getConnection(db, row.cid);
+}
+
+// Point a project at a saved connection (or clear it with null). Returns false if
+// the project does not exist.
+export function setProjectConnection(db: Database, id: string, connectionId: string | null): boolean {
+  return db.prepare("UPDATE projects SET connection_id = ? WHERE id = ?").run(connectionId, id).changes > 0;
 }

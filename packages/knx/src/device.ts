@@ -1,4 +1,4 @@
-import { KnxIpTunnel } from "./connection.ts";
+import type { KnxTransport } from "./transport.ts";
 import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, APCI, type ParsedApdu } from "./frame.ts";
 
 // Connection-oriented KNX management on top of the tunnel: T_Connect, numbered
@@ -11,7 +11,7 @@ export class KnxDevice {
   private ackResolve: (() => void) | null = null;
   private respResolve: ((p: ParsedApdu) => void) | null = null;
 
-  constructor(private tun: KnxIpTunnel, ia: string) {
+  constructor(private tun: KnxTransport, ia: string) {
     this.dst = iaToNum(ia);
     tun.onCemi = (src, dst, tpdu, isGroup) => this.onCemi(src, dst, tpdu, isGroup);
   }

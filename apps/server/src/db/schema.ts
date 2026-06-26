@@ -187,6 +187,40 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE catalog_products ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
   `,
+  // Bus connection becomes transport-aware. A project's active connection stays
+  // inline on the project row (minimal ripple to flash/bus/export/import): the
+  // existing interface_ip/interface_port serve the IP transport, the new columns
+  // serve USB. connection_type selects which. The `connections` table is a
+  // reusable library of saved/discovered connections the user can apply to any
+  // project; it is environment-specific (your IP gateway, your USB stick), not
+  // part of a portable project export.
+  `
+  ALTER TABLE projects ADD COLUMN connection_type TEXT NOT NULL DEFAULT 'ip';
+  ALTER TABLE projects ADD COLUMN usb_vendor_id INTEGER;
+  ALTER TABLE projects ADD COLUMN usb_product_id INTEGER;
+  ALTER TABLE projects ADD COLUMN usb_serial TEXT;
+
+  CREATE TABLE connections (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    type           TEXT NOT NULL,            -- 'ip' | 'usb'
+    host           TEXT NOT NULL DEFAULT '', -- ip transport
+    port           INTEGER NOT NULL DEFAULT 3671,
+    usb_vendor_id  INTEGER,                  -- usb transport
+    usb_product_id INTEGER,
+    usb_serial     TEXT,
+    created_at     INTEGER NOT NULL
+  );
+  `,
+  // A project's active bus connection is now a REFERENCE to a saved connection in
+  // the global `connections` library (single source of truth), not an inline copy.
+  // The earlier inline columns (connection_type, usb_*, interface_ip/port) are no
+  // longer written; they remain only so the .busforge export and snapshot payload
+  // SHAPE stays unchanged (those serializers still read interface_ip/port, which
+  // now always hold their defaults). Dropping them would be a format change.
+  `
+  ALTER TABLE projects ADD COLUMN connection_id TEXT REFERENCES connections(id) ON DELETE SET NULL;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

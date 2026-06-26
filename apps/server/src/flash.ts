@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxIpTunnel, KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
+import { KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
+import { makeTransport } from "./transport.ts";
+import type { Connection } from "./db/connections.ts";
 import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
@@ -96,8 +98,7 @@ export async function flashDeviceParameters(opts: {
   deviceId: string;
   ia: string;
   appXml: string;
-  interfaceIp: string;
-  port: number;
+  connection: Connection;
   params: Map<string, string>;
   moduleInstances?: ModuleInstance[];
   dataDir: string;
@@ -134,7 +135,7 @@ export async function flashDeviceParameters(opts: {
   const target = buildRelativeSegmentTarget(cfg, opts.params, LSM, { moduleInstances: opts.moduleInstances });
   if (!target || target.size === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
-  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);
@@ -206,7 +207,7 @@ async function flashAbsoluteParameters(opts: Parameters<typeof flashDeviceParame
   const targets = buildAbsoluteSegmentTargets(cfg, opts.params, { moduleInstances }).filter((t) => t.size > 0);
   const totalBytes = targets.reduce((n, t) => n + t.size, 0);
 
-  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);
@@ -277,15 +278,14 @@ export async function flashDeviceGroupAddresses(opts: {
   ia: string;
   expectedMask: string;
   links: ComObjectLink[];
-  interfaceIp: string;
-  port: number;
+  connection: Connection;
   dataDir: string;
   dryRun: boolean;
   onProgress?: ProgressFn;
 }): Promise<FlashResult> {
   const { addr, assoc } = buildGroupTables(opts.links);
 
-  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);
@@ -356,8 +356,7 @@ export interface DeviceReadback { mask: string; paramBase: Map<string, string>; 
 export async function readDeviceState(opts: {
   ia: string;
   appXml: string;
-  interfaceIp: string;
-  port: number;
+  connection: Connection;
   liveParams: Map<string, string>;
   moduleInstances?: ModuleInstance[];
   // The parameter refs that are actually part of this device's configuration (the
@@ -373,7 +372,7 @@ export async function readDeviceState(opts: {
   const cfg = parseAppConfig(opts.appXml);
   const { model, writeValues } = moduleAwareImage(cfg, opts.liveParams, opts.moduleInstances ?? []);
 
-  const tun = new KnxIpTunnel(opts.interfaceIp, opts.port);
+  const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
   await tun.connect();
   const dev = new KnxDevice(tun, opts.ia);

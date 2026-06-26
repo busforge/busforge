@@ -146,6 +146,46 @@ describe("API (project resources)", () => {
     expect(await res!.json()).toEqual([]);
   });
 
+  const jreq = (path: string, method: string, body: unknown) =>
+    req(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  test("connection library: create (ip + usb), list, update, delete", async () => {
+    const state = freshState();
+    const ip = await (await handleApi(jreq("/api/connections", "POST", { type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }), state))!.json() as any;
+    expect(ip).toMatchObject({ type: "ip", host: "198.51.100.10", name: "GW" });
+    const usb = await (await handleApi(jreq("/api/connections", "POST", { type: "usb", usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "S1" }), state))!.json() as any;
+    expect(usb).toMatchObject({ type: "usb", usbVendorId: 0x147b, usbProductId: 0x5120 });
+    const list = await (await handleApi(req("/api/connections"), state))!.json() as any[];
+    expect(list.map((c) => c.id)).toEqual([ip.id, usb.id]);
+    const upd = await (await handleApi(jreq(`/api/connections/${ip.id}`, "PUT", { type: "ip", name: "GW2", host: "203.0.113.11" }), state))!.json() as any;
+    expect(upd).toMatchObject({ name: "GW2", host: "203.0.113.11" });
+    const del = await handleApi(req(`/api/connections/${usb.id}`, { method: "DELETE" }), state);
+    expect(del!.status).toBe(200);
+    expect((await (await handleApi(req("/api/connections"), state))!.json() as any[]).map((c) => c.id)).toEqual([ip.id]);
+  });
+
+  test("connection create rejects invalid body", async () => {
+    const state = freshState();
+    const res = (await handleApi(jreq("/api/connections", "POST", { type: "ip" }), state))!; // no host
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error.code).toBe("CONNECTION_FIELDS_INVALID");
+    const usbBad = (await handleApi(jreq("/api/connections", "POST", { type: "usb" }), state))!; // no vid/pid
+    expect((await usbBad.json() as any).error.code).toBe("CONNECTION_FIELDS_INVALID");
+  });
+
+  test("project points at a saved connection, rejects unknown id, clears with null", async () => {
+    const state = freshState();
+    const imp = await (await importDemo(state))!.json() as any;
+    const conn = await (await handleApi(jreq("/api/connections", "POST", { type: "ip", name: "GW", host: "203.0.113.41" }), state))!.json() as any;
+    const set = await (await handleApi(jreq(`/api/projects/${imp.id}/connection`, "PUT", { connectionId: conn.id }), state))!.json() as any;
+    expect(set).toEqual({ connectionId: conn.id });
+    expect((await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json() as any).connectionId).toBe(conn.id);
+    const bad = (await handleApi(jreq(`/api/projects/${imp.id}/connection`, "PUT", { connectionId: "nope" }), state))!;
+    expect(bad.status).toBe(404);
+    const cleared = await (await handleApi(jreq(`/api/projects/${imp.id}/connection`, "PUT", { connectionId: null }), state))!.json() as any;
+    expect(cleared).toEqual({ connectionId: null });
+  });
+
   test("import -> list -> get", async () => {
     const state = freshState();
     const imp = (await (await importDemo(state))!.json()) as any;
@@ -160,7 +200,7 @@ describe("API (project resources)", () => {
     expect(proj.devices).toHaveLength(2);
     expect(proj.groupRanges[0].name).toBe("Licht");
     expect(proj.groupRanges[0].children[0].addresses).toHaveLength(2);
-    expect(proj.interface).toMatchObject({ interfaceIp: "", port: 3671 });
+    expect(proj.connectionId).toBeNull(); // no connection assigned on import
   });
 
   test("import with wrong password -> error, nothing stored", async () => {
@@ -194,16 +234,6 @@ describe("API (project resources)", () => {
     expect(await changes()).toMatchObject({ params: 0 });
   });
 
-  test("interface round-trip per project", async () => {
-    const state = freshState();
-    const imp = (await (await importDemo(state))!.json()) as any;
-    const res = await handleApi(req(`/api/projects/${imp.id}/interface`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ interfaceIp: "203.0.113.15", port: 3671 }),
-    }), state);
-    expect(await res!.json()).toMatchObject({ interfaceIp: "203.0.113.15", port: 3671 });
-    const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
-    expect(proj.interface.interfaceIp).toBe("203.0.113.15");
-  });
 
   test("connect without an interface IP -> error", async () => {
     const state = freshState();

@@ -1,5 +1,9 @@
 export * from "./frame.ts";
+export type { KnxTransport } from "./transport.ts";
+export { parseCemiLData } from "./transport.ts";
 export { KnxIpTunnel } from "./connection.ts";
+export { KnxUsbTransport, listUsbInterfaces } from "./usb.ts";
+export { searchInterfaces } from "./discover.ts";
 export { KnxDevice } from "./device.ts";
 export * from "./flash.ts";
 export * from "./loadrunner.ts";

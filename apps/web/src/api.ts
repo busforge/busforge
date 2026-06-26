@@ -6,9 +6,14 @@ export interface DeviceChanges { params: number; links: number; }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; }
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
-export interface ProjectInterface { interfaceIp: string; port: number; }
+export type ConnectionType = "ip" | "usb";
+// A saved, reusable bus connection (the connection-manager library).
+export interface Connection { id: string; name: string; type: ConnectionType; host: string; port: number; usbVendorId: number | null; usbProductId: number | null; usbSerial: string | null; createdAt: number; }
+export type ConnectionInput = Omit<Connection, "id" | "createdAt">;
+export interface UsbDevice { vendorId: number; productId: number; product: string; serial?: string; path?: string; }
+export interface Gateway { name: string; ip: string; port: number; ia: string; mac: string; }
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
-export interface Project { id: string; name: string; interface: ProjectInterface; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
+export interface Project { id: string; name: string; connectionId: string | null; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
@@ -163,8 +168,8 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  saveInterface: (id: string, iface: ProjectInterface): Promise<ProjectInterface> =>
-    fetch(`/api/projects/${id}/interface`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(iface) }).then((r) => jsonOrThrow<ProjectInterface>(r)),
+  setProjectConnection: (id: string, connectionId: string | null): Promise<{ connectionId: string | null }> =>
+    fetch(`/api/projects/${id}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId }) }).then((r) => jsonOrThrow<{ connectionId: string | null }>(r)),
 
   telegrams: (id: string, limit = 500): Promise<Telegram[]> =>
     fetch(`/api/projects/${id}/telegrams?limit=${limit}`).then((r) => jsonOrThrow<Telegram[]>(r)),
@@ -241,6 +246,17 @@ export const api = {
   tasks: (id: string): Promise<Task[]> => fetch(`/api/projects/${id}/tasks`).then((r) => jsonOrThrow<Task[]>(r)),
   cancelTask: (id: string, taskId: string): Promise<{ cancelled: string }> =>
     fetch(`/api/projects/${id}/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }).then((r) => jsonOrThrow<{ cancelled: string }>(r)),
+
+  // Connection-manager library (reusable saved connections, project-independent).
+  connections: (): Promise<Connection[]> => fetch("/api/connections").then((r) => jsonOrThrow<Connection[]>(r)),
+  createConnection: (c: ConnectionInput): Promise<Connection> =>
+    fetch("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(c) }).then((r) => jsonOrThrow<Connection>(r)),
+  updateConnection: (cid: string, c: ConnectionInput): Promise<Connection> =>
+    fetch(`/api/connections/${encodeURIComponent(cid)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(c) }).then((r) => jsonOrThrow<Connection>(r)),
+  deleteConnection: (cid: string): Promise<{ ok: true }> =>
+    fetch(`/api/connections/${encodeURIComponent(cid)}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
+  discoverUsb: (): Promise<UsbDevice[]> => fetch("/api/connections/discover-usb").then((r) => jsonOrThrow<UsbDevice[]>(r)),
+  discoverIp: (): Promise<Gateway[]> => fetch("/api/connections/discover-ip").then((r) => jsonOrThrow<Gateway[]>(r)),
 
   busStatus: (id: string): Promise<BusState> => fetch(`/api/projects/${id}/bus/status`).then((r) => jsonOrThrow<BusState>(r)),
   busConnect: (id: string): Promise<{ status: BusStatus }> => fetch(`/api/projects/${id}/bus/connect`, { method: "POST" }).then((r) => jsonOrThrow<{ status: BusStatus }>(r)),

@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
 import { openDb } from "../src/db/schema.ts";
-import { insertProject, listProjects, getProject, deleteProject, setInterface } from "../src/db/projects.ts";
+import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
+import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
 import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
@@ -243,11 +244,17 @@ describe("projects", () => {
     expect(d.searchText).not.toContain("600");            // bare numeric value skipped
   });
 
-  test("interface update", () => {
+  test("project references a saved connection", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    expect(setInterface(db, "p1", "1.2.3.4", 3672)).toBe(true);
-    expect(getProject(db, "p1")!.interface).toMatchObject({ interfaceIp: "1.2.3.4", port: 3672 });
+    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3672, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    expect(setProjectConnection(db, "p1", "c1")).toBe(true);
+    expect(getProject(db, "p1")!.connectionId).toBe("c1");
+    expect(getProjectConnection(db, "p1")).toMatchObject({ id: "c1", host: "1.2.3.4", port: 3672 });
+    // deleting the connection clears the reference (ON DELETE SET NULL)
+    deleteConnection(db, "c1");
+    expect(getProjectConnection(db, "p1")).toBeNull();
+    expect(getProject(db, "p1")!.connectionId).toBeNull();
   });
 
   test("delete cascades to children", () => {
@@ -412,10 +419,9 @@ describe("snapshots", () => {
   test("serialize captures params, links and project meta", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    setInterface(db, "p1", "203.0.113.15", 3672);
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
     const cfg = serializeConfig(db, "p1");
-    expect(cfg.project).toMatchObject({ name: "Demo", interfaceIp: "203.0.113.15", interfacePort: 3672 });
+    expect(cfg.project).toMatchObject({ name: "Demo" });
     expect(cfg.deviceParameters).toContainEqual({ deviceId: dev, paramRefId: "M-X_A-1_P-9_R-1", value: "7" });
     expect(cfg.deviceLinks).toContainEqual({ deviceId: dev, comObjRefId: "O-1_R-1", slot: 0, gaRaw: 1 });
   });
@@ -541,5 +547,36 @@ describe("telegrams", () => {
     insertTelegram(db, "p1", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 500));
     expect(pruneTelegrams(db, 300)).toBe(1);
     expect(recentTelegrams(db, "p1", 10).map((t) => t.ts)).toEqual([500]);
+  });
+});
+
+describe("connections", () => {
+  const ipInput: ConnectionInput = { name: "Gateway", type: "ip", host: "198.51.100.10", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null };
+  const usbInput: ConnectionInput = { name: "USB Stick", type: "usb", host: "", port: 3671, usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "ABC123" };
+
+  test("create -> list -> get round-trips both transports", () => {
+    const db = fresh();
+    const ip = createConnection(db, "c1", ipInput, 1000);
+    const usb = createConnection(db, "c2", usbInput, 2000);
+    expect(ip).toMatchObject({ id: "c1", name: "Gateway", type: "ip", host: "198.51.100.10", port: 3671, createdAt: 1000 });
+    expect(usb).toMatchObject({ id: "c2", type: "usb", usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "ABC123" });
+    expect(listConnections(db).map((c) => c.id)).toEqual(["c1", "c2"]); // ordered by created_at
+    expect(getConnection(db, "c2")).toMatchObject({ name: "USB Stick", usbSerial: "ABC123" });
+  });
+
+  test("update changes fields, returns null for unknown id", () => {
+    const db = fresh();
+    createConnection(db, "c1", ipInput, 1000);
+    const updated = updateConnection(db, "c1", { ...ipInput, name: "Renamed", host: "203.0.113.11" });
+    expect(updated).toMatchObject({ id: "c1", name: "Renamed", host: "203.0.113.11" });
+    expect(updateConnection(db, "nope", ipInput)).toBeNull();
+  });
+
+  test("delete removes, returns false for unknown id", () => {
+    const db = fresh();
+    createConnection(db, "c1", ipInput, 1000);
+    expect(deleteConnection(db, "c1")).toBe(true);
+    expect(getConnection(db, "c1")).toBeNull();
+    expect(deleteConnection(db, "c1")).toBe(false);
   });
 });

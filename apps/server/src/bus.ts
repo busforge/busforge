@@ -1,5 +1,7 @@
-import { KnxIpTunnel } from "@busforge/knx";
+import type { KnxTransport } from "@busforge/knx";
 import { decodeGroupTpdu, type Telegram } from "./telegram.ts";
+import { makeTransport } from "./transport.ts";
+import type { Connection } from "./db/connections.ts";
 
 export type BusStatus = "disconnected" | "connecting" | "connected";
 
@@ -7,7 +9,7 @@ export type BusStatus = "disconnected" | "connecting" | "connected";
 // subscribers (the DB writer and the WebSocket clients). Read-only: it never
 // sends to the bus. One active connection at a time, bound to a project.
 export class Bus {
-  private tunnel: KnxIpTunnel | null = null;
+  private tunnel: KnxTransport | null = null;
   status: BusStatus = "disconnected";
   error: string | null = null;
   activeProjectId: string | null = null;
@@ -23,12 +25,12 @@ export class Bus {
 
   private emit(t: Telegram) { for (const l of this.listeners) l(t); }
 
-  async connect(projectId: string, ip: string, port: number): Promise<void> {
+  async connect(projectId: string, connection: Connection): Promise<void> {
     if (this.status === "connected" || this.status === "connecting") return;
     this.status = "connecting";
     this.error = null;
     this.activeProjectId = projectId;
-    const tunnel = new KnxIpTunnel(ip, port);
+    const tunnel = makeTransport(connection);
     tunnel.onCemi = (src, dst, tpdu, isGroup) => {
       if (isGroup) this.emit(decodeGroupTpdu(src, dst, tpdu, this.now()));
     };

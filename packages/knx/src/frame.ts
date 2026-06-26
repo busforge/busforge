@@ -8,6 +8,7 @@ export const numToIa = (n: number) => `${(n >> 12) & 0xf}.${(n >> 8) & 0xf}.${n 
 
 // --- KNXnet/IP service ids ---
 export const SVC = {
+  SEARCH_REQ: 0x0201, SEARCH_RES: 0x0202,
   CONNECT_REQ: 0x0205, CONNECT_RES: 0x0206,
   DISCONNECT_REQ: 0x0209, DISCONNECT_RES: 0x020a,
   TUNNEL_REQ: 0x0420, TUNNEL_ACK: 0x0421,

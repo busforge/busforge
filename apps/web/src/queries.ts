@@ -18,7 +18,11 @@ export const qk = {
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
+  connections: ["connections"] as const,
 };
+
+export const useConnections = () =>
+  useQuery({ queryKey: qk.connections, queryFn: api.connections, staleTime: 30_000 });
 
 // The dashboard must reflect each project's current counts (devices, GAs, restore
 // points) whenever you return to it. Those change while you are inside a project,

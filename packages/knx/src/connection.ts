@@ -1,11 +1,12 @@
 import dgram from "node:dgram";
 import { SVC, knxFrame, hpai, KNXPORT } from "./frame.ts";
+import { parseCemiLData, type KnxTransport } from "./transport.ts";
 
 // KNXnet/IP tunnelling connection. Handles the KNXnet/IP layer (connect,
 // tunnelling request/ack both directions) and surfaces incoming cEMI L_Data
 // (source IA + raw TPDU) to a listener. The connection-oriented KNX transport
 // lives one layer up in KnxDevice.
-export class KnxIpTunnel {
+export class KnxIpTunnel implements KnxTransport {
   private sock!: dgram.Socket;
   channel = 0;
   assignedIa = 0;
@@ -55,14 +56,7 @@ export class KnxIpTunnel {
     } else if (svc === SVC.TUNNEL_REQ) {
       const serverSeq = body[2];
       await this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, this.channel, serverSeq, 0x00])));
-      const cemi = body.subarray(4);
-      const addIL = cemi[1];
-      const off = 2 + addIL;
-      const isGroup = (cemi[off + 1] & 0x80) !== 0;
-      const src = cemi.readUInt16BE(off + 2);
-      const dst = cemi.readUInt16BE(off + 4);
-      const len = cemi[off + 6];
-      const tpdu = cemi.subarray(off + 7, off + 7 + len + 1);
+      const { src, dst, tpdu, isGroup } = parseCemiLData(body.subarray(4));
       this.onCemi?.(src, dst, tpdu, isGroup);
     }
   }

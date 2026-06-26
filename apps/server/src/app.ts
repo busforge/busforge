@@ -6,7 +6,10 @@ import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
-import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, getInterface, setInterface, getGaMeta } from "./db/projects.ts";
+import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta } from "./db/projects.ts";
+import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "./db/connections.ts";
+import { isConnectionReady } from "./transport.ts";
+import { searchInterfaces, listUsbInterfaces } from "@busforge/knx";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
 import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddress, updateGroupAddress, deleteGroupAddress, rangeLinkImpact, countLinksForRaws } from "./db/groupedit.ts";
 import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
@@ -54,6 +57,26 @@ const json = (data: unknown, status = 200) =>
 // English `message` as a fallback/log line.
 const err = (code: string, message: string, status = 400) => json({ error: { code, message } }, status);
 
+// Validate a saved-connection payload for the connection library. Returns the
+// normalized fields, or an English error string on invalid input.
+function parseConnInput(raw: unknown): ConnectionInput | string {
+  const b = (raw ?? {}) as Record<string, unknown>;
+  const name = typeof b.name === "string" ? b.name.trim() : "";
+  // type defaults to 'ip', inferring 'usb' when a usb identity is supplied.
+  const type = b.type === "usb" ? "usb" : b.type === "ip" ? "ip" : (b.usbVendorId != null ? "usb" : "ip");
+  if (type === "ip") {
+    const host = (typeof b.host === "string" ? b.host : "").trim();
+    if (!host) return "host (IP address) required for an IP connection";
+    const port = Number(b.port) || 3671;
+    return { name: name || host, type, host, port, usbVendorId: null, usbProductId: null, usbSerial: null };
+  }
+  const usbVendorId = Number(b.usbVendorId);
+  const usbProductId = Number(b.usbProductId);
+  if (!Number.isInteger(usbVendorId) || !Number.isInteger(usbProductId)) return "usbVendorId and usbProductId required for a USB connection";
+  const usbSerial = typeof b.usbSerial === "string" ? b.usbSerial : null;
+  return { name: name || "KNX-USB", type, host: "", port: 3671, usbVendorId, usbProductId, usbSerial };
+}
+
 // Handle an /api/* request. Returns null for non-API paths so the caller can
 // fall through to static serving.
 export async function handleApi(req: Request, state: AppState): Promise<Response | null> {
@@ -93,6 +116,37 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           for (const p of placeable) putCatalogProduct(db, p, true);
         })();
         return json({ products: placeable.length, programs: programs.size }, 201);
+      }
+      return err("NOT_FOUND", "not found", 404);
+    }
+
+    // /api/connections  -> reusable library of saved bus connections (IP / USB)
+    if (seg[1] === "connections") {
+      // discovery: enumerate gateways on the LAN / KNX-USB sticks for the picker
+      if (seg.length === 3 && seg[2] === "discover-ip" && req.method === "GET") {
+        return json(await searchInterfaces());
+      }
+      if (seg.length === 3 && seg[2] === "discover-usb" && req.method === "GET") {
+        try { return json(await listUsbInterfaces()); }
+        catch { return err("USB_UNAVAILABLE", "USB support is not available on this server"); }
+      }
+      if (seg.length === 2 && req.method === "GET") return json(listConnections(db));
+      if (seg.length === 2 && req.method === "POST") {
+        const input = parseConnInput(await req.json().catch(() => ({})));
+        if (typeof input === "string") return err("CONNECTION_FIELDS_INVALID", input);
+        return json(createConnection(db, randomUUID(), input, state.now()), 201);
+      }
+      if (seg.length === 3) {
+        const cid = decodeURIComponent(seg[2]);
+        if (req.method === "PUT") {
+          const input = parseConnInput(await req.json().catch(() => ({})));
+          if (typeof input === "string") return err("CONNECTION_FIELDS_INVALID", input);
+          const updated = updateConnection(db, cid, input);
+          return updated ? json(updated) : err("CONNECTION_NOT_FOUND", "connection not found", 404);
+        }
+        if (req.method === "DELETE") {
+          return deleteConnection(db, cid) ? json({ ok: true }) : err("CONNECTION_NOT_FOUND", "connection not found", 404);
+        }
       }
       return err("NOT_FOUND", "not found", 404);
     }
@@ -199,7 +253,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
 
     // /api/projects/:id/devices  (POST: place a catalog product as a new device)
     if (seg.length === 4 && seg[3] === "devices" && req.method === "POST") {
-      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: string };
       if (!body.appRef || !body.productRef) return err("DEVICE_FIELDS_REQUIRED", "appRef and productRef required");
       const product = getCatalogProduct(db, body.appRef, body.productRef);
@@ -210,11 +264,14 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     }
 
     // /api/projects/:id/interface
-    if (seg.length === 4 && seg[3] === "interface" && req.method === "PUT") {
-      const body = (await req.json()) as { interfaceIp?: string; port?: number };
-      if (!body.interfaceIp || !body.port) return err("INTERFACE_FIELDS_REQUIRED", "interfaceIp and port required");
-      if (!setInterface(db, id, body.interfaceIp, Number(body.port))) return err("PROJECT_NOT_FOUND", "project not found", 404);
-      return json(getInterface(db, id));
+    // /api/projects/:id/connection  -> point the project at a saved connection
+    // (or clear it with connectionId: null).
+    if (seg.length === 4 && seg[3] === "connection" && req.method === "PUT") {
+      const body = (await req.json().catch(() => ({}))) as { connectionId?: string | null };
+      const cid = body.connectionId ?? null;
+      if (cid !== null && !getConnection(db, cid)) return err("CONNECTION_NOT_FOUND", "connection not found", 404);
+      if (!setProjectConnection(db, id, cid)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      return json({ connectionId: cid });
     }
 
     // /api/projects/:id/telegrams?limit=
@@ -246,7 +303,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 4 && seg[3] === "snapshots") {
       if (req.method === "GET") return json(listSnapshots(db, id));
       if (req.method === "POST") {
-        if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+        if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
         const body = (await req.json().catch(() => ({}))) as { label?: string };
         const snap = createSnapshot(db, id, { label: (body.label ?? "").trim(), kind: "manual", reason: "manual" }, state.now());
         return json(snap, 201);
@@ -279,7 +336,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // --- group-address structure editing -------------------------------------
     // /api/projects/:id/group-ranges  -> create a main/middle range
     if (seg.length === 4 && seg[3] === "group-ranges" && req.method === "POST") {
-      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; name?: string; number?: number };
       if (typeof body.number !== "number") return err("GA_NUMBER_INVALID", "number required");
       createGroupRange(db, id, body.parentId ?? null, (body.name ?? "").trim(), body.number);
@@ -307,7 +364,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     }
     // /api/projects/:id/group-addresses  -> create a group address in a range
     if (seg.length === 4 && seg[3] === "group-addresses" && req.method === "POST") {
-      if (!getInterface(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const body = (await req.json().catch(() => ({}))) as { rangeId?: number; sub?: number; name?: string; dpt?: string };
       if (typeof body.rangeId !== "number" || typeof body.sub !== "number") return err("GA_FIELDS_REQUIRED", "rangeId and sub required");
       createGroupAddress(db, id, body.rangeId, body.sub, (body.name ?? "").trim(), (body.dpt ?? "").trim());
@@ -418,8 +475,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
       if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-      const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
+      const conn = getProjectConnection(db, id);
+      if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const appXml = resolveAppXml(state, id, dev.appRef);
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
@@ -433,7 +490,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return readDeviceState({
             ia: dev.ia, appXml,
-            interfaceIp: iface.interfaceIp, port: iface.port,
+            connection: conn,
             liveParams: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
           });
         },
@@ -448,8 +505,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
       if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-      const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
+      const conn = getProjectConnection(db, id);
+      if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const dryGa = url.searchParams.get("dry") === "1";
@@ -461,7 +518,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceGroupAddresses({
             projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
-            interfaceIp: iface.interfaceIp, port: iface.port, dataDir: state.dataDir,
+            connection: conn, dataDir: state.dataDir,
             dryRun: dryGa, onProgress: progress,
           });
         },
@@ -476,8 +533,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const deviceId = decodeURIComponent(seg[4]);
       const dev = getDeviceForFlash(db, id, deviceId);
       if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-      const iface = getInterface(db, id);
-      if (!iface?.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
+      const conn = getProjectConnection(db, id);
+      if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const appXml = resolveAppXml(state, id, dev.appRef);
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const dryParams = url.searchParams.get("dry") === "1";
@@ -490,7 +547,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceParameters({
             projectId: id, deviceId, ia: dev.ia, appXml,
-            interfaceIp: iface.interfaceIp, port: iface.port,
+            connection: conn,
             params: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), dataDir: state.dataDir,
             dryRun: dryParams, onProgress: progress,
           });
@@ -520,11 +577,10 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         return json({ status: active ? bus.status : "disconnected", error: active ? bus.error : null, projectId: bus.activeProjectId });
       }
       if (seg[4] === "connect" && req.method === "POST") {
-        const iface = getInterface(db, id);
-        if (!iface) return err("PROJECT_NOT_FOUND", "project not found", 404);
-        if (!iface.interfaceIp) return err("INTERFACE_NOT_SET", "set an interface IP first");
+        const conn = getProjectConnection(db, id);
+        if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
         if (bus.activeProjectId && bus.activeProjectId !== id) await bus.disconnect();
-        await bus.connect(id, iface.interfaceIp, iface.port);
+        await bus.connect(id, conn);
         return json({ status: bus.status, projectId: id });
       }
       if (seg[4] === "disconnect" && req.method === "POST") {
@@ -665,7 +721,7 @@ function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>
 // back to the receiver list (e.g. a read-only responder), so nothing is dropped.
 function gaDevices(state: AppState, projectId: string, raw: number, lang?: string): Response {
   const { db } = state;
-  if (!getInterface(db, projectId)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+  if (!projectExists(db, projectId)) return err("PROJECT_NOT_FOUND", "project not found", 404);
   const meta = getGaMeta(db, projectId, raw);
   if (!meta) return err("GA_NOT_FOUND", "group address not found", 404);
 
