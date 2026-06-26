@@ -81,6 +81,14 @@ The earlier inline project columns (`connection_type`, `usb_*`, `interface_ip`,
 `interface_port`) are kept only so the `.busforge` export format and snapshots
 stay byte-stable; they no longer drive the active connection.
 
+**Export/backup.** A project's `connection_id` is a project property, so it is
+carried in the `.busforge` export (a backup should preserve which connection the
+project used). The connection's *details* are never exported (they live in the
+global library and are machine-specific). On import the reference is re-applied
+only if that saved connection still exists on the target system; otherwise it
+falls away (the FK would reject a dangling reference anyway) and the user simply
+picks a connection again.
+
 Server endpoints (`apps/server/src/app.ts`):
 
 | Method | Path | Purpose |

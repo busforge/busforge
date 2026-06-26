@@ -16,7 +16,12 @@ export const EXPORT_VERSION = 1;
 export interface ProjectExport {
   busforgeExport: number; // format version
   exportedAt: number;
-  project: { name: string; interfaceIp: string; interfacePort: number };
+  // connectionId is the project's active-connection reference (a project property,
+  // so it is carried for backup/restore). It is only re-applied on import if that
+  // saved connection still exists on the target system; otherwise it falls away and
+  // the user picks a connection again. The connection's DETAILS are never exported
+  // (they are machine-specific and live in the global connections library).
+  project: { name: string; interfaceIp: string; interfacePort: number; connectionId: string | null };
   devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   groupAddresses: { rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
@@ -45,7 +50,7 @@ const linkRows = (db: Database, table: string, projectId: string) =>
 // have ensured it is populated (for legacy projects, by resolving each device's
 // app program first, which backfills the catalog).
 export function exportProject(db: Database, projectId: string, now: number): ProjectExport | null {
-  const project = db.query("SELECT name, interface_ip AS interfaceIp, interface_port AS interfacePort FROM projects WHERE id = ?")
+  const project = db.query("SELECT name, interface_ip AS interfaceIp, interface_port AS interfacePort, connection_id AS connectionId FROM projects WHERE id = ?")
     .get(projectId) as ProjectExport["project"] | null;
   if (!project) return null;
 

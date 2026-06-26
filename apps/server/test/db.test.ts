@@ -14,6 +14,7 @@ import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, g
 import { createProject, addDevice } from "../src/db/projects.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
 import { exportProject } from "../src/db/exportProject.ts";
+import { importProjectExport } from "../src/db/importProject.ts";
 import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
@@ -292,6 +293,24 @@ describe("project export", () => {
     expect(ex.baggage).toContainEqual({ name: `${dev}_x.bin`, dataBase64: Buffer.from("zz").toString("base64") });
 
     expect(exportProject(db, "ghost", 1)).toBeNull();
+  });
+
+  test("carries the active-connection reference; import restores it only if the connection exists", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    createConnection(db, "conn-1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    setProjectConnection(db, "p1", "conn-1");
+    const ex = exportProject(db, "p1", 5000)!;
+    expect(ex.project.connectionId).toBe("conn-1");
+
+    // re-import while the connection still exists -> reference restored
+    importProjectExport(db, ex, "p2", 6000);
+    expect(getProjectConnection(db, "p2")).toMatchObject({ id: "conn-1" });
+
+    // connection gone (e.g. another machine) -> reference falls away, no FK error
+    deleteConnection(db, "conn-1");
+    importProjectExport(db, ex, "p3", 7000);
+    expect(getProject(db, "p3")!.connectionId).toBeNull();
   });
 });
 
