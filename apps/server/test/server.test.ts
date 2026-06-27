@@ -215,6 +215,20 @@ describe("API (project resources)", () => {
     expect(res!.status).toBe(404);
   });
 
+  test("rename project (PATCH): updates name, rejects empty, 404 for unknown", async () => {
+    const state = freshState();
+    const imp = await (await importDemo(state))!.json() as any;
+    const ok = (await handleApi(jreq(`/api/projects/${imp.id}`, "PATCH", { name: "Renamed" }), state))!;
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ id: imp.id, name: "Renamed" });
+    expect((await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json() as any).name).toBe("Renamed");
+    const empty = (await handleApi(jreq(`/api/projects/${imp.id}`, "PATCH", { name: "  " }), state))!;
+    expect(empty.status).toBe(400);
+    expect((await empty.json() as any).error.code).toBe("PROJECT_NAME_REQUIRED");
+    const missing = (await handleApi(jreq("/api/projects/nope", "PATCH", { name: "X" }), state))!;
+    expect(missing.status).toBe(404);
+  });
+
   test("editing a param back to its default clears the change", async () => {
     const state = freshState();
     const form = new FormData();

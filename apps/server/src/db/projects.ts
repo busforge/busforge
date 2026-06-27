@@ -140,6 +140,10 @@ export function deleteProject(db: Database, id: string): boolean {
   return db.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
 }
 
+export function renameProject(db: Database, id: string, name: string): boolean {
+  return db.prepare("UPDATE projects SET name = ? WHERE id = ?").run(name, id).changes > 0;
+}
+
 // A group address's identity for the details overlay: its address/name/dpt plus
 // the readable range path (ancestor range names, top-down, e.g. ["virtuell",
 // "Licht außen"]). Returns null if the project has no such group address.

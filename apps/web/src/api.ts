@@ -144,6 +144,8 @@ export const api = {
   getProject: (id: string): Promise<Project> => fetch(`/api/projects/${id}`).then((r) => jsonOrThrow<Project>(r)),
 
   deleteProject: (id: string): Promise<{ ok: true }> => fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
+  renameProject: (id: string, name: string): Promise<{ id: string; name: string }> =>
+    fetch(`/api/projects/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<{ id: string; name: string }>(r)),
 
   // Download the portable project export (.busforge). POSTs so an optional
   // password rides in the body, not the URL; triggers a browser download from

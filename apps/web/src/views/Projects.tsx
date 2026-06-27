@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -21,8 +21,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ExportDialog } from "@/components/ExportDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -54,6 +55,8 @@ export function ProjectsScreen() {
   const qc = useQueryClient();
   const { data: projects = [], isLoading } = useProjects();
   const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
+  const [renameTarget, setRenameTarget] = useState<ProjectSummary | null>(null);
+  const [exportTarget, setExportTarget] = useState<ProjectSummary | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [blankOpen, setBlankOpen] = useState(false);
 
@@ -102,14 +105,11 @@ export function ProjectsScreen() {
             <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
               <CardContent className="flex items-start justify-between gap-3">
                 <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} date={p.importedAt} />
-                <Button
-                  variant="ghost" size="icon"
-                  className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                  onClick={(e) => { e.stopPropagation(); setPendingDelete(p); }}
-                  aria-label={t("projects.deleteAria")}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+                <ProjectCardMenu
+                  onRename={() => setRenameTarget(p)}
+                  onExport={() => setExportTarget(p)}
+                  onDelete={() => setPendingDelete(p)}
+                />
               </CardContent>
             </Card>
           ))}
@@ -147,7 +147,91 @@ export function ProjectsScreen() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {renameTarget && <RenameDialog project={renameTarget} onClose={() => setRenameTarget(null)} />}
+
+      {exportTarget && (
+        <ExportDialog projectId={exportTarget.id} open onOpenChange={(o) => !o && setExportTarget(null)} />
+      )}
     </div>
+  );
+}
+
+// Per-card overflow menu: rename, export, and (set apart) delete.
+function ProjectCardMenu({ onRename, onExport, onDelete }: { onRename: () => void; onExport: () => void; onDelete: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost" size="icon"
+          className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={t("projects.menuAria")}
+          data-testid="project-menu"
+        >
+          <MoreVertical className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuItem onSelect={onRename} data-testid="menu-rename">
+          <Pencil className="size-4 text-primary" /> {t("projects.renameOption")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onExport} data-testid="menu-export">
+          <Download className="size-4 text-primary" /> {t("projects.exportOption")}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={onDelete}
+          className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+          data-testid="menu-delete"
+        >
+          <Trash2 className="size-4" /> {t("projects.delete")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// Rename an existing project. Mounted only while a project is targeted, so the
+// field seeds from the current name and tracks edits as a controlled input.
+function RenameDialog({ project, onClose }: { project: ProjectSummary; onClose: () => void }) {
+  const { t } = useTranslation();
+  const qc = useQueryClient();
+  const [name, setName] = useState(project.name);
+
+  const renameMut = useMutation({
+    mutationFn: () => api.renameProject(project.id, name.trim()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.projects }); onClose(); },
+    onError: (e) => toast.error(t("projects.renameFailed"), { description: errMsg(t, e) }),
+  });
+  const submit = () => { if (name.trim() && !renameMut.isPending) renameMut.mutate(); };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Pencil className="size-4 text-primary" /> {t("projects.renameTitle")}</DialogTitle>
+          <DialogDescription>{t("projects.renameDescription")}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label>{t("projects.renameLabel")}</Label>
+          <Input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            data-testid="rename-name"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t("common.cancel")}</Button>
+          <Button onClick={submit} disabled={!name.trim() || renameMut.isPending} data-testid="rename-submit">
+            {renameMut.isPending ? <><Loader2 className="size-4 animate-spin" /> {t("projects.renameSaving")}</> : t("projects.renameSave")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

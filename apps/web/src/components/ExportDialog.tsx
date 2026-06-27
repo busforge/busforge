@@ -15,33 +15,41 @@ import { errMsg } from "../lib/apiError.ts";
 // Download the project as a portable .busforge artifact, optionally AES-256-GCM
 // encrypted with a password the user sets here. Without a password the file is a
 // plain gzip stream anyone can open with `gunzip`.
-export function ExportDialog({ projectId }: { projectId: string }) {
+// Without open/onOpenChange it renders its own trigger button (the in-project
+// header use). With them it is controlled and the trigger is omitted, so a menu
+// item elsewhere (e.g. the dashboard card menu) can open it.
+export function ExportDialog({ projectId, open: openProp, onOpenChange }: { projectId: string; open?: boolean; onOpenChange?: (o: boolean) => void }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const [openState, setOpenState] = useState(false);
+  const open = controlled ? openProp : openState;
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function reset() { setPassword(""); setError(null); }
+  const setOpen = (o: boolean) => { if (!o) reset(); controlled ? onOpenChange?.(o) : setOpenState(o); };
 
   const exportMut = useMutation({
     mutationFn: () => api.exportProject(projectId, password.trim() || undefined),
-    onSuccess: () => { toast.success(t("export.done")); reset(); setOpen(false); },
+    onSuccess: () => { toast.success(t("export.done")); setOpen(false); },
     onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("export.failed"), { description: msg }); },
   });
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); setOpen(o); }}>
-      <DialogTrigger asChild>
-        <button
-          type="button"
-          aria-label={t("nav.exportProject")}
-          title={t("nav.exportProject")}
-          className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-          data-testid="export-project"
-        >
-          <Download className="size-3.5 shrink-0" />
-        </button>
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={setOpen}>
+      {!controlled && (
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            aria-label={t("nav.exportProject")}
+            title={t("nav.exportProject")}
+            className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            data-testid="export-project"
+          >
+            <Download className="size-3.5 shrink-0" />
+          </button>
+        </DialogTrigger>
+      )}
       <DialogContent>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Download className="size-4 text-primary" /> {t("export.title")}</DialogTitle>

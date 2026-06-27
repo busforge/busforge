@@ -6,7 +6,7 @@ import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
-import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta } from "./db/projects.ts";
+import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, renameProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta } from "./db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "./db/connections.ts";
 import { isConnectionReady } from "./transport.ts";
 import { searchInterfaces, listUsbInterfaces } from "@busforge/knx";
@@ -242,6 +242,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     if (seg.length === 3 && req.method === "GET") {
       const p = getProject(db, id);
       return p ? json(p) : err("PROJECT_NOT_FOUND", "project not found", 404);
+    }
+    if (seg.length === 3 && req.method === "PATCH") {
+      const body = (await req.json().catch(() => ({}))) as { name?: string };
+      const name = (body.name ?? "").trim();
+      if (!name) return err("PROJECT_NAME_REQUIRED", "a project name is required");
+      if (!renameProject(db, id, name)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      return json({ id, name });
     }
     if (seg.length === 3 && req.method === "DELETE") {
       if (!deleteProject(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
