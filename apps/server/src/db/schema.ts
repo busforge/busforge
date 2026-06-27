@@ -214,12 +214,25 @@ const MIGRATIONS: string[] = [
   `,
   // A project's active bus connection is now a REFERENCE to a saved connection in
   // the global `connections` library (single source of truth), not an inline copy.
-  // The earlier inline columns (connection_type, usb_*, interface_ip/port) are no
-  // longer written; they remain only so the .busforge export and snapshot payload
-  // SHAPE stays unchanged (those serializers still read interface_ip/port, which
-  // now always hold their defaults). Dropping them would be a format change.
+  // The earlier inline columns (connection_type, usb_*, interface_ip/port) became
+  // unused once the model switched to a reference; they are dropped in the next
+  // migration. The project's serializable properties live in projectProps.ts, the
+  // one definition shared by export and snapshots.
   `
   ALTER TABLE projects ADD COLUMN connection_id TEXT REFERENCES connections(id) ON DELETE SET NULL;
+  `,
+  // Drop the now-unused inline connection columns on `projects` (no reader, no
+  // writer remains; the active connection is projects.connection_id). The USB
+  // columns on the `connections` table are unaffected, those are live. Migrations
+  // run before `PRAGMA foreign_keys = ON`, so the connection_id foreign key does
+  // not interfere with the column drops.
+  `
+  ALTER TABLE projects DROP COLUMN interface_ip;
+  ALTER TABLE projects DROP COLUMN interface_port;
+  ALTER TABLE projects DROP COLUMN connection_type;
+  ALTER TABLE projects DROP COLUMN usb_vendor_id;
+  ALTER TABLE projects DROP COLUMN usb_product_id;
+  ALTER TABLE projects DROP COLUMN usb_serial;
   `,
 ];
 

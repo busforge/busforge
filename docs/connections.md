@@ -78,16 +78,37 @@ connection clears it from any project using it). This is the single source of
 truth: there is no inline copy to drift out of sync.
 
 The earlier inline project columns (`connection_type`, `usb_*`, `interface_ip`,
-`interface_port`) are kept only so the `.busforge` export format and snapshots
-stay byte-stable; they no longer drive the active connection.
+`interface_port`) are now fully unused (no reader, no writer) and remain only as
+migration history.
 
-**Export/backup.** A project's `connection_id` is a project property, so it is
-carried in the `.busforge` export (a backup should preserve which connection the
-project used). The connection's *details* are never exported (they live in the
-global library and are machine-specific). On import the reference is re-applied
-only if that saved connection still exists on the target system; otherwise it
-falls away (the FK would reject a dangling reference anyway) and the user simply
-picks a connection again.
+### One definition of "the project"
+
+Everything that travels with a project is captured in two ways, the full
+`.busforge` **export** and config **snapshots**, and both used to hand-pick the
+project's columns, so a new project-level setting was easy to add to one and
+forget in the other. The project's serializable, project-level **properties** now
+have a single definition in `apps/server/src/db/projectProps.ts`:
+
+```ts
+export interface ProjectProperties { name: string; connectionId: string | null }
+export function readProjectProperties(db, id): ProjectProperties | null
+export function applyProjectProperties(db, id, p: ProjectProperties): void
+```
+
+Export and snapshots both **read** via `readProjectProperties` and **write** via
+`applyProjectProperties`, embedding the whole typed object rather than cherry-
+picking fields. Adding a project property is a one-place change in
+`projectProps.ts` that flows into export, import, snapshot capture and snapshot
+restore at once; neither path can silently omit it.
+
+**Backup / restore semantics.** `connectionId` is a project property, so it is
+carried in both the export and snapshots (a backup or restore point should
+preserve which connection the project used). The connection's *details* are never
+serialized (they live in the global library and are machine-specific). The
+reference is only re-applied if that saved connection still exists on the target
+system; otherwise it falls away (the foreign key would reject a dangling
+reference anyway) and the user picks a connection again. `applyProjectProperties`
+enforces this for both import and snapshot restore.
 
 Server endpoints (`apps/server/src/app.ts`):
 

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appProgramId } from "@busforge/project";
 import { getAppProgram } from "./catalog.ts";
+import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
 // (every instance table, including the programmed baselines and module instances)
@@ -16,12 +17,7 @@ export const EXPORT_VERSION = 1;
 export interface ProjectExport {
   busforgeExport: number; // format version
   exportedAt: number;
-  // connectionId is the project's active-connection reference (a project property,
-  // so it is carried for backup/restore). It is only re-applied on import if that
-  // saved connection still exists on the target system; otherwise it falls away and
-  // the user picks a connection again. The connection's DETAILS are never exported
-  // (they are machine-specific and live in the global connections library).
-  project: { name: string; interfaceIp: string; interfacePort: number; connectionId: string | null };
+  project: ProjectProperties; // see projectProps.ts: the one shared definition
   devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   groupAddresses: { rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
@@ -50,8 +46,7 @@ const linkRows = (db: Database, table: string, projectId: string) =>
 // have ensured it is populated (for legacy projects, by resolving each device's
 // app program first, which backfills the catalog).
 export function exportProject(db: Database, projectId: string, now: number): ProjectExport | null {
-  const project = db.query("SELECT name, interface_ip AS interfaceIp, interface_port AS interfacePort, connection_id AS connectionId FROM projects WHERE id = ?")
-    .get(projectId) as ProjectExport["project"] | null;
+  const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
   const devices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY instance_id")

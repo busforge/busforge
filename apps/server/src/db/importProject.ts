@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage } from "./baggage.ts";
-import { getConnection } from "./connections.ts";
+import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
@@ -27,13 +27,13 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   if (d.busforgeExport !== EXPORT_VERSION) {
     throw new ApiError("BUSFORGE_VERSION_UNSUPPORTED", `unsupported export version ${String(d.busforgeExport)} (expected ${EXPORT_VERSION})`);
   }
-  const project = d.project as { name?: unknown; interfaceIp?: unknown; interfacePort?: unknown; connectionId?: unknown } | null | undefined;
-  if (!project || typeof project !== "object" || typeof project.name !== "string"
-    || typeof project.interfaceIp !== "string" || typeof project.interfacePort !== "number") {
+  const project = d.project as { name?: unknown; connectionId?: unknown } | null | undefined;
+  if (!project || typeof project !== "object" || typeof project.name !== "string") {
     throw new ApiError("BUSFORGE_INVALID", "missing or malformed project");
   }
   // connectionId is optional (absent in pre-connection artifacts); if present it
-  // must be a string or null.
+  // must be a string or null. Older artifacts may also carry now-ignored
+  // interfaceIp/interfacePort fields; those are simply not read.
   if (project.connectionId !== undefined && project.connectionId !== null && typeof project.connectionId !== "string") {
     throw new ApiError("BUSFORGE_INVALID", "malformed project connectionId");
   }
@@ -50,13 +50,12 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
 
 // Recreate the project from a validated artifact under id `id`. One transaction.
 export function importProjectExport(db: Database, data: ProjectExport, id: string, now: number): void {
-  // Only re-apply the active-connection reference if that saved connection still
-  // exists here (foreign_keys=ON would reject a dangling ref on insert anyway);
-  // otherwise leave it null so the user re-selects a connection.
-  const connectionId = data.project.connectionId && getConnection(db, data.project.connectionId) ? data.project.connectionId : null;
   db.transaction(() => {
-    db.prepare("INSERT INTO projects (id, name, imported_at, source_file, interface_ip, interface_port, connection_id) VALUES (?, ?, ?, '', ?, ?, ?)")
-      .run(id, data.project.name, now, data.project.interfaceIp, data.project.interfacePort, connectionId);
+    // Insert the bare row, then apply the shared project properties (name +
+    // connection reference, FK-safe) the same way snapshot restore does.
+    db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, '')")
+      .run(id, data.project.name, now);
+    applyProjectProperties(db, id, data.project);
 
     const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);

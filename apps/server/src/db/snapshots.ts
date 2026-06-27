@@ -1,11 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { SCHEMA_VERSION } from "./schema.ts";
+import { readProjectProperties, applyProjectProperties, type ProjectProperties } from "./projectProps.ts";
 
 // ETS-style restore points. A snapshot freezes the project's CONFIG layer only:
-// parameter values, group-address links, and the project name/interface. The
-// application-program model is resolved at runtime, and the programmed baselines
-// describe the physical device, so neither belongs in a config restore point.
+// the project properties (see projectProps.ts), parameter values, and
+// group-address links/structure. The application-program model is resolved at
+// runtime, and the programmed baselines describe the physical device, so neither
+// belongs in a config restore point.
 
 export type SnapshotKind = "manual" | "auto";
 export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit";
@@ -25,7 +27,7 @@ export interface SnapshotMeta {
 // (rename/add/delete of ranges and addresses) are undoable; older snapshots
 // predate these fields, so restore treats them as optional.
 export interface SnapshotPayload {
-  project: { name: string; interfaceIp: string; interfacePort: number };
+  project: ProjectProperties; // see projectProps.ts: the one shared definition
   deviceParameters: { deviceId: string; paramRefId: string; value: string }[];
   deviceLinks: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
   groupRanges?: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
@@ -38,8 +40,7 @@ const AUTO_KEEP = 20;
 
 // Serialize the current config layer of a project into a snapshot payload.
 export function serializeConfig(db: Database, projectId: string): SnapshotPayload {
-  const project = db.query("SELECT name, interface_ip AS interfaceIp, interface_port AS interfacePort FROM projects WHERE id = ?")
-    .get(projectId) as { name: string; interfaceIp: string; interfacePort: number } | null;
+  const project = readProjectProperties(db, projectId);
   if (!project) throw new Error(`project ${projectId} not found`);
   const deviceParameters = db.query("SELECT device_id AS deviceId, param_ref_id AS paramRefId, value FROM device_parameters WHERE project_id = ? ORDER BY device_id, param_ref_id")
     .all(projectId) as SnapshotPayload["deviceParameters"];
@@ -103,7 +104,7 @@ export function deleteSnapshot(db: Database, projectId: string, id: string): boo
 }
 
 // Restore a snapshot: first capture the current state as an undo point, then
-// rewrite the project's config layer (name, interface, params, links) from the
+// rewrite the project's config layer (properties, params, links) from the
 // payload. The programmed baselines are deliberately left untouched, so the
 // post-restore change indicators still reflect drift against the device.
 export function restoreSnapshot(db: Database, projectId: string, id: string, now: number): boolean {
@@ -115,8 +116,7 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
     // Make the restore itself undoable.
     createSnapshot(db, projectId, { kind: "auto", reason: "before-restore" }, now);
 
-    db.prepare("UPDATE projects SET name = ?, interface_ip = ?, interface_port = ? WHERE id = ?")
-      .run(payload.project.name, payload.project.interfaceIp, payload.project.interfacePort, projectId);
+    applyProjectProperties(db, projectId, payload.project);
 
     db.prepare("DELETE FROM device_parameters WHERE project_id = ?").run(projectId);
     const insParam = db.prepare("INSERT INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");

@@ -35,7 +35,9 @@ describe("schema/migrations", () => {
     const path = join(dir, "old.db");
     // Simulate an iteration-2 DB: devices without instance_id, at user_version 1.
     const old = new Database(path, { create: true });
-    old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY);
+    // projects carries the migration-0 columns (incl. interface_ip/port) a real
+    // user_version-1 DB would have, so the later drop-inline-columns migration applies.
+    old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT, interface_ip TEXT NOT NULL DEFAULT '', interface_port INTEGER NOT NULL DEFAULT 3671);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL);
       PRAGMA user_version = 1;`);
     old.close();
@@ -443,6 +445,25 @@ describe("snapshots", () => {
     expect(cfg.project).toMatchObject({ name: "Demo" });
     expect(cfg.deviceParameters).toContainEqual({ deviceId: dev, paramRefId: "M-X_A-1_P-9_R-1", value: "7" });
     expect(cfg.deviceLinks).toContainEqual({ deviceId: dev, comObjRefId: "O-1_R-1", slot: 0, gaRaw: 1 });
+  });
+
+  test("captures and restores the connection reference (shared project properties)", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    setProjectConnection(db, "p1", "c1");
+    const snap = createSnapshot(db, "p1", { kind: "manual", label: "with conn", reason: "manual" }, 1000)!;
+    expect(serializeConfig(db, "p1").project.connectionId).toBe("c1");
+
+    setProjectConnection(db, "p1", null); // change it away
+    expect(restoreSnapshot(db, "p1", snap.id, 2000)).toBe(true);
+    expect(getProject(db, "p1")!.connectionId).toBe("c1"); // restored
+
+    // FK-safe: if the connection is gone, restore falls back to null, no crash
+    setProjectConnection(db, "p1", null);
+    deleteConnection(db, "c1");
+    expect(restoreSnapshot(db, "p1", snap.id, 3000)).toBe(true);
+    expect(getProject(db, "p1")!.connectionId).toBeNull();
   });
 
   test("restore rolls the config back to a captured point", () => {

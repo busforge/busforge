@@ -607,12 +607,12 @@ describe("busforge re-import (export round-trip)", () => {
     expect(((await r3!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
 
     // A version-1 artifact missing fields importProjectExport dereferences (catalog,
-    // baggage, the interface fields) must fail cleanly as 400, not crash mid-insert.
+    // baggage) or with a malformed project must fail cleanly as 400, not crash mid-insert.
     const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [] };
     for (const partial of [
-      { busforgeExport: 1, project: { name: "x", interfaceIp: "", interfacePort: 3671 }, ...arrays, baggage: [] }, // no catalog
-      { busforgeExport: 1, project: { name: "x", interfaceIp: "", interfacePort: 3671 }, ...arrays, catalog: {} }, // no baggage
-      { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {}, baggage: [] }, // no interface fields
+      { busforgeExport: 1, project: { name: "x" }, ...arrays, baggage: [] }, // no catalog
+      { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {} }, // no baggage
+      { busforgeExport: 1, project: { name: "x", connectionId: 123 }, ...arrays, catalog: {}, baggage: [] }, // malformed connectionId
     ]) {
       const r = await reimport(state, partial);
       expect(r!.status).toBe(400);
