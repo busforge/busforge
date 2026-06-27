@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
+import { KnxDevice, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum } from "@busforge/knx";
 import { makeTransport } from "./transport.ts";
 import type { Connection } from "./db/connections.ts";
-import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeAbsoluteImage, decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
+import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage, decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -299,7 +299,10 @@ export async function flashDeviceGroupAddresses(opts: {
   dryRun: boolean;
   onProgress?: ProgressFn;
 }): Promise<FlashResult> {
-  const { addr, assoc } = buildGroupTables(opts.links);
+  // MV-0705 (System 7) devices store their group tables in a different layout and are written
+  // by driving LSM 1/2 at fixed addresses; System B uses the count-prefixed tables + alloc.
+  const isMv0705 = opts.expectedMask === "MV-0705";
+  const { addr, assoc } = isMv0705 ? buildGroupTablesMv0705(opts.links, iaToNum(opts.ia)) : buildGroupTables(opts.links);
 
   const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
@@ -313,18 +316,19 @@ export async function flashDeviceGroupAddresses(opts: {
     if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
     opts.onProgress?.("read");
-    // The dry-run preview compares only the address + association tables. The com-object
-    // table is often the largest, and is read here only to write it back unchanged on a real
-    // flash, so skip it when previewing: otherwise "checking for changes" is dominated by a
-    // long chunked read of a table this path does not use.
-    const cur = await readGroupTables(dev, undefined, opts.dryRun);
+    // The dry-run preview compares only the address + association tables. For System B the
+    // com-object table is read only to write it back unchanged on a real flash, so skip it
+    // when previewing. MV-0705 leaves the com-object table untouched entirely.
+    const cur = isMv0705
+      ? { ...(await readGroupTablesMv0705(dev)), comObj: Buffer.alloc(0) }
+      : await readGroupTables(dev, undefined, opts.dryRun);
     const backupDir = join(opts.dataDir, "projects", opts.projectId, "backups");
     mkdirSync(backupDir, { recursive: true });
     const stamp = Date.now();
     const backup = join(backupDir, `${opts.deviceId}-GA-${stamp}`);
     writeFileSync(`${backup}-addr.bin`, cur.addr);
     writeFileSync(`${backup}-assoc.bin`, cur.assoc);
-    if (!opts.dryRun) writeFileSync(`${backup}-comobj.bin`, cur.comObj);
+    if (!opts.dryRun && !isMv0705) writeFileSync(`${backup}-comobj.bin`, cur.comObj);
 
     const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
     const imageBytes = addr.length + assoc.length;
@@ -338,14 +342,14 @@ export async function flashDeviceGroupAddresses(opts: {
       return { mask, imageBytes, diffBytes, changed: true, flashed: false, backup };
     }
 
-    // Keep the device's com-object table; only address + association change.
     opts.onProgress?.("write");
-    await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj });
+    if (isMv0705) await flashGroupTablesMv0705(dev, { addr, assoc });
+    else await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
 
     await sleep(3000);
     await dev.connect();
     opts.onProgress?.("verify");
-    const back = await readGroupTables(dev);
+    const back = isMv0705 ? await readGroupTablesMv0705(dev) : await readGroupTables(dev);
     const verified = back.addr.equals(addr) && back.assoc.equals(assoc);
 
     await dev.disconnect(); await tun.disconnect();
@@ -392,10 +396,12 @@ export function readbackSupport(cfg: AppConfig, params: Map<string, string>, mod
   return { params: hasParamSegment, links: true };
 }
 
-// Whether this device's group tables can be PROGRAMMED (written). buildGroupTables only
-// produces the System-B layout, so an absolute-segment (MV-0705) device, whose tables use
-// the System-7 layout, can be READ BACK (see readbackSupport) but not yet flashed. This is
-// deliberately distinct from readbackSupport.links: read and write are different capabilities.
+// Whether this device's group tables can be PROGRAMMED (written) on the endpoint path today.
+// System B is hardware-proven. MV-0705 (System-7) GA flash IS implemented
+// (flashDeviceGroupAddresses branches on the mask; flashGroupTablesMv0705 drives LSM 1/2),
+// but it is GATED OFF here until it has been verified on real hardware (identity-flash first).
+// Flip this to allow MV-0705 once that hardware test passes. Distinct from readbackSupport.links:
+// MV-0705 read-back is verified and enabled; its write path is built but not yet hardware-tested.
 export function canFlashGroupTables(cfg: AppConfig, params: Map<string, string>, moduleInstances?: ModuleInstance[]): boolean {
   return !buildAbsoluteSegmentTargets(cfg, params, { moduleInstances }).some((t) => t.size > 0);
 }

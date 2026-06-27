@@ -45,6 +45,26 @@ export async function flashGroupTables(dev: KnxDevice, tables: { addr: Buffer; a
   await dev.restart();
 }
 
+// MV-0705 (System 7) group-address download: the address (LSM 1) and association (LSM 2)
+// tables live at fixed absolute addresses, so unlike System B there is no relative-segment
+// alloc. Mirrors the hardware-proven absolute PARAMETER path (planAbsoluteParFlash): per LSM,
+// LOAD -> write the table at its fixed address (chunk-verified) -> LOAD_COMPLETED, then restart.
+// The com-object table (object 3) is left untouched (a GA change does not alter it). The caller
+// must already be connected (a second T_Connect resets the sequence counter; see the absolute
+// param path) and should have backed up the current tables first.
+export async function flashGroupTablesMv0705(dev: KnxDevice, tables: { addr: Buffer; assoc: Buffer }) {
+  const writeTable = async (lsm: number, bytes: Buffer) => {
+    await lsmEvent(dev, lsm, LSM.LOAD);
+    if ((await lsmState(dev, lsm)) !== STATE.LOADING) throw new Error(`LSM ${lsm} not Loading after Load`);
+    await dev.memWrite(await dev.tableAddr(lsm), bytes, { verify: true });
+    await lsmEvent(dev, lsm, LSM.LOAD_COMPLETED);
+    if ((await lsmState(dev, lsm)) !== STATE.LOADED) throw new Error(`LSM ${lsm} not Loaded after flash`);
+  };
+  await writeTable(1, tables.addr);  // address table
+  await writeTable(2, tables.assoc); // association table
+  await dev.restart();
+}
+
 // Parameter ("par") download: rewrites the application/parameter segment (LSM 4)
 // and stamps the application id so load-completed validates.
 export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer, onProgress?: (done: number, total: number) => void) {

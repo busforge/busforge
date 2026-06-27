@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildGroupTables, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "../src/grouptables.ts";
+import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "../src/grouptables.ts";
 
 describe("buildGroupTables", () => {
   test("address table is sorted GAs, association is ordered by com-object number", () => {
@@ -120,5 +120,29 @@ describe("decodeGroupTablesMv0705 (System-7 layout)", () => {
   test("empty / header-only buffers yield no links", () => {
     expect(decodeGroupTablesMv0705(Buffer.from("00", "hex"), Buffer.from("00", "hex"))).toEqual([]);
     expect(decodeGroupTablesMv0705(Buffer.alloc(0), Buffer.alloc(0))).toEqual([]);
+  });
+});
+
+describe("buildGroupTablesMv0705 (System-7 layout)", () => {
+  const links: ComObjectLink[] = [
+    { comObjNum: 0, gaRaws: [0x2601] }, { comObjNum: 6, gaRaws: [0x2602] }, { comObjNum: 12, gaRaws: [0x2603] },
+    { comObjNum: 18, gaRaws: [0x1302] }, { comObjNum: 44, gaRaws: [0x1303] },
+  ];
+  const ownIa = (1 << 12) | (1 << 8) | 56; // 1.1.56 = 0x1138
+
+  test("produces the real device's exact bytes (byte-for-byte inverse of the decode)", () => {
+    const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
+    expect(addr.toString("hex")).toBe("06113813021303260126022603");
+    expect(assoc.toString("hex")).toBe("0503000406050c0112022c");
+  });
+
+  test("round-trips through decodeGroupTablesMv0705", () => {
+    const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
+    expect(decodeGroupTablesMv0705(addr, assoc).sort((a, b) => a.comObjNum - b.comObjNum)).toEqual(links);
+  });
+
+  test("refuses tables that overflow the 1-byte count", () => {
+    const many: ComObjectLink[] = Array.from({ length: 256 }, (_, i) => ({ comObjNum: i, gaRaws: [1000 + i] }));
+    expect(() => buildGroupTablesMv0705(many, ownIa)).toThrow(/1-byte count/);
   });
 });

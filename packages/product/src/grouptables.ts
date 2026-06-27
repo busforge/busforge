@@ -29,6 +29,33 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
   return { addr, assoc };
 }
 
+// Build an MV-0705 (System 7) device's group tables from its com-object links. The
+// inverse of decodeGroupTablesMv0705, and the System-7 counterpart of buildGroupTables:
+//   Address table:     [count:1][own IA:2 BE][GA:2 BE x N]   (count = 1 + N: the IA entry + N GAs)
+//   Association table: [count:1][groupIdx:1][comObjNum:1] x M (ordered by com-object then group index)
+// `ownIa` is the device's individual address (the first address-table entry). Counts are a
+// single byte, so a device with > 254 group addresses or > 255 associations cannot be
+// represented; that is far beyond any real TP device but guarded rather than silently wrapped.
+export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number): GroupTables {
+  const gas = [...new Set(links.flatMap((l) => l.gaRaws))].sort((a, b) => a - b);
+  const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
+  const entries = links
+    .flatMap((l) => l.gaRaws.map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })))
+    .sort((a, b) => a.co - b.co || a.gi - b.gi);
+  if (gas.length + 1 > 255 || entries.length > 255) throw new Error("MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
+
+  const addr = Buffer.alloc(1 + 2 + gas.length * 2);
+  addr[0] = 1 + gas.length;
+  addr.writeUInt16BE(ownIa & 0xffff, 1);
+  gas.forEach((g, i) => addr.writeUInt16BE(g, 3 + i * 2));
+
+  const assoc = Buffer.alloc(1 + entries.length * 2);
+  assoc[0] = entries.length;
+  entries.forEach((e, i) => { assoc[1 + i * 2] = e.gi; assoc[2 + i * 2] = e.co; });
+
+  return { addr, assoc };
+}
+
 // Read a device's links back out of its group tables. Inverse of
 // buildGroupTables: resolve each association's 1-based group index through the
 // address table to a GA, then group by com-object number. The caller normalizes
