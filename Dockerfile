@@ -13,6 +13,13 @@ RUN bun run build
 FROM oven/bun:1.3
 WORKDIR /app
 COPY --from=build /app ./
+# Bake the build/version info into the image (the build context excludes .git, so the
+# server cannot read git at runtime). The CI build job passes these; defaults keep a local
+# `docker build` honest. Read back via /api/version and shown in the UI footer.
+ARG BUSFORGE_VERSION=unknown
+ARG BUSFORGE_COMMIT=unknown
+ARG BUSFORGE_BUILT_AT=
+RUN printf '{"version":"%s","commit":"%s","builtAt":"%s"}\n' "$BUSFORGE_VERSION" "$BUSFORGE_COMMIT" "$BUSFORGE_BUILT_AT" > /app/version.json
 ENV PORT=3000
 EXPOSE 3000
 # Liveness for `docker compose ps` and the deploy gate. Hits the SPA root, which

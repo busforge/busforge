@@ -12,6 +12,10 @@ const en = {
     unknown: "(unknown)",
     tagline: "Open commissioning tool for KNX",
   },
+
+  footer: {
+    built: "built {{date}}",
+  },
   status: {
     connected: "connected",
     connecting: "connecting",

@@ -14,6 +14,10 @@ const de: Messages = {
     unknown: "(unbekannt)",
     tagline: "Open commissioning tool for KNX",
   },
+
+  footer: {
+    built: "gebaut {{date}}",
+  },
   status: {
     connected: "verbunden",
     connecting: "verbinde",

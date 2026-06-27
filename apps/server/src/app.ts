@@ -21,6 +21,7 @@ import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, classify } from "./deviceprofile.ts";
+import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
@@ -87,6 +88,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
   const { db, bus } = state;
 
   try {
+    // /api/version  -> build/version info for the UI footer (no project scope)
+    if (seg[1] === "version" && seg.length === 2 && req.method === "GET") return json(versionInfo());
+
     // /api/catalog/...  -> browsable device catalog for placing into projects
     if (seg[1] === "catalog") {
       if (seg.length === 3 && seg[2] === "products" && req.method === "GET") {

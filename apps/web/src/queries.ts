@@ -19,7 +19,13 @@ export const qk = {
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
   connections: ["connections"] as const,
+  version: ["version"] as const,
 };
+
+// Build/version info for the footer. It cannot change while the page is open (the server
+// resolves it once per process), so never refetch.
+export const useVersion = () =>
+  useQuery({ queryKey: qk.version, queryFn: api.version, staleTime: Infinity, gcTime: Infinity, refetchOnWindowFocus: false });
 
 export const useConnections = () =>
   useQuery({ queryKey: qk.connections, queryFn: api.connections, staleTime: 30_000 });

@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api, type ProjectSummary, type AnalyzeResult } from "../api.ts";
-import { qk, useProjects } from "../queries.ts";
+import { qk, useProjects, useVersion } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,23 @@ function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCo
       </div>
       <div className="mt-2 font-mono text-[11px] text-muted-foreground">{fmtDate(date)}</div>
     </div>
+  );
+}
+
+// Which build is installed on this system. Shown small at the bottom of the dashboard so it
+// is always visible without getting in the way. The version string is the git describe from
+// the release pipeline; the full commit sits in the hover title (it is also embedded in the
+// version for builds past the last tag).
+function VersionFooter() {
+  const { t } = useTranslation();
+  const { data: v } = useVersion();
+  if (!v) return null;
+  const built = v.builtAt ? fmtDate(Date.parse(v.builtAt)) : null;
+  return (
+    <footer className="mt-auto pt-10 text-center font-mono text-[11px] text-muted-foreground/70" title={v.commit !== "unknown" ? `commit ${v.commit}` : undefined}>
+      <span className="font-semibold text-muted-foreground">{v.version}</span>
+      {built ? <span> · {t("footer.built", { date: built })}</span> : null}
+    </footer>
   );
 }
 
@@ -176,6 +193,8 @@ export function ProjectsScreen() {
       {exportTarget && (
         <ExportDialog projectId={exportTarget.id} open onOpenChange={(o) => !o && setExportTarget(null)} />
       )}
+
+      <VersionFooter />
     </div>
   );
 }

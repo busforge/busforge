@@ -180,6 +180,16 @@ describe("API (project resources)", () => {
     expect(await res!.json()).toEqual([]);
   });
 
+  test("GET /api/version returns the build info shape", async () => {
+    const res = await handleApi(req("/api/version"), freshState());
+    expect(res!.status).toBe(200);
+    const v = (await res!.json()) as { version: string; commit: string; builtAt: string | null };
+    expect(typeof v.version).toBe("string");
+    expect(v.version.length).toBeGreaterThan(0);
+    expect(typeof v.commit).toBe("string");
+    expect(v.builtAt === null || typeof v.builtAt === "string").toBe(true);
+  });
+
   const jreq = (path: string, method: string, body: unknown) =>
     req(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 

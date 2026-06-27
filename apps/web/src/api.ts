@@ -15,6 +15,9 @@ export interface Connection { id: string; name: string; type: ConnectionType; ho
 export type ConnectionInput = Omit<Connection, "id" | "createdAt">;
 export interface UsbDevice { vendorId: number; productId: number; product: string; serial?: string; path?: string; }
 export interface Gateway { name: string; ip: string; port: number; ia: string; mac: string; }
+// Build/version info for the footer: git-describe version, commit sha, ISO build time
+// (null for a local dev build).
+export interface VersionInfo { version: string; commit: string; builtAt: string | null; }
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
 export interface Project { id: string; name: string; connectionId: string | null; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; }
 export interface ImportGap { ia: string; name: string }
@@ -100,6 +103,8 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  version: (): Promise<VersionInfo> => fetch("/api/version").then((r) => jsonOrThrow<VersionInfo>(r)),
+
   listProjects: (): Promise<ProjectSummary[]> => fetch("/api/projects").then((r) => jsonOrThrow<ProjectSummary[]>(r)),
 
   async importProject(file: File, password: string): Promise<ImportResult> {
