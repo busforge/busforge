@@ -45,6 +45,25 @@ export function decodeParameterImage(model: AppModel, lsm: number, img: Buffer):
   return out;
 }
 
+// Decode parameter values from an MV-0705 absolute segment's image (the read-back
+// counterpart of buildAbsoluteSegmentTargets). Same codec as decodeParameterImage but
+// keyed off the absolute segment id (those params live in app.absoluteSegments, not the
+// relative model.segments, so the lsm filter does not apply). The caller restricts the
+// result to the visible/relevant refs for drift detection.
+export function decodeAbsoluteImage(model: AppModel, segId: string, img: Buffer): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const ref of model.refs.values()) {
+    const param = model.params.get(ref.paramId);
+    if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
+    const type = model.types.get(param.typeId);
+    if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+    const v = decode(img, param.offset, param.bitOffset, type);
+    if (v === undefined) continue; // text/other: not represented in the image
+    out.set(ref.id, v);
+  }
+  return out;
+}
+
 // KNX 2-byte float (DPT 9.xxx): bit15 sign, bits14-11 exponent, bits10-0 mantissa.
 // value = 0.01 * mantissa * 2^exponent, the mantissa being an 11-bit two's
 // complement combined with the sign bit. Reference vectors: 0 -> 0x0000,

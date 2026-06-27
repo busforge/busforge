@@ -6,7 +6,7 @@ import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, importGaps, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
-import { readGroupTables, readbackSupport } from "../src/flash.ts";
+import { readGroupTables, readbackSupport, canFlashGroupTables } from "../src/flash.ts";
 import { parseAppConfig } from "@busforge/product";
 import { loadKnxproj, appProgramId } from "@busforge/project";
 import type { KnxDevice } from "@busforge/knx";
@@ -71,20 +71,22 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
   });
 });
 
-describe("readbackSupport (honest read-back capability)", () => {
-  // An absolute-segment (MV-0705) device has no LSM4 param segment and stores its
-  // group tables in a non-System-B format; reading either would fabricate a "verified"
-  // parameter baseline or corrupt the link baseline, so both aspects are unsupported.
-  test("MV-0705 absolute-segment device: neither params nor links can be read back", () => {
+describe("readbackSupport / canFlashGroupTables (capability split)", () => {
+  // MV-0705 read-back IS supported (absolute-segment params + System-7 group tables), but
+  // its group tables cannot be FLASHED yet (buildGroupTables is System-B only). Read and
+  // write are different capabilities.
+  test("MV-0705 absolute-segment device: read-back supported, GA flash not", () => {
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
-    expect(readbackSupport(cfg, new Map())).toEqual({ params: false, links: false });
+    expect(readbackSupport(cfg, new Map())).toEqual({ params: true, links: true });
+    expect(canFlashGroupTables(cfg, new Map())).toBe(false);
   });
 
-  test("System-B device: both params and links are read-back supported", () => {
+  test("System-B device: read-back and GA flash both supported", () => {
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
     expect(readbackSupport(cfg, new Map())).toEqual({ params: true, links: true });
+    expect(canFlashGroupTables(cfg, new Map())).toBe(true);
   });
 });
 
@@ -744,8 +746,9 @@ describe("device configuration", () => {
   });
 
   // Turn the imported demo device into an MV-0705 absolute-segment device by swapping its
-  // application program XML, and point the project at a ready connection so the read-back /
-  // flash-ga guards (not INTERFACE_NOT_SET) are the thing being exercised.
+  // application program XML, and point the project at a ready connection so the flash-ga
+  // guard (not INTERFACE_NOT_SET) is the thing being exercised. (Read-back IS supported for
+  // MV-0705 now; the decoders are unit-tested in the product package against real bytes.)
   async function mv0705Device(state: AppState) {
     const { projectId, deviceId } = await importConfig(state);
     state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-00B4-32-3919.xml.gz"), "M-TEST_A-1"]);
@@ -753,17 +756,6 @@ describe("device configuration", () => {
     await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
     return { projectId, deviceId };
   }
-
-  test("read-back refuses on an MV-0705 device instead of fabricating a baseline", async () => {
-    const state = freshState();
-    const { projectId, deviceId } = await mv0705Device(state);
-    const baseBefore = (state.db.query("SELECT COUNT(*) AS n FROM device_param_base WHERE project_id = ?").get(projectId) as any).n;
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(((await res.json()) as any).error.code).toBe("DEVICE_READBACK_UNSUPPORTED");
-    // refused before any bus op, so the baseline is untouched (not a fabricated copy)
-    expect((state.db.query("SELECT COUNT(*) AS n FROM device_param_base WHERE project_id = ?").get(projectId) as any).n).toBe(baseBefore);
-  });
 
   test("flash-ga refuses on an MV-0705 device (System-B table format only)", async () => {
     const state = freshState();

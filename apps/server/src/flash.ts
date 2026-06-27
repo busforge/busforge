@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { KnxDevice, flashParameters, flashGroupTables, appId, runLoadPlan } from "@busforge/knx";
 import { makeTransport } from "./transport.ts";
 import type { Connection } from "./db/connections.ts";
-import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeGroupTables, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
+import { toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, buildDeviceConfig, buildGroupTables, decodeParameterImage, decodeAbsoluteImage, decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink } from "@busforge/product";
 import { ApiError } from "./errors.ts";
 import type { ProgressFn } from "./taskqueue.ts";
 
@@ -69,6 +69,22 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
   const comObj = skipComObj ? Buffer.alloc(0) : await counted(3, 2);
   if (!skipComObj) onStep?.(3, total); // com-object table read
   return { addr, assoc, comObj, long };
+}
+
+// Read an MV-0705 device's address + association tables. Same property-pointer addressing
+// (object 1 / 2, PID 7) as System B, but the count is a SINGLE byte and each entry is 2
+// bytes, so the read length is 1 + count*2 (see decodeGroupTablesMv0705 for the layout).
+async function readGroupTablesMv0705(dev: KnxDevice, onStep?: (done: number, total: number) => void): Promise<{ addr: Buffer; assoc: Buffer }> {
+  const readTable = async (obj: number) => {
+    const base = await dev.tableAddr(obj);
+    // The count is a single byte (0-255), so the read is inherently bounded to <= 511 bytes
+    // (the MAX_TABLE_ENTRIES check, needed for System B's 2-byte count, can never trip here).
+    const count = (await dev.memRead(base, 1))[0];
+    return dev.memRead(base, 1 + count * 2);
+  };
+  const addr = await readTable(1); onStep?.(1, 2);
+  const assoc = await readTable(2); onStep?.(2, 2);
+  return { addr, assoc };
 }
 
 // Program a device's parameter segment (LSM 4) from its stored configuration.
@@ -363,17 +379,25 @@ export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: 
 // refuses instead of writing a false baseline.
 export interface ReadbackSupport { params: boolean; links: boolean; }
 export function readbackSupport(cfg: AppConfig, params: Map<string, string>, moduleInstances?: ModuleInstance[]): ReadbackSupport {
-  // Absolute-segment (MV-0705) devices keep parameters at fixed addresses (no LSM4
-  // segment) and store their group tables in a non-System-B format, so neither can
-  // be read back today.
+  // Absolute-segment (MV-0705) devices keep parameters in fixed absolute segments and store
+  // their group tables in the System-7 layout. Both are read back via the MV-0705 paths
+  // (decodeAbsoluteImage / decodeGroupTablesMv0705), so reading is fully supported.
   const absolute = buildAbsoluteSegmentTargets(cfg, params, { moduleInstances }).some((t) => t.size > 0);
-  if (absolute) return { params: false, links: false };
+  if (absolute) return { params: true, links: true };
   // Relative (System-B) device: parameters are decoded from the LSM4 segment and group
   // tables from the System-B address/association tables. A relative device WITHOUT an
   // LSM4 segment has nowhere to read parameters from, so don't claim its params verify
   // (the params/links split is real, not speculative: this case sets params=false, links=true).
   const hasParamSegment = toAppModel(cfg).segments.some((s) => s.lsm === LSM);
   return { params: hasParamSegment, links: true };
+}
+
+// Whether this device's group tables can be PROGRAMMED (written). buildGroupTables only
+// produces the System-B layout, so an absolute-segment (MV-0705) device, whose tables use
+// the System-7 layout, can be READ BACK (see readbackSupport) but not yet flashed. This is
+// deliberately distinct from readbackSupport.links: read and write are different capabilities.
+export function canFlashGroupTables(cfg: AppConfig, params: Map<string, string>, moduleInstances?: ModuleInstance[]): boolean {
+  return !buildAbsoluteSegmentTargets(cfg, params, { moduleInstances }).some((t) => t.size > 0);
 }
 
 export async function readDeviceState(opts: {
@@ -417,34 +441,66 @@ export async function readDeviceState(opts: {
     if (!wantMask) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing to read");
     if (!mask.includes(wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
 
-    // Parameters (LSM 4): read the whole segment, decode it, and compare against
-    // what the project config would flash, both normalized via the same codec.
-    // paramBase is only meaningful when paramsRead is true; otherwise the caller
-    // must leave the existing baseline untouched rather than store this copy.
+    // paramBase is only meaningful when paramsRead is true; otherwise the caller must
+    // leave the existing baseline untouched rather than store this copy.
     const paramBase = new Map(opts.liveParams);
-    const seg = model.segments.find((s) => s.lsm === LSM);
-    const paramsRead = support.params && !!seg;
-    if (paramsRead) {
-      const img = await dev.memRead(await dev.tableAddr(LSM), seg!.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
-      const deviceVals = decodeParameterImage(model, LSM, img);
-      const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
-      for (const [refId, devVal] of deviceVals) {
-        if (opts.relevantRefs && !opts.relevantRefs.has(refId)) continue; // not part of this device's config
-        if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal); // device drifted from project
-      }
-    }
-
-    // Group-address links: read the address + association tables and reverse them.
-    // The com-object table is not needed to decode links, so skip it (much faster).
-    // Only attempt the System-B table read when the device actually stores its tables
-    // that way; otherwise the count header is misread and the baseline is corrupted.
     let links: ComObjectLink[] = [];
-    const linksRead = support.links;
-    if (linksRead) {
+    let paramsRead = false;
+    let linksRead = false;
+
+    const absoluteTargets = buildAbsoluteSegmentTargets(cfg, opts.liveParams, { moduleInstances: opts.moduleInstances });
+    if (absoluteTargets.some((t) => t.size > 0)) {
+      // MV-0705 absolute device: read each absolute parameter segment off the bus, decode it,
+      // and compare against the project image built the same way (same codec on both sides, so
+      // representation can't cause phantom drift). Drift is recorded only for the relevant
+      // (visible) refs; hidden union/module residual bytes are outside that set.
+      const instances = opts.moduleInstances?.length ? opts.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, opts.liveParams) : []);
+      const absModel = toAppModel(cfg, { includeUnions: true, instances });
+      // memRead reports progress in 12-byte chunks; accumulate across segments so the bar
+      // tracks the whole read (most MV-0705 devices have a single absolute segment).
+      const chunksFor = (size: number) => Math.ceil(size / 12);
+      const totalChunks = absoluteTargets.reduce((n, t) => n + chunksFor(t.size), 0);
+      let doneChunks = 0;
+      for (const t of absoluteTargets) {
+        const deviceImg = await dev.memRead(t.address, t.size, 12, (d) => opts.onProgress?.("params", doneChunks + d, totalChunks), opts.signal);
+        const deviceVals = decodeAbsoluteImage(absModel, t.id, deviceImg);
+        const projectVals = decodeAbsoluteImage(absModel, t.id, t.bytes);
+        for (const [refId, devVal] of deviceVals) {
+          if (opts.relevantRefs && !opts.relevantRefs.has(refId)) continue;
+          if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal);
+        }
+        doneChunks += chunksFor(t.size);
+      }
+      paramsRead = true;
+
       if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
       opts.onProgress?.("links", 0, 2);
-      const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
-      links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
+      const gt = await readGroupTablesMv0705(dev, (d, total) => opts.onProgress?.("links", d, total));
+      links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
+      linksRead = true;
+    } else {
+      // System-B relative device. Parameters (LSM 4): read the whole segment, decode it, and
+      // compare against what the project config would flash, both normalized via the same codec.
+      const seg = model.segments.find((s) => s.lsm === LSM);
+      if (support.params && seg) {
+        const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
+        const deviceVals = decodeParameterImage(model, LSM, img);
+        const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
+        for (const [refId, devVal] of deviceVals) {
+          if (opts.relevantRefs && !opts.relevantRefs.has(refId)) continue; // not part of this device's config
+          if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal); // device drifted from project
+        }
+        paramsRead = true;
+      }
+      // Group-address links: read the address + association tables and reverse them. The
+      // com-object table is not needed to decode links, so skip it (much faster).
+      if (support.links) {
+        if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
+        opts.onProgress?.("links", 0, 2);
+        const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
+        links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
+        linksRead = true;
+      }
     }
 
     await dev.disconnect(); await tun.disconnect();

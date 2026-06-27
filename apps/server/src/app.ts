@@ -19,7 +19,7 @@ import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, readbackSupport } from "./flash.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, readbackSupport, canFlashGroupTables } from "./flash.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
@@ -495,12 +495,14 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const appXml = resolveAppXml(state, id, dev.appRef);
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
-      // Refuse up front for device classes whose state we cannot actually read: reading
-      // anyway would fabricate a "verified" parameter baseline or corrupt the link
-      // baseline. Honest refusal beats false confidence (no bus traffic either).
+      // Refuse up front for device classes whose state we cannot read at all: reading anyway
+      // would fabricate a "verified" parameter baseline or corrupt the link baseline. Now that
+      // both System-B and MV-0705 are supported this is a DEFENSIVE guard (currently
+      // unreachable, since readbackSupport always returns links:true) kept for a future class
+      // that genuinely can read neither aspect. Honest refusal beats false confidence.
       const support = readbackSupport(parseAppConfig(appXml), getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId));
       if (!support.params && !support.links) {
-        return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet (e.g. MV-0705 absolute-segment device); its values cannot be verified against the device");
+        return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet; its values cannot be verified against the device");
       }
       // Only record drift for refs the device config actually exposes (matches
       // what the UI shows; keeps module devices from flagging flat-model refs).
@@ -534,11 +536,12 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       // buildGroupTables only produces the System-B table format. An absolute-segment
-      // (MV-0705) device stores its group tables differently, so writing System-B tables
-      // would corrupt them while reporting success. Refuse rather than guess. (Today an
-      // incidental count-bound throw catches most of these, but that is luck, not a guard.)
+      // (MV-0705) device stores its group tables in the System-7 layout, so writing System-B
+      // tables would corrupt them while reporting success. MV-0705 group tables can be READ
+      // back but not yet WRITTEN, so this guards the flash path specifically (see
+      // canFlashGroupTables vs readbackSupport.links).
       const gaApp = loadApp(state, id, deviceId);
-      if (gaApp && !readbackSupport(gaApp, getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).links) {
+      if (gaApp && !canFlashGroupTables(gaApp, getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId))) {
         return err("GROUP_TABLE_UNREADABLE", "this device does not store its group tables in the System-B format; programming its group addresses is not supported yet");
       }
       const dryGa = url.searchParams.get("dry") === "1";

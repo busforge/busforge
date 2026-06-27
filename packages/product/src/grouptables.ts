@@ -59,3 +59,32 @@ export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean
   }
   return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: gaRaws.sort((a, b) => a - b) }));
 }
+
+// Decode an MV-0705 (System 7) device's group tables. This mask uses a DIFFERENT layout
+// from System B (reverse-engineered byte-for-byte off a real BE-06001.02):
+//   Address table:     [count:1][own IA:2 BE][GA:2 BE x (count-1)]  (count includes the IA entry)
+//   Association table: [count:1][groupIdx:1][comObjNum:1] x count    (groupIdx 1-based into the GA list)
+// The first address-table entry is the device's own individual address, so group index gi
+// resolves to the gi-th GA after it. Counts are 1 byte (not the System B 2-byte count), and
+// each entry is 2 bytes, so the System B reader misreads the header as a huge count and the
+// offsets by one byte. gaRaws are sorted ascending for a stable, table-order-independent result.
+export function decodeGroupTablesMv0705(addr: Buffer, assoc: Buffer): ComObjectLink[] {
+  const acount = addr.length >= 1 ? addr[0] : 0; // entries incl. the device IA at index 0
+  const gas: number[] = []; // gas[gi] indexed by 1-based group index
+  for (let gi = 1; gi < acount && 1 + gi * 2 + 2 <= addr.length; gi++) gas[gi] = addr.readUInt16BE(1 + gi * 2);
+
+  const scount = assoc.length >= 1 ? assoc[0] : 0;
+  const byCo = new Map<number, number[]>();
+  for (let k = 0; k < scount; k++) {
+    const off = 1 + k * 2;
+    if (off + 2 > assoc.length) break; // truncated read: stop at the last whole entry
+    const gi = assoc[off];
+    const co = assoc[off + 1];
+    const ga = gas[gi];
+    if (ga === undefined) continue; // unused/invalid group index
+    const list = byCo.get(co) ?? [];
+    list.push(ga);
+    byCo.set(co, list);
+  }
+  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: gaRaws.sort((a, b) => a - b) }));
+}

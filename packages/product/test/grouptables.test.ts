@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildGroupTables, decodeGroupTables, type ComObjectLink } from "../src/grouptables.ts";
+import { buildGroupTables, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "../src/grouptables.ts";
 
 describe("buildGroupTables", () => {
   test("address table is sorted GAs, association is ordered by com-object number", () => {
@@ -87,5 +87,38 @@ describe("decodeGroupTables", () => {
 
   test("buffers too short for even the header yield no links", () => {
     expect(decodeGroupTables(Buffer.alloc(0), Buffer.alloc(1), true)).toEqual([]);
+  });
+});
+
+describe("decodeGroupTablesMv0705 (System-7 layout)", () => {
+  const byCo = (l: ComObjectLink[]) => l.sort((a, b) => a.comObjNum - b.comObjNum);
+
+  test("decodes a real BE-06001.02 (MV-0705) address + association table to its links", () => {
+    // Off a real device. addr = [count:1=6][own IA 0x1138=1.1.56][GA:2 BE x 5];
+    // assoc = [count:1=5][groupIdx:1][comObjNum:1 x 5]. The IA entry is skipped; gi 1..5
+    // index the GAs after it (gi1=0x1302, gi2=0x1303, gi3=0x2601, gi4=0x2602, gi5=0x2603).
+    const addr = Buffer.from("06" + "1138" + "1302" + "1303" + "2601" + "2602" + "2603", "hex");
+    const assoc = Buffer.from("05" + "0300" + "0406" + "050c" + "0112" + "022c", "hex");
+    expect(byCo(decodeGroupTablesMv0705(addr, assoc))).toEqual([
+      { comObjNum: 0, gaRaws: [0x2601] },  // 9729 = 4/6/1
+      { comObjNum: 6, gaRaws: [0x2602] },  // 9730 = 4/6/2
+      { comObjNum: 12, gaRaws: [0x2603] }, // 9731 = 4/6/3
+      { comObjNum: 18, gaRaws: [0x1302] }, // 4866 = 2/3/2
+      { comObjNum: 44, gaRaws: [0x1303] }, // 4867 = 2/3/3
+    ]);
+  });
+
+  test("a truncated association read stops at the last whole entry, no crash", () => {
+    const addr = Buffer.from("03" + "1138" + "0a01" + "0a02", "hex");   // IA + 2 GAs
+    const assoc = Buffer.from("03" + "0100" + "0206" + "01", "hex");    // says 3, 2 whole + a stub byte
+    expect(byCo(decodeGroupTablesMv0705(addr, assoc))).toEqual([
+      { comObjNum: 0, gaRaws: [0x0a01] },
+      { comObjNum: 6, gaRaws: [0x0a02] },
+    ]);
+  });
+
+  test("empty / header-only buffers yield no links", () => {
+    expect(decodeGroupTablesMv0705(Buffer.from("00", "hex"), Buffer.from("00", "hex"))).toEqual([]);
+    expect(decodeGroupTablesMv0705(Buffer.alloc(0), Buffer.alloc(0))).toEqual([]);
   });
 });

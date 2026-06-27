@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { parseAppConfig, parseApplication, buildDeviceConfig } from "../src/index.ts";
-import { buildAbsoluteSegmentImages, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
+import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
@@ -20,6 +20,25 @@ test("parses the AbsoluteSegment with its fixed address and default image", () =
   expect(seg!.address).toBe(16896);
   expect(seg!.size).toBe(256);
   expect(seg!.data.length).toBe(256); // default image present, not blank
+});
+
+test("decodeAbsoluteImage reads back the values the absolute build wrote (round-trip, MV-0705 read-back)", () => {
+  // Build the absolute image the same way the flash/read-back path does, then decode it.
+  // Every integer/enum value the build placed must decode back identically, i.e.
+  // decodeAbsoluteImage is the inverse of the encode used by buildAbsoluteSegmentTargets.
+  const instances = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
+  const m = toAppModel(app, { includeUnions: true, instances });
+  const targets = buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances });
+  const active = buildDeviceConfig(app, new Map(), undefined, instances).imageValues;
+  const seg = targets.find((t) => t.size > 0)!;
+  const decoded = decodeAbsoluteImage(m, seg.id, seg.bytes);
+  expect(decoded.size).toBeGreaterThan(0);
+  let checked = 0;
+  for (const [ref, v] of decoded) {
+    const a = active.get(ref);
+    if (a !== undefined && /^-?\d+$/.test(a)) { expect(v).toBe(a); checked++; }
+  }
+  expect(checked).toBeGreaterThan(0);
 });
 
 test("builds one absolute-segment image at the fixed address, sized from the segment", () => {
