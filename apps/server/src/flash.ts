@@ -351,7 +351,30 @@ export async function flashDeviceGroupAddresses(opts: {
 // project would flash. Both sides are normalized through the same build+decode,
 // so default-vs-stored representation can't cause phantom diffs. The caller maps
 // each link's comObjNum back to its ref id before storing.
-export interface DeviceReadback { mask: string; paramBase: Map<string, string>; links: ComObjectLink[]; }
+export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; }
+
+// Which aspects of a device can actually be read back today. Absolute-segment
+// (MV-0705) devices keep their parameters at fixed addresses (no LSM4 segment to
+// decode) and store their group tables in a non-System-B format we don't yet
+// decode. Attempting either would FABRICATE a parameter baseline (a verbatim copy
+// of the project, masquerading as "verified, no drift") or CORRUPT the link
+// baseline (the count header is misread as thousands of bogus entries). So we
+// report those aspects as unsupported rather than guess, and the read-back path
+// refuses instead of writing a false baseline.
+export interface ReadbackSupport { params: boolean; links: boolean; }
+export function readbackSupport(cfg: AppConfig, params: Map<string, string>, moduleInstances?: ModuleInstance[]): ReadbackSupport {
+  // Absolute-segment (MV-0705) devices keep parameters at fixed addresses (no LSM4
+  // segment) and store their group tables in a non-System-B format, so neither can
+  // be read back today.
+  const absolute = buildAbsoluteSegmentTargets(cfg, params, { moduleInstances }).some((t) => t.size > 0);
+  if (absolute) return { params: false, links: false };
+  // Relative (System-B) device: parameters are decoded from the LSM4 segment and group
+  // tables from the System-B address/association tables. A relative device WITHOUT an
+  // LSM4 segment has nowhere to read parameters from, so don't claim its params verify
+  // (the params/links split is real, not speculative: this case sets params=false, links=true).
+  const hasParamSegment = toAppModel(cfg).segments.some((s) => s.lsm === LSM);
+  return { params: hasParamSegment, links: true };
+}
 
 export async function readDeviceState(opts: {
   ia: string;
@@ -371,6 +394,11 @@ export async function readDeviceState(opts: {
   // device memory and compared against the project (drift detection covers modules).
   const cfg = parseAppConfig(opts.appXml);
   const { model, writeValues } = moduleAwareImage(cfg, opts.liveParams, opts.moduleInstances ?? []);
+  // What we can actually read back for this device class. We NEVER read an aspect we
+  // can't decode: doing so would either fabricate a parameter baseline (a verbatim copy
+  // of the project that reads as "verified, no drift") or corrupt the link baseline
+  // (a misread count header). The caller must not persist an aspect whose flag is false.
+  const support = readbackSupport(cfg, opts.liveParams, opts.moduleInstances);
 
   const tun = makeTransport(opts.connection);
   opts.onProgress?.("connect");
@@ -386,10 +414,13 @@ export async function readDeviceState(opts: {
 
     // Parameters (LSM 4): read the whole segment, decode it, and compare against
     // what the project config would flash, both normalized via the same codec.
+    // paramBase is only meaningful when paramsRead is true; otherwise the caller
+    // must leave the existing baseline untouched rather than store this copy.
     const paramBase = new Map(opts.liveParams);
     const seg = model.segments.find((s) => s.lsm === LSM);
-    if (seg) {
-      const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
+    const paramsRead = support.params && !!seg;
+    if (paramsRead) {
+      const img = await dev.memRead(await dev.tableAddr(LSM), seg!.size, 12, (d, t) => opts.onProgress?.("params", d, t), opts.signal);
       const deviceVals = decodeParameterImage(model, LSM, img);
       const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
       for (const [refId, devVal] of deviceVals) {
@@ -400,13 +431,19 @@ export async function readDeviceState(opts: {
 
     // Group-address links: read the address + association tables and reverse them.
     // The com-object table is not needed to decode links, so skip it (much faster).
-    if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
-    opts.onProgress?.("links", 0, 2);
-    const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
-    const links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
+    // Only attempt the System-B table read when the device actually stores its tables
+    // that way; otherwise the count header is misread and the baseline is corrupted.
+    let links: ComObjectLink[] = [];
+    const linksRead = support.links;
+    if (linksRead) {
+      if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
+      opts.onProgress?.("links", 0, 2);
+      const gt = await readGroupTables(dev, (d, total) => opts.onProgress?.("links", d, total), true);
+      links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
+    }
 
     await dev.disconnect(); await tun.disconnect();
-    return { mask, paramBase, links };
+    return { mask, paramsRead, linksRead, paramBase, links };
   } catch (e) {
     try { await dev.disconnect(); } catch {}
     try { await tun.disconnect(); } catch {}

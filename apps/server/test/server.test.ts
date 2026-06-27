@@ -4,11 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
-import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, type AppState } from "../src/app.ts";
+import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, importGaps, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
-import { readGroupTables } from "../src/flash.ts";
+import { readGroupTables, readbackSupport } from "../src/flash.ts";
+import { parseAppConfig } from "@busforge/product";
+import { loadKnxproj, appProgramId } from "@busforge/project";
 import type { KnxDevice } from "@busforge/knx";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { gunzipSync } from "node:zlib";
+
+const realAppXml = (n: string) => gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", n))).toString("utf8");
+const realApp = (n: string) => parseAppConfig(realAppXml(n));
 
 // Export is a POST that returns the binary .busforge artifact (gzip, AES-sealed
 // with a password). These helpers POST the export and decode it back to the JSON.
@@ -62,6 +68,23 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
     const live = m({ A: [1], B: [2] });
     expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), false))).toEqual({ A: [1], B: [2] });
     expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), true))).toEqual({ A: [1], B: [2] });
+  });
+});
+
+describe("readbackSupport (honest read-back capability)", () => {
+  // An absolute-segment (MV-0705) device has no LSM4 param segment and stores its
+  // group tables in a non-System-B format; reading either would fabricate a "verified"
+  // parameter baseline or corrupt the link baseline, so both aspects are unsupported.
+  test("MV-0705 absolute-segment device: neither params nor links can be read back", () => {
+    const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
+    expect(cfg.mask).toBe("MV-0705");
+    expect(readbackSupport(cfg, new Map())).toEqual({ params: false, links: false });
+  });
+
+  test("System-B device: both params and links are read-back supported", () => {
+    const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
+    expect(cfg.mask).toBe("MV-07B0");
+    expect(readbackSupport(cfg, new Map())).toEqual({ params: true, links: true });
   });
 });
 
@@ -718,6 +741,46 @@ describe("device configuration", () => {
     expect((await handleApi(req(`/api/projects/${projectId}/devices/ghost/flash-ga`, { method: "POST" }), state))!.status).toBe(404);
     const r2 = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state);
     expect(r2!.status).toBe(400);
+  });
+
+  // Turn the imported demo device into an MV-0705 absolute-segment device by swapping its
+  // application program XML, and point the project at a ready connection so the read-back /
+  // flash-ga guards (not INTERFACE_NOT_SET) are the thing being exercised.
+  async function mv0705Device(state: AppState) {
+    const { projectId, deviceId } = await importConfig(state);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-00B4-32-3919.xml.gz"), "M-TEST_A-1"]);
+    const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }) }), state))!.json()) as any;
+    await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
+    return { projectId, deviceId };
+  }
+
+  test("read-back refuses on an MV-0705 device instead of fabricating a baseline", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await mv0705Device(state);
+    const baseBefore = (state.db.query("SELECT COUNT(*) AS n FROM device_param_base WHERE project_id = ?").get(projectId) as any).n;
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(((await res.json()) as any).error.code).toBe("DEVICE_READBACK_UNSUPPORTED");
+    // refused before any bus op, so the baseline is untouched (not a fabricated copy)
+    expect((state.db.query("SELECT COUNT(*) AS n FROM device_param_base WHERE project_id = ?").get(projectId) as any).n).toBe(baseBefore);
+  });
+
+  test("flash-ga refuses on an MV-0705 device (System-B table format only)", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await mv0705Device(state);
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(((await res.json()) as any).error.code).toBe("GROUP_TABLE_UNREADABLE");
+  });
+
+  test("importGaps lists devices whose application program is absent and counts unresolved links", () => {
+    const proj = loadKnxproj(cfgFixture, "tester12", "x");
+    // No programs available -> every device is flagged as un-openable (not silently hidden).
+    expect(importGaps(proj, new Map()).devicesWithoutProgram.length).toBe(proj.devices.length);
+    expect(importGaps(proj, new Map()).devicesWithoutProgram.length).toBeGreaterThan(0);
+    // All programs present -> no gaps; clean project surfaces empty, not undefined.
+    const all = new Map(proj.devices.map((d) => [appProgramId(d.appRef), "<x/>"]));
+    expect(importGaps(proj, all)).toEqual({ devicesWithoutProgram: [], unresolvedLinks: 0 });
   });
 
   test("tasks endpoint is empty until a bus operation runs", async () => {

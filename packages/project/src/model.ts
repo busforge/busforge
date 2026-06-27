@@ -79,4 +79,5 @@ export interface Project {
   deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
   deviceModules: DeviceModules[]; // per-device module instances from 0.xml
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
+  unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
 }

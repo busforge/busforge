@@ -356,7 +356,7 @@ export function DeviceConfig() {
         <div className="flex items-center justify-end gap-2 sm:shrink-0">
           {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
-          {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving, testId: "read-back" })}
+          {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
           {flashTargetsAvail.length > 0 && (
             <div className="flex">
               <Button
@@ -431,6 +431,22 @@ export function DeviceConfig() {
               {gaps.types.map(([label, n]) => <li key={`t-${label}`}>{t("device.gapType", { type: label, count: n })}</li>)}
               {gaps.elements.map(([label, n]) => <li key={`e-${label}`}>{t("device.gapElement", { tag: label, count: n })}</li>)}
             </ul>
+          </div>
+        </div>
+      )}
+
+      {view?.readbackSupport && (!view.readbackSupport.params || !view.readbackSupport.links) && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="readback-unsupported">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">{t("device.readbackUnsupportedTitle")}</p>
+            <p className="text-amber-700/90 dark:text-amber-300/90">
+              {!view.readbackSupport.params && !view.readbackSupport.links
+                ? t("device.readbackUnsupportedBoth")
+                : !view.readbackSupport.params
+                  ? t("device.readbackUnsupportedParams")
+                  : t("device.readbackUnsupportedLinks")}
+            </p>
           </div>
         </div>
       )}

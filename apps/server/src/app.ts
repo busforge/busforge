@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts, appProgramId, readBaggage } from "@busforge/project";
+import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts, appProgramId, readBaggage, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
@@ -19,7 +19,7 @@ import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState } from "./flash.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, readbackSupport } from "./flash.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
@@ -199,7 +199,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         for (const p of catalog) putCatalogProduct(db, p);
         for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
       })();
-      return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length });
+      // Surface what did NOT fully import: devices whose application program was not in
+      // the archive (they import as un-configurable husks) and group-address links that
+      // referenced an address not in the tree (silently lost). The count alone is no
+      // longer the only success signal.
+      return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, ...importGaps(project, programs) });
     }
 
     // /api/projects/analyze  (POST: parse a file's metadata for an import preview,
@@ -215,7 +219,10 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (isZip) {
         const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
         const project = loadKnxproj(bytes, password, name);
-        return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, modifiedAt: null });
+        // Run the same program/link resolution the real import does, so the preview's
+        // gaps match what import will actually produce (no clean-looking false promise).
+        const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
+        return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, modifiedAt: null, ...importGaps(project, programs) });
       }
       const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
       validateExport(data);
@@ -487,6 +494,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const appXml = resolveAppXml(state, id, dev.appRef);
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
+      // Refuse up front for device classes whose state we cannot actually read: reading
+      // anyway would fabricate a "verified" parameter baseline or corrupt the link
+      // baseline. Honest refusal beats false confidence (no bus traffic either).
+      const support = readbackSupport(parseAppConfig(appXml), getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId));
+      if (!support.params && !support.links) {
+        return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet (e.g. MV-0705 absolute-segment device); its values cannot be verified against the device");
+      }
       // Only record drift for refs the device config actually exposes (matches
       // what the UI shows; keeps module devices from flagging flat-model refs).
       const relevantRefs = deviceParamRefs(state, id, deviceId);
@@ -502,8 +516,10 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           });
         },
       );
-      replaceParamBase(db, id, deviceId, rb.paramBase);
-      replaceLinkBase(db, id, deviceId, readbackLinkBase(state, id, deviceId, rb.links));
+      // Persist ONLY the aspects actually read off the device. An aspect we couldn't
+      // read keeps its existing baseline rather than getting a fabricated/garbage one.
+      if (rb.paramsRead) replaceParamBase(db, id, deviceId, rb.paramBase);
+      if (rb.linksRead) replaceLinkBase(db, id, deviceId, readbackLinkBase(state, id, deviceId, rb.links));
       return deviceConfig(state, id, deviceId, body.lang);
     }
 
@@ -516,6 +532,14 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+      // buildGroupTables only produces the System-B table format. An absolute-segment
+      // (MV-0705) device stores its group tables differently, so writing System-B tables
+      // would corrupt them while reporting success. Refuse rather than guess. (Today an
+      // incidental count-bound throw catches most of these, but that is luck, not a guard.)
+      const gaApp = loadApp(state, id, deviceId);
+      if (gaApp && !readbackSupport(gaApp, getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).links) {
+        return err("GROUP_TABLE_UNREADABLE", "this device does not store its group tables in the System-B format; programming its group addresses is not supported yet");
+      }
       const dryGa = url.searchParams.get("dry") === "1";
       // Auto restore point of the about-to-be-programmed config (real flash only).
       if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
@@ -621,6 +645,17 @@ function resolveAppXml(state: AppState, projectId: string, appRef: string): stri
   return xml;
 }
 
+// Gaps an import does not fully cover, surfaced so the device/GA counts are not the
+// only success signal: devices whose application program was missing from the archive
+// (they import but cannot be opened, configured, or flashed) and group-address link
+// tokens that referenced an address not in the tree (silently dropped during parse).
+export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number } {
+  const devicesWithoutProgram = project.devices
+    .filter((d) => !programs.has(appProgramId(d.appRef)))
+    .map((d) => ({ ia: d.ia, name: d.name }));
+  return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks };
+}
+
 // Load and cache a device's parsed application program from the catalog.
 function loadApp(state: AppState, projectId: string, deviceId: string): AppConfig | null {
   const appRef = getDeviceAppRef(state.db, projectId, deviceId);
@@ -656,6 +691,11 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   // Offer a native DCA-replacement module if one matches this app program.
   const module = resolveDcaModule(app.id, app.appVersion);
   if (module) view.dca = { ...(view.dca ?? { hint: "" }), module };
+  // Honest read-back capability: which aspects (parameters / group-address links)
+  // can be verified against the device. When false, the change indicators reflect
+  // edits-vs-import only and were NEVER confirmed against the hardware, so the UI
+  // must say so rather than imply a verified "no changes".
+  view.readbackSupport = readbackSupport(app, getDeviceParams(db, projectId, deviceId), getDeviceModules(db, projectId, deviceId));
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI

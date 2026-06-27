@@ -64,6 +64,14 @@ describe("0.xml parser", () => {
     // O-1_R-1 links GA-1 (raw 1) and GA-2 (raw 2); O-2_R-2 has no Links and is omitted
     expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
     expect(proj.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-2")!.links).toEqual([]);
+    expect(proj.unresolvedLinks).toBe(0); // every link token resolved to a GA in the tree
+  });
+
+  test("counts link tokens that reference a GA not in the tree instead of dropping them silently", () => {
+    const p = parseProject(xml0.replace('Links="GA-1 GA-2"', 'Links="GA-1 GA-2 GA-999"'), undefined, "fallback");
+    expect(p.unresolvedLinks).toBe(1); // GA-999 has no address; surfaced, not hidden
+    // the resolvable tokens still import correctly
+    expect(p.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
   });
 });
 

@@ -14,11 +14,12 @@ export interface UsbDevice { vendorId: number; productId: number; product: strin
 export interface Gateway { name: string; ip: string; port: number; ia: string; mac: string; }
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
 export interface Project { id: string; name: string; connectionId: string | null; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
-export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; }
+export interface ImportGap { ia: string; name: string }
+export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; }
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
 // .knxproj (the UI falls back to the picked file's last-modified date).
-export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; modifiedAt: number | null; }
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 export interface CfgParamView {
@@ -43,7 +44,7 @@ export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: n
 // `module` is present when busforge ships a native replacement for that DCA.
 export interface DcaModuleInfo { id: string; displayName: string; category: string; compatible: boolean; deviceVersion: number; supportedVersions: number[] }
 export interface DcaInfo { hint: string; module?: DcaModuleInfo }
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; }
+export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; readbackSupport?: { params: boolean; links: boolean }; }
 // One device's communication object on a group address, for the GA details overlay.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;

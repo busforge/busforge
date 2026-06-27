@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -356,6 +356,22 @@ function ImportDialog({
                 snapshotCount={analysis.snapshotCount}
                 date={analysis.modifiedAt ?? file?.lastModified ?? Date.now()}
               />
+              {((analysis.devicesWithoutProgram?.length ?? 0) > 0 || (analysis.unresolvedLinks ?? 0) > 0) && (
+                <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="import-gaps">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-medium">{t("import.gapsTitle")}</p>
+                    <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
+                      {(analysis.devicesWithoutProgram?.length ?? 0) > 0 && (
+                        <li>{t("import.gapNoProgram", { count: analysis.devicesWithoutProgram!.length })}</li>
+                      )}
+                      {(analysis.unresolvedLinks ?? 0) > 0 && (
+                        <li>{t("import.gapUnresolvedLinks", { count: analysis.unresolvedLinks })}</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         ) : (

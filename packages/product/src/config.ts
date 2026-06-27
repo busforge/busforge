@@ -67,6 +67,10 @@ export interface DeviceConfigView {
   // internal parameters, which ETS writes to the memory image even though they are
   // hidden from the UI; the image build needs them. See buildDeviceConfig.
   imageValues: Map<string, string>;
+  // Which aspects of this device can be verified against the hardware via read-back.
+  // Attached by the server (not buildDeviceConfig). When params/links is false, the
+  // shown change state was never confirmed against the device. See readbackSupport.
+  readbackSupport?: { params: boolean; links: boolean };
 }
 
 interface Scope {

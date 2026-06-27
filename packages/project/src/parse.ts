@@ -32,9 +32,11 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
   const gaIdToRaw = new Map<string, number>();
   buildGaIdMap(doc, gaIdToRaw);
-  const deviceLinks = devices.map((d) => ({ deviceId: d.id, links: parseDeviceLinks(doc, d.id, gaIdToRaw) }));
+  const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(doc, d.id, gaIdToRaw) }));
+  const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
+  const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks };
+  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, unresolvedLinks };
 }
 
 // Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so
@@ -46,15 +48,21 @@ function buildGaIdMap(node: any, out: Map<string, number>) {
 }
 
 // A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs).
-function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, number>) {
+// Also counts link tokens that did NOT resolve to a group address in the tree: those
+// are real assignments we silently lose, so the caller can surface the count instead
+// of pretending every link imported.
+function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number } {
   const dev = findDeviceInstance(doc, deviceId);
   const out: { comObjRefId: string; gaRaws: number[] }[] = [];
+  let unresolved = 0;
   for (const c of arr<any>(dev?.ComObjectInstanceRefs?.ComObjectInstanceRef)) {
     if (!c.Links) continue;
-    const gaRaws = String(c.Links).split(/\s+/).map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
+    const tokens = String(c.Links).split(/\s+/).filter(Boolean);
+    const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
+    unresolved += tokens.length - gaRaws.length;
     if (gaRaws.length) out.push({ comObjRefId: String(c.RefId), gaRaws });
   }
-  return out;
+  return { links: out, unresolved };
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).
