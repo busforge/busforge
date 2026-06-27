@@ -141,6 +141,10 @@ export interface AppConfig {
   allocators: Map<string, Allocator>; // Static/Allocators, for from-scratch instance resolution
   hasModules: boolean;
   dca?: DcaInfo;
+  // Leading whitespace from a Parameter Text used as a faux-indent (nesting a sub-parameter
+  // under the one above), keyed by Parameter Id. The XML parser trims attribute values, so
+  // this is captured from the raw source and reattached to the label. See parseParamFauxIndent.
+  paramFauxIndent: Map<string, string>;
 }
 
 // --- order-preserving node helpers (fast-xml-parser preserveOrder shape) ---
@@ -173,6 +177,23 @@ function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
 
 const num = (s: string | undefined): number | undefined => (s === undefined ? undefined : Number(s));
 const bool = (s: string | undefined): boolean => s === "Enabled" || s === "true";
+
+// ETS app authors use leading whitespace in a Parameter's Text as a faux-indent to nest a
+// sub-parameter visually under the one above (a workaround for ETS's layout limits, e.g.
+// "    Send cyclically every" under "Cyclic sending"). The XML parser trims attribute values,
+// so we recover that leading whitespace from the raw source here and reattach it to the label
+// later, rendering the author's deliberate nesting faithfully. Intentional, not noise.
+function parseParamFauxIndent(xml: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /<Parameter\b([^>]*?)\/?>/g;
+  for (let m; (m = re.exec(xml)); ) {
+    const attrs = m[1];
+    const id = /\bId="([^"]*)"/.exec(attrs)?.[1];
+    const lead = /\bText="([ \t]+)/.exec(attrs)?.[1]; // leading spaces/tabs of the Text attribute only
+    if (id && lead) out.set(id, lead);
+  }
+  return out;
+}
 
 export function parseAppConfig(xml: string): AppConfig {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
@@ -244,6 +265,7 @@ export function parseAppConfig(xml: string): AppConfig {
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, translations, dynamic, moduleDefs, allocators, hasModules, dca,
+    paramFauxIndent: parseParamFauxIndent(xml),
   };
 }
 

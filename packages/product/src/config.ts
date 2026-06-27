@@ -173,7 +173,9 @@ export function buildDeviceConfig(
     text.replace(/\{\{([^}]+)\}\}/g, (m, k) => scope.textArgs.get(k) ?? m);
   // Tidy a display label: normalize newlines, drop the manufacturer's leading/
   // trailing whitespace (often a faux-indent), and upper-case the first letter in
-  // the catalogue's language (some texts are authored lower-case).
+  // the catalogue's language (some texts are authored lower-case). The leading faux-
+  // indent is reattached separately (see app.paramFauxIndent / buildParam) so the
+  // author's deliberate nesting still renders without leaking whitespace everywhere.
   const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
   // ETS evaluates EVERY matching <when> of a <choose>, not just the first. The
@@ -201,7 +203,9 @@ export function buildDeviceConfig(
     if (access === "None") return null;
     const type = app.types.get(param.typeId);
     const value = resolve(defRefId, scope) ?? "";
-    const name = cap(subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope));
+    // Reattach the author's leading-space faux-indent (the XML parser trimmed it). cap()
+    // tidies the visible text; the preserved whitespace nests the row under the one above.
+    const name = (app.paramFauxIndent.get(param.id) ?? "") + cap(subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope));
     const suffix = param.suffix ? subst(tr(param.id, "SuffixText", param.suffix), scope) : undefined;
     // TypeNone is a display-only element (no datapoint). A nameless one is a pure
     // ETS layout spacer with nothing to show or support; drop only that case. A

@@ -621,7 +621,8 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
     >
       <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
         {param.changed ? <ChangedDot title={changedTitle} /> : null}
-        <span className="min-w-0 whitespace-pre-line">{param.name}</span>
+        {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
+        <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
       </span>
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
       <div className={cn("flex shrink-0 items-center gap-2", CONTROL_W)}>
