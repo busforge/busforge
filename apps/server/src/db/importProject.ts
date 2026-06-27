@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage } from "./baggage.ts";
+import { insertSpaces } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 
@@ -42,7 +43,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams"]) {
+  for (const key of ["snapshots", "telegrams", "spaces"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
@@ -69,6 +70,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     }
     const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
     for (const g of data.groupAddresses) insGa.run(id, g.rangeId == null ? null : idMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt);
+
+    insertSpaces(db, id, data.spaces ?? []);
 
     const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
     for (const p of data.deviceParameters) insParam.run(id, p.deviceId, p.paramRefId, p.value);

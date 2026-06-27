@@ -28,6 +28,15 @@
             </GroupRange>
           </GroupRanges>
         </GroupAddresses>
+        <Locations>
+          <Space Type="Building" Id="P-TEST-0_BP-1" Name="Haus">
+            <Space Type="Floor" Id="P-TEST-0_BP-2" Name="Erdgeschoss">
+              <Space Type="Room" Id="P-TEST-0_BP-3" Name="Küche">
+                <DeviceInstanceRef RefId="P-TEST-0_DI-1" />
+              </Space>
+            </Space>
+          </Space>
+        </Locations>
       </Installation>
     </Installations>
   </Project>

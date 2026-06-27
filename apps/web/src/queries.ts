@@ -126,6 +126,25 @@ export function useGroupEdit(projectId: string) {
   };
 }
 
+// Building-structure edits (spaces + device assignment). Each returns the
+// refreshed project, applied immediately. A delete captures an undo snapshot
+// server-side; assignment can move a device between rooms. The project (device
+// grouping), dashboard counts and the snapshot list are refreshed.
+export function useSpaceEdit(projectId: string) {
+  const qc = useQueryClient();
+  const after = (project: Awaited<ReturnType<typeof api.getProject>>) => {
+    qc.setQueryData(qk.project(projectId), project);
+    qc.invalidateQueries({ queryKey: qk.projects });
+    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+  };
+  return {
+    createSpace: useMutation({ mutationFn: (v: { parentId: number | null; type: string; name: string }) => api.createSpace(projectId, v.parentId, v.type, v.name), onSuccess: after }),
+    renameSpace: useMutation({ mutationFn: (v: { spaceId: number; name: string }) => api.renameSpace(projectId, v.spaceId, v.name), onSuccess: after }),
+    deleteSpace: useMutation({ mutationFn: (spaceId: number) => api.deleteSpace(projectId, spaceId), onSuccess: after }),
+    assignDevice: useMutation({ mutationFn: (v: { deviceId: string; spaceId: number | null }) => api.assignDeviceSpace(projectId, v.deviceId, v.spaceId), onSuccess: after }),
+  };
+}
+
 // Devices linked to a group address, fetched only when the details overlay opens
 // (enabled). Language-keyed so com-object names match the UI; cached briefly so
 // reopening the same GA is instant.

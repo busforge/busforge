@@ -10,7 +10,7 @@ import { readProjectProperties, applyProjectProperties, type ProjectProperties }
 // belongs in a config restore point.
 
 export type SnapshotKind = "manual" | "auto";
-export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit";
+export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit" | "before-space-edit";
 
 // Metadata for the history list (everything but the payload).
 export interface SnapshotMeta {
@@ -32,6 +32,11 @@ export interface SnapshotPayload {
   deviceLinks: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
   groupRanges?: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   groupAddresses?: { id: number; rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
+  // Building structure + device-to-space membership, so location edits (add/rename/
+  // delete a space, move a device) are undoable. Optional: snapshots taken before
+  // this capture leave the current structure in place on restore.
+  spaces?: { id: number; parentId: number | null; extId: string; type: string; name: string; ord: number }[];
+  spaceDevices?: { spaceId: number; deviceId: string }[];
 }
 
 // How many automatic snapshots to keep per project (ring buffer). Manual
@@ -51,7 +56,12 @@ export function serializeConfig(db: Database, projectId: string): SnapshotPayloa
     .all(projectId) as NonNullable<SnapshotPayload["groupRanges"]>;
   const groupAddresses = db.query("SELECT id, range_id AS rangeId, raw, address, name, dpt FROM group_addresses WHERE project_id = ? ORDER BY id")
     .all(projectId) as NonNullable<SnapshotPayload["groupAddresses"]>;
-  return { project, deviceParameters, deviceLinks, groupRanges, groupAddresses };
+  // Ordered by id so a parent space precedes its children on restore (FK-safe).
+  const spaces = db.query("SELECT id, parent_id AS parentId, ext_id AS extId, type, name, ord FROM spaces WHERE project_id = ? ORDER BY id")
+    .all(projectId) as NonNullable<SnapshotPayload["spaces"]>;
+  const spaceDevices = db.query("SELECT space_id AS spaceId, device_id AS deviceId FROM space_devices WHERE project_id = ? ORDER BY space_id, device_id")
+    .all(projectId) as NonNullable<SnapshotPayload["spaceDevices"]>;
+  return { project, deviceParameters, deviceLinks, groupRanges, groupAddresses, spaces, spaceDevices };
 }
 
 const rowToMeta = (r: { id: string; label: string; kind: string; reason: string; created_at: number; schema_version: number }): SnapshotMeta =>
@@ -142,6 +152,18 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
       for (const r of payload.groupRanges) insRange.run(r.id, projectId, r.parentId, r.name, r.rangeStart, r.rangeEnd);
       const insGa = db.prepare("INSERT INTO group_addresses (id, project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const g of payload.groupAddresses) insGa.run(g.id, projectId, g.rangeId, g.raw, g.address, g.name, g.dpt);
+    }
+
+    // Building structure: only rewritten for snapshots that captured it. Membership
+    // rows reference spaces, so they are cleared first; spaces re-insert parents-
+    // first (payload is id-ordered) with explicit ids, then membership after.
+    if (payload.spaces && payload.spaceDevices) {
+      db.prepare("DELETE FROM space_devices WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM spaces WHERE project_id = ?").run(projectId);
+      const insSpace = db.prepare("INSERT INTO spaces (id, project_id, parent_id, ext_id, type, name, ord) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      for (const s of payload.spaces) insSpace.run(s.id, projectId, s.parentId, s.extId, s.type, s.name, s.ord);
+      const insSd = db.prepare("INSERT INTO space_devices (project_id, space_id, device_id) VALUES (?, ?, ?)");
+      for (const sd of payload.spaceDevices) insSd.run(projectId, sd.spaceId, sd.deviceId);
     }
   })();
   return { ok: true, gaStructureRestored };

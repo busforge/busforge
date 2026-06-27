@@ -118,10 +118,14 @@ of the manufacturer data the project already carries. Busforge follows the same 
 Where a device sits in that set is what determines how far we can program it today.
 Full detail and the per-axis gap analysis: [`docs/device-memory-model.md`](docs/device-memory-model.md).
 
-The model is decided by the device's **segment structure** (does the app declare a
-`RelativeSegment` or an `AbsoluteSegment`), not by the mask number. The masks below are
-just the ones seen in the reference installation; e.g. MV-0701 ships absolute segments and
-is handled by the absolute path, despite the lower number.
+The model is decided by the device's **mask version**, which maps to a system family and
+thus to a memory model (System 7 → absolute, System B → relative, BCU1/BCU2 → the classic
+fixed-EEPROM models). A device is `classify()`-ed to exactly one profile, and a recognised
+family we have not implemented is refused, not guessed. This matters: an `MV-0012` (System 1 /
+BCU1) device happens to carry an absolute segment, so the earlier "decide by segment structure"
+heuristic misrouted it into the absolute path and silently mis-decoded its tables; mask-based
+classification refuses it honestly. The full ~40-mask matrix and per-mask support status:
+[`docs/device-support.md`](docs/device-support.md).
 
 | Memory model | Masks (seen here) | Config UI (read + edit) | Image build + byte-match | On-bus flash |
 |---|---|---|---|---|

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
-import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct } from "@busforge/project";
+import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 import { getConnection, type Connection } from "./connections.ts";
 
@@ -9,14 +9,66 @@ import { getConnection, type Connection } from "./connections.ts";
 // deeper than the visible name/address.
 export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string };
 
-export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
+export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
+
+// Count location spaces by category for the dashboard's location axis. "rooms" is
+// every space that is not a building or a floor (Room, Corridor, DistributionBoard,
+// ...), i.e. the leaf places devices actually live. Works on the parsed tree (a
+// .knxproj) and the exported tree (a .busforge), which share the SpaceNode shape.
+export function countSpacesByType(locations: SpaceNode[]): { buildingCount: number; floorCount: number; roomCount: number } {
+  let buildingCount = 0, floorCount = 0, roomCount = 0;
+  const walk = (n: SpaceNode) => {
+    if (n.type === "Building") buildingCount++;
+    else if (n.type === "Floor") floorCount++;
+    else roomCount++;
+    n.children.forEach(walk);
+  };
+  locations.forEach(walk);
+  return { buildingCount, floorCount, roomCount };
+}
 export interface StoredProject {
   id: string;
   name: string;
   connectionId: string | null; // id of the saved connection in use, or null
   devices: DeviceWithChanges[];
   groupRanges: GroupRangeNode[];
+  locations: SpaceNode[];      // building structure (empty for projects without it)
   gaCount: number;
+}
+
+// Insert a project's location tree (depth-first, preserving order) into the
+// `spaces`/`space_devices` tables. Shared by import and .busforge re-import so the
+// recursive walk and the device-membership rows live in one place.
+export function insertSpaces(db: Database, projectId: string, locations: SpaceNode[]): void {
+  const insSpace = db.prepare("INSERT INTO spaces (project_id, parent_id, ext_id, type, name, ord) VALUES (?, ?, ?, ?, ?, ?)");
+  const insSpaceDev = db.prepare("INSERT INTO space_devices (project_id, space_id, device_id) VALUES (?, ?, ?)");
+  const walk = (node: SpaceNode, parentId: number | null, ord: number) => {
+    const sid = Number(insSpace.run(projectId, parentId, node.id, node.type, node.name, ord).lastInsertRowid);
+    for (const did of node.deviceIds) insSpaceDev.run(projectId, sid, did);
+    node.children.forEach((c, i) => walk(c, sid, i));
+  };
+  locations.forEach((n, i) => walk(n, null, i));
+}
+
+// Rebuild a project's location tree (spaces parent_id adjacency + device
+// membership). SpaceNode.id is the DB row id (as a string), which the edit/assign
+// endpoints address; the source 0.xml Space Id stays in the ext_id column for
+// provenance but is not needed by the client.
+export function readSpaces(db: Database, projectId: string): SpaceNode[] {
+  const rows = db.query("SELECT id, parent_id AS parentId, type, name FROM spaces WHERE project_id = ? ORDER BY ord, id")
+    .all(projectId) as { id: number; parentId: number | null; type: string; name: string }[];
+  const devRows = db.query("SELECT space_id AS spaceId, device_id AS deviceId FROM space_devices WHERE project_id = ? ORDER BY rowid")
+    .all(projectId) as { spaceId: number; deviceId: string }[];
+  const nodes = new Map<number, SpaceNode>();
+  for (const r of rows) nodes.set(r.id, { id: String(r.id), type: r.type, name: r.name, deviceIds: [], children: [] });
+  for (const d of devRows) nodes.get(d.spaceId)?.deviceIds.push(d.deviceId);
+  const roots: SpaceNode[] = [];
+  for (const r of rows) {
+    const node = nodes.get(r.id)!;
+    if (r.parentId == null) roots.push(node);
+    else nodes.get(r.parentId)?.children.push(node);
+  }
+  return roots;
 }
 
 // Persist a freshly parsed project (rows only; the caller stores the source file).
@@ -44,6 +96,7 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
     for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
+    insertSpaces(db, id, project.locations);
   })();
 }
 
@@ -84,7 +137,10 @@ export function listProjects(db: Database): ProjectSummary[] {
     SELECT p.id, p.name, p.imported_at AS importedAt,
       (SELECT COUNT(*) FROM devices d WHERE d.project_id = p.id) AS deviceCount,
       (SELECT COUNT(*) FROM group_addresses g WHERE g.project_id = p.id) AS gaCount,
-      (SELECT COUNT(*) FROM snapshots s WHERE s.project_id = p.id) AS snapshotCount
+      (SELECT COUNT(*) FROM snapshots s WHERE s.project_id = p.id) AS snapshotCount,
+      (SELECT COUNT(*) FROM spaces s WHERE s.project_id = p.id AND s.type = 'Building') AS buildingCount,
+      (SELECT COUNT(*) FROM spaces s WHERE s.project_id = p.id AND s.type = 'Floor') AS floorCount,
+      (SELECT COUNT(*) FROM spaces s WHERE s.project_id = p.id AND s.type NOT IN ('Building', 'Floor')) AS roomCount
     FROM projects p ORDER BY p.imported_at DESC
   `).all() as ProjectSummary[];
   return rows;
@@ -133,7 +189,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
     nodes.get(g.rangeId)?.addresses.push({ raw: g.raw, address: g.address, name: g.name, dpt: g.dpt });
   }
 
-  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, gaCount: gaRows.length };
+  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length };
 }
 
 export function deleteProject(db: Database, id: string): boolean {

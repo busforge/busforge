@@ -53,6 +53,22 @@ describe("0.xml parser", () => {
     expect(proj.groupAddresses[0]).toMatchObject({ address: "0/0/1", name: "Kitchen On/Off", dpt: "1.001" });
   });
 
+  test("parses the building structure (Locations) into a space tree with device refs", () => {
+    expect(proj.locations).toHaveLength(1);
+    const building = proj.locations[0];
+    expect(building).toMatchObject({ type: "Building", name: "Haus", deviceIds: [] });
+    const floor = building.children[0];
+    expect(floor).toMatchObject({ type: "Floor", name: "Erdgeschoss" });
+    const room = floor.children[0];
+    expect(room).toMatchObject({ type: "Room", name: "Küche", deviceIds: ["P-TEST-0_DI-1"] });
+    expect(room.children).toEqual([]);
+  });
+
+  test("leaves Locations empty when the export has none", () => {
+    const noLoc = parseProject(xml0.replace(/<Locations>[\s\S]*<\/Locations>/, ""), undefined, "fallback");
+    expect(noLoc.locations).toEqual([]);
+  });
+
   test("builds the named group-range tree", () => {
     expect(proj.groupRanges[0].name).toBe("Licht");
     expect(proj.groupRanges[0].children[0].name).toBe("Schalten");

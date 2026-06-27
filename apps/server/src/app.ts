@@ -6,12 +6,13 @@ import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts
 import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
-import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, renameProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta } from "./db/projects.ts";
+import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, renameProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta, countSpacesByType } from "./db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "./db/connections.ts";
 import { isConnectionReady } from "./transport.ts";
 import { searchInterfaces, listUsbInterfaces } from "@busforge/knx";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "./db/snapshots.ts";
 import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddress, updateGroupAddress, deleteGroupAddress, rangeLinkImpact, countLinksForRaws } from "./db/groupedit.ts";
+import { createSpace, renameSpace, deleteSpace, spaceDeviceImpact, assignDeviceSpace } from "./db/spaceedit.ts";
 import { putAppProgram, getAppProgram, gcAppPrograms, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices } from "./db/catalog.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "./db/baggage.ts";
 import { exportProject } from "./db/exportProject.ts";
@@ -19,7 +20,7 @@ import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, readbackSupport, canFlashGroupTables } from "./flash.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, classify } from "./deviceprofile.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
@@ -162,7 +163,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!name) return err("PROJECT_NAME_REQUIRED", "project name required");
       const id = randomUUID();
       createProject(db, id, name, state.now());
-      return json({ id, name, deviceCount: 0, gaCount: 0 }, 201);
+      return json({ id, name, deviceCount: 0, gaCount: 0, snapshotCount: 0, buildingCount: 0, floorCount: 0, roomCount: 0 }, 201);
     }
 
     // /api/projects/import
@@ -222,11 +223,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         // Run the same program/link resolution the real import does, so the preview's
         // gaps match what import will actually produce (no clean-looking false promise).
         const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
-        return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, modifiedAt: null, ...importGaps(project, programs) });
+        return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs) });
       }
       const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
       validateExport(data);
-      return json({ kind: "busforge", name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, snapshotCount: data.snapshots?.length ?? 0, modifiedAt: data.exportedAt ?? null });
+      return json({ kind: "busforge", name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, snapshotCount: data.snapshots?.length ?? 0, ...countSpacesByType(data.spaces ?? []), modifiedAt: data.exportedAt ?? null });
     }
 
     // /api/projects/import-busforge  (POST: re-import a .busforge project artifact)
@@ -405,6 +406,48 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         return json(getProject(db, id));
       }
     }
+
+    // --- building structure (spaces). Edits are pure project organisation, never
+    // flashed; all return the refreshed project. Consistent with group-address
+    // editing: the structure rides in every snapshot payload + the .busforge export
+    // (so a restore reverts it), and the destructive delete captures an undo point.
+    // /api/projects/:id/spaces  -> create a building/floor/room under a parent (null = root)
+    if (seg.length === 4 && seg[3] === "spaces" && req.method === "POST") {
+      if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; type?: string; name?: string };
+      const type = (body.type ?? "").trim();
+      if (!type) return err("SPACE_FIELDS_REQUIRED", "space type required");
+      createSpace(db, id, body.parentId ?? null, type, (body.name ?? "").trim());
+      return json(getProject(db, id), 201);
+    }
+    // /api/projects/:id/spaces/:spaceId/impact  -> devices unassigned if deleted
+    if (seg.length === 6 && seg[3] === "spaces" && seg[5] === "impact" && req.method === "GET") {
+      return json({ devices: spaceDeviceImpact(db, id, Number(decodeURIComponent(seg[4]))) });
+    }
+    // /api/projects/:id/spaces/:spaceId  -> rename, or delete (subtree + memberships
+    // cascade; the devices themselves survive as unassigned).
+    if (seg.length === 5 && seg[3] === "spaces") {
+      const spaceId = Number(decodeURIComponent(seg[4]));
+      if (req.method === "PATCH") {
+        const body = (await req.json().catch(() => ({}))) as { name?: string };
+        if (!renameSpace(db, id, spaceId, (body.name ?? "").trim())) return err("SPACE_NOT_FOUND", "space not found", 404);
+        return json(getProject(db, id));
+      }
+      if (req.method === "DELETE") {
+        if (!db.query("SELECT 1 FROM spaces WHERE id = ? AND project_id = ?").get(spaceId, id)) return err("SPACE_NOT_FOUND", "space not found", 404);
+        createSnapshot(db, id, { kind: "auto", reason: "before-space-edit" }, state.now());
+        deleteSpace(db, id, spaceId);
+        return json(getProject(db, id));
+      }
+    }
+    // /api/projects/:id/devices/:deviceId/space  -> assign device to a space (or null to unassign)
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "space" && req.method === "PUT") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const body = (await req.json().catch(() => ({}))) as { spaceId?: number | null };
+      if (!assignDeviceSpace(db, id, deviceId, body.spaceId ?? null)) return err("SPACE_ASSIGN_FAILED", "device or space not found", 404);
+      return json(getProject(db, id));
+    }
+
     // /api/projects/:id/devices/:deviceId/baggage  -> DCA config blobs for this
     // device (base64), consumed by native DCA-replacement modules.
     if (seg.length === 6 && seg[3] === "devices" && seg[5] === "baggage" && req.method === "GET") {
@@ -496,12 +539,12 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       const body = (await req.json().catch(() => ({}))) as { lang?: string };
       // Refuse up front for device classes whose state we cannot read at all: reading anyway
-      // would fabricate a "verified" parameter baseline or corrupt the link baseline. Now that
-      // both System-B and MV-0705 are supported this is a DEFENSIVE guard (currently
-      // unreachable, since readbackSupport always returns links:true) kept for a future class
-      // that genuinely can read neither aspect. Honest refusal beats false confidence.
-      const support = readbackSupport(parseAppConfig(appXml), getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId));
-      if (!support.params && !support.links) {
+      // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
+      // and System 7 both read; a recognised-but-unimplemented family (e.g. System 1 / BCU1)
+      // resolves to UnsupportedProfile (all capabilities false) and is refused here. Honest
+      // refusal beats false confidence.
+      const rbCaps = classify(parseAppConfig(appXml)).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId));
+      if (!rbCaps.readParams && !rbCaps.readLinks) {
         return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet; its values cannot be verified against the device");
       }
       // Only record drift for refs the device config actually exposes (matches
@@ -535,13 +578,12 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
-      // buildGroupTables only produces the System-B table format. An absolute-segment
-      // (MV-0705) device stores its group tables in the System-7 layout, so writing System-B
-      // tables would corrupt them while reporting success. MV-0705 group tables can be READ
-      // back but not yet WRITTEN, so this guards the flash path specifically (see
-      // canFlashGroupTables vs readbackSupport.links).
+      // Each memory model knows whether its group tables can be WRITTEN today: System B yes,
+      // System 7 (MV-0705) built-but-gated, unsupported families no. The capability guards the
+      // flash path so a model we cannot program never corrupts the device's tables while
+      // reporting success (read-back capability is separate; MV-0705 reads but does not flash).
       const gaApp = loadApp(state, id, deviceId);
-      if (gaApp && !canFlashGroupTables(gaApp, getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId))) {
+      if (gaApp && !classify(gaApp).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).flashLinks) {
         return err("GROUP_TABLE_UNREADABLE", "this device does not store its group tables in the System-B format; programming its group addresses is not supported yet");
       }
       const dryGa = url.searchParams.get("dry") === "1";
@@ -699,7 +741,8 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
   // can be verified against the device. When false, the change indicators reflect
   // edits-vs-import only and were NEVER confirmed against the hardware, so the UI
   // must say so rather than imply a verified "no changes".
-  view.readbackSupport = readbackSupport(app, getDeviceParams(db, projectId, deviceId), getDeviceModules(db, projectId, deviceId));
+  const rbCaps = classify(app).capabilities(getDeviceParams(db, projectId, deviceId), getDeviceModules(db, projectId, deviceId));
+  view.readbackSupport = { params: rbCaps.readParams, links: rbCaps.readLinks };
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI

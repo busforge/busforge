@@ -234,6 +234,31 @@ const MIGRATIONS: string[] = [
   ALTER TABLE projects DROP COLUMN usb_product_id;
   ALTER TABLE projects DROP COLUMN usb_serial;
   `,
+  // Building structure from 0.xml <Locations>: a tree of spaces (Building > Floor
+  // > Room > ...) with each space's directly-placed devices. Read whole to render
+  // the device overview grouped by location. ext_id keeps the source Space Id;
+  // ord preserves import order so floors/rooms list as ETS shows them. Existing
+  // projects have no rows until re-imported (locations are import-time metadata).
+  `
+  CREATE TABLE spaces (
+    id         INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    parent_id  INTEGER REFERENCES spaces(id) ON DELETE CASCADE,
+    ext_id     TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    ord        INTEGER NOT NULL
+  );
+  CREATE INDEX idx_spaces_project ON spaces(project_id);
+
+  CREATE TABLE space_devices (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    space_id   INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    device_id  TEXT NOT NULL,
+    PRIMARY KEY (project_id, space_id, device_id)
+  );
+  CREATE INDEX idx_space_devices_project ON space_devices(project_id);
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -6,20 +6,23 @@ export interface DeviceChanges { params: number; links: number; }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; }
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
+// Building structure: a tree of spaces (Building > Floor > Room > ...), each with
+// the ids of the devices placed directly in it. Empty when the project has none.
+export interface SpaceNode { id: string; type: string; name: string; deviceIds: string[]; children: SpaceNode[]; }
 export type ConnectionType = "ip" | "usb";
 // A saved, reusable bus connection (the connection-manager library).
 export interface Connection { id: string; name: string; type: ConnectionType; host: string; port: number; usbVendorId: number | null; usbProductId: number | null; usbSerial: string | null; createdAt: number; }
 export type ConnectionInput = Omit<Connection, "id" | "createdAt">;
 export interface UsbDevice { vendorId: number; productId: number; product: string; serial?: string; path?: string; }
 export interface Gateway { name: string; ip: string; port: number; ia: string; mac: string; }
-export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; importedAt: number; }
-export interface Project { id: string; name: string; connectionId: string | null; devices: Device[]; groupRanges: GroupRangeNode[]; gaCount: number; }
+export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
+export interface Project { id: string; name: string; connectionId: string | null; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; }
 export interface ImportGap { ia: string; name: string }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; }
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
 // .knxproj (the UI falls back to the picked file's last-modified date).
-export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; }
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 export interface CfgParamView {
@@ -65,7 +68,7 @@ export interface Task {
 }
 
 export type SnapshotKind = "manual" | "auto";
-export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore";
+export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit" | "before-space-edit";
 export interface SnapshotMeta {
   id: string; label: string; kind: SnapshotKind; reason: SnapshotReason; createdAt: number; schemaVersion: number;
 }
@@ -201,6 +204,18 @@ export const api = {
     fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "DELETE" }).then((r) => jsonOrThrow<Project>(r)),
   gaImpact: (id: string, raw: number): Promise<{ links: number }> =>
     fetch(`/api/projects/${id}/group-addresses/${raw}/impact`).then((r) => jsonOrThrow<{ links: number }>(r)),
+
+  // --- building-structure editing. All return the refreshed project. ---
+  createSpace: (id: string, parentId: number | null, type: string, name: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/spaces`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ parentId, type, name }) }).then((r) => jsonOrThrow<Project>(r)),
+  renameSpace: (id: string, spaceId: number, name: string): Promise<Project> =>
+    fetch(`/api/projects/${id}/spaces/${spaceId}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<Project>(r)),
+  deleteSpace: (id: string, spaceId: number): Promise<Project> =>
+    fetch(`/api/projects/${id}/spaces/${spaceId}`, { method: "DELETE" }).then((r) => jsonOrThrow<Project>(r)),
+  spaceImpact: (id: string, spaceId: number): Promise<{ devices: number }> =>
+    fetch(`/api/projects/${id}/spaces/${spaceId}/impact`).then((r) => jsonOrThrow<{ devices: number }>(r)),
+  assignDeviceSpace: (id: string, deviceId: string, spaceId: number | null): Promise<Project> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/space`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ spaceId }) }).then((r) => jsonOrThrow<Project>(r)),
 
   // DCA config blobs for a device (name -> base64), consumed by native DCA modules.
   deviceBaggage: (id: string, deviceId: string): Promise<Record<string, string>> =>

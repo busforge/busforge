@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId } from "@busforge/project";
+import { appProgramId, type SpaceNode } from "@busforge/project";
 import { getAppProgram } from "./catalog.ts";
+import { readSpaces } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
@@ -20,6 +21,9 @@ export interface ProjectExport {
   project: ProjectProperties; // see projectProps.ts: the one shared definition
   devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
+  // Building structure (0.xml <Locations>). Optional so artifacts exported before
+  // it was carried still import (they re-import with no location grouping).
+  spaces?: SpaceNode[];
   groupAddresses: { rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
   deviceParameters: { deviceId: string; paramRefId: string; value: string }[];
   deviceParamBase: { deviceId: string; paramRefId: string; value: string }[];
@@ -85,6 +89,7 @@ export function exportProject(db: Database, projectId: string, now: number): Pro
     project,
     devices,
     groupRanges,
+    spaces: readSpaces(db, projectId),
     groupAddresses,
     deviceParameters: paramRows(db, "device_parameters", projectId),
     deviceParamBase: paramRows(db, "device_param_base", projectId),

@@ -6,7 +6,7 @@ import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, importGaps, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
-import { readGroupTables, readbackSupport, canFlashGroupTables } from "../src/flash.ts";
+import { readGroupTables, classify } from "../src/deviceprofile.ts";
 import { parseAppConfig } from "@busforge/product";
 import { loadKnxproj, appProgramId } from "@busforge/project";
 import type { KnxDevice } from "@busforge/knx";
@@ -71,22 +71,31 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
   });
 });
 
-describe("readbackSupport / canFlashGroupTables (capability split)", () => {
-  // MV-0705 read-back IS supported (absolute-segment params + System-7 group tables), but
-  // its group tables cannot be FLASHED yet (buildGroupTables is System-B only). Read and
-  // write are different capabilities.
-  test("MV-0705 absolute-segment device: read-back supported, GA flash not", () => {
+describe("device profile capabilities (read vs flash, per memory model)", () => {
+  // Read and write are independent capabilities. MV-0705 read-back IS supported (absolute
+  // params + System-7 group tables) but its GA flash is gated; System B does both.
+  test("System 7 (MV-0705) absolute-segment device: reads both aspects, GA flash gated", () => {
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
-    expect(readbackSupport(cfg, new Map())).toEqual({ params: true, links: true });
-    expect(canFlashGroupTables(cfg, new Map())).toBe(false);
+    const caps = classify(cfg).capabilities(new Map());
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: false });
   });
 
-  test("System-B device: read-back and GA flash both supported", () => {
+  test("System B device: read-back and GA flash both supported", () => {
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
-    expect(readbackSupport(cfg, new Map())).toEqual({ params: true, links: true });
-    expect(canFlashGroupTables(cfg, new Map())).toBe(true);
+    const caps = classify(cfg).capabilities(new Map());
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
+  });
+
+  test("System 1 (MV-0012 / BCU1) device: recognised but unsupported, every aspect false", () => {
+    // MV-0012 carries an AbsoluteSegment and used to be misrouted into the System 7 path,
+    // silently decoding its group tables in the wrong format. It must resolve to unsupported.
+    const cfg = realApp("M-0083_A-0138-21-F18E-O0072.xml.gz"); // mask MV-0012
+    expect(cfg.mask).toBe("MV-0012");
+    const profile = classify(cfg);
+    expect(profile.constructor.name).toBe("UnsupportedProfile");
+    expect(profile.capabilities(new Map())).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false });
   });
 });
 

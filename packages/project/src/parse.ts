@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { numToGa } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode } from "./model.ts";
+import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode } from "./model.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
@@ -26,6 +26,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
 
   const installation = firstByKey(doc, "Installation");
   const topology = parseTopology(installation?.Topology, productNames);
+  const locations = parseLocations(installation?.Locations);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
@@ -36,7 +37,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, unresolvedLinks };
+  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, unresolvedLinks };
 }
 
 // Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so
@@ -132,6 +133,21 @@ function parseTopology(topo: any, productNames: Map<string, string>): Topology {
     areas.push({ address: Number(area.Address), name: String(area.Name ?? ""), lines });
   }
   return { areas };
+}
+
+// The building structure: <Locations> holds a tree of <Space> elements (ETS6),
+// each carrying its Type (Building/Floor/Room/...), Name and the device instances
+// placed directly in it. Nesting is arbitrary depth. Absent in older/structureless
+// exports, in which case this returns an empty array.
+function parseLocations(node: any): SpaceNode[] {
+  const toSpace = (s: any): SpaceNode => ({
+    id: String(s.Id ?? ""),
+    type: String(s.Type ?? ""),
+    name: String(s.Name ?? ""),
+    deviceIds: arr<any>(s.DeviceInstanceRef).map((r) => String(r.RefId ?? "")).filter(Boolean),
+    children: arr<any>(s.Space).map(toSpace),
+  });
+  return arr<any>(node?.Space).map(toSpace);
 }
 
 function parseGroupAddresses(node: any): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {

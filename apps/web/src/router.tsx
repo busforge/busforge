@@ -31,14 +31,16 @@ const projectIndexRoute = createRoute({
 });
 
 // Device-list filter state lives in the URL so it survives browser back/forward
-// and reload (q = search text, changed = "only to program" toggle).
+// and reload (q = search text, changed = "only to program" toggle, b = selected
+// building id when the project has more than one).
 const devicesRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "devices",
   component: DevicesView,
-  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean } => ({
+  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean; b?: string } => ({
     q: typeof s.q === "string" && s.q ? s.q : undefined,
     changed: s.changed === true || s.changed === "true" ? true : undefined,
+    b: typeof s.b === "string" && s.b ? s.b : undefined,
   }),
 });
 // Carries the device-list filter (q, changed) so the back button and match

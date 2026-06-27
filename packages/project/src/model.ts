@@ -52,6 +52,18 @@ export interface Topology {
   areas: TopologyArea[];
 }
 
+// The building structure from 0.xml's <Locations>: a tree of <Space> elements
+// (Building > Floor > Room, with deeper types like DistributionBoard/Corridor).
+// Each space carries the ids of the device instances placed directly in it
+// (DeviceInstanceRef RefId == Device.id). Empty for a project without locations.
+export interface SpaceNode {
+  id: string;          // the 0.xml Space Id
+  type: string;        // "Building" | "Floor" | "Room" | "DistributionBoard" | ...
+  name: string;
+  deviceIds: string[]; // device instance ids placed directly in this space
+  children: SpaceNode[];
+}
+
 export interface GroupAddress {
   address: string;      // "1/2/3"
   raw: number;          // 16-bit
@@ -73,6 +85,7 @@ export interface GroupRangeNode {
 export interface Project {
   name: string;
   topology: Topology;
+  locations: SpaceNode[];         // building structure from 0.xml <Locations> (empty if none)
   devices: Device[];
   groupRanges: GroupRangeNode[];
   groupAddresses: GroupAddress[]; // flat, for counts and search

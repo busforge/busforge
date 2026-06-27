@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle, Building2, Layers, DoorOpen } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -29,20 +29,36 @@ import { errMsg } from "../lib/apiError.ts";
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-// The shared project card body: name, the device/GA/restore-point counts, and a
-// date. Used both on the dashboard (per project) and in the import preview, so
-// the two stay visually identical.
-function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, date }: {
-  name: string; deviceCount: number; gaCount: number; snapshotCount: number; date: number;
+// The shared project card body, used on the dashboard and in the import preview so
+// the two stay identical. Two distinct axes of counts: the CONFIG axis (devices,
+// group addresses, restore points) as filled badges, and the LOCATION axis
+// (buildings, floors, rooms) as outline badges set apart by a divider. The
+// location group is hidden when the project has no building structure.
+function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCount, floorCount, roomCount, date }: {
+  name: string; deviceCount: number; gaCount: number; snapshotCount: number;
+  buildingCount: number; floorCount: number; roomCount: number; date: number;
 }) {
   const { t } = useTranslation();
+  const hasLocation = buildingCount > 0 || floorCount > 0 || roomCount > 0;
   return (
     <div className="min-w-0">
       <div className="truncate text-lg font-bold">{name}</div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
-        <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
-        <Badge variant="secondary" className="gap-1 font-mono" title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
+          <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
+          <Badge variant="secondary" className="gap-1 font-mono" title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
+        </div>
+        {hasLocation && (
+          <>
+            <span className="h-4 w-px shrink-0 self-center bg-border" aria-hidden />
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.buildings")}><Building2 className="size-3" />{buildingCount}</Badge>
+              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.floors")}><Layers className="size-3" />{floorCount}</Badge>
+              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.rooms")}><DoorOpen className="size-3" />{roomCount}</Badge>
+            </div>
+          </>
+        )}
       </div>
       <div className="mt-2 font-mono text-[11px] text-muted-foreground">{fmtDate(date)}</div>
     </div>
@@ -86,7 +102,14 @@ export function ProjectsScreen() {
 
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">{t("projects.heading")}</h2>
-        <NewProjectMenu onImport={() => setImportOpen(true)} onBlank={() => setBlankOpen(true)} />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setBlankOpen(true)} data-testid="new-blank">
+            <Plus className="size-4" /> {t("projects.blankOption")}
+          </Button>
+          <Button onClick={() => setImportOpen(true)} data-testid="new-import">
+            <FolderUp className="size-4" /> {t("projects.importProject")}
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -104,7 +127,7 @@ export function ProjectsScreen() {
           {projects.map((p) => (
             <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
               <CardContent className="flex items-start justify-between gap-3">
-                <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} date={p.importedAt} />
+                <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} buildingCount={p.buildingCount} floorCount={p.floorCount} roomCount={p.roomCount} date={p.importedAt} />
                 <ProjectCardMenu
                   onRename={() => setRenameTarget(p)}
                   onExport={() => setExportTarget(p)}
@@ -235,27 +258,6 @@ function RenameDialog({ project, onClose }: { project: ProjectSummary; onClose: 
   );
 }
 
-function NewProjectMenu({ onImport, onBlank }: { onImport: () => void; onBlank: () => void }) {
-  const { t } = useTranslation();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button data-testid="new-project">
-          <Plus className="size-4" /> {t("projects.newProject")}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={onImport} data-testid="menu-import">
-          <FolderUp className="size-4 text-primary" /> {t("projects.importOption")}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onBlank} data-testid="menu-blank">
-          <FilePlus2 className="size-4 text-primary" /> {t("projects.blankOption")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 function BlankProjectDialog({
   open, onOpenChange, onCreated,
 }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (id: string) => void }) {
@@ -354,6 +356,9 @@ function ImportDialog({
                 deviceCount={analysis.deviceCount}
                 gaCount={analysis.gaCount}
                 snapshotCount={analysis.snapshotCount}
+                buildingCount={analysis.buildingCount}
+                floorCount={analysis.floorCount}
+                roomCount={analysis.roomCount}
                 date={analysis.modifiedAt ?? file?.lastModified ?? Date.now()}
               />
               {((analysis.devicesWithoutProgram?.length ?? 0) > 0 || (analysis.unresolvedLinks ?? 0) > 0) && (
