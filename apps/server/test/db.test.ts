@@ -90,6 +90,19 @@ describe("projects", () => {
     expect(getDeviceModules(db, "p1", "ghost")).toEqual([]);
   });
 
+  test("a project with duplicate com-object RefIds inserts without colliding on the link PK", () => {
+    // Two ComObjectInstanceRefs sharing a RefId would, unmerged, produce two (refId, slot)
+    // rows that collide on the device_links PK and abort the whole import. The parser merges
+    // them; this drives that merged output through the real insert path to prove no throw.
+    const dup = sampleXml.replace(
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" />',
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" /><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-2" />',
+    );
+    const db = fresh();
+    expect(() => insertProject(db, "pdup", parseProject(dup, undefined, "x"), "/tmp/pdup", 1000)).not.toThrow();
+    expect(getDeviceLinks(db, "pdup", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2, 2]);
+  });
+
   test("device links round-trip and re-point replaces", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
@@ -456,13 +469,13 @@ describe("snapshots", () => {
     expect(serializeConfig(db, "p1").project.connectionId).toBe("c1");
 
     setProjectConnection(db, "p1", null); // change it away
-    expect(restoreSnapshot(db, "p1", snap.id, 2000)).toBe(true);
+    expect(restoreSnapshot(db, "p1", snap.id, 2000).ok).toBe(true);
     expect(getProject(db, "p1")!.connectionId).toBe("c1"); // restored
 
     // FK-safe: if the connection is gone, restore falls back to null, no crash
     setProjectConnection(db, "p1", null);
     deleteConnection(db, "c1");
-    expect(restoreSnapshot(db, "p1", snap.id, 3000)).toBe(true);
+    expect(restoreSnapshot(db, "p1", snap.id, 3000).ok).toBe(true);
     expect(getProject(db, "p1")!.connectionId).toBeNull();
   });
 
@@ -476,7 +489,7 @@ describe("snapshots", () => {
     setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
     expect(getProjectChanges(db, "p1").get(dev)).toBeDefined();
 
-    expect(restoreSnapshot(db, "p1", base.id, 2000)).toBe(true);
+    expect(restoreSnapshot(db, "p1", base.id, 2000).ok).toBe(true);
     expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false); // edit gone
     expect(getDeviceLinks(db, "p1", dev).get("O-1_R-1")).toEqual([1, 2]);        // link restored
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();               // matches baseline again
@@ -541,7 +554,24 @@ describe("snapshots", () => {
     expect(deleteSnapshot(db, "p1", s.id)).toBe(true);
     expect(listSnapshots(db, "p1")).toHaveLength(0);
     expect(deleteSnapshot(db, "p1", s.id)).toBe(false);
-    expect(restoreSnapshot(db, "p1", "ghost", 2000)).toBe(false);
+    expect(restoreSnapshot(db, "p1", "ghost", 2000).ok).toBe(false);
+  });
+
+  test("restore reports whether the restore point carried group structure", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    // A modern snapshot captures the GA structure, so restoring it covers the structure.
+    const modern = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
+    expect(restoreSnapshot(db, "p1", modern.id, 2000).gaStructureRestored).toBe(true);
+    // An older restore point predates GA-structure capture: restore leaves it unchanged
+    // and must say so, not silently imply a full rollback.
+    const old = JSON.parse(JSON.stringify(serializeConfig(db, "p1")));
+    delete old.groupRanges; delete old.groupAddresses;
+    db.prepare("INSERT INTO snapshots (id, project_id, label, kind, reason, created_at, schema_version, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("old", "p1", "", "manual", "manual", 1500, 1, JSON.stringify(old));
+    const r = restoreSnapshot(db, "p1", "old", 3000);
+    expect(r.ok).toBe(true);
+    expect(r.gaStructureRestored).toBe(false);
   });
 
   test("snapshots cascade on project delete", () => {

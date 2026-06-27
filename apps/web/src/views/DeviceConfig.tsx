@@ -117,6 +117,22 @@ export function DeviceConfig() {
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
   const flashTargetsAvail: FlashTarget[] = [...(hasParams ? ["params" as const] : []), ...(hasComObjects ? ["ga" as const] : [])];
 
+  // Honest read-back disclosure: every way the shown change state was NOT confirmed
+  // against the hardware. Device-class limits (params/links unsupported) plus the
+  // type-level blind spot: text and colour parameters are not image-representable, so
+  // read-back can never verify them even on an otherwise supported device.
+  const rb = view?.readbackSupport;
+  const hasTextColorParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param" && (i.param.control === "text" || i.param.control === "color")));
+  const readbackNotes: string[] = [];
+  if (rb) {
+    if (!rb.params && !rb.links) readbackNotes.push(t("device.readbackUnsupportedBoth"));
+    else {
+      if (!rb.params) readbackNotes.push(t("device.readbackUnsupportedParams"));
+      if (!rb.links) readbackNotes.push(t("device.readbackUnsupportedLinks"));
+    }
+    if (rb.params !== false && hasTextColorParams) readbackNotes.push(t("device.readbackUnverifiableTextColor"));
+  }
+
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
   const relink = (comObjRefId: string, gaRaw: number | null) =>
     setLink.mutate({ comObjRefId, gaRaws: gaRaw == null ? [] : [gaRaw] }, { onError });
@@ -435,18 +451,14 @@ export function DeviceConfig() {
         </div>
       )}
 
-      {view?.readbackSupport && (!view.readbackSupport.params || !view.readbackSupport.links) && (
+      {readbackNotes.length > 0 && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="readback-unsupported">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div className="space-y-1">
             <p className="font-medium">{t("device.readbackUnsupportedTitle")}</p>
-            <p className="text-amber-700/90 dark:text-amber-300/90">
-              {!view.readbackSupport.params && !view.readbackSupport.links
-                ? t("device.readbackUnsupportedBoth")
-                : !view.readbackSupport.params
-                  ? t("device.readbackUnsupportedParams")
-                  : t("device.readbackUnsupportedLinks")}
-            </p>
+            <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
+              {readbackNotes.map((n, i) => <li key={i}>{n}</li>)}
+            </ul>
           </div>
         </div>
       )}

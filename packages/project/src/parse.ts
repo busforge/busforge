@@ -53,16 +53,24 @@ function buildGaIdMap(node: any, out: Map<string, number>) {
 // of pretending every link imported.
 function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number } {
   const dev = findDeviceInstance(doc, deviceId);
-  const out: { comObjRefId: string; gaRaws: number[] }[] = [];
+  // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
+  // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
+  // rows would collide on the slot index and abort the whole import. Merging their GAs
+  // keeps the assignments and never crashes; for the normal (unique-RefId) case it is a
+  // no-op that preserves document order.
+  const byRef = new Map<string, number[]>();
   let unresolved = 0;
   for (const c of arr<any>(dev?.ComObjectInstanceRefs?.ComObjectInstanceRef)) {
     if (!c.Links) continue;
     const tokens = String(c.Links).split(/\s+/).filter(Boolean);
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
     unresolved += tokens.length - gaRaws.length;
-    if (gaRaws.length) out.push({ comObjRefId: String(c.RefId), gaRaws });
+    if (!gaRaws.length) continue;
+    const existing = byRef.get(String(c.RefId));
+    if (existing) existing.push(...gaRaws);
+    else byRef.set(String(c.RefId), gaRaws);
   }
-  return { links: out, unresolved };
+  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved };
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).

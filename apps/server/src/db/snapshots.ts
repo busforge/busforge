@@ -107,11 +107,16 @@ export function deleteSnapshot(db: Database, projectId: string, id: string): boo
 // rewrite the project's config layer (properties, params, links) from the
 // payload. The programmed baselines are deliberately left untouched, so the
 // post-restore change indicators still reflect drift against the device.
-export function restoreSnapshot(db: Database, projectId: string, id: string, now: number): boolean {
+export function restoreSnapshot(db: Database, projectId: string, id: string, now: number): { ok: boolean; gaStructureRestored: boolean } {
   const row = db.query("SELECT payload FROM snapshots WHERE id = ? AND project_id = ?")
     .get(id, projectId) as { payload: string } | null;
-  if (!row) return false;
+  if (!row) return { ok: false, gaStructureRestored: false };
   const payload = JSON.parse(row.payload) as SnapshotPayload;
+  // Snapshots taken before GA-structure capture carry no group ranges/addresses, so the
+  // restore leaves the current structure in place. Report that so the caller can tell the
+  // user the group structure was NOT part of this restore point, instead of implying a
+  // full rollback succeeded.
+  const gaStructureRestored = !!(payload.groupRanges && payload.groupAddresses);
   db.transaction(() => {
     // Make the restore itself undoable.
     createSnapshot(db, projectId, { kind: "auto", reason: "before-restore" }, now);
@@ -139,5 +144,5 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
       for (const g of payload.groupAddresses) insGa.run(g.id, projectId, g.rangeId, g.raw, g.address, g.name, g.dpt);
     }
   })();
-  return true;
+  return { ok: true, gaStructureRestored };
 }

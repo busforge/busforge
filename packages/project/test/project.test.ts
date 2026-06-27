@@ -73,6 +73,16 @@ describe("0.xml parser", () => {
     // the resolvable tokens still import correctly
     expect(p.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
   });
+
+  test("merges duplicate com-object RefIds instead of producing colliding rows that abort the import", () => {
+    const dup = xml0.replace(
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" />',
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" /><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-2" />',
+    );
+    const di1 = parseProject(dup, undefined, "fallback").deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!;
+    // one merged entry (slots 0,1,2 stay unique, so insertProject cannot collide on its PK)
+    expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2, 2] }]);
+  });
 });
 
 describe("loadKnxproj (integration)", () => {

@@ -386,6 +386,11 @@ export async function readDeviceState(opts: {
   // config view's keys). Drift is only recorded for these, so module devices,
   // whose real params are instance-expanded and not in the flat model, don't
   // produce phantom changes from flat refs the UI never shows.
+  // KNOWN LIMITATION (by design): a parameter the device has drifted into a state that
+  // is currently HIDDEN by the project's dynamic visibility is not in this set, so its
+  // on-device drift is not detected. Surfacing drift on a parameter the user cannot see
+  // would be more confusing than useful; the visibility-controlling parameter itself IS
+  // in the view and so its own drift is caught.
   relevantRefs?: Set<string>;
   onProgress?: ProgressFn;
   signal?: AbortSignal;

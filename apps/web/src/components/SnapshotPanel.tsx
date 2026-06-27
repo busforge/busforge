@@ -38,7 +38,13 @@ export function SnapshotPanel({ projectId }: { projectId: string }) {
 
   function doRestore(s: SnapshotMeta) {
     restore.mutate(s.id, {
-      onSuccess: () => { setConfirm(null); toast.success(t("snapshot.restored")); },
+      onSuccess: (data) => {
+        setConfirm(null);
+        // An older restore point captured no group-address structure, so it was left as-is.
+        // Say so instead of implying a full rollback.
+        if (data.gaStructureRestored === false) toast.warning(t("snapshot.restored"), { description: t("snapshot.restoredNoGaStructure") });
+        else toast.success(t("snapshot.restored"));
+      },
       onError: (e) => toast.error(t("snapshot.restoreError"), { description: errMsg(t, e) }),
     });
   }

@@ -326,8 +326,9 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
 
     // /api/projects/:id/snapshots/:sid/restore  -> roll the config back to a snapshot
     if (seg.length === 6 && seg[3] === "snapshots" && seg[5] === "restore" && req.method === "POST") {
-      if (!restoreSnapshot(db, id, decodeURIComponent(seg[4]), state.now())) return err("SNAPSHOT_NOT_FOUND", "snapshot not found", 404);
-      return json(getProject(db, id));
+      const restored = restoreSnapshot(db, id, decodeURIComponent(seg[4]), state.now());
+      if (!restored.ok) return err("SNAPSHOT_NOT_FOUND", "snapshot not found", 404);
+      return json({ ...getProject(db, id), gaStructureRestored: restored.gaStructureRestored });
     }
 
     // /api/projects/:id/snapshots/:sid  -> delete a restore point

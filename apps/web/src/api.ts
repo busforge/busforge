@@ -241,8 +241,8 @@ export const api = {
   snapshots: (id: string): Promise<SnapshotMeta[]> => fetch(`/api/projects/${id}/snapshots`).then((r) => jsonOrThrow<SnapshotMeta[]>(r)),
   createSnapshot: (id: string, label: string): Promise<SnapshotMeta | null> =>
     fetch(`/api/projects/${id}/snapshots`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label }) }).then((r) => jsonOrThrow<SnapshotMeta | null>(r)),
-  restoreSnapshot: (id: string, sid: string): Promise<Project> =>
-    fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}/restore`, { method: "POST" }).then((r) => jsonOrThrow<Project>(r)),
+  restoreSnapshot: (id: string, sid: string): Promise<Project & { gaStructureRestored: boolean }> =>
+    fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}/restore`, { method: "POST" }).then((r) => jsonOrThrow<Project & { gaStructureRestored: boolean }>(r)),
   deleteSnapshot: (id: string, sid: string): Promise<{ ok: true }> =>
     fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
 
