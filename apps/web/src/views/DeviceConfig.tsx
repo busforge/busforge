@@ -536,10 +536,13 @@ export function DeviceConfig() {
                         ref={child.level === 1 ? registerRef(`sec-${child.id}`) : undefined}
                         className={cn("scroll-mt-20 pt-3", deep && "pl-3")}
                       >
-                        <h4 className={cn("mt-2 mb-2 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold",
-                          deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
-                          <span className="min-w-0 truncate">{child.name}</span>
+                        {/* Channel sub-heading: the label followed by a hairline that fades out,
+                            so each sub-block reads as its own section without a heavy left bar. */}
+                        <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
+                          deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
+                          <span className="min-w-0 shrink truncate">{child.name}</span>
                           {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                          <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
                         </h4>
                         {child.items.map((item: CfgItem, i: number) => renderItem(item, `${child.id}-${i}`))}
                       </section>
