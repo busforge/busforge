@@ -131,11 +131,11 @@ still writes it. M-0083 has ten such union-member assigns, all left to their act
 | Read group tables (LSM1/2/3) | yes | 32 non-secure devices (read-back corpus) |
 | **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes | hardware-proven on MV-07B0 (1.1.x, 1.1.x) |
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
-| **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff); **1.1.x** HMG 6T dry-run writes only 2 changed bytes, 1701 unowned preserved |
-| **Module/channel** per-instance offsets (build + place + plan) | yes (offsets resolved both for imported projects and from scratch) | placement byte-verified vs read-back; flash planned, not yet confirmed on a clean re-flash (see below) |
+| **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff) and **1.1.x** (Theben HMG: a module-instance param change applied + restored, byte-checked) |
+| **Module/channel** per-instance offsets (build + place + flash) | yes (offsets resolved both for imported projects and from scratch), **hardware-verified** | build byte-matches the device on 3/5 Theben HMG (1.1.x = 0 owned diffs; 1.1.x/1.1.x differ only in project-device drift, confirmed by sibling consistency); a module-param change + restore was byte-checked on **1.1.x** (relative) and **1.1.56** (M-0083, MV-0705 absolute - the resolved module offset placed correctly on hardware) |
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
 | **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps. The MV-0701 device (1.1.x, M-0048 A-140C) is built correctly by the generic absolute path (structure-detected, not mask-gated): its only owned diff is the internal download-recognition marker P-2228 ("Wert $AA, Downloaderkennung", Access="None", default 0xAA; the device reads 0), and its second segment (AS-4C00) is unused erased EEPROM (0xFF) that the surgical flash leaves untouched. The other 3 are single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
-| **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081 (1.1.x param applied + reverted, LSM3 reaching LOADED); surgical `par` download, see [load-procedures.md](load-procedures.md) |
+| **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081, M-0008, M-0048, M-008E and M-0083 (1.1.56, module param): each a real param change applied + restored, byte-checked; surgical `par` download, see [load-procedures.md](load-procedures.md). M-008E self-stamps `AS-4B00[0:2]` on download (our build over-claims those 2 bytes). |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |
 | **KNX Secure** devices | **no** (opaque: descriptor MV-FFFF, no plain access) | 2 MDT IP interfaces |
@@ -165,9 +165,12 @@ small, finite set the image builder cares about:
    `Start + cumulative Allocates`, walked over the visibility-resolved active tree, a
    `<Repeat Count="k">` instantiating k copies). The allocator re-run was validated
    against the real Theben 493B devices: it reproduced all 67 of their 0.xml module
-   instances exactly. Placement is byte-verified against the device read-back; the
-   residual diff vs that particular read-back is dominated by project-device drift, so
-   a clean ETS re-flash + re-read is the pending step before claiming module flash.
+   instances exactly. Placement is **hardware-verified**: with the boundary-aware read
+   (see "Reading device memory") the Theben HMG devices read full-length and the build
+   byte-matches the device on 3 of 5 (0 owned diffs), the other 2 differing only in
+   project-device drift (confirmed by sibling consistency). A module-instance param change
+   was flashed and restored, byte-checked, on both a relative device and the one
+   MV-0705 module device (M-0083, 1.1.56), so the resolved offset is correct on hardware.
 4. **Property / interface-object** - the genuine "property-based" model: parameters
    load via interface-object property writes, not a memory image.
 

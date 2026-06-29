@@ -174,11 +174,15 @@ model. The plan, in three stages:
    `Data`) is read uniformly via `attrOrText`, restoring the transparency the merged
    parser had. The UI is the visibility-filtered, localized projection; the image is
    the byte projection; both read one model.
-   - **Still open (the hard part):** per-instance **memory-offset** resolution for
-     module instances (allocators / 0.xml). Until it exists, module instances are
-     not byte-placed, so the flash path still refuses them via `unmappedParamRefs`
-     (stage 1). Once it lands, module devices become flashable and the projection's
-     module-def exclusion is lifted.
+   - **DONE, hardware-verified (the hard part):** per-instance **memory-offset**
+     resolution for module instances = `ModuleDef static offset + the instance value of
+     the Memory@BaseOffset argument` (from the 0.xml for imports, re-run from
+     `<Allocators>` from scratch; oracle-perfect 67/67 instances). Module instances are
+     byte-placed in both image codecs and `unmappedParamRefs` no longer refuses them.
+     Confirmed on hardware: build byte-matches the device on 3/5 Theben HMG (0 owned
+     diffs), and a module-param change was flashed + restored byte-checked on a relative
+     device and the MV-0705 module device (M-0083, 1.1.56). See
+     [device-memory-model.md](device-memory-model.md).
 3. **Lock it in CI (planned).** A coverage test per catalogue/device asserting the
    UI-exposed param-ref set equals the image-placeable set; today that would fail
    for module devices (they genuinely diverge), so the enforced form today is the
