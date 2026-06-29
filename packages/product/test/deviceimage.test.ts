@@ -137,6 +137,15 @@ test("the build writes the Access=None internal param's value into the segment",
   expect(img[1]).toBe(85); // internal param, value 85 from its active ref (not its 255 default)
 });
 
+test("an Access=None internal byte is OWNED (written) but excluded from verify", () => {
+  // The download-marker class (M-008E AS-4B00[0:2], MV-0701 P-2228): we write it as part of
+  // the correct image, but the device re-stamps it on download, so it must not be checked by
+  // the post-flash read-back verify or every successful flash would report as failed.
+  const t = buildAbsoluteSegmentTargets(parseAppConfig(internalXml), new Map())[0];
+  expect(t.owned[1]).toBe(true);   // Access=None internal: still written
+  expect(t.verify[1]).toBe(false); // ...but not asserted against the device read-back
+});
+
 // Regression: the image-value pass must resolve choose/Assign in its OWN document
 // order, not against the UI walk's already-fully-mutated env. Here a <choose> on
 // `ctrl` precedes an <Assign ctrl=1>: in document order the choose sees ctrl=0 and
@@ -260,12 +269,18 @@ test("relative target: visible owned (active+inactive), Access=None-inactive pre
   expect(t.bytes[3]).toBe(5);
   // Trailing gap owned by no parameter.
   expect(t.owned[4]).toBe(false);
+  // verify mask: user-facing bytes are checked post-flash; device-internal Access=None bytes
+  // are owned (written) but EXCLUDED from verify. P-A (offset 3) is an ACTIVE union member but
+  // Access=None, so it is written yet not verified, exactly like the M-008E download marker.
+  expect(t.verify[0]).toBe(true);  // P-1 user-facing: verified
+  expect(t.verify[2]).toBe(true);  // P-3 user-facing default: verified
+  expect(t.verify[3]).toBe(false); // active Access=None union member: owned/written, not verified
 });
 
 // The flash merge writes only owned bytes over the live device read and preserves the
 // rest; diffBytes counts only the owned bytes that actually change.
-const relTarget = (owned: boolean[], bytes: number[]): RelativeSegmentTarget =>
-  ({ lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned });
+const relTarget = (owned: boolean[], bytes: number[], verify: boolean[] = owned): RelativeSegmentTarget =>
+  ({ lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned, verify });
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
   const current = Buffer.from([10, 20, 30, 40]);

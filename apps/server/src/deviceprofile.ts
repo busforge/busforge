@@ -401,7 +401,10 @@ export class System7Profile extends DeviceProfile {
     let verified = true;
     for (const t of targets) {
       const back = await dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n));
-      for (let i = 0; i < t.size; i++) if (t.owned[i] && back[i] !== t.bytes[i]) { verified = false; break; }
+      // Verify only user-facing owned bytes (t.verify). Access="None" device-internal markers
+      // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
+      // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
+      for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) { verified = false; break; }
     }
     return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: true, verified, backup };
   }
@@ -412,6 +415,17 @@ export class System7Profile extends DeviceProfile {
     // and byte-matched, and the revert restored the device exactly.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const cur = await readGroupTablesMv0705(dev);
+    // SAFETY: a System 7 device's address/association tables live at FIXED absolute addresses
+    // with no reallocation (unlike System B, which calls allocSegment to resize). Writing a
+    // table larger than what the device currently holds could run past the reserved region and
+    // overwrite adjacent memory (the com-object table or parameters), and the table-only verify
+    // below would not catch that collateral damage. Re-pointing or removing links keeps the
+    // table the same size or smaller and is hardware-proven; growing it (adding group addresses)
+    // is not, so refuse it rather than risk corrupting the device.
+    if (addr.length > cur.addr.length || assoc.length > cur.assoc.length) {
+      throw new ApiError("GA_TABLE_TOO_LARGE",
+        `the new group tables (address ${addr.length} B, association ${assoc.length} B) are larger than the device's current tables (${cur.addr.length} B / ${cur.assoc.length} B); a System 7 device stores these at a fixed address with no room to grow, so adding group addresses on this device class is not supported yet. Re-pointing or removing links is fine.`);
+    }
     const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
     mkdirSync(backupDir, { recursive: true });
     const stamp = Date.now();

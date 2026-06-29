@@ -42,9 +42,12 @@ Busforge implements two memory models:
 Everything else resolves to `UnsupportedProfile`: the family is recognised (so we can name it
 and say "not yet"), but every operation throws.
 
-A ✅ means the memory model is implemented. Hardware verification to date is on **twisted-pair**
-System B and System 7 devices; the same memory model on PL/RF/IP shares the codec but has not
-been exercised on that medium.
+A ✅ means the memory model is implemented. **The ✅ does not by itself mean "verified on that
+medium."** Hardware verification to date is on **twisted-pair (TP)** only, for System B and
+System 7. The PL, RF (`MV-2705`, `MV-27B0`, `MV-17B0`) and IP (`MV-5705`, `MV-57B0`) rows share
+the exact same codec and load procedure, so they read ✅, but they have **not** been exercised on
+that medium. Treat a non-TP ✅ as "should work, code-shared, unproven on the wire" and read one
+back before trusting it. (This is the same convention parameter flash already used.)
 
 ## The full matrix
 

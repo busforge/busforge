@@ -1,7 +1,18 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { MASKS, type SystemFamily, type MemoryModel } from "@busforge/product";
+import { MASKS, parseAppConfig, type SystemFamily, type MemoryModel } from "@busforge/product";
+import { classify, classifyByMask, type DeviceCapabilities } from "../src/deviceprofile.ts";
+
+const realApp = (n: string) => parseAppConfig(gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", n))).toString("utf8"));
+// The doc cells a device's capabilities() render to. Keeping this here makes the VERDICT
+// constant below a PRESENTATION of real capabilities(), not an independent claim.
+const cells = (c: DeviceCapabilities): [string, string, string] => [
+  c.readParams || c.readLinks ? "✅ params + links" : "❌",
+  c.flashParams ? "✅" : "❌",
+  c.flashLinks ? "✅" : "❌",
+];
 
 // Enforces that docs/device-support.md is in sync with the mask registry: every mask in
 // MASKS must appear as a row with the same medium/family/memory-model and the support verdict
@@ -38,6 +49,16 @@ describe("docs/device-support.md stays in sync with the mask registry", () => {
 
   test.each(MASKS.map((m) => [m.mask, m] as const))("%s has a matching matrix row", (_mask, m) => {
     expect(doc).toContain(row(m));
+  });
+
+  // The VERDICT constant is only honest if it reflects what classify().capabilities() actually
+  // returns. Pin each implemented memory model to a real device's live capabilities, so a future
+  // gate flip (e.g. flashLinks back to false) fails here instead of letting the doc lie.
+  test("VERDICT for each memory model matches classify().capabilities()", () => {
+    expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities(new Map()))).toEqual(VERDICT.relative); // System B
+    expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities(new Map()))).toEqual(VERDICT.absolute); // System 7
+    // A recognised-but-unimplemented family resolves to UnsupportedProfile: every aspect false.
+    expect(cells(classifyByMask("MV-0010").capabilities(new Map()))).toEqual(VERDICT.bcu1);
   });
 
   test("the matrix has no rows for masks that are not in the registry", () => {

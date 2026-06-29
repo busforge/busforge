@@ -29,7 +29,15 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // them: a Data-less segment cannot reconstruct ETS's precomputed non-zero defaults
 // (see the M-008E 4-byte residual in docs/mv0705-spike-findings.md). The flash path
 // must only WRITE owned bytes; see planAbsoluteSegmentFlash.
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: boolean[]; }
+//
+// `verify` is the subset of owned bytes a post-flash read-back may assert. It EXCLUDES
+// bytes owned only by Access="None" device-internal parameters (download-recognition
+// markers / counters the device computes for itself on download, e.g. M-008E's P-223 at
+// AS-4B00[0:2], default 0xFFFF; the MV-0701 P-2228 "Downloaderkennung" is the same class).
+// We still WRITE those bytes (they are part of the correct image), but the device overwrites
+// them on download, so checking them in verify would report every successful flash as failed.
+// User-facing parameters (Access != None) stay in `verify`, so a real mis-write still fails.
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: boolean[]; verify: boolean[]; }
 
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
@@ -85,6 +93,7 @@ export function buildAbsoluteSegmentTargets(
       }
     }
     const owned = new Array<boolean>(seg.size).fill(false);
+    const verify = new Array<boolean>(seg.size).fill(false);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -101,10 +110,13 @@ export function buildAbsoluteSegmentTargets(
       if (!wrote) continue;
       // This parameter's value is authoritative: mark its byte(s) owned so the flash
       // path may write them. A sub-byte parameter owns the single byte it shares.
+      // Access="None" params are device-internal (download markers/counters the device
+      // re-stamps); they stay owned/written but are excluded from `verify` (see the type).
+      const verifiable = app.params.get(ref.paramId)?.access !== "None";
       const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
-      for (let b = 0; b < bytes && param.offset + b < seg.size; b++) owned[param.offset + b] = true;
+      for (let b = 0; b < bytes && param.offset + b < seg.size; b++) { owned[param.offset + b] = true; if (verifiable) verify[param.offset + b] = true; }
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned });
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify });
   }
   return out.sort((a, b) => a.address - b.address);
 }
@@ -137,7 +149,9 @@ export function buildAbsoluteSegmentTargets(
 //    1129 are the inactive "Zeit fuer zykl. Senden" param sitting in MD-12/MD-6 regions).
 // Ownership is gated on encode() ACTUALLY writing, exactly like the absolute path, so a
 // text/time/malformed value claims no bytes.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: boolean[]; }
+// `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
+// markers, so a post-flash read-back asserts only user-facing bytes.
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: boolean[]; verify: boolean[]; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -178,6 +192,7 @@ export function buildRelativeSegmentTarget(
   const img = Buffer.alloc(seg.size);
   seg.data.copy(img); // manufacturer default image (overwritten where owned)
   const owned = new Array<boolean>(seg.size).fill(false);
+  const verify = new Array<boolean>(seg.size).fill(false);
 
   for (const ref of model.refs.values()) {
     const param = model.params.get(ref.paramId);
@@ -210,10 +225,11 @@ export function buildRelativeSegmentTarget(
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
+    const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
-    for (let b = 0; b < bytes && param.offset + b < seg.size; b++) owned[param.offset + b] = true;
+    for (let b = 0; b < bytes && param.offset + b < seg.size; b++) { owned[param.offset + b] = true; if (verifiable) verify[param.offset + b] = true; }
   }
-  return { lsm, size: seg.size, bytes: img, owned };
+  return { lsm, size: seg.size, bytes: img, owned, verify };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write
@@ -236,6 +252,6 @@ export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarg
 // device (the channel "Objektlink" tables), so a full-buffer equality check would report a
 // correct flash as failed. Mirrors the absolute path's owned-only verify.
 export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
-  for (let i = 0; i < target.size; i++) if (target.owned[i] && back[i] !== target.bytes[i]) return false;
+  for (let i = 0; i < target.size; i++) if (target.verify[i] && back[i] !== target.bytes[i]) return false;
   return true;
 }
