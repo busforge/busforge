@@ -415,16 +415,21 @@ export class System7Profile extends DeviceProfile {
     // and byte-matched, and the revert restored the device exactly.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const cur = await readGroupTablesMv0705(dev);
-    // SAFETY: a System 7 device's address/association tables live at FIXED absolute addresses
-    // with no reallocation (unlike System B, which calls allocSegment to resize). Writing a
-    // table larger than what the device currently holds could run past the reserved region and
-    // overwrite adjacent memory (the com-object table or parameters), and the table-only verify
-    // below would not catch that collateral damage. Re-pointing or removing links keeps the
-    // table the same size or smaller and is hardware-proven; growing it (adding group addresses)
-    // is not, so refuse it rather than risk corrupting the device.
-    if (addr.length > cur.addr.length || assoc.length > cur.assoc.length) {
+    // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
+    // segments (no reallocation, unlike System B's allocSegment). The app program declares how
+    // many entries the device reserved room for (<AddressTable>/<AssociationTable> MaxEntries),
+    // so growing the tables UP TO that capacity stays inside the reserved segment; beyond it the
+    // write would overrun adjacent memory (association/com-object table), which the table-only
+    // verify below would not catch. Layouts: address = [count:1][own IA:2][GA:2 x N] -> max
+    // 3 + 2*addressMaxEntries; association = [count:1][groupIdx:1][comObj:1 x M] -> max
+    // 1 + 2*associationMaxEntries. If the program declares no capacity, fall back to the
+    // conservative "no growth beyond the current table" bound (the current table demonstrably fits).
+    const cap = this.cfg?.groupTables;
+    const maxAddr = cap?.addressMaxEntries !== undefined ? 3 + 2 * cap.addressMaxEntries : cur.addr.length;
+    const maxAssoc = cap?.associationMaxEntries !== undefined ? 1 + 2 * cap.associationMaxEntries : cur.assoc.length;
+    if (addr.length > maxAddr || assoc.length > maxAssoc) {
       throw new ApiError("GA_TABLE_TOO_LARGE",
-        `the new group tables (address ${addr.length} B, association ${assoc.length} B) are larger than the device's current tables (${cur.addr.length} B / ${cur.assoc.length} B); a System 7 device stores these at a fixed address with no room to grow, so adding group addresses on this device class is not supported yet. Re-pointing or removing links is fine.`);
+        `the group tables would need address ${addr.length} B / association ${assoc.length} B, but this device reserves only ${maxAddr} B / ${maxAssoc} B${cap?.addressMaxEntries !== undefined ? ` (${cap.addressMaxEntries} group addresses)` : ""}. Remove links or assign fewer group addresses.`);
     }
     const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
     mkdirSync(backupDir, { recursive: true });

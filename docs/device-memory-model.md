@@ -129,7 +129,7 @@ still writes it. M-0083 has ten such union-member assigns, all left to their act
 | --- | --- | --- |
 | Read device descriptor / mask | yes | all non-secure devices |
 | Read group tables (LSM1/2/3) | yes | 32 non-secure devices (read-back corpus) |
-| **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes | hardware-proven on MV-07B0 (1.1.x, 1.1.x) |
+| **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes, incl. re-point and **adding/removing** GAs up to the device's reserved capacity | hardware-proven on MV-07B0 (1.1.x, 1.1.x) and MV-0705 (1.1.x: re-point + adding a GA, byte-verified). For System 7 the table sizes are fixed-reserved; growth is bounded by `<AddressTable>`/`<AssociationTable>` `MaxEntries` (e.g. 22 on M-0081), refused beyond it. System B reallocates via `allocSegment`. |
 | Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
 | **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff) and **1.1.x** (Theben HMG: a module-instance param change applied + restored, byte-checked) |
 | **Module/channel** per-instance offsets (build + place + flash) | yes (offsets resolved both for imported projects and from scratch), **hardware-verified** | build byte-matches the device on 3/5 Theben HMG (1.1.x = 0 owned diffs; 1.1.x/1.1.x differ only in project-device drift, confirmed by sibling consistency); a module-param change + restore was byte-checked on **1.1.x** (relative) and **1.1.56** (M-0083, MV-0705 absolute - the resolved module offset placed correctly on hardware) |

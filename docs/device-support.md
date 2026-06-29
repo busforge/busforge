@@ -37,7 +37,7 @@ Busforge implements two memory models:
 | Memory model | Family | Profile | Status |
 |---|---|---|---|
 | `relative` | System B | `SystemBProfile` | Read + flash (params and group addresses). Hardware-proven on TP. |
-| `absolute` | System 7 (BIM M112) | `System7Profile` | Read + flash (params and group addresses). Hardware-proven on TP (M-0081, 1.1.x): GA flash verified by identity flash, re-point and revert, each byte-matched. |
+| `absolute` | System 7 (BIM M112) | `System7Profile` | Read + flash (params and group addresses). Hardware-proven on TP (M-0081, 1.1.x): GA flash verified by identity flash, re-point, **adding a group address (table growth)**, and revert, each byte-matched. Growth is bounded by the device's declared `<AddressTable>`/`<AssociationTable>` `MaxEntries`; beyond capacity is refused. |
 
 Everything else resolves to `UnsupportedProfile`: the family is recognised (so we can name it
 and say "not yet"), but every operation throws.

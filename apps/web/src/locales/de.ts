@@ -136,7 +136,7 @@ const de: Messages = {
     LOAD_PROCEDURE_UNSUPPORTED: "Dieses Gerät deklariert keine nutzbare Ladeprozedur (Legacy oder unbekannter Stil). Es kann noch nicht sicher geflasht werden.",
     FLASH_SEGMENT_UNPLACEABLE: "Einige geänderte Parameter liegen in einem Speichersegment, das die Ladeprozedur des Geräts nicht deklariert. Flashen abgelehnt, damit nichts still verloren geht.",
     GROUP_TABLE_UNREADABLE: "Dieses Gerät speichert seine Gruppentabellen nicht im erwarteten Format (vermutlich ein Absolut-Segment-Gerät). Das Programmieren von Gruppenadressen wird dafür noch nicht unterstützt; die Parameter lassen sich trotzdem flashen.",
-    GA_TABLE_TOO_LARGE: "Das Hinzufügen von Gruppenadressen würde die Tabellen dieses Geräts über den dafür reservierten Platz hinaus vergrößern (ein System-7-Gerät hält sie an einer festen Adresse). Umhängen oder Entfernen von Verknüpfungen geht; das Hinzufügen wird für diese Geräteklasse noch nicht unterstützt.",
+    GA_TABLE_TOO_LARGE: "Dieses Gerät hat keinen Platz mehr für weitere Gruppenadressen: seine reservierten Adress-/Assoziationstabellen sind voll. Entferne Verknüpfungen oder weise diesem Gerät weniger Gruppenadressen zu.",
     DEVICE_READBACK_UNSUPPORTED: "Das Zurücklesen des Gerätezustands vom Bus wird für dieses Gerät noch nicht unterstützt (z. B. ein Absolut-Segment-Gerät MV-0705). Seine Werte lassen sich nicht gegen das Gerät verifizieren, daher wurde kein Rücklesen durchgeführt.",
     DEVICE_FAMILY_UNSUPPORTED: "Die Gerätefamilie ist bekannt, aber noch nicht implementiert (z. B. System 1 / BCU1). Der Vorgang wurde abgelehnt, statt das Speicherlayout zu raten.",
     READ_ABORTED: "Lesen abgebrochen.",

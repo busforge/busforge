@@ -136,7 +136,7 @@ const en = {
     LOAD_PROCEDURE_UNSUPPORTED: "This device declares no usable load procedure (legacy or unknown style). It cannot be flashed safely yet.",
     FLASH_SEGMENT_UNPLACEABLE: "Some changed parameters live in a memory segment the device's load procedure does not declare. Refusing to flash so nothing is silently dropped.",
     GROUP_TABLE_UNREADABLE: "This device does not store its group tables in the expected format (it is likely an absolute-segment device). Group address programming is not supported for it yet; its parameters can still be flashed.",
-    GA_TABLE_TOO_LARGE: "Adding group addresses to this device would grow its tables beyond the space reserved on it (a System 7 device keeps them at a fixed address). Re-pointing or removing links works; adding them on this device class is not supported yet.",
+    GA_TABLE_TOO_LARGE: "This device has no room left for more group addresses: its reserved address/association tables are full. Remove some links or assign fewer group addresses to this device.",
     DEVICE_READBACK_UNSUPPORTED: "Reading this device's state back off the bus is not supported yet (e.g. an absolute-segment MV-0705 device). Its values cannot be verified against the device, so no read-back was performed.",
     DEVICE_FAMILY_UNSUPPORTED: "This device's family is recognised but not yet implemented (e.g. System 1 / BCU1). The operation was refused rather than guessing at its memory layout.",
     READ_ABORTED: "Read aborted.",

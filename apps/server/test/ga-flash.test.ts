@@ -65,20 +65,43 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true);
   });
 
-  test("System7Profile.flashGroupTables REFUSES growth (adding GAs) instead of overflowing fixed tables", async () => {
+  const cfgCap = (addr: number, assoc: number) => ({ groupTables: { addressMaxEntries: addr, associationMaxEntries: assoc } }) as any;
+  const grownLinks: ComObjectLink[] = [ // 4 GAs / 4 associations
+    { comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 2, gaRaws: [0x040c] },
+    { comObjNum: 3, gaRaws: [0x040d] }, { comObjNum: 4, gaRaws: [0x040e] },
+  ];
+
+  test("ADDS group addresses up to the device's declared MaxEntries capacity", async () => {
     const dev = new MockDevice();
-    const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia); // 1 GA
+    const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia); // 1 GA today
     dev.seedTables(small.addr, small.assoc);
-    const grown: ComObjectLink[] = [ // 4 GAs -> larger tables than the device holds
-      { comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 2, gaRaws: [0x040c] },
-      { comObjNum: 3, gaRaws: [0x040d] }, { comObjNum: 4, gaRaws: [0x040e] },
-    ];
     const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
-    const profile = new System7Profile("system-7", "MV-0705", null);
-    await expect(profile.flashGroupTables(asDev(dev), "MV-0705", {
-      projectId: "p", deviceId: "d", ia: "1.2.17", links: grown, dataDir, dryRun: false,
-    })).rejects.toThrow(/GA_TABLE_TOO_LARGE|larger than the device/);
-    // and nothing was written (the guard fires before any memWrite to the tables)
-    expect((await dev.memRead(0x1000, small.addr.length)).equals(small.addr)).toBe(true);
+    const res = await new System7Profile("system-7", "MV-0705", cfgCap(22, 22)).flashGroupTables(asDev(dev), "MV-0705", {
+      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false, // grow 1 -> 4, within 22
+    });
+    expect(res.flashed).toBe(true);
+    const built = buildGroupTablesMv0705(grownLinks, ia);
+    expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true); // the larger table was written
+  });
+
+  test("REFUSES growth BEYOND MaxEntries instead of overrunning the reserved segment", async () => {
+    const dev = new MockDevice();
+    const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
+    dev.seedTables(small.addr, small.assoc);
+    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
+    await expect(new System7Profile("system-7", "MV-0705", cfgCap(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
+      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false, // 4 GAs > capacity 3
+    })).rejects.toThrow(/GA_TABLE_TOO_LARGE|reserves only/);
+    expect((await dev.memRead(0x1000, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
+  });
+
+  test("without a declared capacity, falls back to refusing any growth (conservative)", async () => {
+    const dev = new MockDevice();
+    const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
+    dev.seedTables(small.addr, small.assoc);
+    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
+    await expect(new System7Profile("system-7", "MV-0705", null).flashGroupTables(asDev(dev), "MV-0705", {
+      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false,
+    })).rejects.toThrow(/reserves only/);
   });
 });

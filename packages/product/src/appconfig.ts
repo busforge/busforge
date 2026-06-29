@@ -52,6 +52,13 @@ export interface CfgSegment { id: string; lsm: number; size: number; data: Buffe
 // MV-0705 image build (deviceimage.ts) consumes these. `address` is the literal
 // device address to read/write the segment at.
 export interface CfgAbsSegment { id: string; address: number; size: number; data: Buffer; }
+
+// Reserved capacity of the device's group-address and association tables, declared in the app
+// program as <AddressTable MaxEntries> / <AssociationTable MaxEntries> (siblings of <ComObjectRefs>
+// under <Static>). MaxEntries is the number of group addresses / associations the device reserves
+// room for. This is what lets us SAFELY grow the tables: writing up to MaxEntries stays inside the
+// pre-reserved segment; beyond it would overrun adjacent memory. Absent => capacity unknown.
+export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
@@ -135,6 +142,7 @@ export interface AppConfig {
   comObjectRefs: Map<string, CfgComObjectRef>;
   segments: CfgSegment[]; // memory segments (Code/RelativeSegment), for the image projection
   absoluteSegments: CfgAbsSegment[]; // Code/AbsoluteSegment (MV-0705 parameter model)
+  groupTables: GroupTableCapacity; // declared <AddressTable>/<AssociationTable> reserved sizes
   translations: Translations;
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
@@ -213,6 +221,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const segments = parseSegments(staticKids);
   const absoluteSegments = parseAbsoluteSegments(staticKids);
   const allocators = parseAllocators(staticKids);
+  const groupTables = parseGroupTables(staticKids);
 
   // Module definitions: merge each def's Static (its ids are globally unique,
   // prefixed with the MD id) into the shared maps, and keep its Arguments +
@@ -264,7 +273,7 @@ export function parseAppConfig(xml: string): AppConfig {
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
-    types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, translations, dynamic, moduleDefs, allocators, hasModules, dca,
+    types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,
     paramFauxIndent: parseParamFauxIndent(xml),
   };
 }
@@ -399,6 +408,14 @@ function parseAbsoluteSegments(staticKids: ONode[]): CfgAbsSegment[] {
     out.push({ id: a.Id, address: Number(a.Address), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
   }
   return out;
+}
+
+// <AddressTable>/<AssociationTable> are direct children of <Static>; MaxEntries is the device's
+// reserved group-address / association capacity. Used by the flash path to allow growing the
+// tables up to capacity (and to refuse beyond it instead of overrunning device memory).
+function parseGroupTables(staticKids: ONode[]): GroupTableCapacity {
+  const num = (tag: string) => { const n = firstByTag(staticKids, tag); const v = n ? attrsOf(n).MaxEntries : undefined; return v !== undefined ? Number(v) : undefined; };
+  return { addressMaxEntries: num("AddressTable"), associationMaxEntries: num("AssociationTable") };
 }
 
 function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
