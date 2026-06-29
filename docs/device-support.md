@@ -101,6 +101,18 @@ back before trusting it. (This is the same convention parameter flash already us
 
 ## Known gaps to close next
 
+- **Com-object table (L3) authoring is NOT supported.** Group-address flashing rebuilds only the
+  address table (L1) and association table (L2) from your links; the com-object table (L3) — *which*
+  com-objects exist and their flags (communication/read/write/transmit/update), priority and size —
+  is read from the device and written back **unchanged**. Consequences:
+  - Initial from-scratch commissioning of a device still needs ETS once (we cannot author L3).
+  - A parameter change that, in ETS, would change a com-object's flags or the *set* of active
+    com-objects (e.g. enabling a channel that adds/removes objects) is **not** reflected on the
+    device: it keeps its existing L3. The links (L1/L2) are updated, the object flags are not.
+  - **Honesty risk:** if this is not detected, such a flash reports success while the device's
+    com-object flags silently diverge from the project. The fix is to detect when the active config
+    implies an L3 different from the device's and surface/refuse it (see the review that follows),
+    or to implement L3 authoring. Until then this is a documented unsupported gap.
 - **System 1 / System 2 (BCU1/BCU2)** appear in real projects (e.g. an `MV-0012` device in the
   house project). They are recognised and refused; implementing them means the classic
   fixed-EEPROM address/association/com-object/parameter model, which is a separate effort.
