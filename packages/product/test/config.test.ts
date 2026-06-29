@@ -104,6 +104,14 @@ describe("buildDeviceConfig visibility", () => {
     expect(co.comObject).toMatchObject({ number: 0, functionText: "On/Off", dpt: "DPST-1-1" });
     expect(co.comObject.flags).toEqual({ read: false, write: true, comm: true, transmit: true, update: false, readOnInit: false });
   });
+
+  test("imageComObjects records the reached com-object by resolved number with resolved flags/size", () => {
+    const v = buildDeviceConfig(app, new Map());
+    const c = v.imageComObjects.get(0);
+    expect(c).toBeDefined();
+    expect(c).toMatchObject({ number: 0, objectSize: "1 Bit" });
+    expect(c!.flags).toEqual({ read: false, write: true, comm: true, transmit: true, update: false, readOnInit: false });
+  });
 });
 
 // ETS evaluates EVERY matching <when> of a <choose>, not just the first. A single choose

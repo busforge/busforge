@@ -203,50 +203,67 @@ by mask version and (for modern devices) described by the product XML's `LdCtrl`
 controls, exactly the model ETS uses. There is no path here that needs a hand-written,
 per-device programming recipe.
 
-## Com-object table (L3) format, reverse-engineered (MV-0705 / M-0081)
+## Com-object table (L3) format, reverse-engineered (MV-0705)
 
 Toward authoring the com-object table (the documented gap: today L3 is kept from the device).
-Read-only investigation on 1.1.x / 1.1.x (M-0081) cracked the on-device format:
+Read-only investigation across **all five MV-0705 families on the house bus** (M-0008,
+M-0048, M-0081, M-008E, M-0083, 24 devices) established the model:
 
 - L3 lives at the app program's `<ComObjectTable CodeSegment=…>` fixed absolute address (e.g.
   `AS-405C` = `0x405C`, 91 B for M-0081). It is **not** behind the object-3 table pointer:
   `tableAddr(3)` (PID 7) returns `0` on MV-0705, unlike System B.
-- Layout: a **3-byte header**, then one **4-byte entry per com-object**:
+- Layout: a **3-byte header** (`[count:1][ramEnd:2 BE]`), then one **4-byte entry per com-object**:
   `[dataPtr:2 BE][config:1][type:1]`.
-  - `dataPtr` points into the `0x07xx` RAM value segment (`AS-0700`); it advances by the object's
-    size (1 for 1-bit/1-byte, 2 for 2-byte), i.e. the RAM allocation of each object's value.
-  - `type` is the standard KNX size enum: `0x00`=1 bit, `0x07`=1 byte, `0x08`=2 bytes, …
-  - `config` is the flags/priority byte: bits 0-1 = priority (3 = low here), `0x08` = read,
-    `0x10` = write, `0x40` = transmit. One more effective-flag bit (`0x04`) is still to be mapped
-    (it is static, not runtime: identical across reads and byte-identical on sibling devices, so it
-    derives from the **resolved** com-object flags Busforge already computes, not the base defaults).
-- The config bytes are **static and byte-identical across devices with the same app** (1.1.x ^ 1.1.x
-  = 0), so a built table can be byte-matched against the device before any write.
+  - `dataPtr` points into the `0x07xx` RAM value segment; `type` is the KNX size enum
+    (`0x00`=1 bit, `0x03`=4 bit, `0x07`=1 byte, `0x08`=2 bytes, …).
+  - `config` byte: bits 0-1 = priority, `0x04` = object has a linked group address, `0x08` = read,
+    `0x10` = write, `0x40` = transmit, `0x80` = **unconfigured marker** (the manufacturer template's
+    "not yet configured" bit, which ETS clears when it configures an object).
 
-The `config` byte is fully decoded: priority (bits 0-1), `0x04` = the object has a linked group
-address (hardware-confirmed: the `0x04` set equals the linked com-object numbers on 1.1.x),
-`0x08` read, `0x10` write, `0x40` transmit. The flags are the **resolved** com-object flags
-(base `ComObject` flags overlaid with the active `ComObjectRef`), not the base defaults.
+### The build model: manufacturer template + per-device overlay
+
+The decisive finding: the app program's `<ComObjectTable>` `AbsoluteSegment` carries a base64
+**`<Data>` blob** that is the manufacturer's complete static image of L3 (header + every entry,
+including `dataPtr`, `type`, sizes, and a template `config` byte with `0x80` set). ETS writes that
+image, then **overlays only the dynamic state** onto each entry. So the build is:
+
+1. Start from the segment `<Data>` blob (truth for header, `dataPtr`, sizes, and inactive entries).
+2. For each entry, overlay the `config` byte:
+   - `0x04` (linked) := the object has a GA in the device's group/association table.
+   - **Configured (active) objects**: `config = priority | linked | read | write | transmit` from the
+     **resolved** com-object flags (`ComObject` base overlaid with the active `ComObjectRef`); the
+     `0x80` marker drops; the `type` byte is rewritten from the resolved object size.
+   - **Unconfigured objects**: keep the template entry verbatim, only clear the linked bit.
+
+This is robust by construction (the manufacturer image is the base; we change only what ETS changes)
+rather than rebuilding every byte from first principles. The active set + resolved flags come from
+`buildDeviceConfig().imageComObjects` (the com-object analog of `imageValues`: every com-object
+reached in the active dynamic tree, incl. hidden Access="None" blocks and per-instance module
+objects, keyed by resolved number).
 
 ### Build + byte-match status (Phase 2A, offline, read-only)
 
-A from-scratch builder (`[count][ramEnd]` header + `[dataPtr][config][type]` entries) was compared
-against the live device L3:
+Offline builder vs live device L3, all 24 MV-0705 devices:
 
-- **M-0081 1.1.x: full byte-match (91/91).** The format and build are correct for a simple,
-  module-free device whose objects are all in the active view.
-- M-0081 1.1.x / 1.1.x: off by **one byte** (object 11's read flag). That object is hidden in
-  their configuration, so the visible config view does not carry its resolved flags and the build
-  falls back to the base default. **Fix: resolve com-object flags for ALL reached objects (visible
-  or not), analogous to `imageValues` for parameters.**
-- M-0048 / M-0008 / M-008E / M-0083: large diffs (the header/count already differs). These have
-  module com-objects and/or sparse numbering the builder does not yet model.
+- **18 / 24 byte-match exactly**, including **all 12 M-0081** and one M-0008.
+- The remaining 6 differ only in the **config byte** of a small, bounded set of objects (1-12 bytes
+  each), all from one root cause: our **"configured/active" predicate does not yet exactly match
+  ETS** for certain module and multi-`ComObjectRef` objects. Concretely:
+  - **Multi-ref selection** (M-0008 obj 64, 7 devices): two `ComObjectRef`s target the object
+    (a generic one with read enabled, a functional variant with read disabled); ETS keeps the
+    generic, our reach-walk picks the variant.
+  - **Over-reach** (M-0048 obj 116, M-0083 obj 36/39, M-0008 1.1.x obj 66-72): `imgCollect` reaches
+    objects (via Access="None" blocks / inactive-adjacent branches) that ETS leaves **unconfigured**
+    (`0x80` kept).
+  - **Module objects** (M-008E obj 13, obj 170-176): a resolved transmit flag and the linked bit on
+    per-instance module com-objects.
 
-So the format is **proven** but the build is complete only for simple devices. Before L3 can be
-authored/flashed it must byte-match **every** device (resolve hidden-object flags; handle module
-com-objects; validate the complex families). Flashing wrong com-object flags breaks communication,
-so the byte-match gate is mandatory. Until then L3 stays kept-from-device (device-support.md
-"Known gaps").
+So the **format and the build model are proven and robust**; what remains is making the active/
+configured predicate and `ComObjectRef` selection match ETS exactly (the same class of dynamic-
+resolution work as the parameter image, which Busforge already gets right). Until the builder
+byte-matches **every** device, L3 stays **kept-from-device** (device-support.md "Known gaps") and is
+**not** authored/flashed: a wrong com-object flag breaks the object's communication, so the byte-match
+gate is mandatory.
 
 ## Reading device memory: chunking and read boundaries
 

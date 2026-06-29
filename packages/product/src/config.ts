@@ -52,6 +52,10 @@ export interface CfgComObjView {
   gaRaw?: number | null; // current GA link, filled in by the server from stored links
   changed?: boolean; // GA link differs from the programmed baseline; filled in by the server
 }
+// The minimal resolved facts the com-object-table (L3) build needs for one reached
+// com-object: its number, its datapoint size, and its RESOLVED flags. Captured for
+// every reached object including hidden ones (see DeviceConfigView.imageComObjects).
+export interface CfgComObjImage { number: number; objectSize: string; flags: ComObjFlags; refId: string; }
 export type CfgItem =
   | { kind: "separator"; text: string; uiHint: string }
   | { kind: "param"; param: CfgParamView }
@@ -67,6 +71,12 @@ export interface DeviceConfigView {
   // internal parameters, which ETS writes to the memory image even though they are
   // hidden from the UI; the image build needs them. See buildDeviceConfig.
   imageValues: Map<string, string>;
+  // Resolved com-objects reached in the active dynamic tree, keyed by resolved object
+  // number. Unlike `blocks` this INCLUDES com-objects inside Access="None" blocks (hidden
+  // from the UI but still present in the device's com-object table / L3) and per-instance
+  // module com-objects. Carries the RESOLVED flags (ComObjectRef overrides applied), which
+  // the com-object-table build needs. See buildDeviceConfig and CfgComObjImage.
+  imageComObjects: Map<number, CfgComObjImage>;
   // Which aspects of this device can be verified against the hardware via read-back.
   // Attached by the server (not buildDeviceConfig). When params/links is false, the
   // shown change state was never confirmed against the device. See readbackSupport.
@@ -250,6 +260,21 @@ export function buildDeviceConfig(
     return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display", defaultValue, typeLabel } };
   };
 
+  // Resolve just the table-relevant facts of a com-object (number with the module
+  // instance base applied, datapoint size, flags with ComObjectRef overrides applied).
+  // Shared by the visible build and the image (L3) pass so both agree on the numbering.
+  const resolveComObjImage = (defRefId: string, scope: Scope): CfgComObjImage | null => {
+    const ref = app.comObjectRefs.get(defRefId);
+    const obj = ref ? app.comObjects.get(ref.refId) : app.comObjects.get(defRefId);
+    if (!obj) return null;
+    return {
+      number: obj.number + (obj.baseNumber ? scope.argValue(obj.baseNumber) : 0),
+      objectSize: ref?.objectSize ?? obj.objectSize,
+      flags: { ...obj.flags, ...ref?.flags },
+      refId: scope.rewrite(defRefId),
+    };
+  };
+
   const buildComObj = (defRefId: string, scope: Scope): CfgItem | null => {
     const ref = app.comObjectRefs.get(defRefId);
     const obj = ref ? app.comObjects.get(ref.refId) : app.comObjects.get(defRefId);
@@ -261,16 +286,17 @@ export function buildDeviceConfig(
       return textParamRefId ? out.replace(/\{\{0\}\}/g, resolve(textParamRefId, scope) ?? "") : out;
     };
     const elem = ref?.id ?? obj.id;
+    const img = resolveComObjImage(defRefId, scope)!; // obj exists (guarded above)
     return {
       kind: "comObject",
       comObject: {
-        refId: scope.rewrite(defRefId),
-        number: obj.number + (obj.baseNumber ? scope.argValue(obj.baseNumber) : 0),
+        refId: img.refId,
+        number: img.number,
         name: fill(tr(elem, "Text", pick(ref?.text, obj.text)) || obj.name),
         functionText: fill(tr(elem, "FunctionText", pick(ref?.functionText, obj.functionText))),
-        objectSize: pick(ref?.objectSize, obj.objectSize),
+        objectSize: img.objectSize,
         dpt: pick(ref?.dpt, obj.dpt),
-        flags: { ...obj.flags, ...ref?.flags },
+        flags: img.flags,
       },
     };
   };
@@ -401,11 +427,17 @@ export function buildDeviceConfig(
   // resolve in this pass's own document order, not against the already-fully-mutated
   // UI env (which would mis-select branches controlled by a later Assign).
   const imageValues = new Map<string, string>();
+  const imageComObjects = new Map<number, CfgComObjImage>();
   const imgEnv = new Map(overrides);
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        // Record EVERY reached com-object (active branches, descending into Access="None"
+        // blocks, per module instance) with its resolved flags, so the com-object-table
+        // build sees hidden objects' flags too. Keyed by resolved number; a later active
+        // placement overrides an earlier one (document order), matching what ETS compiles.
+        case "comObjRef": { const c = resolveComObjImage(n.refId, scope); if (c) imageComObjects.set(c.number, c); break; }
         // An <Assign> sets the target parameter's value, and ETS writes that value to the
         // target's memory even if the target's own ParameterRef is only placed in an
         // inactive branch (a common pattern: assign a hidden Access="None" param from a
@@ -446,5 +478,5 @@ export function buildDeviceConfig(
   };
   emit(roots, 0);
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues };
+  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects };
 }
