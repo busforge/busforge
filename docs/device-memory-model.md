@@ -203,6 +203,31 @@ by mask version and (for modern devices) described by the product XML's `LdCtrl`
 controls, exactly the model ETS uses. There is no path here that needs a hand-written,
 per-device programming recipe.
 
+## Com-object table (L3) format, reverse-engineered (MV-0705 / M-0081)
+
+Toward authoring the com-object table (the documented gap: today L3 is kept from the device).
+Read-only investigation on 1.1.x / 1.1.x (M-0081) cracked the on-device format:
+
+- L3 lives at the app program's `<ComObjectTable CodeSegment=…>` fixed absolute address (e.g.
+  `AS-405C` = `0x405C`, 91 B for M-0081). It is **not** behind the object-3 table pointer:
+  `tableAddr(3)` (PID 7) returns `0` on MV-0705, unlike System B.
+- Layout: a **3-byte header**, then one **4-byte entry per com-object**:
+  `[dataPtr:2 BE][config:1][type:1]`.
+  - `dataPtr` points into the `0x07xx` RAM value segment (`AS-0700`); it advances by the object's
+    size (1 for 1-bit/1-byte, 2 for 2-byte), i.e. the RAM allocation of each object's value.
+  - `type` is the standard KNX size enum: `0x00`=1 bit, `0x07`=1 byte, `0x08`=2 bytes, …
+  - `config` is the flags/priority byte: bits 0-1 = priority (3 = low here), `0x08` = read,
+    `0x10` = write, `0x40` = transmit. One more effective-flag bit (`0x04`) is still to be mapped
+    (it is static, not runtime: identical across reads and byte-identical on sibling devices, so it
+    derives from the **resolved** com-object flags Busforge already computes, not the base defaults).
+- The config bytes are **static and byte-identical across devices with the same app** (1.1.x ^ 1.1.x
+  = 0), so a built table can be byte-matched against the device before any write.
+
+Remaining to author L3 (each step before the next): finalize the `config` bit mapping from the
+resolved flags; compute the `dataPtr` RAM layout; build the table and **byte-match offline against
+every device**; only then flash it (identity-flash-first), since wrong flags break com-object
+communication. Until that lands, L3 stays kept-from-device (see device-support.md "Known gaps").
+
 ## Reading device memory: chunking and read boundaries
 
 `KnxDevice.memRead` reads a segment in chunks (12 bytes by default). Some M112 devices
