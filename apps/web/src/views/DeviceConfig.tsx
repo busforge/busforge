@@ -131,6 +131,8 @@ export function DeviceConfig() {
       if (!rb.links) readbackNotes.push(t("device.readbackUnsupportedLinks"));
     }
     if (rb.params !== false && hasTextColorParams) readbackNotes.push(t("device.readbackUnverifiableTextColor"));
+    // Com-object flags / active object set (L3) are not programmed or compared; only links are.
+    if (rb.links && hasComObjects) readbackNotes.push(t("device.readbackComObjectFlags"));
   }
 
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });

@@ -237,6 +237,7 @@ const de: Messages = {
     readbackUnsupportedParams: "busforge kann die Parameter dieses Geräts noch nicht zurücklesen. Die angezeigten Parameterwerte stammen aus dem Import und wurden nicht mit dem Gerät abgeglichen.",
     readbackUnsupportedLinks: "busforge kann die Gruppenadress-Verknüpfungen dieses Geräts noch nicht zurücklesen. Die angezeigten Verknüpfungen stammen aus dem Import und wurden nicht mit dem Gerät abgeglichen.",
     readbackUnverifiableTextColor: "Text- und Farb-Parameter lassen sich nicht vom Gerät zurücklesen, daher werden ihre Werte nie gegen das Gerät verifiziert (sie lassen sich auch nicht flashen).",
+    readbackComObjectFlags: "Kommunikationsobjekt-Flags (Lesen/Schreiben/Übertragen/Aktualisieren) und das aktive Objekt-Set werden noch nicht programmiert oder verifiziert; nur Parameterwerte und Gruppenadress-Verknüpfungen. Eine Parameteränderung, die die Flags eines Com-Objekts ändern müsste, landet nicht auf dem Gerät.",
     unsupportedType: "{{type}} noch nicht unterstützt",
     unsupportedElement: "Noch nicht unterstützt: {{tag}} (dieser Bereich bleibt verborgen, bis busforge ihn darstellen kann)",
     flagCommunication: "Kommunikation",
