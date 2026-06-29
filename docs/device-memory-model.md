@@ -246,24 +246,35 @@ objects, keyed by resolved number).
 Offline builder vs live device L3, all 24 MV-0705 devices:
 
 - **18 / 24 byte-match exactly**, including **all 12 M-0081** and one M-0008.
-- The remaining 6 differ only in the **config byte** of a small, bounded set of objects (1-12 bytes
-  each), all from one root cause: our **"configured/active" predicate does not yet exactly match
-  ETS** for certain module and multi-`ComObjectRef` objects. Concretely:
-  - **Multi-ref selection** (M-0008 obj 64, 7 devices): two `ComObjectRef`s target the object
-    (a generic one with read enabled, a functional variant with read disabled); ETS keeps the
-    generic, our reach-walk picks the variant.
-  - **Over-reach** (M-0048 obj 116, M-0083 obj 36/39, M-0008 1.1.x obj 66-72): `imgCollect` reaches
-    objects (via Access="None" blocks / inactive-adjacent branches) that ETS leaves **unconfigured**
-    (`0x80` kept).
-  - **Module objects** (M-008E obj 13, obj 170-176): a resolved transmit flag and the linked bit on
-    per-instance module com-objects.
+- The remaining 6 differ only in the **config byte** (and one type byte) of a small, bounded set of
+  objects, 1-12 bytes each. Verified by comparison against each device's own `0x80` marker, the
+  flag bits themselves are correct everywhere (read/write/transmit equal the resolved flags). What
+  is NOT yet exact is the **"configured" predicate** (which objects get `0x80` cleared) plus one
+  `ComObjectRef` selection. The residual has **several distinct causes**, not one rule:
+  - **Large/special objects** (M-0048 obj 116 "Software version", 14 B): the device leaves it
+    **unconfigured** (`0x80` kept, template type) even though it is reached and its two sibling
+    objects (114/115) one line away in the *same* container *are* configured. So the predicate is a
+    property of the object, not its dynamic placement. `0xcb` = its resolved flags (`read,transmit`)
+    + `0x80`, i.e. the unified rule below already produces the right flag bits; only the `0x80`/type
+    handling is wrong because we classify it active.
+  - **Module objects** (M-0083 obj 36/39, M-008E obj 13 + obj 170-176): per-instance module
+    com-objects the device leaves unconfigured, plus a transmit flag and the linked bit that our
+    module numbering does not yet line up with the association table.
+  - **Per-device branch / multi-ref** (M-0008 obj 64 multi-`ComObjectRef`; 1.1.x obj 66-72): our
+    reach-walk includes objects/refs that ETS's choose evaluation excludes for that specific config.
 
-So the **format and the build model are proven and robust**; what remains is making the active/
-configured predicate and `ComObjectRef` selection match ETS exactly (the same class of dynamic-
-resolution work as the parameter image, which Busforge already gets right). Until the builder
-byte-matches **every** device, L3 stays **kept-from-device** (device-support.md "Known gaps") and is
-**not** authored/flashed: a wrong com-object flag breaks the object's communication, so the byte-match
-gate is mandatory.
+  The cleanest flag rule (validated against every device's `0x80` ground truth) is unified across
+  active and inactive: `config = priority(template) | linked(GA) | read | write | transmit` from the
+  resolved flags, `| 0x80` when the object is **not configured**, with the `type` byte taken from the
+  resolved size for configured objects and from the template otherwise.
+
+So the **format and the build model are proven and robust**, and the flag/linked/priority bits are
+correct for all 24 devices. What remains is the **"configured" predicate**: it is ETS-internal and
+heterogeneous (large/diagnostic objects, module instantiation, per-config choose evaluation), so it
+needs per-cause reverse-engineering, not a single heuristic. Until the builder byte-matches **every**
+device, L3 stays **kept-from-device** (device-support.md "Known gaps") and is **not** authored/
+flashed: a wrong com-object flag breaks the object's communication, so the byte-match gate is
+mandatory.
 
 ## Reading device memory: chunking and read boundaries
 
