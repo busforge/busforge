@@ -223,10 +223,30 @@ Read-only investigation on 1.1.x / 1.1.x (M-0081) cracked the on-device format:
 - The config bytes are **static and byte-identical across devices with the same app** (1.1.x ^ 1.1.x
   = 0), so a built table can be byte-matched against the device before any write.
 
-Remaining to author L3 (each step before the next): finalize the `config` bit mapping from the
-resolved flags; compute the `dataPtr` RAM layout; build the table and **byte-match offline against
-every device**; only then flash it (identity-flash-first), since wrong flags break com-object
-communication. Until that lands, L3 stays kept-from-device (see device-support.md "Known gaps").
+The `config` byte is fully decoded: priority (bits 0-1), `0x04` = the object has a linked group
+address (hardware-confirmed: the `0x04` set equals the linked com-object numbers on 1.1.x),
+`0x08` read, `0x10` write, `0x40` transmit. The flags are the **resolved** com-object flags
+(base `ComObject` flags overlaid with the active `ComObjectRef`), not the base defaults.
+
+### Build + byte-match status (Phase 2A, offline, read-only)
+
+A from-scratch builder (`[count][ramEnd]` header + `[dataPtr][config][type]` entries) was compared
+against the live device L3:
+
+- **M-0081 1.1.x: full byte-match (91/91).** The format and build are correct for a simple,
+  module-free device whose objects are all in the active view.
+- M-0081 1.1.x / 1.1.x: off by **one byte** (object 11's read flag). That object is hidden in
+  their configuration, so the visible config view does not carry its resolved flags and the build
+  falls back to the base default. **Fix: resolve com-object flags for ALL reached objects (visible
+  or not), analogous to `imageValues` for parameters.**
+- M-0048 / M-0008 / M-008E / M-0083: large diffs (the header/count already differs). These have
+  module com-objects and/or sparse numbering the builder does not yet model.
+
+So the format is **proven** but the build is complete only for simple devices. Before L3 can be
+authored/flashed it must byte-match **every** device (resolve hidden-object flags; handle module
+com-objects; validate the complex families). Flashing wrong com-object flags breaks communication,
+so the byte-match gate is mandatory. Until then L3 stays kept-from-device (device-support.md
+"Known gaps").
 
 ## Reading device memory: chunking and read boundaries
 
