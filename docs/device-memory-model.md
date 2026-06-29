@@ -256,12 +256,27 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
     objects (114/115) one line away in the *same* container *are* configured. So the predicate is a
     property of the object, not its dynamic placement. `0xcb` = its resolved flags (`read,transmit`)
     + `0x80`, i.e. the unified rule below already produces the right flag bits; only the `0x80`/type
-    handling is wrong because we classify it active.
+    handling is wrong because we classify it active. It is **not a simple size rule**: a scan found
+    configured objects of 3 B (M-0048 obj 0), 6 B and 8 B (M-008E obj 0/109), so only obj 116 at 14 B
+    is unconfigured. Likely threshold "> 8 B / string DPT" (too large for the standard RAM comms
+    buffer), but that needs more samples to pin down.
   - **Module objects** (M-0083 obj 36/39, M-008E obj 13 + obj 170-176): per-instance module
     com-objects the device leaves unconfigured, plus a transmit flag and the linked bit that our
     module numbering does not yet line up with the association table.
-  - **Per-device branch / multi-ref** (M-0008 obj 64 multi-`ComObjectRef`; 1.1.x obj 66-72): our
-    reach-walk includes objects/refs that ETS's choose evaluation excludes for that specific config.
+  - **Project-vs-device drift, NOT a bug** (M-0008 obj 64, 7 devices): **proven** drift. obj 64's
+    read flag is selected by param **P-2387** ("Temperaturerfassung durch"): project value `0`
+    activates the read-disabled `ComObjectRef` R-1249, so our build (correctly) sets read=0. The
+    device reads P-2387 = `1` from its own memory (`0x436E` bit 2), which deactivates that branch and
+    leaves read=1. The device was simply last ETS-flashed from a different config than the current
+    `.knxproj`. Our build is correct for the project; the device is drifted. Same class as the
+    parameter-image drift cases (see "Project vs device drift" in the handover / drift docs). 1.1.x's
+    obj 66-72 are very likely the same (1.1.x is an established drift device).
+
+  This drift finding **reframes the gate**: byte-matching against the *current* devices is wrong
+  where they are drifted (a correct build will never match a drifted device). The right ground truth
+  is a **clean ETS re-flash** of one device per family, then classify any residual as drift vs bug by
+  reading the gating param from the device (as done for obj 64). So "18/24 against drifted devices"
+  understates correctness: at least the 7-device obj 64 residual is drift, not a build error.
 
   The cleanest flag rule (validated against every device's `0x80` ground truth) is unified across
   active and inactive: `config = priority(template) | linked(GA) | read | write | transmit` from the
