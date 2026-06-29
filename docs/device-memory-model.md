@@ -216,11 +216,10 @@ M-0048, M-0081, M-008E, M-0083, 24 devices) established the model:
   `[dataPtr:2 BE][config:1][type:1]`.
   - `dataPtr` points into the `0x07xx` RAM value segment; `type` is the KNX size enum
     (`0x00`=1 bit, `0x03`=4 bit, `0x07`=1 byte, `0x08`=2 bytes, …).
-  - `config` byte: bits 0-1 = priority, `0x04` = object has a linked group address,
-    `0x10` = write, `0x40` = transmit, `0x80` = **unconfigured marker** (the manufacturer template's
-    "not yet configured" bit, which ETS clears when it configures an object). The `0x08` bit was
-    earlier assumed to be "read" but is NOT (see the residual notes below: it is set for write-disabled
-    transmit-only/output objects); the exact read/output bit layout is still being pinned down.
+  - `config` byte: bits 0-1 = priority, `0x04` = linked group address, `0x08` = read, `0x10` = write,
+    `0x40` = transmit, `0x80` = **unconfigured marker** (the manufacturer template's "not yet
+    configured" bit, which ETS clears when it configures an object). Confirmed cross-family on clean
+    re-flashed devices (M-0081 obj 1 `r0 w0` clears `0x08`; M-008E obj 81 `r1 w0` sets it).
 
 ### The build model: manufacturer template + per-device overlay
 
@@ -248,43 +247,40 @@ objects, keyed by resolved number).
 Offline builder vs live device L3, all 24 MV-0705 devices:
 
 - **18 / 24 byte-match exactly**, including **all 12 M-0081** and one M-0008.
-- The remaining 6 differ only in the **config byte** (and one type byte) of a small, bounded set of
-  objects. Root causes (corrected after a clean re-flash of 1.1.x, see below):
-  - **The config-byte BIT LAYOUT is incomplete / partly wrong.** Our builder used
-    `0x08 = read, 0x10 = write, 0x40 = transmit`. Clean ground truth from the freshly re-flashed
-    1.1.x shows that is wrong: the two active flag combos present map as
-    `r0 w0 c1 t1 -> 0x08|0x40` and `r0 w1 c1 t1 -> 0x10|0x40`. So `0x10 = write`, but `0x08` is **not
-    read**: it is set for a **write-disabled (transmit-only / output) object**, regardless of the
-    ReadFlag. Our builder emits neither bit for such objects, so e.g. M-0008 obj 64 (a transmit-only
-    output) comes out `0x40` instead of `0x48`. M-0081 never had this flag combo, which is exactly why
-    all 12 byte-match while obj 64 (×7 M-0008) and several others do not. **Fix needs the full bit
-    layout, which needs more flag-combo samples** (clean re-flashed devices, especially M-008E whose
-    objects exercise read-enabled and other combos 1.1.x lacks).
+- **Bit layout CONFIRMED** (clean re-flashed 1.1.x + 1.1.x, cross-family single-ref objects):
+  `0x08 = read`, `0x10 = write`, `0x40 = transmit`, `0x04 = linked`, `0x80 = unconfigured`. Proof that
+  `0x08 = read` (and not some output bit): M-0081 obj 1 `r0 w0` has `0x08` **clear** while M-008E obj 81
+  `r1 w0` has it **set**; same write, the bit tracks read. The builder's layout was correct all along.
+- The remaining 6 devices differ only in the config byte of a small, bounded set of objects, all from
+  **ComObjectRef / association resolution** (NOT the bit layout, NOT drift; confirmed because a clean
+  ETS "download all" of 1.1.x and 1.1.x left their diffs unchanged):
+  - **Multi-active-ComObjectRef merge** (M-0008 obj 64, 7 devices): obj 64 has two active refs,
+    R-1011 (`r1 w1 t1`, generic) and R-1249 (`r0 w0 t1`, the "measured room temperature" output).
+    The device resolves to `r1 w0 t1` (read from R-1011, write from R-1249, i.e. read = OR, write =
+    AND across the active refs). Our builder takes the last reached ref (R-1249) so it misses read=1.
+    The exact merge rule needs more multi-ref samples to confirm beyond this one case.
+  - **A single flag mis-resolves** (M-008E obj 13): built transmit=1, device transmit=0, again a
+    ComObjectRef resolution detail.
+  - **Module-object linked bit** (M-008E obj 170-178): the device marks them linked (`0x04`) but the
+    association table has only 11 entries (none of them). So module com-objects get their linked/active
+    bit from a separate mechanism (likely "module instance active"), not the association table.
   - **Large/special objects** (M-0048 obj 116 "Software version", 14 B): the device leaves it
-    **unconfigured** (`0x80` kept, template type) even though it is reached and its two sibling
-    objects (114/115) one line away in the *same* container *are* configured. So the predicate is a
-    property of the object, not its dynamic placement. **Not a simple size rule**: a scan found
-    configured objects of 3 B (M-0048 obj 0), 6 B and 8 B (M-008E obj 0/109), so only obj 116 at 14 B
-    is unconfigured. Likely threshold "> 8 B / string DPT" (too large for the standard RAM comms
-    buffer), but that needs more samples to pin down.
-  - **Module objects** (M-0083 obj 36/39, M-008E obj 13 + obj 170-178): per-instance module
-    com-objects. The linked bit (`0x04`) on module objects does **not** come from the association
-    table the way it does for normal objects: 1.1.x's L3 marks objects 170-178 linked, yet its
-    association table has only 11 entries (none of them). So module objects carry a linked/active bit
-    from a separate mechanism still to be modelled.
+    **unconfigured** (`0x80` kept) though its siblings 114/115 in the *same* container are configured,
+    so it is a property of the object. **Not a simple size rule**: configured objects of 3/6/8 B exist
+    (M-0048 obj 0, M-008E obj 0/109); only obj 116 at 14 B is unconfigured. Likely "> 8 B / string DPT".
 
-  **CORRECTION (do not trust the earlier "obj 64 is drift" claim in git history).** An earlier pass
-  called obj 64 project-vs-device drift after reading param P-2387 as `1`. That used **LSB-first** bit
-  extraction; the codec is **MSB-first** (`shift = 8 - bit - sizeInBit`, image.ts). With the correct
-  ordering P-2387 = `0`, matching the project. A full ETS "download all" of 1.1.x then left obj 64
-  unchanged, **disproving drift**. obj 64 is a genuine build bug (the bit-layout above), not drift.
-  The clean-re-flash method is still the right gate (it disambiguates bug vs drift AND yields clean
-  flag-combo samples to finish the bit layout); the conclusion for obj 64 specifically was wrong.
+  **TWO EARLIER ERRORS in git history for obj 64, both corrected here.** (1) It was called
+  project-vs-device drift after reading param P-2387 as `1`; that used LSB-first bit extraction, but
+  the codec is MSB-first (`shift = 8 - bit - sizeInBit`, image.ts), so P-2387 = `0` (matches project),
+  and a clean download-all left obj 64 unchanged: **not drift**. (2) It was then called a bit-layout
+  bug ("`0x08` is not read"); that was wrong too, polluted by obj 64's own mis-resolved flags. The
+  verified truth: `0x08 = read`, and obj 64 is a multi-ref **flag-merge** gap. The clean-re-flash
+  method remains the right gate (it disproved both wrong theories and gave the clean samples).
 
-So the **format and the build model (template + per-device overlay) are proven and robust**, and 18/24
-devices byte-match. What remains is three bounded, well-characterized reverse-engineering items: the
-**config-byte bit layout** (chiefly the `0x08` output bit, needs more flag-combo samples), the
-**"configured" predicate** for large/special objects, and the **module linked/active bit**. Each
+So the **format and the build model (template + per-device overlay) are proven and robust**, the bit
+layout is confirmed, and 18/24 devices byte-match. What remains is bounded **ComObjectRef/association
+resolution**: the multi-ref flag merge, a couple of single-flag resolutions, the module linked bit,
+and the large-object "configured" predicate. Each
 needs real samples, not a heuristic. Until the builder byte-matches **every** device, L3 stays
 **kept-from-device** (device-support.md "Known gaps") and is **not** authored/flashed: a wrong
 com-object flag breaks the object's communication, so the byte-match gate is mandatory.
