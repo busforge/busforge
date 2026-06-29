@@ -21,7 +21,7 @@ const FAMILY_LABEL: Record<SystemFamily, string> = {
 // capabilities() of SystemBProfile (relative), System7Profile (absolute), and UnsupportedProfile.
 const VERDICT: Record<MemoryModel, [read: string, flashP: string, flashGa: string]> = {
   relative: ["✅ params + links", "✅", "✅"],
-  absolute: ["✅ params + links", "✅", "⚠️ gated"],
+  absolute: ["✅ params + links", "✅", "✅"],
   bcu1: ["❌", "❌", "❌"],
   bcu2: ["❌", "❌", "❌"],
   system300: ["❌", "❌", "❌"],

@@ -145,4 +145,25 @@ describe("buildGroupTablesMv0705 (System-7 layout)", () => {
     const many: ComObjectLink[] = Array.from({ length: 256 }, (_, i) => ({ comObjNum: i, gaRaws: [1000 + i] }));
     expect(() => buildGroupTablesMv0705(many, ownIa)).toThrow(/1-byte count/);
   });
+
+  // Hardware-verified vectors from the GA-flash test on an M-0081 (the run that
+  // ungated System7Profile.flashLinks): the build reproduces the device's exact bytes, and a
+  // re-point of co#1 (0/4/11 -> 3/7/0) produced exactly these tables, which flashed and
+  // byte-matched on the bus, then reverted to the originals below.
+  test("reproduces real M-0081 tables and a hardware-verified re-point", () => {
+    const ia17 = (1 << 12) | (2 << 8) | 17; // 1.2.17 = 0x1211
+    const orig: ComObjectLink[] = [
+      { comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x180a] },
+      { comObjNum: 8, gaRaws: [0x1807] }, { comObjNum: 10, gaRaws: [0x0508] },
+      { comObjNum: 11, gaRaws: [0x100d] },
+    ];
+    const o = buildGroupTablesMv0705(orig, ia17);
+    expect(o.addr.toString("hex")).toBe("061211040b0508100d1807180a");
+    expect(o.assoc.toString("hex")).toBe("05010105050408020a030b");
+
+    const repointed = orig.map((l) => (l.comObjNum === 1 ? { ...l, gaRaws: [0x1f00] } : l));
+    const r = buildGroupTablesMv0705(repointed, ia17);
+    expect(r.addr.toString("hex")).toBe("0612110508100d1807180a1f00");
+    expect(r.assoc.toString("hex")).toBe("05050104050308010a020b");
+  });
 });

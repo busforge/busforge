@@ -53,7 +53,7 @@ export interface FlashResult {
 export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; }
 
 // What can be done with a device today, split by aspect. Read and write are independent
-// capabilities (MV-0705 can be read but its GA write is gated), as are parameters and links.
+// capabilities (an unsupported family may be neither), as are parameters and links.
 export interface DeviceCapabilities { readParams: boolean; readLinks: boolean; flashParams: boolean; flashLinks: boolean; }
 
 export interface ReadStateCtx {
@@ -319,16 +319,17 @@ export class SystemBProfile extends DeviceProfile {
 
 // System 7 (absolute-segment) devices: MV-0700/0701/0705 and the RF/IP variants. Parameters
 // live at fixed EEPROM addresses (driven by the device's declared LoadProcedure); group tables
-// use the System-7 layout. Read-back is hardware-verified; the GA WRITE path is built but GATED
-// until verified on hardware (see capabilities().flashLinks).
+// use the System-7 layout. Read-back, parameter flash and GA flash are all hardware-verified
+// on twisted-pair (M-0081): identity flash, re-point and revert each byte-matched.
 export class System7Profile extends DeviceProfile {
   readonly memoryModel = "absolute" as const;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
 
   capabilities(): DeviceCapabilities {
     // Parameters (absolute segments) and links (System-7 tables) are both read back. Parameter
-    // flash is hardware-proven (M-0081). GA flash is implemented but not yet hardware-tested.
-    return { readParams: true, readLinks: true, flashParams: true, flashLinks: false };
+    // and GA flash are hardware-proven on TP (M-0081); the RF/IP variants share the codec
+    // but have not been exercised on that medium (see the device-support.md medium caveat).
+    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true };
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -406,9 +407,9 @@ export class System7Profile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
-    // Built (buildGroupTablesMv0705 / flashGroupTablesMv0705) and byte-verified against a real
-    // device, but GATED in capabilities().flashLinks until an on-hardware identity flash passes.
-    // The endpoint guard refuses before reaching here; this body is the wired-up write path.
+    // buildGroupTablesMv0705 / flashGroupTablesMv0705, hardware-verified on TP (M-0081):
+    // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
+    // and byte-matched, and the revert restored the device exactly.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const cur = await readGroupTablesMv0705(dev);
     const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");

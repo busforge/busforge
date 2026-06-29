@@ -72,13 +72,13 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
 });
 
 describe("device profile capabilities (read vs flash, per memory model)", () => {
-  // Read and write are independent capabilities. MV-0705 read-back IS supported (absolute
-  // params + System-7 group tables) but its GA flash is gated; System B does both.
-  test("System 7 (MV-0705) absolute-segment device: reads both aspects, GA flash gated", () => {
+  // Read and write are independent capabilities. MV-0705 supports both (absolute params +
+  // System-7 group tables); GA flash is hardware-verified on TP. System B does both too.
+  test("System 7 (MV-0705) absolute-segment device: reads and flashes both aspects", () => {
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
     const caps = classify(cfg).capabilities(new Map());
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: false });
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
   });
 
   test("System B device: read-back and GA flash both supported", () => {
@@ -776,12 +776,19 @@ describe("device configuration", () => {
     return { projectId, deviceId };
   }
 
-  test("flash-ga refuses on an MV-0705 device (System-B table format only)", async () => {
+  test("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
+    // GA flash is hardware-verified for MV-0705 now (identity + re-point + revert),
+    // so the capability guard must NOT refuse it: the request gets past GROUP_TABLE_UNREADABLE
+    // and only fails later on the unreachable test connection.
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(((await res.json()) as any).error.code).toBe("GROUP_TABLE_UNREADABLE");
+    const code = ((await res.json()) as any).error?.code;
+    // Positively confirm the request got past every pre-flash guard (capability, app program,
+    // connection) and reached the actual flash attempt, which then fails only on the unreachable
+    // test gateway. A regression that re-gated or broke an earlier guard would surface as one of
+    // these codes and fail the test, rather than silently passing a weaker negative assertion.
+    expect(["GROUP_TABLE_UNREADABLE", "APP_PROGRAM_MISSING", "INTERFACE_NOT_SET", "DEVICE_NOT_FOUND"]).not.toContain(code);
   });
 
   test("importGaps lists devices whose application program is absent and counts unresolved links", () => {

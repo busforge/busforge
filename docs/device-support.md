@@ -37,15 +37,14 @@ Busforge implements two memory models:
 | Memory model | Family | Profile | Status |
 |---|---|---|---|
 | `relative` | System B | `SystemBProfile` | Read + flash (params and group addresses). Hardware-proven on TP. |
-| `absolute` | System 7 (BIM M112) | `System7Profile` | Read-back hardware-verified. Parameter flash hardware-proven (M-0081). Group-address flash is **built but gated** until an on-hardware identity flash passes. |
+| `absolute` | System 7 (BIM M112) | `System7Profile` | Read + flash (params and group addresses). Hardware-proven on TP (M-0081, 1.1.x): GA flash verified by identity flash, re-point and revert, each byte-matched. |
 
 Everything else resolves to `UnsupportedProfile`: the family is recognised (so we can name it
 and say "not yet"), but every operation throws.
 
 A ✅ means the memory model is implemented. Hardware verification to date is on **twisted-pair**
 System B and System 7 devices; the same memory model on PL/RF/IP shares the codec but has not
-been exercised on that medium. ⚠️ marks a path that exists in code but is gated off pending a
-hardware test.
+been exercised on that medium.
 
 ## The full matrix
 
@@ -66,9 +65,9 @@ hardware test.
 | `MV-0300` | TP | System 300 | system300 | ❌ | ❌ | ❌ |
 | `MV-0310` | TP | Interface | none | ❌ | ❌ | ❌ |
 | `MV-0311` | TP | Interface | none | ❌ | ❌ | ❌ |
-| `MV-0700` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ⚠️ gated |
-| `MV-0701` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ⚠️ gated |
-| `MV-0705` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ⚠️ gated |
+| `MV-0700` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
+| `MV-0701` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
+| `MV-0705` | TP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-07B0` | TP | System B | relative | ✅ params + links | ✅ | ✅ |
 | `MV-0810` | TP | IR decoder | none | ❌ | ❌ | ❌ |
 | `MV-0811` | TP | IR decoder | none | ❌ | ❌ | ❌ |
@@ -89,19 +88,16 @@ hardware test.
 | `MV-2010` | RF | RF-only | none | ❌ | ❌ | ❌ |
 | `MV-2110` | RF | RF-only | none | ❌ | ❌ | ❌ |
 | `MV-2311` | RF | Interface | none | ❌ | ❌ | ❌ |
-| `MV-2705` | RF | System 7 (M112) | absolute | ✅ params + links | ✅ | ⚠️ gated |
+| `MV-2705` | RF | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-27B0` | RF | System B | relative | ✅ params + links | ✅ | ✅ |
 | `MV-2920` | RF | Media coupler | none | ❌ | ❌ | ❌ |
 | `MV-3012` | IP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
 | `MV-4012` | IP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-5705` | IP | System 7 (M112) | absolute | ✅ params + links | ✅ | ⚠️ gated |
+| `MV-5705` | IP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-57B0` | IP | System B | relative | ✅ params + links | ✅ | ✅ |
 
 ## Known gaps to close next
 
-- **System 7 group-address flash** is implemented (`buildGroupTablesMv0705` /
-  `flashGroupTablesMv0705`, byte-verified against a real device) but gated until an on-hardware
-  identity flash passes. Flip `System7Profile.capabilities().flashLinks` to `true` once verified.
 - **System 1 / System 2 (BCU1/BCU2)** appear in real projects (e.g. an `MV-0012` device in the
   house project). They are recognised and refused; implementing them means the classic
   fixed-EEPROM address/association/com-object/parameter model, which is a separate effort.

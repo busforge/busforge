@@ -582,13 +582,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
-      // Each memory model knows whether its group tables can be WRITTEN today: System B yes,
-      // System 7 (MV-0705) built-but-gated, unsupported families no. The capability guards the
-      // flash path so a model we cannot program never corrupts the device's tables while
-      // reporting success (read-back capability is separate; MV-0705 reads but does not flash).
+      // Each memory model knows whether its group tables can be WRITTEN today: System B and
+      // System 7 (MV-0705) yes (both hardware-verified), recognised-but-unsupported families no.
+      // The capability guards the flash path so a model we cannot program never corrupts the
+      // device's tables while reporting success.
       const gaApp = loadApp(state, id, deviceId);
       if (gaApp && !classify(gaApp).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).flashLinks) {
-        return err("GROUP_TABLE_UNREADABLE", "this device does not store its group tables in the System-B format; programming its group addresses is not supported yet");
+        return err("GROUP_TABLE_UNREADABLE", "this device's memory model does not support programming its group addresses yet");
       }
       const dryGa = url.searchParams.get("dry") === "1";
       // Auto restore point of the about-to-be-programmed config (real flash only).
