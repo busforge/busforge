@@ -56,19 +56,34 @@ export class KnxDevice {
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
-    const out: Buffer[] = [];
+    // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
+    // MemoryRead that spans an internal memory boundary (they answer with an empty data
+    // response); the old concat-and-advance-by-requested-length loop then produced a buffer
+    // that was both short AND misaligned (corrupting read-back of any segment crossing such a
+    // boundary). On a short/empty response we shrink the request until it fits within a
+    // boundary and advance only by what was actually returned.
+    const out = Buffer.alloc(len);
     const total = Math.ceil(len / chunk);
     let done = 0;
-    for (let pos = addr; pos < addr + len; ) {
+    let pos = 0;
+    while (pos < len) {
       if (signal?.aborted) throw new Error("read aborted");
-      const n = Math.min(chunk, addr + len - pos);
-      const tail = Buffer.from([(pos >> 8) & 0xff, pos & 0xff]);
-      const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, n), true);
-      out.push(r!.data.subarray(2)); // skip echoed address
-      pos += n;
-      onProgress?.(++done, total);
+      let want = Math.min(chunk, len - pos);
+      let data: Buffer;
+      for (;;) {
+        const a = addr + pos;
+        const tail = Buffer.from([(a >> 8) & 0xff, a & 0xff]);
+        const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, want), true);
+        data = r!.data.subarray(2); // skip echoed address
+        if (data.length >= want) { data = data.subarray(0, want); break; }
+        if (want === 1) throw new Error(`memRead: device refused byte @0x${a.toString(16)}`);
+        want = Math.max(1, want >> 1); // shrink to fit within the device read boundary
+      }
+      data.copy(out, pos);
+      pos += want;
+      onProgress?.(Math.min(++done, total), total);
     }
-    return Buffer.concat(out);
+    return out;
   }
   async tableAddr(obj: number): Promise<number> {
     const b = await this.propRead(obj, 7);

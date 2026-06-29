@@ -200,6 +200,27 @@ by mask version and (for modern devices) described by the product XML's `LdCtrl`
 controls, exactly the model ETS uses. There is no path here that needs a hand-written,
 per-device programming recipe.
 
+## Reading device memory: chunking and read boundaries
+
+`KnxDevice.memRead` reads a segment in chunks (12 bytes by default). Some M112 devices
+have **internal read boundaries**: they refuse any single `MemoryRead` that spans the
+boundary, answering with an empty data response (each byte is individually readable; only
+a request that straddles the line is refused). Confirmed on the house installation:
+M-0048 refuses reads crossing `0x4008`-`0x4009`, and M-0008 has a
+boundary inside its `0x4000` segment.
+
+`memRead` therefore places bytes **by address** and, on a short/empty chunk response,
+shrinks the request until it fits within a boundary and advances only by what was actually
+returned. (The earlier loop concatenated chunk responses and advanced by the requested
+length regardless, so a refused chunk produced a buffer that was both short and
+**misaligned** - silently corrupting read-back of any segment crossing such a boundary.
+It stayed hidden because the only fully-verified device, M-0081, never crosses one, and the
+surgical flash targets in this house happen not to either; it is a latent-correctness fix.)
+`memWrite` uses the same fixed-chunk loop and is **not** boundary-aware, but its read-back
+verify now uses the corrected `memRead`, so a write that crossed a boundary would fail loud
+(verify mismatch) rather than corrupt silently. No flash target here crosses a boundary, so
+this path is untested on hardware and left unchanged.
+
 ## Read-back corpus (kept out of git)
 
 To develop against ground truth, every reachable device was read back from the bus
