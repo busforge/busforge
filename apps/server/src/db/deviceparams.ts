@@ -250,11 +250,15 @@ export function resetParamBase(db: Database, projectId: string, deviceId: string
 }
 
 // Mark a device's GA links as programmed (baseline := current live links).
-export function resetLinkBase(db: Database, projectId: string, deviceId: string): void {
+// Re-baseline ONLY the com-object refs whose links were actually flashed to the device.
+// A GA flash skips links whose com-object is not in the active view (hidden, or a module
+// synthetic ref the flat tables cannot resolve); those were NOT written, so they must stay
+// as drift rather than be adopted into the baseline (which would falsely report them in sync).
+export function resetLinkBase(db: Database, projectId: string, deviceId: string, comObjRefIds: string[]): void {
   db.transaction(() => {
-    db.prepare("DELETE FROM device_link_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
-    db.prepare(`INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw)
-      SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_links WHERE project_id = ? AND device_id = ?`)
-      .run(projectId, deviceId);
+    const del = db.prepare("DELETE FROM device_link_base WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?");
+    const ins = db.prepare(`INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw)
+      SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_links WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?`);
+    for (const ref of comObjRefIds) { del.run(projectId, deviceId, ref); ins.run(projectId, deviceId, ref); }
   })();
 }

@@ -161,8 +161,23 @@ describe("projects", () => {
     setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 1 });
 
-    resetLinkBase(db, "p1", dev);
+    resetLinkBase(db, "p1", dev, ["O-1_R-1"]);
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
+  });
+
+  test("resetLinkBase re-baselines ONLY the flashed refs; a skipped link stays drift", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    setDeviceLink(db, "p1", dev, "O-1_R-1", [9]); // this one gets flashed
+    setDeviceLink(db, "p1", dev, "O-2_R-2", [5]); // this one was skipped at flash (e.g. hidden com-object)
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 2 });
+
+    resetLinkBase(db, "p1", dev, ["O-1_R-1"]); // only the flashed ref is baselined
+    // The skipped link must NOT be adopted into the baseline (no fake "in sync"): drift remains.
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 1 });
+    expect(getDeviceChangedKeys(db, "p1", dev).links.has("O-2_R-2")).toBe(true);
+    expect(getDeviceChangedKeys(db, "p1", dev).links.has("O-1_R-1")).toBe(false);
   });
 
   test("flags the exact edited rows", () => {

@@ -111,6 +111,7 @@ const de: Messages = {
     PARAM_REF_REQUIRED: "Eine Parameter-Referenz ist erforderlich.",
     COMOBJ_FIELDS_REQUIRED: "Kommunikationsobjekt und Gruppenadressen sind erforderlich.",
     COMOBJ_REF_REQUIRED: "Eine Kommunikationsobjekt-Referenz ist erforderlich.",
+    COMOBJ_NOT_FOUND: "Dieses Kommunikationsobjekt existiert auf diesem Gerät (in seiner aktuellen Konfiguration) nicht.",
     APP_PROGRAM_MISSING: "Das Applikationsprogramm fehlt im Projekt.",
     PROJECT_NAME_REQUIRED: "Ein Projektname ist erforderlich.",
     DEVICE_FIELDS_REQUIRED: "Ein Produkt zum Hinzufügen auswählen.",

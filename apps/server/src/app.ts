@@ -496,6 +496,13 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
       // Accept the full (view) ref id or the stored stripped key.
       const key = body.comObjRefId.startsWith(`${app.id}_`) ? body.comObjRefId.slice(app.id.length + 1) : body.comObjRefId;
+      // Validate the target com-object actually exists in this device's active config. Without
+      // this, a bogus ref is stored and then silently dropped at flash (selectFlashLinks finds no
+      // number) or would build an association to a non-existent com-object. Refuse instead.
+      const linkView = buildDeviceConfig(app, getDeviceParams(db, id, deviceId), body.lang, getDeviceModules(db, id, deviceId));
+      const knownComObjs = new Set<string>();
+      for (const b of linkView.blocks) for (const it of b.items) if (it.kind === "comObject") knownComObjs.add(it.comObject.refId);
+      if (!knownComObjs.has(`${app.id}_${key}`)) return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
       setDeviceLink(db, id, deviceId, key, body.gaRaws.map(Number));
       return deviceConfig(state, id, deviceId, body.lang);
     }
@@ -582,6 +589,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const resolved = resolveDeviceLinks(state, id, deviceId);
       if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+      const gaAppXml = resolveAppXml(state, id, dev.appRef);
+      if (!gaAppXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
       // Each memory model knows whether its group tables can be WRITTEN today: System B and
       // System 7 (MV-0705) yes (both hardware-verified), recognised-but-unsupported families no.
       // The capability guards the flash path so a model we cannot program never corrupts the
@@ -598,14 +607,15 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         async (progress) => {
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceGroupAddresses({
-            projectId: id, deviceId, ia: dev.ia, expectedMask: resolved.mask, links: resolved.links,
+            projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
             connection: conn, dataDir: state.dataDir,
             dryRun: dryGa, onProgress: progress,
           });
         },
       );
-      // The device's group tables now match our links: clear the change marker.
-      if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId);
+      // The device's group tables now match our links: clear the marker for ONLY the links we
+      // actually flashed (skipped links stay as drift; see resetLinkBase / resolveDeviceLinks).
+      if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
       return json(result);
     }
 
@@ -618,6 +628,12 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
       const appXml = resolveAppXml(state, id, dev.appRef);
       if (!appXml) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+      // Refuse an unsupported device up front (mirrors flash-ga), so we don't create a snapshot
+      // and connect the bus just to have the profile throw.
+      const flApp = loadApp(state, id, deviceId);
+      if (flApp && !classify(flApp).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).flashParams) {
+        return err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
+      }
       const dryParams = url.searchParams.get("dry") === "1";
       // Auto restore point of the about-to-be-programmed config (real flash only).
       if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
@@ -879,7 +895,7 @@ export function selectFlashLinks(
 
 // Resolve a device's stored links to (comObjNum -> GAs) for flashing the group
 // tables. Com-object numbers come from the (module-resolved) config view.
-function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string): { mask: string; links: ComObjectLink[] } | null {
+function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string): { mask: string; links: ComObjectLink[]; flashedRefIds: string[] } | null {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
   if (!app) return null;
@@ -887,7 +903,14 @@ function resolveDeviceLinks(state: AppState, projectId: string, deviceId: string
   const numByRef = new Map<string, number>();
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
   const links = selectFlashLinks(getDeviceLinks(db, projectId, deviceId), numByRef, app.id);
-  return { mask: app.mask, links };
+  // A GA flash rewrites the WHOLE address+association table, so every com-object resolvable in
+  // the active view is authoritatively written — whether it has links now or had them removed
+  // (an empty link is also "written"). Those are the refs whose baseline may be reset. Refs NOT
+  // in the view (hidden/unresolvable) are absent from the table, were not written, and must stay
+  // as drift. Deriving from the view (not from stored links) is what keeps a fully-removed link
+  // from being stuck as false drift.
+  const flashedRefIds = [...numByRef.keys()].map((full) => (full.startsWith(`${app.id}_`) ? full.slice(app.id.length + 1) : full));
+  return { mask: app.mask, links, flashedRefIds };
 }
 
 // The parameter refs that make up a device's actual configuration (the config

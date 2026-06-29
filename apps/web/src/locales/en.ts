@@ -111,6 +111,7 @@ const en = {
     PARAM_REF_REQUIRED: "A parameter reference is required.",
     COMOBJ_FIELDS_REQUIRED: "Communication object and group addresses are required.",
     COMOBJ_REF_REQUIRED: "A communication object reference is required.",
+    COMOBJ_NOT_FOUND: "That communication object does not exist on this device (in its current configuration).",
     APP_PROGRAM_MISSING: "The application program is missing from the project.",
     PROJECT_NAME_REQUIRED: "A project name is required.",
     DEVICE_FIELDS_REQUIRED: "Select a product to add.",

@@ -503,9 +503,13 @@ export function flashDeviceParameters(opts: ParamFlashCtx & { ia: string; connec
 }
 
 // Program a device's group-address tables (address + association) from its com-object links.
-export function flashDeviceGroupAddresses(opts: GaFlashCtx & { expectedMask: string; connection: Connection }): Promise<FlashResult> {
-  const profile = classifyByMask(opts.expectedMask);
-  return withDeviceSession(opts.connection, opts.ia, opts.expectedMask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, opts));
+// Classify from the parsed application (not the mask alone) so the profile carries the app's
+// declared table capacity (<AddressTable>/<AssociationTable> MaxEntries); the GA-flash growth
+// guard depends on it. Without the cfg it would fall back to "no growth beyond the current
+// table" and refuse every legitimate add.
+export function flashDeviceGroupAddresses(opts: GaFlashCtx & { appXml: string; connection: Connection }): Promise<FlashResult> {
+  const profile = classify(parseAppConfig(opts.appXml));
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, opts));
 }
 
 // Read a device's current state back off the bus into a programmed baseline (drift detection).
