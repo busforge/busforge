@@ -254,11 +254,16 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
 - The remaining 6 devices differ only in the config byte of a small, bounded set of objects, all from
   **ComObjectRef / association resolution** (NOT the bit layout, NOT drift; confirmed because a clean
   ETS "download all" of 1.1.x and 1.1.x left their diffs unchanged):
-  - **Multi-active-ComObjectRef merge** (M-0008 obj 64, 7 devices): obj 64 has two active refs,
-    R-1011 (`r1 w1 t1`, generic) and R-1249 (`r0 w0 t1`, the "measured room temperature" output).
-    The device resolves to `r1 w0 t1` (read from R-1011, write from R-1249, i.e. read = OR, write =
-    AND across the active refs). Our builder takes the last reached ref (R-1249) so it misses read=1.
-    The exact merge rule needs more multi-ref samples to confirm beyond this one case.
+  - **One anomalous object** (M-0008 obj 64, 7 devices): the general rule "L3 flags = the resolved
+    active ComObjectRef" is correct for **every** clean object except this one. obj 64 (the "measured
+    room temperature" output) resolves via the active ref R-1249 to `r0 w0 t1`, and the device takes
+    its **write/transmit from that resolved ref** (`w0 t1`) but its **read from the base ComObject**
+    (`r1`), giving `r1 w0 t1`. R-1011 (`r1 w1`) is NOT active (its merker branch P-2378 is never 1),
+    so this is not a merge of two active refs. It is also not "w0 -> read=1" (M-0081 obj 1 is `w0`
+    with base read 0 and the device keeps read 0). So the read flag here specifically ignores the
+    ComObjectRef's `ReadFlag="Disabled"` and uses the base ComObject's read. The exact trigger
+    (why base read wins for this object but resolved read wins everywhere else) is not yet determined
+    from the available samples; it is a single isolated residual.
   - **A single flag mis-resolves** (M-008E obj 13): built transmit=1, device transmit=0, again a
     ComObjectRef resolution detail.
   - **Module-object linked bit** (M-008E obj 170-178): the device marks them linked (`0x04`) but the
@@ -278,9 +283,10 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
   method remains the right gate (it disproved both wrong theories and gave the clean samples).
 
 So the **format and the build model (template + per-device overlay) are proven and robust**, the bit
-layout is confirmed, and 18/24 devices byte-match. What remains is bounded **ComObjectRef/association
-resolution**: the multi-ref flag merge, a couple of single-flag resolutions, the module linked bit,
-and the large-object "configured" predicate. Each
+layout is confirmed, the general flag rule (resolved active ComObjectRef) is correct, and 18/24
+devices byte-match. What remains is bounded **ComObjectRef/association resolution**: one anomalous
+object (obj 64), a couple of single-flag resolutions, the module linked bit, and the large-object
+"configured" predicate. Each
 needs real samples, not a heuristic. Until the builder byte-matches **every** device, L3 stays
 **kept-from-device** (device-support.md "Known gaps") and is **not** authored/flashed: a wrong
 com-object flag breaks the object's communication, so the byte-match gate is mandatory.
