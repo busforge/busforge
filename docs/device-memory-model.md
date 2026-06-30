@@ -251,6 +251,15 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
   `0x08 = read`, `0x10 = write`, `0x40 = transmit`, `0x04 = linked`, `0x80 = unconfigured`. Proof that
   `0x08 = read` (and not some output bit): M-0081 obj 1 `r0 w0` has `0x08` **clear** while M-008E obj 81
   `r1 w0` has it **set**; same write, the bit tracks read. The builder's layout was correct all along.
+- **Bit layout and flag rule re-confirmed by correlation (169 configured objects, 23
+  MV-0705 devices, drifted 1.1.x / MV-0701 1.1.x excluded).** Counting per-bit disagreements between
+  the resolved active ComObjectRef flag and the device config byte: `write = 0`, `read = 7` (every one
+  is the M-0008 obj 64 below), `transmit = 2` (both the M-008E obj 13 below). The flag rule
+  `config = priority | linked | read | write | transmit` from the resolved ref is correct; the residual
+  is two isolated single-flag anomalies, not a missed formula. Candidate formulas were tested against
+  the live corpus and **rejected** (each makes the fit far worse): `read = read || transmit` -> 77
+  disagreements, `transmit = transmit && !write` -> 69. So obj 64 / obj 13 are not explained by any
+  flags-derived rule; they are device-specific.
 - The remaining 6 devices differ only in the config byte of a small, bounded set of objects, all from
   **ComObjectRef / association resolution** (NOT the bit layout, NOT drift; confirmed because a clean
   ETS "download all" of 1.1.x and 1.1.x left their diffs unchanged):
@@ -261,18 +270,35 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
     (`r1`), giving `r1 w0 t1`. R-1011 (`r1 w1`) is NOT active (its merker branch P-2378 is never 1),
     so this is not a merge of two active refs. It is also not "w0 -> read=1" (M-0081 obj 1 is `w0`
     with base read 0 and the device keeps read 0). So the read flag here specifically ignores the
-    ComObjectRef's `ReadFlag="Disabled"` and uses the base ComObject's read. The exact trigger
-    (why base read wins for this object but resolved read wins everywhere else) is not yet determined
-    from the available samples; it is a single isolated residual.
+    ComObjectRef's `ReadFlag="Disabled"` and uses the base ComObject's read. **It is not a general
+    "read from base" rule either**: the corpus has 349 ComObjectRefs that set
+    `ReadFlag="Disabled"`, and the device honours every one of them (resolved read wins) **except**
+    this single ref R-1249. The exact trigger (why this one object keeps base read) is undetermined
+    from the available samples; it is a single isolated residual on a sensor-output object
+    (`r0 w0 t1`, "measured room temperature").
   - **A single flag mis-resolves** (M-008E obj 13): built transmit=1, device transmit=0, again a
     ComObjectRef resolution detail.
   - **Module-object linked bit** (M-008E obj 170-178): the device marks them linked (`0x04`) but the
     association table has only 11 entries (none of them). So module com-objects get their linked/active
     bit from a separate mechanism (likely "module instance active"), not the association table.
+  - **Module "configured" predicate is per-active-ref, not per-link** (M-0083 1.1.56
+    BE-06001.02): the device leaves obj 36 / obj 39 **unconfigured** (`0x80` kept) while the builder
+    configures them, because both resolve to the module ref `O-2-36_R-9`. Within the *same* module
+    instances the device DOES configure obj 38 / obj 41 (ref `R-1`, configured **and unlinked**) and
+    obj 44 (ref `R-5`). So neither "configured = linked" nor "configured = reached" holds for module
+    objects: a channel's selected mode picks which ComObjectRef is live, and only that ref's object is
+    configured. The builder's `imgCollect` reaches `R-9` for two instances whose mode does not select
+    it (an over-inclusion in the module-internal branch selection, the all-match `selectWhens` walk).
+    Top-level objects are unaffected (the device configures reached top-level objects even when
+    unlinked, e.g. M-0048 1.1.x obj 0).
   - **Large/special objects** (M-0048 obj 116 "Software version", 14 B): the device leaves it
     **unconfigured** (`0x80` kept) though its siblings 114/115 in the *same* container are configured,
     so it is a property of the object. **Not a simple size rule**: configured objects of 3/6/8 B exist
     (M-0048 obj 0, M-008E obj 0/109); only obj 116 at 14 B is unconfigured. Likely "> 8 B / string DPT".
+  - **Drift, not a model gap** (re-confirmed): M-0008 1.1.x (obj 66-74, unique to this one
+    sibling of nine) and the MV-0701 device M-0048 1.1.x (12 objects, several **linked yet
+    `0x80`-unconfigured** on the device, an impossible clean state) are stale device L3, not builder
+    errors. They are excluded from the correlation above and settle on a clean ETS re-flash.
 
   **TWO EARLIER ERRORS in git history for obj 64, both corrected here.** (1) It was called
   project-vs-device drift after reading param P-2387 as `1`; that used LSB-first bit extraction, but
@@ -283,12 +309,16 @@ Offline builder vs live device L3, all 24 MV-0705 devices:
   method remains the right gate (it disproved both wrong theories and gave the clean samples).
 
 So the **format and the build model (template + per-device overlay) are proven and robust**, the bit
-layout is confirmed, the general flag rule (resolved active ComObjectRef) is correct, and 18/24
-devices byte-match. What remains is bounded **ComObjectRef/association resolution**: one anomalous
-object (obj 64), a couple of single-flag resolutions, the module linked bit, and the large-object
-"configured" predicate. Each
-needs real samples, not a heuristic. Until the builder byte-matches **every** device, L3 stays
-**kept-from-device** (device-support.md "Known gaps") and is **not** authored/flashed: a wrong
+layout and flag rule are confirmed by correlation over 169 clean objects, and 18/24 devices
+byte-match. The residual is now precisely bounded into three kinds, none a missed general rule:
+(1) **two isolated single-flag anomalies** on specific manufacturer objects (M-0008 obj 64 read,
+M-008E obj 13 transmit), device-specific with no flags-derived formula; (2) the **module "configured"
+predicate** (per active ComObjectRef inside the module's mode selection, plus the module linked bit and
+the large-object case), the one structural gap left, tied to module-internal branch selection; and
+(3) **drift** on individual devices (1.1.x, MV-0701 1.1.x), settled by a clean ETS re-flash, not code.
+Each genuine gap needs real samples, not a heuristic, and a per-object patch for obj 64 / obj 13 would
+be exactly the hand-coded special-casing to avoid. Until the builder byte-matches **every** device, L3
+stays **kept-from-device** (device-support.md "Known gaps") and is **not** authored/flashed: a wrong
 com-object flag breaks the object's communication, so the byte-match gate is mandatory.
 
 ## Reading device memory: chunking and read boundaries
