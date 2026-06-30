@@ -45,7 +45,8 @@ current architecture and features.
 | Program parameters and group addresses from the UI (backup + verify + revert) | ✅ verified on the bus |
 | Snapshots: config-only restore points (capture, compare, restore) | ✅ |
 | DCA replacement plugins: native device-specific views, no ETS DCA needed | ✅ (Theben DALI gateway) |
-| KNX Secure | ⬜ |
+| KNX Data Secure: read + write secure devices (tool keys from the project, AES-128-CCM) | ✅ read + write verified on the bus; full secure param-flash pending suitable hardware ([gap](docs/knx-secure-design.md#the-gap-honest-hardware-bound)) |
+| KNX IP Secure (secure tunnelling transport) | ⬜ (out of scope for now) |
 
 All ✅ items except where noted are **verified against a real KNX installation**
 (a live, multi-manufacturer house bus via an MDT KNXnet/IP interface).
@@ -284,6 +285,7 @@ The full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeist
 ## Next steps
 1. Full group-address link management (add/remove links, multiple GAs per
    com-object, create new GAs).
-2. KNX Secure.
+2. KNX Data Secure: full secure param-flash (write primitive done; needs a non-gateway
+   secure device to verify) and FDSK provisioning ([design + gap](docs/knx-secure-design.md)).
 3. Config display completeness (DPT-9 float / text / binary value editors).
 4. Channel/module device programming (per-instance parameter offsets).

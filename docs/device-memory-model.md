@@ -138,7 +138,7 @@ still writes it. M-0083 has ten such union-member assigns, all left to their act
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081, M-0008, M-0048, M-008E and M-0083 (1.1.56, module param): each a real param change applied + restored, byte-checked; surgical `par` download, see [load-procedures.md](load-procedures.md). M-008E self-stamps `AS-4B00[0:2]` on download (our build over-claims those 2 bytes). |
 | Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
 | Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |
-| **KNX Secure** devices | **no** (opaque: descriptor MV-FFFF, no plain access) | 2 MDT IP interfaces |
+| **KNX Data Secure** devices | **read + write** over the secure channel (tool key from the project; AES-128-CCM); full secure param-flash pending suitable hardware | 2 MDT IP interfaces; see [knx-secure-design.md](knx-secure-design.md) |
 
 The flash path's safety rails (mask check, segment backup, dry-run, post-flash
 read-back-verify) apply to everything it does write. For how correctness vs stability
@@ -358,4 +358,6 @@ are not committed.
 What it established: of the parameter images, exactly **one** device (the MEAN WELL
 PSU, 1.1.x) byte-matches fully today; the DALI gateway differs in its DCA-managed
 bytes; the module devices differ in exactly their module-instance parameters; and the
-two KNX Secure interfaces cannot be read at all.
+two KNX Secure interfaces could not be read at all then. (The latter is now solved:
+they are read and written over the Data Secure channel; see
+[knx-secure-design.md](knx-secure-design.md).)
