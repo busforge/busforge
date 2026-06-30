@@ -194,8 +194,12 @@ model. The plan, in three stages:
    internal params, union members and all-branch bytes the UI never shows), so equality
    would be wrong; UI-exposed must be a subset of image-placeable. Before per-instance
    module offsets landed (stage 2) this failed for module devices, which is exactly the
-   regression it now pins. Still open: round-trip tests (build image -> read back ->
-   decode == stored).
+   regression it now pins. Round-trip is locked too: per fixture the codec must be its
+   own inverse on the real model wiring, so the flash-verify path's build/read-back agree.
+   Relative (System B) segments rebuild from their decoded image byte-for-byte; absolute
+   (MV-0705) segments re-encode every decoded value over a copy with no byte change
+   (`real-catalogue.test.ts`). This is self-consistency; directional correctness (MSB-first
+   bit order, DPT-9 vectors) stays pinned by `image.test.ts` and the hardware byte-match.
 
 Also to verify: whether the GA-flash path (`flash-ga`) has the same
 module/channel gap as the parameter-image path.

@@ -5,6 +5,8 @@ import { parseAppConfig } from "../src/appconfig.ts";
 import { parseApplication, toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
 import { buildDeviceConfig } from "../src/config.ts";
+import { buildParameterImage, decodeParameterImage, decodeAbsoluteImage, encode } from "../src/image.ts";
+import { buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import {
   REAL_DIR, listRealFixtures, readRealFixture, snapshot, IMAGE_BASES, CONFIG_BASES, type AppSnapshot,
 } from "./real-catalogue.snapshot.ts";
@@ -66,6 +68,59 @@ describe("real catalogue (per-manufacturer regression)", () => {
         expect(uiRefs.size).toBeGreaterThan(0); // every real device exposes params; never pass vacuously
         const model = toAppModel(app, { instances });
         expect(unmappedParamRefs(model, uiRefs)).toEqual([]);
+      });
+
+      test("the parameter image codec round-trips on the real model (build -> decode is its own inverse)", () => {
+        // Round-trip lock (docs/ets-coverage.md stage 3). The flash-verify path builds an
+        // image, flashes, reads it back and decodes to detect drift, so the codec must be
+        // its own inverse on the REAL model wiring (actual offsets, types, signedness,
+        // sub-byte packing, materialized module instances), not just the synthetic codec
+        // model in image.test.ts. Relative (System B) segments: rebuilding from the decoded
+        // image must reproduce it byte-for-byte. Absolute (MV-0705) segments: re-encoding
+        // every decoded value over a copy must leave the bytes unchanged. This is the
+        // self-consistency the verify path relies on (build and read-back agree); directional
+        // correctness (MSB-first bit order, DPT-9 vectors) is pinned by image.test.ts and the
+        // hardware byte-match. A non-inverse offset/type on any real param shifts a byte here.
+        const app = parseAppConfig(xml);
+        const instances = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
+        let roundTripped = 0;
+
+        // Relative (System B): build from decoded defaults must reproduce the default image.
+        const relModel = toAppModel(app, { instances });
+        for (const lsm of new Set(relModel.segments.map((s) => s.lsm))) {
+          const def = buildParameterImage(relModel, lsm, new Map());
+          const stored = decodeParameterImage(relModel, lsm, def);
+          // rebuilt == def is strictly stronger than decode(rebuilt) == stored, so assert the bytes.
+          expect(buildParameterImage(relModel, lsm, stored).equals(def)).toBe(true);
+          roundTripped += stored.size;
+        }
+
+        // Absolute (MV-0705): re-encoding every decoded value over a copy is a no-op. Uses the
+        // same model shape buildAbsoluteSegmentTargets builds from (includeUnions + instances).
+        if (app.absoluteSegments.length) {
+          const absModel = toAppModel(app, { includeUnions: true, instances });
+          for (const tg of buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances })) {
+            // Each re-encode writes the decoded value back to the byte it came from, so it is a
+            // no-op against the original regardless of write order or union overlap (idempotent
+            // on the copy). Caveat: a Float (DPT-9 / float32-NaN) param landing on a non-canonical
+            // manufacturer <Data>/0xFF default would re-encode to a canonical pattern and flip a
+            // byte; none of the 13 fixtures place one, so this stays a clean inverse here.
+            const stored = decodeAbsoluteImage(absModel, tg.id, tg.bytes);
+            const copy = Buffer.from(tg.bytes);
+            for (const ref of absModel.refs.values()) {
+              const param = absModel.params.get(ref.paramId);
+              if (!param || param.codeSegment !== tg.id || param.offset === undefined) continue;
+              const type = absModel.types.get(param.typeId);
+              if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+              const v = stored.get(ref.id);
+              if (v !== undefined) encode(copy, param.offset, param.bitOffset, type, v);
+            }
+            expect(copy.equals(tg.bytes)).toBe(true);
+            roundTripped += stored.size;
+          }
+        }
+
+        expect(roundTripped).toBeGreaterThan(0); // never vacuous: every real device has placeable params
       });
 
       test("the image projection drops module-def and union entries", () => {
