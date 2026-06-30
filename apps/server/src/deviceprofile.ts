@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum } from "@busforge/knx";
+import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum } from "@busforge/knx";
 import {
   toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned,
   buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage,
@@ -564,4 +564,31 @@ export function flashDeviceGroupAddresses(opts: GaFlashCtx & { appXml: string; c
 export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: string; connection: Connection }): Promise<DeviceReadback> {
   const profile = classify(parseAppConfig(opts.appXml));
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.readState(dev, mask, opts));
+}
+
+// Securely identify a KNX Data Secure device: open the secure session (T_Connect +
+// Sync) with the device's tool key and read its real device descriptor and serial.
+// This is what makes a secure device (opaque MV-FFFF to plain reads) recognisable.
+// Read-only; no mask gate (identification is what learns the mask). Hardware-verified
+// on an MDT IP interface. See docs/knx-secure-design.md.
+export async function secureIdentify(
+  connection: Connection, ia: string, toolKey: Buffer, serial: Buffer,
+  onProgress?: ProgressFn,
+): Promise<{ mask: string; serial: string }> {
+  const tun = makeTransport(connection);
+  onProgress?.("connect");
+  await tun.connect();
+  const session = new SecureSession({ toolKey, src: tun.assignedIa, dst: iaToNum(ia), serial });
+  const dev = new KnxDevice(tun, ia, session);
+  try {
+    await dev.connect(); // T_Connect + Sync
+    const mask = await dev.deviceDescriptor();
+    const sn = await dev.propRead(0, 11); // device object (0), serial-number property (PID 11)
+    await dev.disconnect(); await tun.disconnect();
+    return { mask, serial: sn.toString("hex") };
+  } catch (e) {
+    try { await dev.disconnect(); } catch {}
+    try { await tun.disconnect(); } catch {}
+    throw e;
+  }
 }

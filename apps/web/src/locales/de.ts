@@ -177,6 +177,7 @@ const de: Messages = {
     roomSearchPlaceholder: "Bereich suchen…",
     noRoomMatch: "Kein Bereich gefunden.",
     assignFailed: "Gerät konnte nicht verschoben werden",
+    secure: "Secure",
     emptyRoom: "Noch keine Geräte hier.",
     emptyBuilding: "Noch keine Bereiche. Geschoss hinzufügen, um zu starten.",
     type: { Building: "Gebäude", Floor: "Geschoss", Room: "Raum" },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Search, X, Zap, Plus, Loader2, Cpu, FolderUp, FolderPlus, Building2, Check, ChevronsUpDown, Pencil, Trash2, MapPin } from "lucide-react";
+import { Search, X, Zap, Plus, Loader2, Cpu, FolderUp, FolderPlus, Building2, Check, ChevronsUpDown, Pencil, Trash2, MapPin, ShieldCheck } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -274,6 +274,11 @@ export function DevicesView() {
     <div key={d.id} className="group/row flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
       <Link {...row(d)} className="flex min-w-0 flex-1 items-center"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
       <div className="flex shrink-0 items-center gap-2">
+        {d.secure && (
+          <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
+            <ShieldCheck className="size-3" /> <span className="hidden sm:inline">{t("devices.secure")}</span>
+          </Badge>
+        )}
         <Badge variant="outline" className="hidden font-mono text-[10px] sm:inline-flex">{manuf(d.manufacturer)}</Badge>
         <ChangePill changes={d.changes} />
         <RoomSelect

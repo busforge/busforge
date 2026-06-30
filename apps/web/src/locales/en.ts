@@ -177,6 +177,7 @@ const en = {
     roomSearchPlaceholder: "Search area…",
     noRoomMatch: "No area matches.",
     assignFailed: "Could not move the device",
+    secure: "Secure",
     emptyRoom: "No devices here yet.",
     emptyBuilding: "No areas yet. Add a floor to start.",
     type: { Building: "Building", Floor: "Floor", Room: "Room" },

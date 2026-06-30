@@ -7,7 +7,7 @@ import { getConnection, type Connection } from "./connections.ts";
 // searchText is a server-built, lowercased blob (comment + user-entered text
 // parameter values like channel/actuator names) so the device list can search
 // deeper than the visible name/address.
-export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string };
+export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string; secure: boolean };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
 
@@ -166,10 +166,12 @@ export function getProject(db: Database, id: string): StoredProject | null {
     set.add(r.value);
     paramText.set(r.deviceId, set);
   }
+  const secureIds = new Set((db.query("SELECT device_id AS id FROM device_security WHERE project_id = ?").all(id) as { id: string }[]).map((r) => r.id));
   const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
     ...d,
     changes: changes.get(d.id) ?? { params: 0, links: 0 },
     searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
+    secure: secureIds.has(d.id),
   }));
 
   const rangeRows = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id").all(id) as

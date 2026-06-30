@@ -20,13 +20,13 @@ import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, classify } from "./deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify } from "./deviceprofile.ts";
 import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
 import { getMasterKey } from "./secrets.ts";
-import { putDeviceSecurity } from "./db/deviceSecurity.ts";
+import { putDeviceSecurity, getDeviceSecurity } from "./db/deviceSecurity.ts";
 
 export interface AppState {
   db: Database;
@@ -603,6 +603,27 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       if (rb.paramsRead) replaceParamBase(db, id, deviceId, rb.paramBase);
       if (rb.linksRead) replaceLinkBase(db, id, deviceId, readbackLinkBase(state, id, deviceId, rb.links));
       return deviceConfig(state, id, deviceId, body.lang);
+    }
+
+    // /api/projects/:id/devices/:deviceId/secure-identify -> read a Data Secure device's
+    // real identity (descriptor + serial) over the secure channel, using its stored tool
+    // key. Replaces the opaque MV-FFFF a plain read returns. Read-only.
+    if (seg.length === 6 && seg[3] === "devices" && seg[5] === "secure-identify" && req.method === "POST") {
+      const deviceId = decodeURIComponent(seg[4]);
+      const dev = getDeviceForFlash(db, id, deviceId);
+      if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+      const sec = getDeviceSecurity(db, id, deviceId, state.masterKey);
+      if (!sec) return err("DEVICE_NOT_SECURE", "this device has no stored tool key (not a Data Secure device, or its keys were not imported)");
+      const conn = getProjectConnection(db, id);
+      if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+      const result = await state.queue.enqueue(
+        { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
+        async (progress) => {
+          if (bus.activeProjectId) await bus.disconnect();
+          return secureIdentify(conn, dev.ia, sec.toolKey, sec.serialNumber, progress);
+        },
+      );
+      return json({ ia: dev.ia, secure: true, ...result });
     }
 
     // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
