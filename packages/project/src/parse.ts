@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { numToGa } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode } from "./model.ts";
+import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity } from "./model.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
@@ -36,8 +36,28 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(doc, d.id, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
+  const deviceSecurity = devices.map((d) => parseDeviceSecurity(doc, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, unresolvedLinks };
+  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks };
+}
+
+// A device's Data-Secure commissioning secrets, or undefined for a non-secure device.
+// The tool key lives in the device's nested <Security ToolKey="..b64.."> element
+// (present only once ETS secure-commissioned it); the 6-byte device serial used for the
+// Sync request is the DeviceInstance's own SerialNumber attribute. SequenceNumber here is
+// the group/data counter, kept for completeness; tool-access programming syncs its own.
+function parseDeviceSecurity(doc: any, deviceId: string): DeviceSecurity | undefined {
+  const dev = findDeviceInstance(doc, deviceId);
+  const sec = dev?.Security;
+  // A non-secure device has no <Security> child; a stray Security="Off" attribute
+  // parses to a string, not an object, so the ToolKey lookup safely yields nothing.
+  if (!sec || typeof sec !== "object" || !sec.ToolKey) return undefined;
+  return {
+    deviceId,
+    toolKey: String(sec.ToolKey),
+    serialNumber: String(dev.SerialNumber ?? ""),
+    sequenceNumber: String(sec.SequenceNumber ?? ""),
+  };
 }
 
 // Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so

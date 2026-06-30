@@ -6,6 +6,7 @@ import { putBaggage } from "./baggage.ts";
 import { insertSpaces } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
+import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
 
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
 // the whole project under a fresh id, restore its referenced catalog application
@@ -43,14 +44,26 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
+  }
+  // Validate each security entry's shape so a crafted artifact fails as a clean 400
+  // (not a generic 500 from Buffer.from(undefined) mid-insert). Key/serial byte lengths
+  // are enforced by putDeviceSecurity, the one guard shared by every population path.
+  for (const s of (d.deviceSecurity as Record<string, unknown>[] | undefined) ?? []) {
+    if (typeof s.deviceId !== "string" || typeof s.toolKey !== "string" || typeof s.serialNumber !== "string" || typeof s.sequenceNumber !== "string") {
+      throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity entry");
+    }
+    if (s.source !== undefined && !["import", "manual", "provisioned"].includes(s.source as string)) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity source");
+    }
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
 }
 
 // Recreate the project from a validated artifact under id `id`. One transaction.
-export function importProjectExport(db: Database, data: ProjectExport, id: string, now: number): void {
+// masterKey re-seals the imported tool keys under THIS instance's key.
+export function importProjectExport(db: Database, data: ProjectExport, id: string, now: number, masterKey: Buffer): void {
   db.transaction(() => {
     // Insert the bare row, then apply the shared project properties (name +
     // connection reference, FK-safe) the same way snapshot restore does.
@@ -96,5 +109,16 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const s of data.snapshots ?? []) insSnap.run(randomUUID(), id, s.label, s.kind, s.reason, s.createdAt, s.schemaVersion, s.payload);
     const insTel = db.prepare("INSERT INTO telegrams (project_id, ts, src, dst_raw, kind, data) VALUES (?, ?, ?, ?, ?, ?)");
     for (const tg of data.telegrams ?? []) insTel.run(id, tg.ts, tg.src, tg.dstRaw, tg.kind, tg.data);
+
+    // KNX Data Secure tool keys: re-sealed under this instance's master key.
+    if (data.deviceSecurity?.length) {
+      putDeviceSecurity(db, id, data.deviceSecurity.map((s) => ({
+        deviceId: s.deviceId,
+        toolKey: Buffer.from(s.toolKey, "base64"),
+        serialNumber: Buffer.from(s.serialNumber, "base64"),
+        sequenceNumber: s.sequenceNumber,
+        source: (s.source as SecuritySource) || "import",
+      })), masterKey);
+    }
   })();
 }

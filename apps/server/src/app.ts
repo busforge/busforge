@@ -25,11 +25,16 @@ import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { resolveDcaModule } from "./dca.ts";
+import { getMasterKey } from "./secrets.ts";
+import { putDeviceSecurity } from "./db/deviceSecurity.ts";
 
 export interface AppState {
   db: Database;
   bus: Bus;
   dataDir: string;
+  // Instance master key for sealing KNX Data Secure tool keys at rest (secrets.ts).
+  // Resolved once at startup; held in memory, never persisted to the DB.
+  masterKey: Buffer;
   now: () => number;
   // One physical interface, so bus operations (read/flash) run serially through
   // this queue instead of rejecting each other; it also surfaces their progress.
@@ -50,7 +55,16 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   // or not a monitor WebSocket is open.
   bus.subscribe((t) => { if (bus.activeProjectId) insertTelegram(db, bus.activeProjectId, t); });
   const now = opts?.now ?? (() => Date.now());
-  return { db, bus, dataDir, now, appCache: new Map(), queue: new TaskQueue(now) };
+  // Refuse to start if the DB holds sealed tool keys but no master key is available:
+  // auto-generating a fresh one (the zero-config default) would silently make every
+  // stored key unopenable. Surface the missing key instead of faking a working store.
+  const sealedKeyRows = (db.query("SELECT COUNT(*) AS n FROM device_security").get() as { n: number }).n;
+  const hasMasterKey = !!process.env.BUSFORGE_MASTER_KEY || existsSync(join(dataDir, "master.key"));
+  if (sealedKeyRows > 0 && !hasMasterKey) {
+    throw new Error("device_security holds sealed tool keys but no master key is available; set BUSFORGE_MASTER_KEY or restore the master.key file, refusing to auto-generate a key that cannot open them");
+  }
+  const masterKey = getMasterKey(dataDir);
+  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue: new TaskQueue(now) };
 }
 
 const json = (data: unknown, status = 200) =>
@@ -203,6 +217,17 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
         for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
         for (const p of catalog) putCatalogProduct(db, p);
         for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
+        // KNX Data Secure tool keys, sealed under the instance master key. Only
+        // secure-commissioned devices have one (project.deviceSecurity is otherwise empty).
+        if (project.deviceSecurity.length) {
+          putDeviceSecurity(db, id, project.deviceSecurity.map((s) => ({
+            deviceId: s.deviceId,
+            toolKey: Buffer.from(s.toolKey, "base64"),
+            serialNumber: Buffer.from(s.serialNumber, "base64"),
+            sequenceNumber: s.sequenceNumber,
+            source: "import" as const,
+          })), state.masterKey);
+        }
       })();
       // Surface what did NOT fully import: devices whose application program was not in
       // the archive (they import as un-configurable husks) and group-address links that
@@ -244,7 +269,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       const data = await unpackBusforge(bytes, password); // sniffs gzip/encrypted/legacy; throws a coded ApiError
       validateExport(data); // throws a coded ImportError on a bad shape/version
       const id = randomUUID();
-      importProjectExport(db, data, id, state.now());
+      importProjectExport(db, data, id, state.now(), state.masterKey);
       return json({ id, name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length }, 201);
     }
 
@@ -309,7 +334,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       // project from its file) so the export is self-contained.
       const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices WHERE project_id = ?").all(id) as { appRef: string }[];
       for (const r of refs) resolveAppXml(state, id, r.appRef);
-      const data = exportProject(db, id, state.now());
+      const data = exportProject(db, id, state.now(), state.masterKey);
       if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
       const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";
       const artifact = await packBusforge(data, body.password?.trim() || undefined);

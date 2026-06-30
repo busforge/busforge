@@ -99,6 +99,25 @@ describe("0.xml parser", () => {
     // one merged entry (slots 0,1,2 stay unique, so insertProject cannot collide on its PK)
     expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2, 2] }]);
   });
+
+  test("parses a secure device's <Security> tool key, omitting non-secure devices", () => {
+    // Synthetic key/serial (never a real device's), injected as a <Security> child of DI-1.
+    const secured = xml0.replace(
+      'Hardware2ProgramRefId="M-0048_H-1_HP-1">',
+      'Hardware2ProgramRefId="M-0048_H-1_HP-1" SerialNumber="AAECAwQF"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" SequenceNumber="123456789012" />',
+    );
+    const p = parseProject(secured, undefined, "fallback");
+    expect(p.deviceSecurity).toEqual([
+      { deviceId: "P-TEST-0_DI-1", toolKey: "AAECAwQFBgcICQoLDA0ODw==", serialNumber: "AAECAwQF", sequenceNumber: "123456789012" },
+    ]);
+    // 16-byte AES-128 tool key, 6-byte device serial
+    expect(Buffer.from(p.deviceSecurity[0].toolKey, "base64")).toHaveLength(16);
+    expect(Buffer.from(p.deviceSecurity[0].serialNumber, "base64")).toHaveLength(6);
+  });
+
+  test("leaves deviceSecurity empty for a project with no secure devices", () => {
+    expect(parseProject(xml0, undefined, "fallback").deviceSecurity).toEqual([]);
+  });
 });
 
 describe("loadKnxproj (integration)", () => {

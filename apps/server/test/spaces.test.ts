@@ -126,10 +126,11 @@ describe("snapshots capture + restore the building structure", () => {
 describe(".busforge export/import carries the structure", () => {
   test("re-imported project has the same tree and memberships", () => {
     const db = freshProject();
-    const data = exportProject(db, "P", 5)!;
+    const MK = Buffer.alloc(32, 1);
+    const data = exportProject(db, "P", 5, MK)!;
     expect(data.spaces?.length).toBeGreaterThan(0);
     validateExport(data);
-    importProjectExport(db, data, "P2", 6);
+    importProjectExport(db, data, "P2", 6, MK);
     const re = getProject(db, "P2")!;
     expect(re.locations[0].name).toBe("Haus");
     expect(re.locations[0].children[0].children[0]).toMatchObject({ name: "Küche", deviceIds: ["P-TEST-0_DI-1"] });

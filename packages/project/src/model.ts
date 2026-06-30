@@ -38,6 +38,14 @@ export interface DeviceModules { deviceId: string; instances: ModuleInstanceData
 export interface DeviceLink { comObjRefId: string; gaRaws: number[]; }
 export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
 
+// A Data-Secure device's commissioning secrets, parsed from the device's
+// <Security> element in 0.xml (present only when the device is secure-commissioned).
+// toolKey/serialNumber are base64 exactly as ETS stores them (16- and 6-byte values);
+// sequenceNumber is the group/data counter (NOT the tool-access counter, which is
+// obtained live via Sync). Keys are sealed before they touch the DB (see secrets.ts);
+// the parser only lifts the plaintext out of the already-decrypted project archive.
+export interface DeviceSecurity { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; }
+
 export interface TopologyLine {
   address: number;
   name: string;
@@ -92,5 +100,6 @@ export interface Project {
   deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
   deviceModules: DeviceModules[]; // per-device module instances from 0.xml
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
+  deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
 }

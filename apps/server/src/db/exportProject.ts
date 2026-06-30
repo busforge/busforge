@@ -3,6 +3,7 @@ import { appProgramId, type SpaceNode } from "@busforge/project";
 import { getAppProgram } from "./catalog.ts";
 import { readSpaces } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
+import { open } from "../secrets.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
 // (every instance table, including the programmed baselines and module instances)
@@ -36,6 +37,12 @@ export interface ProjectExport {
   // these were added (a plain .busforge.json) still imports.
   snapshots?: { label: string; kind: string; reason: string; createdAt: number; schemaVersion: number; payload: string }[];
   telegrams?: { ts: number; src: string; dstRaw: number; kind: string; data: string }[];
+  // KNX Data Secure tool keys. The keys are carried in CLEARTEXT here (base64),
+  // unsealed from the master key, so the project is never separated from its keys.
+  // The only protection is the .busforge container password; an unencrypted export
+  // therefore exposes them, which the UI must warn about before exporting. Optional
+  // so artifacts from before secure support still import. See docs/knx-secure-design.md.
+  deviceSecurity?: { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; source: string }[];
 }
 
 const paramRows = (db: Database, table: string, projectId: string) =>
@@ -49,7 +56,7 @@ const linkRows = (db: Database, table: string, projectId: string) =>
 // unknown project. The catalog is read from the DB; the caller is expected to
 // have ensured it is populated (for legacy projects, by resolving each device's
 // app program first, which backfills the catalog).
-export function exportProject(db: Database, projectId: string, now: number): ProjectExport | null {
+export function exportProject(db: Database, projectId: string, now: number, masterKey: Buffer): ProjectExport | null {
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
@@ -83,6 +90,12 @@ export function exportProject(db: Database, projectId: string, now: number): Pro
   const telegrams = db.query("SELECT ts, src, dst_raw AS dstRaw, kind, data FROM telegrams WHERE project_id = ? ORDER BY ts, id")
     .all(projectId) as ProjectExport["telegrams"];
 
+  // Tool keys, unsealed from the master key into cleartext base64 for portability
+  // (the importing instance re-seals under its own master key). Carried always.
+  const deviceSecurity = (db.query("SELECT device_id AS deviceId, tool_key AS toolKey, serial_number AS serialNumber, seq_group AS sequenceNumber, source FROM device_security WHERE project_id = ? ORDER BY device_id")
+    .all(projectId) as { deviceId: string; toolKey: Uint8Array; serialNumber: Uint8Array; sequenceNumber: string; source: string }[])
+    .map((r) => ({ deviceId: r.deviceId, toolKey: open(Buffer.from(r.toolKey), masterKey).toString("base64"), serialNumber: Buffer.from(r.serialNumber).toString("base64"), sequenceNumber: r.sequenceNumber, source: r.source }));
+
   return {
     busforgeExport: EXPORT_VERSION,
     exportedAt: now,
@@ -100,5 +113,6 @@ export function exportProject(db: Database, projectId: string, now: number): Pro
     baggage,
     snapshots,
     telegrams,
+    deviceSecurity,
   };
 }

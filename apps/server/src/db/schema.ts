@@ -259,6 +259,23 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_space_devices_project ON space_devices(project_id);
   `,
+  // KNX Data Secure key store: per-device tool keys for secure-commissioned devices.
+  // tool_key is SEALED at rest (AES-256-GCM under the instance master key, see
+  // secrets.ts); the DB file alone never reveals a key. serial_number is the 6-byte
+  // device serial (for the Sync request); seq_group is the project's group/data
+  // sequence counter (tool-access programming syncs its own). source records how the
+  // entry was populated (import | manual | provisioned). See docs/knx-secure-design.md.
+  `
+  CREATE TABLE device_security (
+    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id     TEXT NOT NULL,
+    tool_key      BLOB NOT NULL,
+    serial_number BLOB NOT NULL,
+    seq_group     TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -34,6 +34,7 @@ export interface StoredProject {
   groupRanges: GroupRangeNode[];
   locations: SpaceNode[];      // building structure (empty for projects without it)
   gaCount: number;
+  secureDeviceCount: number;   // devices with a Data-Secure tool key in the store
 }
 
 // Insert a project's location tree (depth-first, preserving order) into the
@@ -189,7 +190,11 @@ export function getProject(db: Database, id: string): StoredProject | null {
     nodes.get(g.rangeId)?.addresses.push({ raw: g.raw, address: g.address, name: g.name, dpt: g.dpt });
   }
 
-  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length };
+  // How many devices carry a Data-Secure tool key, so the UI can warn before an
+  // unencrypted export leaks them in clear (and badge secure devices later).
+  const secureDeviceCount = (db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = ?").get(id) as { n: number }).n;
+
+  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length, secureDeviceCount };
 }
 
 export function deleteProject(db: Database, id: string): boolean {

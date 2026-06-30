@@ -14,7 +14,8 @@ import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, g
 import { createProject, addDevice } from "../src/db/projects.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
 import { exportProject } from "../src/db/exportProject.ts";
-import { importProjectExport } from "../src/db/importProject.ts";
+import { importProjectExport, validateExport } from "../src/db/importProject.ts";
+import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
@@ -300,6 +301,8 @@ describe("projects", () => {
 });
 
 describe("project export", () => {
+  const MK = Buffer.alloc(32, 1); // synthetic instance master key
+
   test("serializes the whole project plus referenced catalog and baggage", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
@@ -310,7 +313,7 @@ describe("project export", () => {
     const appRefs = (db.query("SELECT DISTINCT app_ref AS a FROM devices WHERE project_id = 'p1'").all() as { a: string }[]).map((r) => r.a);
     for (const ar of appRefs) putAppProgram(db, appProgramId(ar), `<ApplicationProgram id="${appProgramId(ar)}"/>`);
 
-    const ex = exportProject(db, "p1", 5000)!;
+    const ex = exportProject(db, "p1", 5000, MK)!;
     expect(ex.busforgeExport).toBe(1);
     expect(ex.exportedAt).toBe(5000);
     expect(ex.project.name).toBe("Demo");
@@ -322,7 +325,7 @@ describe("project export", () => {
     for (const ar of appRefs) expect(ex.catalog[appProgramId(ar)]).toContain("ApplicationProgram"); // referenced programs bundled
     expect(ex.baggage).toContainEqual({ name: `${dev}_x.bin`, dataBase64: Buffer.from("zz").toString("base64") });
 
-    expect(exportProject(db, "ghost", 1)).toBeNull();
+    expect(exportProject(db, "ghost", 1, MK)).toBeNull();
   });
 
   test("carries the active-connection reference; import restores it only if the connection exists", () => {
@@ -330,17 +333,80 @@ describe("project export", () => {
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
     createConnection(db, "conn-1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     setProjectConnection(db, "p1", "conn-1");
-    const ex = exportProject(db, "p1", 5000)!;
+    const ex = exportProject(db, "p1", 5000, MK)!;
     expect(ex.project.connectionId).toBe("conn-1");
 
     // re-import while the connection still exists -> reference restored
-    importProjectExport(db, ex, "p2", 6000);
+    importProjectExport(db, ex, "p2", 6000, MK);
     expect(getProjectConnection(db, "p2")).toMatchObject({ id: "conn-1" });
 
     // connection gone (e.g. another machine) -> reference falls away, no FK error
     deleteConnection(db, "conn-1");
-    importProjectExport(db, ex, "p3", 7000);
+    importProjectExport(db, ex, "p3", 7000, MK);
     expect(getProject(db, "p3")!.connectionId).toBeNull();
+  });
+
+  test("round-trips Data Secure tool keys through export/import, re-sealed under the importing master key", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = "P-TEST-0_DI-1";
+    const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+    const serial = Buffer.from("aabbccddeeff", "hex");
+    putDeviceSecurity(db, "p1", [{ deviceId: dev, toolKey, serialNumber: serial, sequenceNumber: "9", source: "import" }], MK);
+
+    const ex = exportProject(db, "p1", 5000, MK)!;
+    // carried in CLEARTEXT base64 (the .busforge container password is the only protection)
+    expect(ex.deviceSecurity).toEqual([
+      { deviceId: dev, toolKey: toolKey.toString("base64"), serialNumber: serial.toString("base64"), sequenceNumber: "9", source: "import" },
+    ]);
+
+    // import under a DIFFERENT instance master key: re-sealed, key reads back correctly
+    const MK2 = Buffer.alloc(32, 2);
+    importProjectExport(db, ex, "p2", 6000, MK2);
+    expect(getDeviceSecurity(db, "p2", dev, MK2)!.toolKey).toEqual(toolKey);
+    // and the original master key cannot open the re-sealed copy (no silent wrong key)
+    expect(() => getDeviceSecurity(db, "p2", dev, MK)).toThrow();
+  });
+});
+
+describe("device security persistence", () => {
+  const MK = Buffer.alloc(32, 3);
+  const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+  const serial = Buffer.from("aabbccddeeff", "hex");
+  const dev = "P-TEST-0_DI-1";
+  const seed = () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    putDeviceSecurity(db, "p1", [{ deviceId: dev, toolKey, serialNumber: serial, sequenceNumber: "1", source: "import" }], MK);
+    return db;
+  };
+
+  test("a config snapshot/restore never touches tool keys (device state, not config)", () => {
+    const db = seed();
+    createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 2000);
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "9"); // change config after the snapshot
+    const snap = listSnapshots(db, "p1")[0];
+    restoreSnapshot(db, "p1", snap.id, 3000);
+    // the key is unchanged: a config rollback can never lose device access
+    expect(getDeviceSecurity(db, "p1", dev, MK)!.toolKey).toEqual(toolKey);
+  });
+
+  test("getProject surfaces secureDeviceCount for the export warning", () => {
+    expect(getProject(seed(), "p1")!.secureDeviceCount).toBe(1);
+  });
+
+  test("deleting a project cascades its tool keys out of the store", () => {
+    const db = seed();
+    expect((db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = 'p1'").get() as { n: number }).n).toBe(1);
+    deleteProject(db, "p1");
+    expect((db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = 'p1'").get() as { n: number }).n).toBe(0);
+  });
+
+  test("validateExport rejects a malformed deviceSecurity entry as a coded 400", () => {
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    expect(() => validateExport({ ...base, deviceSecurity: [{ deviceId: "d" }] })).toThrow(/deviceSecurity/);
+    try { validateExport({ ...base, deviceSecurity: [{ deviceId: "d", toolKey: "x", serialNumber: "y", sequenceNumber: "1", source: "bogus" }] }); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
   });
 });
 
