@@ -89,6 +89,8 @@ const de: Messages = {
     passwordLabel: "Passwort",
     passwordPlaceholder: "Leer lassen für keine Verschlüsselung",
     passwordHint: "Mit Passwort wird die Datei AES-256-verschlüsselt und lässt sich nur damit öffnen. Ohne Passwort ist es eine gzip-Datei, die jedes Zip-Programm oder `gunzip` öffnet.",
+    secretsWarning_one: "Dieses Projekt hat {{count}} KNX-Secure-Gerät. Ohne Passwort wird sein Geräteschlüssel im Klartext exportiert.",
+    secretsWarning_other: "Dieses Projekt hat {{count}} KNX-Secure-Geräte. Ohne Passwort werden ihre Geräteschlüssel im Klartext exportiert.",
     submit: "Exportieren",
     exporting: "Exportiere…",
     done: "Export heruntergeladen",

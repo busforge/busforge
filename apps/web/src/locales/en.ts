@@ -87,6 +87,8 @@ const en = {
     passwordLabel: "Password",
     passwordPlaceholder: "Leave empty for no encryption",
     passwordHint: "With a password the file is AES-256 encrypted and opens only with that password. Without one it is a gzip file you can unpack with any zip tool or `gunzip`.",
+    secretsWarning_one: "This project has {{count}} KNX Secure device. Without a password its device key is exported in clear text.",
+    secretsWarning_other: "This project has {{count}} KNX Secure devices. Without a password their device keys are exported in clear text.",
     submit: "Export",
     exporting: "Exporting…",
     done: "Export downloaded",

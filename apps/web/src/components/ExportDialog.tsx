@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Download, KeyRound, Loader2 } from "lucide-react";
+import { Download, KeyRound, Loader2, ShieldAlert } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api } from "../api.ts";
+import { useProject } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +26,11 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
   const open = controlled ? openProp : openState;
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Warn when this export would carry device keys in clear: the project has secure
+  // devices and no container password is set. The keys travel either way (by design);
+  // the password is their only protection.
+  const { data: project } = useProject(projectId);
+  const exposesKeys = (project?.secureDeviceCount ?? 0) > 0 && !password.trim();
 
   function reset() { setPassword(""); setError(null); }
   const setOpen = (o: boolean) => { if (!o) reset(); controlled ? onOpenChange?.(o) : setOpenState(o); };
@@ -69,6 +75,13 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
           />
           <p className="text-xs text-muted-foreground">{t("export.passwordHint")}</p>
         </div>
+
+        {exposesKeys && (
+          <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" data-testid="export-keys-warning">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            {t("export.secretsWarning", { count: project?.secureDeviceCount ?? 0 })}
+          </p>
+        )}
 
         {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
