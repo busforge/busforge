@@ -74,6 +74,25 @@ describe("module instances (Theben 493B channel device)", () => {
     expect(unmappedParamRefs(toAppModel(app), storedModuleValues).length).toBe(storedModuleValues.size);
   });
 
+  test("UI-exposed module params under an active channel config are all image-placeable", () => {
+    // The corpus coverage lock (real-catalogue.test.ts) runs every fixture in its
+    // DEFAULT config; the 493B instantiates no channels until P-57 picks a count, so its
+    // module path needs an explicit active config. With six HMG channels selected, every
+    // editable per-instance param the UI exposes (…_MI-…) must be placeable by the image
+    // model, so the flash guard never fires for a module device. This is the channel-active
+    // form of stage 3: it locks in that the config and image projections agree on the
+    // module-instance refs ETS pins into a project 0.xml.
+    const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
+    const instances = resolveModuleInstances(app, env);
+    const view = buildDeviceConfig(app, env, undefined, instances);
+    const uiRefs = new Map<string, string>();
+    for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") uiRefs.set(it.param.refId, "0");
+    // The active channels really do expose per-instance params (else the test is vacuous).
+    expect([...uiRefs.keys()].some((r) => r.includes("_MI-"))).toBe(true);
+    const model = toAppModel(app, { instances });
+    expect(unmappedParamRefs(model, uiRefs)).toEqual([]);
+  });
+
   test("Merker-gated block is hidden until its real switch is set (assignment by placement)", () => {
     // The HMG6T Notprogramm block (P-55..P-58) is gated by an Access=None Merker (P-7)
     // that is only placed when its real switch P-6 = 1. With P-6 at its default 0, ETS

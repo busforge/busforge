@@ -183,12 +183,19 @@ model. The plan, in three stages:
      diffs), and a module-param change was flashed + restored byte-checked on a relative
      device and the MV-0705 module device (M-0083, 1.1.56). See
      [device-memory-model.md](device-memory-model.md).
-3. **Lock it in CI (planned).** A coverage test per catalogue/device asserting the
-   UI-exposed param-ref set equals the image-placeable set; today that would fail
-   for module devices (they genuinely diverge), so the enforced form today is the
-   runtime guard from stage 1. When stage 2 lands, flip the test to an equality
-   assertion so any feature added to one projection but not the other fails the
-   build. Add round-trip tests too (build image -> read back -> decode == stored).
+3. **Lock it in CI (done).** A coverage test per catalogue/device asserts the
+   UI-exposed param-ref set is fully image-placeable: for every real fixture,
+   `unmappedParamRefs(toAppModel(app, {instances}), <every editable ref the config
+   view exposes>)` is empty (`real-catalogue.test.ts`, plus the 493B's channel-active
+   path in `modules.test.ts`). The runtime guard from stage 1 stays as flash-time
+   defense; this lifts the same invariant to a build-time assertion, so a feature
+   added to one projection but not the other fails the build. It is the **coverage**
+   direction, not literal set equality: the image is a deliberate superset (Access="None"
+   internal params, union members and all-branch bytes the UI never shows), so equality
+   would be wrong; UI-exposed must be a subset of image-placeable. Before per-instance
+   module offsets landed (stage 2) this failed for module devices, which is exactly the
+   regression it now pins. Still open: round-trip tests (build image -> read back ->
+   decode == stored).
 
 Also to verify: whether the GA-flash path (`flash-ga`) has the same
 module/channel gap as the parameter-image path.
