@@ -33,6 +33,36 @@ import type { ProgressFn } from "./taskqueue.ts";
 
 const LSM = 4; // System B parameter segment
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// After a LoadProcedure restart the device can be briefly unreachable while it reboots. Some
+// devices are notably slow (M-008E answers only several seconds after the restart), so a single
+// fixed pause then one connect would throw "device not answering" on the post-restart read and
+// report a SUCCESSFUL flash as a failure. Re-establish the connection and wait for the device to
+// answer a lightweight liveness probe, retrying with backoff. Throws only if the device never
+// answers within the budget. Timing is injectable for tests. Worst case on a truly dead device
+// is bounded (~40 s with the defaults: 3 s + 6 probes, each probe's request retries internally),
+// which is acceptable for a one-off commissioning flash and far better than the false-failure.
+export async function reconnectAfterRestart(
+  dev: Pick<KnxDevice, "connect" | "disconnect" | "deviceDescriptor">,
+  opts: { initialMs?: number; tries?: number; delayMs?: number } = {},
+): Promise<void> {
+  const { initialMs = 3000, tries = 6, delayMs = 2000 } = opts;
+  await sleep(initialMs);
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      await dev.connect();
+      await dev.deviceDescriptor(); // probe: confirms the rebooted device answers before verifying
+      return;
+    } catch (e) {
+      lastErr = e;
+      try { await dev.disconnect(); } catch { /* connection may already be gone */ }
+      if (i < tries - 1) await sleep(delayMs);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("device did not answer after restart");
+}
+
 const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
@@ -281,8 +311,7 @@ export class SystemBProfile extends DeviceProfile {
     await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => ctx.onProgress?.("write", d, t));
 
     // The device restarts after load-completed; reconnect and verify ONLY the owned bytes.
-    await sleep(3000);
-    await dev.connect();
+    await reconnectAfterRestart(dev);
     const back = await dev.memRead(await dev.tableAddr(LSM), image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t));
     const verified = verifyRelativeOwned(back, target);
     return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: true, verified, backup };
@@ -308,8 +337,7 @@ export class SystemBProfile extends DeviceProfile {
 
     ctx.onProgress?.("write");
     await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
-    await sleep(3000);
-    await dev.connect();
+    await reconnectAfterRestart(dev);
     ctx.onProgress?.("verify");
     const back = await readGroupTables(dev);
     const verified = back.addr.equals(addr) && back.assoc.equals(assoc);
@@ -396,8 +424,7 @@ export class System7Profile extends DeviceProfile {
     let wrote = 0;
     await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
 
-    await sleep(3000);
-    await dev.connect();
+    await reconnectAfterRestart(dev);
     let verified = true;
     for (const t of targets) {
       const back = await dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n));
@@ -445,8 +472,7 @@ export class System7Profile extends DeviceProfile {
 
     ctx.onProgress?.("write");
     await flashGroupTablesMv0705(dev, { addr, assoc });
-    await sleep(3000);
-    await dev.connect();
+    await reconnectAfterRestart(dev);
     ctx.onProgress?.("verify");
     const back = await readGroupTablesMv0705(dev);
     const verified = back.addr.equals(addr) && back.assoc.equals(assoc);

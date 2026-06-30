@@ -14,6 +14,8 @@ class MockDevice {
   state = new Map<number, number>(); // LSM object -> STATE
   addrOf: Record<number, number> = { 1: 0x1000, 2: 0x2000, 3: 0x3000 };
   async connect() {}
+  async disconnect() {}
+  async deviceDescriptor() { return "MV-0705"; } // post-restart liveness probe (reconnectAfterRestart)
   async restart() {}
   async tableAddr(obj: number) { return this.addrOf[obj]; }
   async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff; return b; }
