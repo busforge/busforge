@@ -136,17 +136,24 @@ export class UnsupportedOperation extends ApiError {
 // Open a connection-oriented link to the device, verify it is the device/application we
 // expect, run the model-specific body, and always tear the link down. The mask check is the
 // primary safety gate (wrong device or wrong application aborts before any read or write).
+// Credentials for a KNX Data Secure session: the device's tool key + serial, from
+// the key store. When supplied, the whole session (connect/Sync/read/flash) speaks
+// Data Secure transparently.
+export interface SecureCreds { toolKey: Buffer; serial: Buffer; }
+
 async function withDeviceSession<T>(
   connection: Connection,
   ia: string,
   wantMask: string,
   onProgress: ProgressFn | undefined,
   body: (dev: KnxDevice, mask: string) => Promise<T>,
+  secure?: SecureCreds,
 ): Promise<T> {
   const tun = makeTransport(connection);
   onProgress?.("connect");
   await tun.connect();
-  const dev = new KnxDevice(tun, ia);
+  const session = secure ? new SecureSession({ toolKey: secure.toolKey, src: tun.assignedIa, dst: iaToNum(ia), serial: secure.serial }) : undefined;
+  const dev = new KnxDevice(tun, ia, session);
   try {
     await dev.connect();
     const mask = await dev.deviceDescriptor();
@@ -544,9 +551,9 @@ export function classifyByMask(mask: string): DeviceProfile {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Program a device's parameter segment from its stored configuration.
-export function flashDeviceParameters(opts: ParamFlashCtx & { ia: string; connection: Connection }): Promise<FlashResult> {
+export function flashDeviceParameters(opts: ParamFlashCtx & { ia: string; connection: Connection; secure?: SecureCreds }): Promise<FlashResult> {
   const profile = classify(parseAppConfig(opts.appXml));
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashParameters(dev, mask, opts));
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashParameters(dev, mask, opts), opts.secure);
 }
 
 // Program a device's group-address tables (address + association) from its com-object links.
@@ -554,16 +561,16 @@ export function flashDeviceParameters(opts: ParamFlashCtx & { ia: string; connec
 // declared table capacity (<AddressTable>/<AssociationTable> MaxEntries); the GA-flash growth
 // guard depends on it. Without the cfg it would fall back to "no growth beyond the current
 // table" and refuse every legitimate add.
-export function flashDeviceGroupAddresses(opts: GaFlashCtx & { appXml: string; connection: Connection }): Promise<FlashResult> {
+export function flashDeviceGroupAddresses(opts: GaFlashCtx & { appXml: string; connection: Connection; secure?: SecureCreds }): Promise<FlashResult> {
   const profile = classify(parseAppConfig(opts.appXml));
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, opts));
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, opts), opts.secure);
 }
 
 // Read a device's current state back off the bus into a programmed baseline (drift detection).
 // Read-only: nothing is written to the device.
-export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: string; connection: Connection }): Promise<DeviceReadback> {
+export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: string; connection: Connection; secure?: SecureCreds }): Promise<DeviceReadback> {
   const profile = classify(parseAppConfig(opts.appXml));
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.readState(dev, mask, opts));
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.readState(dev, mask, opts), opts.secure);
 }
 
 // Securely identify a KNX Data Secure device: open the secure session (T_Connect +

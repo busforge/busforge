@@ -20,7 +20,7 @@ import { importProjectExport, validateExport } from "./db/importProject.ts";
 import { packBusforge, unpackBusforge } from "./db/busforgeArtifact.ts";
 import { insertTelegram, recentTelegrams } from "./db/telegrams.ts";
 import { getDeviceParams, getDeviceParamBase, setDeviceParam, deleteDeviceParam, getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, getGaLinks } from "./db/deviceparams.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify } from "./deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify, type SecureCreds } from "./deviceprofile.ts";
 import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
@@ -72,6 +72,13 @@ const json = (data: unknown, status = 200) =>
 // Error responses carry a stable `code` (for client localization) plus the
 // English `message` as a fallback/log line.
 const err = (code: string, message: string, status = 400) => json({ error: { code, message } }, status);
+
+// Data Secure credentials for a device, or undefined for a non-secure one. When a
+// device has a stored tool key, every bus session (read or flash) is run securely.
+function secureCredsFor(state: AppState, projectId: string, deviceId: string): SecureCreds | undefined {
+  const sec = getDeviceSecurity(state.db, projectId, deviceId, state.masterKey);
+  return sec ? { toolKey: sec.toolKey, serial: sec.serialNumber } : undefined;
+}
 
 // Validate a saved-connection payload for the connection library. Returns the
 // normalized fields, or an English error string on invalid input.
@@ -593,7 +600,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return readDeviceState({
             ia: dev.ia, appXml,
-            connection: conn,
+            connection: conn, secure: secureCredsFor(state, id, deviceId),
             liveParams: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
           });
         },
@@ -654,7 +661,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceGroupAddresses({
             projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
-            connection: conn, dataDir: state.dataDir,
+            connection: conn, secure: secureCredsFor(state, id, deviceId), dataDir: state.dataDir,
             dryRun: dryGa, onProgress: progress,
           });
         },
@@ -690,7 +697,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           if (bus.activeProjectId) await bus.disconnect();
           return flashDeviceParameters({
             projectId: id, deviceId, ia: dev.ia, appXml,
-            connection: conn,
+            connection: conn, secure: secureCredsFor(state, id, deviceId),
             params: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), dataDir: state.dataDir,
             dryRun: dryParams, onProgress: progress,
           });
