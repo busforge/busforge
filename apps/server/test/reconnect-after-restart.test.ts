@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { reconnectAfterRestart } from "../src/deviceprofile.ts";
+import { reconnectAfterRestart, verifySettled } from "../src/deviceprofile.ts";
 
 // A minimal stand-in for KnxDevice: deviceDescriptor() throws for the first `failProbes`
 // attempts (simulating a device still rebooting after the LoadProcedure restart), then answers.
@@ -38,5 +38,30 @@ describe("reconnectAfterRestart", () => {
     await expect(reconnectAfterRestart(dev, { initialMs: 0, delayMs: 0, tries: 3 }))
       .rejects.toThrow(/device not answering/);
     expect(calls.connect).toBe(3); // tried exactly `tries` times
+  });
+});
+
+describe("verifySettled", () => {
+  test("matches on the first read (no wasted re-read)", async () => {
+    let reads = 0;
+    const r = await verifySettled(async () => { reads++; return 7; }, (v) => v === 7, 0);
+    expect(r.ok).toBe(true);
+    expect(reads).toBe(1);
+  });
+
+  test("absorbs a transient mismatch: re-reads once and succeeds", async () => {
+    let reads = 0;
+    // first read is a settling-transient (wrong), second read is correct
+    const r = await verifySettled(async () => { reads++; return reads === 1 ? 0 : 7; }, (v) => v === 7, 0);
+    expect(r.ok).toBe(true);
+    expect(reads).toBe(2); // exactly one re-read
+    expect(r.value).toBe(7);
+  });
+
+  test("a genuine mis-write still fails (mismatch persists on re-read)", async () => {
+    let reads = 0;
+    const r = await verifySettled(async () => { reads++; return 0; }, (v) => v === 7, 0);
+    expect(r.ok).toBe(false);
+    expect(reads).toBe(2); // tried once more, still wrong
   });
 });

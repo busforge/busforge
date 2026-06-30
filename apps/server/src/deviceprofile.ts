@@ -63,6 +63,17 @@ export async function reconnectAfterRestart(
   throw lastErr instanceof Error ? lastErr : new Error("device did not answer after restart");
 }
 
+// A post-restart verify read can transiently mismatch while a slow device is still settling its
+// memory (it answers the reconnect probe before every byte is stable). Read, check, and on a
+// mismatch settle briefly and read ONCE more before declaring failure, so a momentary read does
+// not report a successful flash as failed. A genuine mis-write still fails (it persists on re-read).
+// Returns the final readback and whether it matched. Settle is injectable for tests.
+export async function verifySettled<T>(read: () => Promise<T>, ok: (v: T) => boolean, settleMs = 1500): Promise<{ value: T; ok: boolean }> {
+  let value = await read();
+  if (!ok(value)) { await sleep(settleMs); value = await read(); }
+  return { value, ok: ok(value) };
+}
+
 const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
@@ -312,8 +323,11 @@ export class SystemBProfile extends DeviceProfile {
 
     // The device restarts after load-completed; reconnect and verify ONLY the owned bytes.
     await reconnectAfterRestart(dev);
-    const back = await dev.memRead(await dev.tableAddr(LSM), image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t));
-    const verified = verifyRelativeOwned(back, target);
+    const verifyAddr = await dev.tableAddr(LSM);
+    const { ok: verified } = await verifySettled(
+      () => dev.memRead(verifyAddr, image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t)),
+      (back) => verifyRelativeOwned(back, target),
+    );
     return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: true, verified, backup };
   }
 
@@ -339,8 +353,10 @@ export class SystemBProfile extends DeviceProfile {
     await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
     await reconnectAfterRestart(dev);
     ctx.onProgress?.("verify");
-    const back = await readGroupTables(dev);
-    const verified = back.addr.equals(addr) && back.assoc.equals(assoc);
+    const { ok: verified } = await verifySettled(
+      () => readGroupTables(dev),
+      (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+    );
     return { mask, imageBytes, diffBytes, changed: true, flashed: true, verified, backup };
   }
 }
@@ -427,11 +443,14 @@ export class System7Profile extends DeviceProfile {
     await reconnectAfterRestart(dev);
     let verified = true;
     for (const t of targets) {
-      const back = await dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n));
       // Verify only user-facing owned bytes (t.verify). Access="None" device-internal markers
       // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
       // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
-      for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) { verified = false; break; }
+      const { ok } = await verifySettled(
+        () => dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n)),
+        (back) => { for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) return false; return true; },
+      );
+      if (!ok) { verified = false; break; }
     }
     return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: true, verified, backup };
   }
@@ -474,8 +493,10 @@ export class System7Profile extends DeviceProfile {
     await flashGroupTablesMv0705(dev, { addr, assoc });
     await reconnectAfterRestart(dev);
     ctx.onProgress?.("verify");
-    const back = await readGroupTablesMv0705(dev);
-    const verified = back.addr.equals(addr) && back.assoc.equals(assoc);
+    const { ok: verified } = await verifySettled(
+      () => readGroupTablesMv0705(dev),
+      (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+    );
     return { mask, imageBytes, diffBytes, changed: true, flashed: true, verified, backup };
   }
 }
