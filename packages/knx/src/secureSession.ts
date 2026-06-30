@@ -29,14 +29,18 @@ export class SecureSession {
   private toolKey: Buffer;
   readonly src: number;
   readonly dst: number;
+  // The target device's 6-byte serial, needed for the Sync request. Optional: only
+  // the Sync flow uses it; pure wrap/unwrap and explicit buildSyncRequest do not.
+  readonly serial: Buffer;
   // Our outgoing tool-access sequence. Set from a Sync at session start; strictly
   // increasing per sent secure frame (0 is never sent).
   private seq: bigint;
 
-  constructor(opts: { toolKey: Buffer; src: number; dst: number; seq?: bigint }) {
+  constructor(opts: { toolKey: Buffer; src: number; dst: number; serial?: Buffer; seq?: bigint }) {
     this.toolKey = opts.toolKey;
     this.src = opts.src;
     this.dst = opts.dst;
+    this.serial = opts.serial ?? Buffer.alloc(6);
     this.seq = opts.seq ?? 1n;
   }
 
