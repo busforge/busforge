@@ -8,3 +8,4 @@ export { KnxDevice } from "./device.ts";
 export * from "./flash.ts";
 export * from "./loadrunner.ts";
 export { secureEncode, secureDecode, SCF, SCF_TOOL_DATA, type SecureFields } from "./secure.ts";
+export { SecureSession } from "./secureSession.ts";
