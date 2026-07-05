@@ -145,7 +145,14 @@ export function DeviceConfig() {
     });
   const doReadBack = () =>
     readBack.mutate(undefined, {
-      onSuccess: (v) => { const n = countChanged(v); toast.success(n ? t("device.readDrift", { count: n }) : t("device.readNoDrift")); },
+      onSuccess: (v) => {
+        const n = countChanged(v);
+        toast.success(n ? t("device.readDrift", { count: n }) : t("device.readNoDrift"));
+        // Device associations that mapped to no known com-object are NOT in the baseline;
+        // drift there stays invisible. Say so instead of implying a complete read.
+        const gaps = v.readback?.linkGaps ?? 0;
+        if (gaps > 0) toast.warning(t("device.readLinkGaps", { count: gaps }));
+      },
       onError: (e) => toast.error(t("device.readError"), { description: errMsg(t, e) }),
     });
   const afterFlash = () => {

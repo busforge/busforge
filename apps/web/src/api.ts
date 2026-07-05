@@ -50,7 +50,10 @@ export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: n
 // `module` is present when busforge ships a native replacement for that DCA.
 export interface DcaModuleInfo { id: string; displayName: string; category: string; compatible: boolean; deviceVersion: number; supportedVersions: number[] }
 export interface DcaInfo { hint: string; module?: DcaModuleInfo }
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; readbackSupport?: { params: boolean; links: boolean }; }
+// `readback` is present only on a read-back response: what the read actually covered.
+// `linkGaps` counts device associations that could not be mapped to a com-object and
+// are therefore missing from the baseline (drift there is invisible).
+export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; readbackSupport?: { params: boolean; links: boolean }; readback?: { paramsRead: boolean; linksRead: boolean; linkGaps: number }; }
 // One device's communication object on a group address, for the GA details overlay.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
@@ -60,7 +63,12 @@ export interface GaComObj {
 // Which devices use a group address, split into senders (transmit) and receivers
 // (write), plus the address's readable range path.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
-export interface FlashResult { mask: string; imageBytes: number; diffBytes: number; changed: boolean; flashed: boolean; verified?: boolean; backup: string; }
+// Discriminated union mirroring the server: a "flashed" result always states whether
+// the post-flash verify matched (no optional tri-state).
+export type FlashResult =
+  | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
+  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
 export type TaskKind = "read" | "flash-params" | "flash-ga";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";

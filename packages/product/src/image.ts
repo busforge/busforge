@@ -98,6 +98,12 @@ function parseIPv4(s: string): [number, number, number, number] | undefined {
   return octets as [number, number, number, number];
 }
 
+// The type bases encode() can represent in the parameter image. MUST stay in sync with
+// encode() below: everything else (Text, Time, Color, BinaryValue, Other) writes nothing
+// and therefore is never programmed by a flash. Consumers use this to avoid claiming
+// such a parameter as "programmed" (e.g. the post-flash baseline reset).
+export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "Number", "Float", "IPAddress"]);
+
 export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string): boolean {
   if (!Number.isFinite(offset)) return false; // malformed memory (no/garbage Offset): no location to write
   if (type.base === "IPAddress") {

@@ -240,12 +240,18 @@ export function revertDeviceLink(db: Database, projectId: string, deviceId: stri
 }
 
 // Mark a device's parameters as programmed (baseline := current live values).
-export function resetParamBase(db: Database, projectId: string, deviceId: string): void {
+// `keepDrift` refs are exempt: their old baseline rows survive untouched. Used for
+// params the flash can never write (memory-backed text/colour): adopting their live
+// value into the baseline would clear a "changed" chip for a value that never reached
+// the device.
+export function resetParamBase(db: Database, projectId: string, deviceId: string, keepDrift?: Set<string>): void {
+  const keep = [...(keepDrift ?? [])];
+  const notIn = keep.length ? ` AND param_ref_id NOT IN (${keep.map(() => "?").join(",")})` : "";
   db.transaction(() => {
-    db.prepare("DELETE FROM device_param_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    db.prepare(`DELETE FROM device_param_base WHERE project_id = ? AND device_id = ?${notIn}`).run(projectId, deviceId, ...keep);
     db.prepare(`INSERT INTO device_param_base (project_id, device_id, param_ref_id, value)
-      SELECT project_id, device_id, param_ref_id, value FROM device_parameters WHERE project_id = ? AND device_id = ?`)
-      .run(projectId, deviceId);
+      SELECT project_id, device_id, param_ref_id, value FROM device_parameters WHERE project_id = ? AND device_id = ?${notIn}`)
+      .run(projectId, deviceId, ...keep);
   })();
 }
 

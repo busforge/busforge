@@ -105,15 +105,14 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
   }
 }
 
-export interface FlashResult {
-  mask: string;
-  imageBytes: number;
-  diffBytes: number;
-  changed: boolean;
-  flashed: boolean;
-  verified?: boolean;
-  backup: string;
-}
+// The outcome of a flash operation, as a discriminated union so honesty is
+// compiler-enforced: a "flashed" result MUST state whether it verified. The old shape
+// (`verified?: boolean`) treated a forgotten field as verified at the persistence
+// boundary (baseline reset), which is exactly the fake-green class this codebase bans.
+export type FlashResult =
+  | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
+  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
 // The programmed-baseline read back off the bus (see readState). `paramBase` is sparse like
 // device_parameters; the caller persists only the aspects whose *Read flag is true.
@@ -354,8 +353,8 @@ export class SystemBProfile extends DeviceProfile {
     writeFileSync(backup, current);
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
-    if (diffBytes === 0) return { mask, imageBytes: image.length, diffBytes, changed: false, flashed: false, backup };
-    if (ctx.dryRun) return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: false, backup };
+    if (diffBytes === 0) return { kind: "unchanged", mask, imageBytes: image.length, backup };
+    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: image.length, diffBytes, backup };
 
     await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => ctx.onProgress?.("write", d, t));
 
@@ -366,7 +365,7 @@ export class SystemBProfile extends DeviceProfile {
       () => dev.memRead(verifyAddr, image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t)),
       (back) => verifyRelativeOwned(back, target),
     );
-    return { mask, imageBytes: image.length, diffBytes, changed: true, flashed: true, verified, backup };
+    return { kind: "flashed", mask, imageBytes: image.length, diffBytes, verified, backup };
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
@@ -384,8 +383,8 @@ export class SystemBProfile extends DeviceProfile {
 
     const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
     const imageBytes = addr.length + assoc.length;
-    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { mask, imageBytes, diffBytes: 0, changed: false, flashed: false, backup };
-    if (ctx.dryRun) return { mask, imageBytes, diffBytes, changed: true, flashed: false, backup };
+    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { kind: "unchanged", mask, imageBytes, backup };
+    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes, diffBytes, backup };
 
     ctx.onProgress?.("write");
     await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
@@ -395,7 +394,7 @@ export class SystemBProfile extends DeviceProfile {
       () => readGroupTables(dev),
       (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
     );
-    return { mask, imageBytes, diffBytes, changed: true, flashed: true, verified, backup };
+    return { kind: "flashed", mask, imageBytes, diffBytes, verified, backup };
   }
 }
 
@@ -475,8 +474,8 @@ export class System7Profile extends DeviceProfile {
     if (unplaceable.length) {
       throw new ApiError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
     }
-    if (changedBytes === 0) return { mask, imageBytes: totalBytes, diffBytes: 0, changed: false, flashed: false, backup };
-    if (ctx.dryRun) return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: false, backup };
+    if (changedBytes === 0) return { kind: "unchanged", mask, imageBytes: totalBytes, backup };
+    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: totalBytes, diffBytes: changedBytes, backup };
 
     let wrote = 0;
     await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
@@ -493,7 +492,7 @@ export class System7Profile extends DeviceProfile {
       );
       if (!ok) { verified = false; break; }
     }
-    return { mask, imageBytes: totalBytes, diffBytes: changedBytes, changed: true, flashed: true, verified, backup };
+    return { kind: "flashed", mask, imageBytes: totalBytes, diffBytes: changedBytes, verified, backup };
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
@@ -527,8 +526,8 @@ export class System7Profile extends DeviceProfile {
 
     const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
     const imageBytes = addr.length + assoc.length;
-    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { mask, imageBytes, diffBytes: 0, changed: false, flashed: false, backup };
-    if (ctx.dryRun) return { mask, imageBytes, diffBytes, changed: true, flashed: false, backup };
+    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { kind: "unchanged", mask, imageBytes, backup };
+    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes, diffBytes, backup };
 
     ctx.onProgress?.("write");
     await flashGroupTablesMv0705(dev, { addr, assoc });
@@ -538,7 +537,7 @@ export class System7Profile extends DeviceProfile {
       () => readGroupTablesMv0705(dev),
       (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
     );
-    return { mask, imageBytes, diffBytes, changed: true, flashed: true, verified, backup };
+    return { kind: "flashed", mask, imageBytes, diffBytes, verified, backup };
   }
 }
 

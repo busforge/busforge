@@ -220,6 +220,8 @@ const en = {
     readDrift_one: "Device read, {{count}} difference",
     readDrift_other: "Device read, {{count}} differences",
     readNoDrift: "Device read, no differences",
+    readLinkGaps_one: "{{count}} device association could not be safely folded into the baseline (unknown communication object, or a module association without a project link). Drift there stays invisible.",
+    readLinkGaps_other: "{{count}} device associations could not be safely folded into the baseline (unknown communication object, or module associations without a project link). Drift there stays invisible.",
     readError: "Could not read device",
     gaHidden_one: "{{count}} group address hidden",
     gaHidden_other: "{{count}} group addresses hidden",

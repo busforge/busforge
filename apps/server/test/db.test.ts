@@ -151,6 +151,13 @@ describe("projects", () => {
     // 0.xml is sparse) still counts as a change.
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 1 });
+
+    // keepDrift: a ref the flash could not write keeps its old baseline row, so its
+    // "changed" marker survives the reset, while everything else is adopted.
+    setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "61");
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 2 });
+    resetParamBase(db, "p1", dev, new Set(["M-X_A-1_P-9_R-1"]));
+    expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 1 }); // only the kept-drift ref remains changed
   });
 
   test("tracks link changes and resets on flash", () => {

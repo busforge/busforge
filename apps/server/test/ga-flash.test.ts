@@ -61,8 +61,8 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const res = await new System7Profile("system-7", "MV-0705", null).flashGroupTables(asDev(dev), "MV-0705", {
       projectId: "p", deviceId: "d", ia: "1.2.17", links: repointed, dataDir, dryRun: false,
     });
-    expect(res.flashed).toBe(true);
-    expect(res.verified).toBe(true);
+    expect(res.kind).toBe("flashed");
+    expect(res.kind === "flashed" && res.verified).toBe(true);
     const built = buildGroupTablesMv0705(repointed, ia);
     expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true);
   });
@@ -81,7 +81,7 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const res = await new System7Profile("system-7", "MV-0705", cfgCap(22, 22)).flashGroupTables(asDev(dev), "MV-0705", {
       projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false, // grow 1 -> 4, within 22
     });
-    expect(res.flashed).toBe(true);
+    expect(res.kind).toBe("flashed");
     const built = buildGroupTablesMv0705(grownLinks, ia);
     expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true); // the larger table was written
   });

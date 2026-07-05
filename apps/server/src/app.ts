@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, existsSync, readdirSync } from "node:f
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { loadKnxproj, readAppProgram, extractAppPrograms, extractCatalogProducts, appProgramId, readBaggage, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
 import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertProject, createProject, addDevice, listProjects, getProject, deleteProject, renameProject, projectExists, getProjectConnection, setProjectConnection, getGaMeta, countSpacesByType } from "./db/projects.ts";
@@ -608,8 +608,17 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       // Persist ONLY the aspects actually read off the device. An aspect we couldn't
       // read keeps its existing baseline rather than getting a fabricated/garbage one.
       if (rb.paramsRead) replaceParamBase(db, id, deviceId, rb.paramBase);
-      if (rb.linksRead) replaceLinkBase(db, id, deviceId, readbackLinkBase(state, id, deviceId, rb.links));
-      return deviceConfig(state, id, deviceId, body.lang);
+      let linkGaps = 0;
+      if (rb.linksRead) {
+        const lb = readbackLinkBase(state, id, deviceId, rb.links);
+        replaceLinkBase(db, id, deviceId, lb.base);
+        linkGaps = lb.gaps;
+      }
+      // `readback` tells the client what this read actually covered: `linkGaps` counts
+      // device associations that could not be mapped onto a known com-object and are
+      // therefore NOT in the baseline (drift there stays invisible). Surfaced instead of
+      // letting the read-back pass as a complete links baseline.
+      return deviceConfig(state, id, deviceId, body.lang, { readback: { paramsRead: rb.paramsRead, linksRead: rb.linksRead, linkGaps } });
     }
 
     // /api/projects/:id/devices/:deviceId/secure-identify -> read a Data Secure device's
@@ -668,7 +677,8 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
       );
       // The device's group tables now match our links: clear the marker for ONLY the links we
       // actually flashed (skipped links stay as drift; see resetLinkBase / resolveDeviceLinks).
-      if (result.flashed && result.verified !== false) resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
+      // An unverified flash keeps the old baseline: nothing was confirmed on the device.
+      if (result.kind === "flashed" && result.verified) resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
       return json(result);
     }
 
@@ -703,8 +713,11 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
           });
         },
       );
-      // The device's parameter segment now matches our values: clear the marker.
-      if (result.flashed && result.verified !== false) resetParamBase(db, id, deviceId);
+      // The device's parameter segment now matches our values: clear the marker, EXCEPT for
+      // params the flash can never write (memory-backed text/colour, encode() refuses them):
+      // their rows were not programmed, so adopting them into the baseline would clear a
+      // "changed" chip for a value that never reached the device.
+      if (result.kind === "flashed" && result.verified) resetParamBase(db, id, deviceId, unflashableParamRefs(state, id, deviceId));
       return json(result);
     }
 
@@ -801,7 +814,10 @@ function resolveParamForEdit(state: AppState, projectId: string, deviceId: strin
 }
 
 // Build a device's configuration view and overlay each com-object's stored GA link.
-function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string): Response {
+// `extra` is merged into the response; typed so the server-side shape cannot silently
+// drift from the client's DeviceConfigView contract (api.ts).
+interface ReadbackSummary { readback: { paramsRead: boolean; linksRead: boolean; linkGaps: number } }
+function deviceConfig(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary): Response {
   const { db } = state;
   if (!getDeviceForFlash(db, projectId, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
@@ -838,7 +854,34 @@ function deviceConfig(state: AppState, projectId: string, deviceId: string, lang
       it.comObject.changed = changed.links.has(key);
     }
   }
-  return json(view);
+  return json(extra ? { ...view, ...extra } : view);
+}
+
+// Parameter refs a flash can never write, among the device's STORED overrides (the rows
+// resetParamBase would adopt): memory-backed params whose type base the image codec does
+// not represent (text/time/colour/binary/other; IMAGE_WRITABLE_BASES mirrors encode()).
+// Resolved on the flat application model, not the visibility-filtered view, so a
+// currently-hidden text param is covered too. A ref we cannot resolve at all is kept
+// conservatively: we cannot prove the flash wrote it. Memory-less params are NOT kept:
+// there is nothing on the device to program or drift, so adopting them is honest.
+function unflashableParamRefs(state: AppState, projectId: string, deviceId: string): Set<string> {
+  const refs = new Set<string>();
+  const app = loadApp(state, projectId, deviceId);
+  const stored = getDeviceParams(state.db, projectId, deviceId);
+  if (!app) return new Set(stored.keys());
+  for (const refId of stored.keys()) {
+    // A module-instance ref (…_MI-n_…) resolves through its ModuleDef ref.
+    let resolved: { base: string; hasMemory: boolean } | undefined;
+    for (const rid of [refId, refId.replace(/_MI-\d+/, "")]) {
+      const ref = app.refs.get(rid);
+      const param = ref ? app.params.get(ref.paramId) : undefined;
+      const t = param ? app.types.get(param.typeId) : undefined;
+      if (param && t) { resolved = { base: t.base, hasMemory: param.hasMemory }; break; }
+    }
+    if (!resolved) refs.add(refId);
+    else if (resolved.hasMemory && !IMAGE_WRITABLE_BASES.has(resolved.base)) refs.add(refId);
+  }
+  return refs;
 }
 
 // One device's communication object on a group address, for the GA details
@@ -986,11 +1029,16 @@ const sameGaSet = (a: number[], b: number[]) => { const x = [...a].sort((m, n) =
 // so a com-object missing from the device read is genuinely unassigned (cleared).
 // Module devices can't reverse instance numbering reliably, so only links that map
 // onto a known live com-object are trusted; others are neither invented nor dropped.
-export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<string, number[]>, hasModules: boolean): Map<string, number[]> {
+// `gaps` counts the device links that were NOT folded into the baseline (module
+// device-only links on unknown keys): drift there stays invisible, and the caller
+// must surface that instead of presenting the read as a complete links baseline.
+export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<string, number[]>, hasModules: boolean): { base: Map<string, number[]>; gaps: number } {
   const base = new Map(live);
+  let gaps = 0;
   if (hasModules) {
     for (const [key, dev] of device) {
-      if (live.has(key) && !sameGaSet(live.get(key) ?? [], dev)) base.set(key, dev);
+      if (live.has(key)) { if (!sameGaSet(live.get(key) ?? [], dev)) base.set(key, dev); }
+      else gaps++;
     }
   } else {
     for (const key of new Set([...live.keys(), ...device.keys()])) {
@@ -999,14 +1047,16 @@ export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<strin
       if (!sameGaSet(proj, dev)) { if (dev.length) base.set(key, dev); else base.delete(key); }
     }
   }
-  return base;
+  return { base, gaps };
 }
 
 // Turn the links read off a device (keyed by com-object number) into the sparse
 // link baseline keyed by stored ref id: copy the live links, then override only
 // the com-objects whose device GA set differs from the project, so the live-vs-
 // base diff flags exactly the drift. Inverse of resolveDeviceLinks' numbering.
-function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[]): Map<string, number[]> {
+// `gaps` additionally counts device links whose com-object number maps to no known
+// ref id at all (stale/foreign associations): they cannot enter the baseline.
+function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[]): { base: Map<string, number[]>; gaps: number } {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
@@ -1021,7 +1071,13 @@ function readbackLinkBase(state: AppState, projectId: string, deviceId: string, 
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") keyByNum.set(it.comObject.number, it.comObject.refId.slice(app.id.length + 1));
 
   const device = new Map<string, number[]>();
-  for (const l of deviceLinks) { const key = keyByNum.get(l.comObjNum); if (key) device.set(key, l.gaRaws); }
+  let unmapped = 0;
+  for (const l of deviceLinks) {
+    const key = keyByNum.get(l.comObjNum);
+    if (key) device.set(key, l.gaRaws);
+    else unmapped++; // association on a com-object number the app model does not know
+  }
 
-  return mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, app.hasModules);
+  const merged = mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, app.hasModules);
+  return { base: merged.base, gaps: merged.gaps + unmapped };
 }

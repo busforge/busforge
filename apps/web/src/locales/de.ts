@@ -220,6 +220,8 @@ const de: Messages = {
     readDrift_one: "Gerät gelesen, {{count}} Abweichung",
     readDrift_other: "Gerät gelesen, {{count}} Abweichungen",
     readNoDrift: "Gerät gelesen, keine Abweichungen",
+    readLinkGaps_one: "{{count}} Geräte-Verknüpfung konnte nicht sicher in die Baseline übernommen werden (unbekanntes Kommunikationsobjekt oder Modul-Verknüpfung ohne Projekt-Link). Abweichungen dort bleiben unsichtbar.",
+    readLinkGaps_other: "{{count}} Geräte-Verknüpfungen konnten nicht sicher in die Baseline übernommen werden (unbekanntes Kommunikationsobjekt oder Modul-Verknüpfungen ohne Projekt-Link). Abweichungen dort bleiben unsichtbar.",
     readError: "Konnte Gerät nicht lesen",
     gaHidden_one: "{{count}} Gruppenadresse ausgeblendet",
     gaHidden_other: "{{count}} Gruppenadressen ausgeblendet",

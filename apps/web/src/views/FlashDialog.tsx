@@ -60,7 +60,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const anyFlashing = list.some((x) => x.p.flashing);
   const anyDone = list.some((x) => x.p.done);
   // Only targets that actually differ get written; an in-sync target is skipped.
-  const toFlash = list.filter((x) => x.p.dry?.changed && !x.p.done);
+  const toFlash = list.filter((x) => x.p.dry?.kind === "dryRun" && !x.p.done);
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
   // Connection-class failures are detected on the raw (English) message.
   const firstError = list.find((x) => x.p.error)?.p.error;
@@ -74,7 +74,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     try {
       for (const { tg } of toFlash) {
         setPart(tg, { flashing: true, error: null });
-        try { const r = await runFlash(tg, projectId, device.id); setPart(tg, { done: r, flashing: false }); if (r.flashed) flashedAny = true; }
+        try { const r = await runFlash(tg, projectId, device.id); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; }
         catch (e) { setPart(tg, { error: e, flashing: false }); }
       }
     } finally {
@@ -86,12 +86,15 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const partName = (tg: FlashTarget) => t(tg === "ga" ? "flash.partGAs" : "flash.partParams");
   const partLine = (p: Part) => {
     if (p.flashing) return <span className="flex items-center gap-2 text-primary"><Loader2 className="size-4 animate-spin" /> {t("flash.programming")}</span>;
-    if (p.done) return p.done.verified
-      ? <span className="flex items-center gap-2 text-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}</span>
-      : <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {t("flash.doneUnverified")}</span>;
+    if (p.done) {
+      if (p.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>; // raced to in-sync between preview and write
+      return p.done.verified
+        ? <span className="flex items-center gap-2 text-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}</span>
+        : <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {t("flash.doneUnverified")}</span>;
+    }
     if (p.error) return <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
     if (p.checking) return <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>;
-    if (p.dry) return p.dry.changed
+    if (p.dry) return p.dry.kind === "dryRun"
       ? <span>{t("flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}</span>
       : <span className="text-muted-foreground">{t("flash.inSync")}</span>;
     return <span className="text-muted-foreground">…</span>;
