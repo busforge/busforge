@@ -98,6 +98,13 @@ function parseIPv4(s: string): [number, number, number, number] | undefined {
   return octets as [number, number, number, number];
 }
 
+// Integer-codec width limit and byte-width rule, shared by encode/decode here and the
+// ownership mechanics in deviceimage.ts (which previously mirrored them by comment only).
+// writeUIntBE/IntBE cap at 6 bytes; anything wider is an ETS-computed table, not a
+// static parameter (see deviceimage.ts).
+export const MAX_INT_BYTES = 6;
+export const byteWidth = (sizeInBit: number): number => (sizeInBit >= 8 ? sizeInBit >> 3 : 1);
+
 // The type bases encode() can represent in the parameter image. MUST stay in sync with
 // encode() below: everything else (Text, Time, Color, BinaryValue, Other) writes nothing
 // and therefore is never programmed by a flash. Consumers use this to avoid claiming
@@ -131,9 +138,9 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
   if (sizeInBit >= 8) {
     const bytes = sizeInBit >> 3;
     if (offset + bytes > img.length) return false;
-    // writeUIntBE/IntBE cap at 6 bytes. No manufacturer numeric type exceeds that in
-    // practice; refuse loudly rather than emit truncated/cryptic bytes if one appears.
-    if (bytes > 6) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
+    // No manufacturer numeric type exceeds MAX_INT_BYTES in practice; refuse loudly
+    // rather than emit truncated/cryptic bytes if one appears.
+    if (bytes > MAX_INT_BYTES) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
     if (type.signed && v < 0) img.writeIntBE(v, offset, bytes);
     else img.writeUIntBE(v, offset, bytes);
     return true;
@@ -170,7 +177,7 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   const sizeInBit = type.sizeInBit;
   if (sizeInBit >= 8) {
     const bytes = sizeInBit >> 3;
-    if (bytes > 6 || offset + bytes > img.length) return undefined; // mirror encode's refusal
+    if (bytes > MAX_INT_BYTES || offset + bytes > img.length) return undefined; // mirror encode's refusal
     return String(type.signed ? img.readIntBE(offset, bytes) : img.readUIntBE(offset, bytes));
   }
   if (offset >= img.length || bit + sizeInBit > 8) return undefined;

@@ -3,6 +3,22 @@ import type { KnxTransport } from "./transport.ts";
 import type { SecureSession } from "./secureSession.ts";
 import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, APCI, type ParsedApdu } from "./frame.ts";
 
+// Interface-object property ids and standard table-object numbers used across the
+// management/flash layer. Named once here so a transposed literal (5 vs 7 vs 13) in
+// the least-debuggable layer becomes impossible.
+export const PID = {
+  LOAD_STATE_CONTROL: 5, // LSM events (write) / LSM state (read)
+  TABLE_REFERENCE: 7,    // the table/segment base address of a load object
+  PROGRAM_ID: 13,        // manufacturer+app+version stamp validated by LoadCompleted
+  MCB_TABLE: 27,         // memory control block (per-segment CRC bookkeeping)
+} as const;
+export const OBJ = {
+  ADDR_TABLE: 1,   // group address table
+  ASSOC_TABLE: 2,  // association table
+  COMOBJ_TABLE: 3, // com-object table
+  APP_PROGRAM: 4,  // application program / parameter segment
+} as const;
+
 // Connection-oriented KNX management on top of the tunnel: T_Connect, numbered
 // requests with T_ACK + retransmission, ACK-the-response-before-the-next-request.
 // Reads are verified on real hardware; writes/flash are ported from the proven
@@ -119,8 +135,6 @@ export class KnxDevice {
     // boundary). On a short/empty response we shrink the request until it fits within a
     // boundary and advance only by what was actually returned.
     const out = Buffer.alloc(len);
-    const total = Math.ceil(len / chunk);
-    let done = 0;
     let pos = 0;
     while (pos < len) {
       if (signal?.aborted) throw new Error("read aborted");
@@ -137,12 +151,15 @@ export class KnxDevice {
       }
       data.copy(out, pos);
       pos += want;
-      onProgress?.(Math.min(++done, total), total);
+      // Progress in BYTES (done, total): chunk-count progress leaked the transfer
+      // granularity to every caller, which then hardcoded the chunk size to sum
+      // progress across segments (and desynced if the default ever changed).
+      onProgress?.(pos, len);
     }
     return out;
   }
   async tableAddr(obj: number): Promise<number> {
-    const b = await this.propRead(obj, 7);
+    const b = await this.propRead(obj, PID.TABLE_REFERENCE);
     let a = 0; for (const x of b) a = (a << 8) | x; return a;
   }
 

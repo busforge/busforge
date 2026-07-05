@@ -29,7 +29,8 @@ export interface Task {
   finishedAt: number | null;
 }
 
-// Report progress from inside a job: a phase label plus an optional chunk count.
+// Report progress from inside a job: a phase label plus optional done/total counters
+// (unit-agnostic; memory reads report bytes).
 export type ProgressFn = (phase: string, done?: number, total?: number) => void;
 
 export class CancelledError extends Error {

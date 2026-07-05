@@ -31,7 +31,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
 
   // discovery: enumerate gateways on the LAN / KNX-USB sticks for the picker
   if (seg.length === 3 && seg[2] === "discover-ip" && req.method === "GET") {
-    return json(await searchInterfaces());
+    // A socket failure (bind/permission/network) is NOT "no gateways found":
+    // surface it as a coded error so the picker can say the search failed.
+    try { return json(await searchInterfaces()); }
+    catch (e) { return err("DISCOVERY_FAILED", `gateway discovery could not run: ${(e as Error).message}`); }
   }
   if (seg.length === 3 && seg[2] === "discover-usb" && req.method === "GET") {
     try { return json(await listUsbInterfaces()); }

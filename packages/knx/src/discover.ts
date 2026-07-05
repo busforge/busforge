@@ -37,8 +37,11 @@ function parseSearchResponse(body: Buffer): GatewayInfo | null {
 
 // KNXnet/IP discovery: multicast SEARCH_REQUEST, collect SEARCH_RESPONSEs until
 // the timeout. Returns [] when no interface answers (e.g. nothing on the LAN).
+// A SOCKET failure (bind/permission/network) rejects instead: "the search could
+// not run" must stay distinguishable from "the search ran and found nothing",
+// or a misconfigured host looks like an empty LAN in the picker.
 export function searchInterfaces(timeoutMs = 3000): Promise<GatewayInfo[]> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
     const found = new Map<string, GatewayInfo>();
     sock.on("message", (m) => {
@@ -48,7 +51,7 @@ export function searchInterfaces(timeoutMs = 3000): Promise<GatewayInfo[]> {
       const g = parseSearchResponse(m.subarray(6));
       if (g) found.set(g.ip, g);
     });
-    sock.on("error", () => { try { sock.close(); } catch { /* */ } resolve([]); });
+    sock.on("error", (e) => { try { sock.close(); } catch { /* */ } reject(e); });
     sock.bind(0, () => {
       const local = localIPv4();
       const reqPort = sock.address().port;

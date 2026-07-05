@@ -126,6 +126,14 @@ function canonical(mask: string): string {
   return `MV-${parseInt(hex, 16).toString(16).toUpperCase().padStart(4, "0")}`;
 }
 
+// Canonical mask equality: "MV-07B0", "07B0", "7b0" all name the same mask. Used by the
+// device-session safety gate (wrong device/application aborts), which previously did a
+// SUBSTRING match. Unparseable input never equals anything (fail closed).
+export function sameMask(a: string, b: string): boolean {
+  const ca = canonical(a), cb = canonical(b);
+  return ca !== "" && ca === cb;
+}
+
 // Look up a mask version. An unrecognised (but parseable) mask resolves to an "unknown"
 // family with no memory model, so the caller still gets a deterministic, honestly-unsupported
 // answer rather than a crash. An unparseable mask resolves to hex 0 / unknown.

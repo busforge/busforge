@@ -1,4 +1,4 @@
-import { KnxDevice } from "./device.ts";
+import { KnxDevice, PID } from "./device.ts";
 import { lsmEvent, lsmState, allocSegment, LSM, STATE } from "./flash.ts";
 
 // Generic executor for a device's load procedure, expressed as a flat list of typed
@@ -26,7 +26,7 @@ export type LoadStep =
 
 export type LoadPlan = LoadStep[];
 
-const stateName = (s: number) => Object.keys(STATE).find((k) => (STATE as any)[k] === s) ?? `?${s}`;
+const stateName = (s: number) => Object.entries(STATE).find(([, v]) => v === s)?.[0] ?? `?${s}`;
 
 export interface RunOpts {
   onStep?: (i: number, step: LoadStep, total: number) => void;
@@ -54,7 +54,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "alloc": await allocSegment(dev, step.lsm, step.size); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
       case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
-      case "stampAppId": await dev.propWrite(step.lsm, 13, step.data); break;
+      case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED);
         const s = await lsmState(dev, step.lsm);

@@ -81,6 +81,7 @@ const de: Messages = {
     failed: "Import fehlgeschlagen",
     gapsTitle: "Einige Daten konnten nicht vollständig importiert werden:",
     gapNoProgram: "{{count}} Gerät(e) haben kein Applikationsprogramm in dieser Datei und lassen sich nicht öffnen, konfigurieren oder flashen",
+    gapBaggage: "Der eingebettete Gerätedaten-Speicher der Datei (z. B. ein DALI-Gateway-Backup) konnte nicht gelesen werden und wurde nicht importiert.",
     gapUnresolvedLinks: "{{count}} Gruppenadress-Verknüpfung(en) verweisen auf eine Adresse, die nicht im Projekt ist, und wurden verworfen",
   },
   export: {
@@ -147,6 +148,7 @@ const de: Messages = {
     DEVICE_READBACK_UNSUPPORTED: "Das Zurücklesen des Gerätezustands vom Bus wird für dieses Gerät noch nicht unterstützt (z. B. ein Absolut-Segment-Gerät MV-0705). Seine Werte lassen sich nicht gegen das Gerät verifizieren, daher wurde kein Rücklesen durchgeführt.",
     DEVICE_FAMILY_UNSUPPORTED: "Die Gerätefamilie ist bekannt, aber noch nicht implementiert (z. B. System 1 / BCU1). Der Vorgang wurde abgelehnt, statt das Speicherlayout zu raten.",
     READ_ABORTED: "Lesen abgebrochen.",
+    DISCOVERY_FAILED: "Die Gateway-Suche konnte nicht ausgeführt werden (Netzwerk- oder Berechtigungsproblem). Das ist nicht dasselbe wie ein leeres Ergebnis.",
     INTERNAL: "Etwas ist schiefgelaufen.",
   },
   devices: {

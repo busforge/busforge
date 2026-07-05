@@ -92,7 +92,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // can be verified against the device. When false, the change indicators reflect
   // edits-vs-import only and were NEVER confirmed against the hardware, so the UI
   // must say so rather than imply a verified "no changes".
-  const rbCaps = classify(app).capabilities(getDeviceParams(db, projectId, deviceId), getDeviceModules(db, projectId, deviceId));
+  const rbCaps = classify(app).capabilities();
   view.readbackSupport = { params: rbCaps.readParams, links: rbCaps.readLinks };
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);

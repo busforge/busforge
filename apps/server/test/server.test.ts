@@ -82,14 +82,14 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
   test("System 7 (MV-0705) absolute-segment device: reads and flashes both aspects", () => {
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
-    const caps = classify(cfg).capabilities(new Map());
+    const caps = classify(cfg).capabilities();
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
   });
 
   test("System B device: read-back and GA flash both supported", () => {
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
-    const caps = classify(cfg).capabilities(new Map());
+    const caps = classify(cfg).capabilities();
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
   });
 
@@ -100,7 +100,7 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
     expect(cfg.mask).toBe("MV-0012");
     const profile = classify(cfg);
     expect(profile.constructor.name).toBe("UnsupportedProfile");
-    expect(profile.capabilities(new Map())).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false });
+    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false });
   });
 });
 

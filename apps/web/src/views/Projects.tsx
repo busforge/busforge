@@ -349,6 +349,10 @@ function ImportDialog({
     mutationFn: () => (analysis!.kind === "busforge" ? api.importBusforge(file!, password || undefined) : api.importProject(file!, password)),
     onSuccess: (res) => {
       toast.success(t("import.imported", { name: res.name }), { description: t("import.importedDesc", { devices: res.deviceCount, gas: res.gaCount }) });
+      // The DCA baggage store (e.g. a DALI gateway backup) could not be read: the
+      // project imported, but that data is NOT in it. Say so now instead of letting
+      // it surface later as an inexplicably empty module view.
+      if ("baggageUnreadable" in res && res.baggageUnreadable) toast.warning(t("import.gapBaggage"));
       reset();
       onOpenChange(false);
       onImported(res.id);

@@ -2,7 +2,7 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
-import { encode } from "./image.ts";
+import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 
 // Build the parameter memory image for the MV-0705 (absolute-segment) device model.
 //
@@ -18,6 +18,14 @@ import { encode } from "./image.ts";
 // docs/mv0705-spike-findings.md). Union and module-instance parameters are not yet
 // placed (toAppModel drops them), so larger devices still differ in exactly those
 // bytes until union/module support lands.
+
+// Mark a parameter's bytes as under flash authority. `verify` additionally records the
+// user-facing subset (Access="None" device-internal markers are written but excluded from
+// the post-flash comparison; the device re-stamps them on download). One home for the
+// mechanics both the absolute and the relative builder previously hand-rolled.
+function markOwned(owned: boolean[], verify: boolean[], offset: number, bytes: number, size: number, verifiable: boolean): void {
+  for (let b = 0; b < bytes && offset + b < size; b++) { owned[offset + b] = true; if (verifiable) verify[offset + b] = true; }
+}
 
 export interface DeviceSegmentImage { id: string; address: number; size: number; bytes: Buffer; }
 
@@ -88,7 +96,7 @@ export function buildAbsoluteSegmentTargets(
       for (const p of model.params.values()) {
         if (p.codeSegment !== seg.id || p.offset === undefined) continue;
         const t = model.types.get(p.typeId);
-        const bytes = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
+        const bytes = t ? byteWidth(t.sizeInBit) : 1;
         for (let b = 0; b < bytes && p.offset + b < seg.size; b++) img[p.offset + b] = 0;
       }
     }
@@ -113,8 +121,7 @@ export function buildAbsoluteSegmentTargets(
       // Access="None" params are device-internal (download markers/counters the device
       // re-stamps); they stay owned/written but are excluded from `verify` (see the type).
       const verifiable = app.params.get(ref.paramId)?.access !== "None";
-      const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
-      for (let b = 0; b < bytes && param.offset + b < seg.size; b++) { owned[param.offset + b] = true; if (verifiable) verify[param.offset + b] = true; }
+      markOwned(owned, verify, param.offset, byteWidth(type.sizeInBit), seg.size, verifiable);
     }
     out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify });
   }
@@ -178,7 +185,7 @@ export function buildRelativeSegmentTarget(
     // module in another LSM would pollute the span and exclude unrelated offsets here.
     if (p.codeSegment && model.segments.find((s) => s.id === p.codeSegment)?.lsm !== lsm) continue;
     const t = model.types.get(p.typeId);
-    const n = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
+    const n = t ? byteWidth(t.sizeInBit) : 1;
     const key = ref.id.match(/MD-\d+_M-\d+_MI-\d+/)?.[0];
     if (!key) continue;
     const s = spanByInst.get(key) ?? { min: Infinity, max: -Infinity };
@@ -207,7 +214,7 @@ export function buildRelativeSegmentTarget(
     // throw on it). Small Access="None" members with a real default (e.g. a 2-bit hidden
     // behaviour setting) are NOT computed and stay ownable below. Threshold mirrors encode().
     const wType = model.types.get(param.typeId);
-    if (wType && Number.isFinite(wType.sizeInBit) && (wType.sizeInBit >= 8 ? wType.sizeInBit >> 3 : 1) > 6) continue;
+    if (wType && Number.isFinite(wType.sizeInBit) && byteWidth(wType.sizeInBit) > MAX_INT_BYTES) continue;
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.
@@ -226,8 +233,7 @@ export function buildRelativeSegmentTarget(
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
-    const bytes = type.sizeInBit >= 8 ? type.sizeInBit >> 3 : 1;
-    for (let b = 0; b < bytes && param.offset + b < seg.size; b++) { owned[param.offset + b] = true; if (verifiable) verify[param.offset + b] = true; }
+    markOwned(owned, verify, param.offset, byteWidth(type.sizeInBit), seg.size, verifiable);
   }
   return { lsm, size: seg.size, bytes: img, owned, verify };
 }
@@ -247,11 +253,16 @@ export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarg
   return { image, diffBytes };
 }
 
-// Verify a relative flash by comparing ONLY owned bytes against the intended values. The
-// unowned bytes are not under our authority: a System B reload can recompute them on the
-// device (the channel "Objektlink" tables), so a full-buffer equality check would report a
-// correct flash as failed. Mirrors the absolute path's owned-only verify.
-export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
-  for (let i = 0; i < target.size; i++) if (target.verify[i] && back[i] !== target.bytes[i]) return false;
+// Verify a read-back against intended bytes, comparing ONLY the masked positions. This is
+// THE owned-byte verify authority for both memory models: unmasked bytes are not under our
+// authority (device-recomputed tables, unowned defaults), so a full-buffer equality check
+// would report a correct flash as failed.
+export function verifyMaskedBytes(back: Buffer, want: Buffer, mask: boolean[]): boolean {
+  for (let i = 0; i < mask.length; i++) if (mask[i] && back[i] !== want[i]) return false;
   return true;
+}
+
+// Verify a relative flash: owned bytes minus Access="None" markers (the `verify` mask).
+export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
+  return verifyMaskedBytes(back, target.bytes, target.verify);
 }

@@ -52,12 +52,16 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const catalog = extractCatalogProducts(bytes).filter((p) => programs.has(p.appProgramId));
 
     const id = randomUUID();
-    // DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's backup-store):
-    // the inner zip is only decryptable here, with the import password in hand.
-    // Best-effort; never block an import on it. Flattened name keeps the device-id
+    // DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's backup-store): the
+    // inner zip is only decryptable here, with the import password in hand. Never
+    // block an import on it, but never HIDE the loss either: a silently vanished
+    // backup store used to surface only much later as an inexplicably empty module
+    // view (and export/re-import propagated the loss). The gap rides in the import
+    // result next to the other importGaps. Flattened name keeps the device-id
     // prefix the baggage endpoint filters on.
     let baggage = new Map<string, Buffer>();
-    try { baggage = readBaggage(bytes, password); } catch { /* best-effort */ }
+    let baggageUnreadable = false;
+    try { baggage = readBaggage(bytes, password); } catch { baggageUnreadable = true; }
 
     // Everything is stored in the DB; no project files are written at import. The
     // raw .knxproj is not kept (app programs live in the catalog, baggage in the
@@ -84,7 +88,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // the archive (they import as un-configurable husks) and group-address links that
     // referenced an address not in the tree (silently lost). The count alone is no
     // longer the only success signal.
-    return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, ...importGaps(project, programs) });
+    return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, ...importGaps(project, programs), baggageUnreadable });
   }
 
   // /api/projects/analyze  (POST: parse a file's metadata for an import preview,

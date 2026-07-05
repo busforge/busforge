@@ -1,11 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705 } from "@busforge/knx";
+import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
 import {
   toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned,
   buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage,
   decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseLoadProcedures,
-  buildAbsoluteSegmentTargets, planAbsoluteParFlash, maskInfo, parseAppConfig, assessParCoverage,
+  buildAbsoluteSegmentTargets, planAbsoluteParFlash, maskInfo, sameMask, parseAppConfig, assessParCoverage, verifyMaskedBytes,
   type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink, type MemoryModel, type SystemFamily, type ParCoverage, type LoadProcedures,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
@@ -31,7 +31,7 @@ import type { ProgressFn } from "./taskqueue.ts";
 // so it lives once in withDeviceSession(); the profiles own only the model-specific body.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LSM = 4; // System B parameter segment
+const LSM = OBJ.APP_PROGRAM; // System B parameter segment (LSM 4)
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // After a LoadProcedure restart the device can be briefly unreachable while it reboots. Some
@@ -203,7 +203,10 @@ export interface SecureCreds { toolKey: Buffer; serial: Buffer; }
 async function withDeviceSession<T>(
   connection: Connection,
   ia: string,
-  wantMask: string,
+  // The expected application mask, or null for an IDENTIFICATION session (reading the
+  // mask is the goal, e.g. secureIdentify): null skips the gate but still reads the
+  // descriptor so the body gets the device's real mask.
+  wantMask: string | null,
   onProgress: ProgressFn | undefined,
   body: (dev: KnxDevice, mask: string) => Promise<T>,
   secure?: SecureCreds,
@@ -216,9 +219,14 @@ async function withDeviceSession<T>(
   try {
     await dev.connect();
     const mask = await dev.deviceDescriptor();
-    const want = wantMask.replace(/^MV-/, "");
-    if (!want) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing");
-    if (!mask.includes(want)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${want}; aborting (wrong device or application)`);
+    if (wantMask !== null) {
+      // Canonical equality (sameMask), not the old substring match: gate logic on the
+      // primary wrong-device safety check must not pass on a coincidental substring.
+      // sameMask(x, x) is false only for an unparseable mask, i.e. "we don't know what
+      // application this is" -> refuse before comparing anything.
+      if (!sameMask(wantMask, wantMask)) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing");
+      if (!sameMask(mask, wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+    }
     const result = await body(dev, mask);
     await dev.disconnect(); await tun.disconnect();
     return result;
@@ -254,7 +262,10 @@ export abstract class DeviceProfile {
   abstract readonly family: SystemFamily;
   constructor(readonly mask: string, protected readonly cfg: AppConfig | null) {}
 
-  abstract capabilities(params: Map<string, string>, moduleInstances?: ModuleInstance[]): DeviceCapabilities;
+  // Capabilities are a function of the memory model + parsed application alone; they
+  // deliberately take NO live parameter state (every implementation ignored it, and the
+  // callers paid two DB reads per call to feed it).
+  abstract capabilities(): DeviceCapabilities;
   abstract readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback>;
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
@@ -272,7 +283,7 @@ export class SystemBProfile extends DeviceProfile {
   readonly memoryModel = "relative" as const;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
 
-  capabilities(params: Map<string, string>): DeviceCapabilities {
+  capabilities(): DeviceCapabilities {
     // Parameters are decoded from the LSM4 segment; a relative device WITHOUT one has nowhere
     // to read them from, so don't claim its params verify. Group tables are always present.
     const hasParamSegment = this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
@@ -282,7 +293,7 @@ export class SystemBProfile extends DeviceProfile {
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
     const cfg = this.requireCfg("read-back");
     const { model, writeValues } = moduleAwareImage(cfg, ctx.liveParams, ctx.moduleInstances ?? []);
-    const support = this.capabilities(ctx.liveParams);
+    const support = this.capabilities();
     const paramBase = new Map(ctx.liveParams);
     let links: ComObjectLink[] = [];
     let paramsRead = false, linksRead = false;
@@ -291,7 +302,7 @@ export class SystemBProfile extends DeviceProfile {
     // would flash, both normalized via the same codec.
     const seg = model.segments.find((s) => s.lsm === LSM);
     if (support.readParams && seg) {
-      const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, 12, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
+      const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
       const deviceVals = decodeParameterImage(model, LSM, img);
       const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
       for (const [refId, devVal] of deviceVals) {
@@ -335,7 +346,7 @@ export class SystemBProfile extends DeviceProfile {
 
     await runDeclaredChecks(dev, coverage);
     const addr = await dev.tableAddr(LSM);
-    const current = await dev.memRead(addr, target.size, 12, (d, t) => ctx.onProgress?.("backup", d, t));
+    const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t));
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
@@ -349,7 +360,7 @@ export class SystemBProfile extends DeviceProfile {
       verify: async () => {
         const verifyAddr = await dev.tableAddr(LSM);
         const { ok } = await verifySettled(
-          () => dev.memRead(verifyAddr, image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t)),
+          () => dev.memRead(verifyAddr, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
           (back) => verifyRelativeOwned(back, target),
         );
         return ok;
@@ -410,19 +421,18 @@ export class System7Profile extends DeviceProfile {
     const absModel = toAppModel(cfg, { includeUnions: true, instances });
     const absoluteTargets = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { moduleInstances: ctx.moduleInstances });
 
-    // memRead reports progress in 12-byte chunks; accumulate across segments for a whole-read bar.
-    const chunksFor = (size: number) => Math.ceil(size / 12);
-    const totalChunks = absoluteTargets.reduce((n, t) => n + chunksFor(t.size), 0);
-    let doneChunks = 0;
+    // memRead reports progress in BYTES; accumulate across segments for a whole-read bar.
+    const totalBytes = absoluteTargets.reduce((n, t) => n + t.size, 0);
+    let doneBytes = 0;
     for (const t of absoluteTargets) {
-      const deviceImg = await dev.memRead(t.address, t.size, 12, (d) => ctx.onProgress?.("params", doneChunks + d, totalChunks), ctx.signal);
+      const deviceImg = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("params", doneBytes + d, totalBytes), ctx.signal);
       const deviceVals = decodeAbsoluteImage(absModel, t.id, deviceImg);
       const projectVals = decodeAbsoluteImage(absModel, t.id, t.bytes);
       for (const [refId, devVal] of deviceVals) {
         if (ctx.relevantRefs && !ctx.relevantRefs.has(refId)) continue;
         if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal);
       }
-      doneChunks += chunksFor(t.size);
+      doneBytes += t.size;
     }
 
     if (ctx.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted");
@@ -450,7 +460,7 @@ export class System7Profile extends DeviceProfile {
     const stamp = Date.now();
     let read = 0;
     for (const t of targets) {
-      const onDev = await dev.memRead(t.address, t.size, 12, (d) => ctx.onProgress?.("backup", read + d, totalBytes));
+      const onDev = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("backup", read + d, totalBytes));
       read += t.size;
       current.set(t.id, onDev);
     }
@@ -475,8 +485,8 @@ export class System7Profile extends DeviceProfile {
           // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
           // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
           const { ok } = await verifySettled(
-            () => dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n)),
-            (back) => { for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) return false; return true; },
+            () => dev.memRead(t.address, t.size, undefined, (d, n) => ctx.onProgress?.("verify", d, n)),
+            (back) => verifyMaskedBytes(back, t.bytes, t.verify),
           );
           if (!ok) return false;
         }
@@ -602,24 +612,14 @@ export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: strin
 // This is what makes a secure device (opaque MV-FFFF to plain reads) recognisable.
 // Read-only; no mask gate (identification is what learns the mask). Hardware-verified
 // on an MDT IP interface. See docs/knx-secure-design.md.
-export async function secureIdentify(
+export function secureIdentify(
   connection: Connection, ia: string, toolKey: Buffer, serial: Buffer,
   onProgress?: ProgressFn,
 ): Promise<{ mask: string; serial: string }> {
-  const tun = makeTransport(connection);
-  onProgress?.("connect");
-  await tun.connect();
-  const session = new SecureSession({ toolKey, src: tun.assignedIa, dst: iaToNum(ia), serial });
-  const dev = new KnxDevice(tun, ia, session);
-  try {
-    await dev.connect(); // T_Connect + Sync
-    const mask = await dev.deviceDescriptor();
+  // Identification session: wantMask null skips the gate (learning the mask is the
+  // point), the shared envelope owns connect/Sync/teardown ordering.
+  return withDeviceSession(connection, ia, null, onProgress, async (dev, mask) => {
     const sn = await dev.propRead(0, 11); // device object (0), serial-number property (PID 11)
-    await dev.disconnect(); await tun.disconnect();
     return { mask, serial: sn.toString("hex") };
-  } catch (e) {
-    try { await dev.disconnect(); } catch {}
-    try { await tun.disconnect(); } catch {}
-    throw e;
-  }
+  }, { toolKey, serial });
 }

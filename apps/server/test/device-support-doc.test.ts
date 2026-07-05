@@ -55,10 +55,10 @@ describe("docs/device-support.md stays in sync with the mask registry", () => {
   // returns. Pin each implemented memory model to a real device's live capabilities, so a future
   // gate flip (e.g. flashLinks back to false) fails here instead of letting the doc lie.
   test("VERDICT for each memory model matches classify().capabilities()", () => {
-    expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities(new Map()))).toEqual(VERDICT.relative); // System B
-    expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities(new Map()))).toEqual(VERDICT.absolute); // System 7
+    expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities())).toEqual(VERDICT.relative); // System B
+    expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities())).toEqual(VERDICT.absolute); // System 7
     // A recognised-but-unimplemented family resolves to UnsupportedProfile: every aspect false.
-    expect(cells(classifyByMask("MV-0010").capabilities(new Map()))).toEqual(VERDICT.bcu1);
+    expect(cells(classifyByMask("MV-0010").capabilities())).toEqual(VERDICT.bcu1);
   });
 
   test("the matrix has no rows for masks that are not in the registry", () => {

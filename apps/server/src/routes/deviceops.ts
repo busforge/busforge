@@ -43,7 +43,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // and System 7 both read; a recognised-but-unimplemented family (e.g. System 1 / BCU1)
     // resolves to UnsupportedProfile (all capabilities false) and is refused here. Honest
     // refusal beats false confidence.
-    const rbCaps = classify(parseAppConfig(appXml)).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId));
+    const rbCaps = classify(parseAppConfig(appXml)).capabilities();
     if (!rbCaps.readParams && !rbCaps.readLinks) {
       return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet; its values cannot be verified against the device");
     }
@@ -110,7 +110,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // The capability guards the flash path so a model we cannot program never corrupts the
     // device's tables while reporting success.
     const gaApp = loadApp(state, id, deviceId);
-    if (gaApp && !classify(gaApp).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).flashLinks) {
+    if (gaApp && !classify(gaApp).capabilities().flashLinks) {
       return err("GROUP_TABLE_UNREADABLE", "this device's memory model does not support programming its group addresses yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
@@ -141,7 +141,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // Refuse an unsupported device up front (mirrors flash-ga), so we don't create a snapshot
     // and connect the bus just to have the profile throw.
     const flApp = loadApp(state, id, deviceId);
-    if (flApp && !classify(flApp).capabilities(getDeviceParams(db, id, deviceId), getDeviceModules(db, id, deviceId)).flashParams) {
+    if (flApp && !classify(flApp).capabilities().flashParams) {
       return err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
     }
     const dryParams = url.searchParams.get("dry") === "1";

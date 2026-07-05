@@ -79,6 +79,7 @@ const en = {
     failed: "Import failed",
     gapsTitle: "Some data could not be fully imported:",
     gapNoProgram: "{{count}} device(s) have no application program in this file and cannot be opened, configured, or flashed",
+    gapBaggage: "The file's embedded device data store (e.g. a DALI gateway backup) could not be read and was not imported.",
     gapUnresolvedLinks: "{{count}} group-address link(s) reference an address not in the project and were dropped",
   },
   export: {
@@ -147,6 +148,7 @@ const en = {
     DEVICE_READBACK_UNSUPPORTED: "Reading this device's state back off the bus is not supported yet (e.g. an absolute-segment MV-0705 device). Its values cannot be verified against the device, so no read-back was performed.",
     DEVICE_FAMILY_UNSUPPORTED: "This device's family is recognised but not yet implemented (e.g. System 1 / BCU1). The operation was refused rather than guessing at its memory layout.",
     READ_ABORTED: "Read aborted.",
+    DISCOVERY_FAILED: "The gateway search could not run (network or permission problem). This is not the same as an empty result.",
     INTERNAL: "Something went wrong.",
   },
   devices: {
