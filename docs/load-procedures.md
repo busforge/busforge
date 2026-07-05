@@ -32,11 +32,18 @@ A device is flashable only when both are handled.
 
 A generic step executor (`packages/knx/loadrunner.ts`, `runLoadPlan`) drives a typed
 `LoadPlan` (connect / unload / load / alloc / writeMem / writeSegment / writeProp /
-stampAppId / loadCompleted / restart / disconnect) for BOTH memory models. It asserts
-the LSM state after every `load`/`loadCompleted`, so a refused or desynced transition
-stops before the next write. Memory writes verify by read-back; `writeSegment` resolves
-the segment address at execution time (a relative segment's address is only assigned by
-the alloc step).
+stampAppId / loadCompleted / assertLoaded / restart / disconnect) for BOTH memory models
+and BOTH download kinds (parameters and group tables). It asserts the LSM state after
+every `load`/`loadCompleted`, so a refused or desynced transition stops before the next
+write. Memory writes verify by read-back; `writeSegment` resolves the segment address at
+execution time (a relative segment's address is only assigned by the alloc step).
+
+An opt-out lets the engine reproduce a legacy bracket exactly rather than silently
+tightening a hardware-verified path: `load`/`loadCompleted` take `assert:false` (skip the
+inline state read). The System B group-table download uses it plus a final batch of
+`assertLoaded` steps, because that is byte-for-byte what its proven executor did (which
+asserted completion only in a batch, not inline). Its writes still read-back verify like
+every other bracket; every other bracket also keeps the asserting default.
 
 The planner (`packages/product/deviceflash.ts`, `planAbsoluteParFlash`) turns a parsed
 procedure plus the built segment images plus a **live device read** into that plan. It
@@ -99,6 +106,15 @@ flashing blind.
 - **Engine** (`runLoadPlan`) with per-step LSM-state assertions and read-back-verified writes.
 - **Absolute (MV-0705) parameter flash**, wired into the server flash route, surgical
   `par` mode. Replaces the previous "refused" state for these 6 app programs.
+- **Group-address flash through the engine (both models): DONE.** The last two
+  hand-rolled executors are gone. `planSystemBGaFlash` (relative, three count-prefixed
+  tables) and `planMv0705GaFlash` (absolute, two fixed tables) emit `LoadPlan`s that
+  `runLoadPlan` executes, so no flash path bypasses the verified engine anymore. Both
+  planners are locked shape-and-execution in `flash-exec.test.ts`. The System 7 GA path
+  maps to the asserting engine bracket with NO wire delta (it already asserted and wrote
+  verified). The System B GA path is preserved byte-for-byte via the `assert:false` opt-out
+  + batch `assertLoaded` (its loads/completions were never asserted inline); its writes
+  stay read-back verified as before, so it too carries no new wire behavior.
 
 ## Deferred (named, not silent)
 

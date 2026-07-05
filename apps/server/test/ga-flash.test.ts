@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice, flashGroupTablesMv0705, readGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
+import { KnxDevice, planMv0705GaFlash, runLoadPlan, readGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
 import { buildGroupTablesMv0705, decodeGroupTablesMv0705, type ComObjectLink } from "@busforge/product";
 import { System7Profile } from "../src/deviceprofile.ts";
 
@@ -31,12 +31,12 @@ const asDev = (m: MockDevice) => m as unknown as KnxDevice;
 const ia = (1 << 12) | (2 << 8) | 17; // 1.2.17
 
 describe("MV-0705 GA flash orchestration (mock device)", () => {
-  test("flashGroupTablesMv0705 writes the built tables through the LSM bracket and round-trips", async () => {
+  test("planMv0705GaFlash writes the built tables through the LSM bracket and round-trips", async () => {
     const links: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x180a] }];
     const { addr, assoc } = buildGroupTablesMv0705(links, ia);
     const dev = new MockDevice();
     dev.seedTables(Buffer.from("0312110000", "hex"), Buffer.from("00", "hex")); // some prior table
-    await flashGroupTablesMv0705(asDev(dev), { addr, assoc });
+    await runLoadPlan(asDev(dev), planMv0705GaFlash({ addr, assoc }));
     // exact bytes landed at the fixed table addresses
     expect((await dev.memRead(0x1000, addr.length)).equals(addr)).toBe(true);
     expect((await dev.memRead(0x2000, assoc.length)).equals(assoc)).toBe(true);

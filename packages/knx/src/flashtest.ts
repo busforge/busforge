@@ -1,6 +1,6 @@
 import fs from "node:fs";
-import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum } from "./index.ts";
-import { flashGroupTables } from "./flash.ts";
+import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum, runLoadPlan } from "./index.ts";
+import { planSystemBGaFlash } from "./flash.ts";
 import { readGroupTables } from "./grouptable-read.ts";
 
 // LIVE flash test on the Bun stack: change one group address (2/1/7 -> 2/1/8),
@@ -37,7 +37,7 @@ async function flash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }): P
   for (let i = 1; i <= 8; i++) {
     const tun = new KnxIpTunnel(ip); await tun.connect();
     const dev = new KnxDevice(tun, ia);
-    try { await dev.connect(); await dev.deviceDescriptor(); await flashGroupTables(dev, tables); await dev.disconnect(); await tun.disconnect(); return true; }
+    try { await dev.connect(); await dev.deviceDescriptor(); await runLoadPlan(dev, planSystemBGaFlash(tables)); await dev.disconnect(); await tun.disconnect(); return true; }
     catch (e) { log(`   flash attempt ${i}: ${(e as Error).message}`); try { await tun.disconnect(); } catch {} await sleep(1500); }
   }
   return false;

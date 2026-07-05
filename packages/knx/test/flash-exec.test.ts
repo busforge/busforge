@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import type { KnxDevice } from "../src/device.ts";
-import { flashGroupTables, flashGroupTablesMv0705, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planMv0705GaFlash, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -112,61 +112,95 @@ describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoa
   });
 });
 
-describe("flashGroupTables (System B, LSMs 3/2/1)", () => {
+describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPlan)", () => {
   const tables = {
     comObj: Buffer.from("0102030405060708", "hex"), // 8 bytes
     addr: Buffer.from("1112131415", "hex"),         // 5 bytes
     assoc: Buffer.from("212223242526", "hex"),      // 6 bytes
   };
 
-  test("exact call order: unload 3,2,1; load+alloc 3,1,2; write comObj,assoc,addr; complete 3,2,1; checks; restart", async () => {
+  test("planSystemBGaFlash emits the legacy bracket: unasserted loads, verified writes, batch LOADED check", () => {
+    // Byte-for-byte the retired flashGroupTables() order. The loads/completions carry
+    // assert:false (no inline state read); the three tables are checked LOADED in one batch
+    // (assertLoaded) at the end, exactly as the hardware-proven path did. Writes are
+    // read-back verified (the retired memWrite call verified by default), so writeSegment
+    // carries no opt-out.
+    expect(planSystemBGaFlash(tables)).toEqual([
+      { op: "unload", lsm: 3 }, { op: "unload", lsm: 2 }, { op: "unload", lsm: 1 },
+      { op: "load", lsm: 3, assert: false }, { op: "alloc", lsm: 3, size: 8 },
+      { op: "load", lsm: 1, assert: false }, { op: "alloc", lsm: 1, size: 5 },
+      { op: "load", lsm: 2, assert: false }, { op: "alloc", lsm: 2, size: 6 },
+      { op: "writeSegment", lsm: 3, bytes: tables.comObj },
+      { op: "writeSegment", lsm: 2, bytes: tables.assoc },
+      { op: "writeSegment", lsm: 1, bytes: tables.addr },
+      { op: "loadCompleted", lsm: 3, assert: false },
+      { op: "loadCompleted", lsm: 2, assert: false },
+      { op: "loadCompleted", lsm: 1, assert: false },
+      { op: "assertLoaded", lsm: 3 }, { op: "assertLoaded", lsm: 2 }, { op: "assertLoaded", lsm: 1 },
+      { op: "restart" },
+    ]);
+  });
+
+  test("exact device call order: unload 3,2,1; load+alloc 3,1,2; write comObj,assoc,addr; complete 3,2,1; batch checks; restart", async () => {
     const dev = new RecDev();
-    await flashGroupTables(asDev(dev), tables);
+    await runLoadPlan(asDev(dev), planSystemBGaFlash(tables));
+    // Identical wire to the retired executor: same op order, and the writes verify by
+    // read-back (memWrite verify:true) exactly as the old no-opts memWrite did (default
+    // verify ?? true). assert:false suppresses the inline LOADING/LOADED reads; the batch
+    // assertLoaded at the end does them, matching the retired executor.
     expect(dev.calls).toEqual([
       ["propWrite", 3, 5, EV_UNLD],           // unload in dependency order com-obj -> assoc -> addr
       ["propWrite", 2, 5, EV_UNLD],
       ["propWrite", 1, 5, EV_UNLD],
-      ["propWrite", 3, 5, EV_LOAD],           // load+alloc pairs in the coded order 3, 1, 2
+      ["propWrite", 3, 5, EV_LOAD],           // load+alloc pairs in the coded order 3, 1, 2 (no LOADING read: assert:false)
       ["propWrite", 3, 5, alloc("00000008")], // comObj is 8 bytes
       ["propWrite", 1, 5, EV_LOAD],
       ["propWrite", 1, 5, alloc("00000005")], // addr is 5 bytes
       ["propWrite", 2, 5, EV_LOAD],
       ["propWrite", 2, 5, alloc("00000006")], // assoc is 6 bytes
       ["tableAddr", 3],
-      ["memWrite", 0x3000, "0102030405060708", null],
+      ["memWrite", 0x3000, "0102030405060708", true], // read-back verified, as the legacy path wrote
       ["tableAddr", 2],
-      ["memWrite", 0x2000, "212223242526", null],
+      ["memWrite", 0x2000, "212223242526", true],
       ["tableAddr", 1],
-      ["memWrite", 0x1000, "1112131415", null],
-      ["propWrite", 3, 5, EV_DONE],           // load-completed 3, 2, 1
+      ["memWrite", 0x1000, "1112131415", true],
+      ["propWrite", 3, 5, EV_DONE],           // load-completed 3, 2, 1 (no LOADED read: assert:false)
       ["propWrite", 2, 5, EV_DONE],
       ["propWrite", 1, 5, EV_DONE],
-      ["propRead", 3, 5],                     // all three LSMs must read back LOADED
+      ["propRead", 3, 5],                     // batch: all three LSMs must read back LOADED (assertLoaded)
       ["propRead", 2, 5],
       ["propRead", 1, 5],
       ["restart"],
     ]);
   });
 
-  test("one LSM reading non-LOADED after load-completed rejects and skips restart", async () => {
+  test("one LSM reading non-LOADED at the batch check rejects and skips restart", async () => {
     const dev = new RecDev();
-    dev.lsmQueue.set(2, [STATE.ERROR]); // association-table LSM refuses
-    await expect(flashGroupTables(asDev(dev), tables)).rejects.toThrow(/not Loaded/);
+    dev.lsmQueue.set(2, [STATE.ERROR]); // association-table LSM refuses at the batch assertLoaded
+    await expect(runLoadPlan(asDev(dev), planSystemBGaFlash(tables))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
   });
 });
 
-describe("flashGroupTablesMv0705 (System 7, absolute tables)", () => {
+describe("the System 7 GA bracket, engine-driven (planMv0705GaFlash + runLoadPlan)", () => {
   const tables = { addr: Buffer.from("1112131415", "hex"), assoc: Buffer.from("212223242526", "hex") };
+
+  test("planMv0705GaFlash emits the asserting absolute bracket: no unload, no alloc, verified writes", () => {
+    expect(planMv0705GaFlash(tables)).toEqual([
+      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, bytes: tables.addr }, { op: "loadCompleted", lsm: 1 },
+      { op: "load", lsm: 2 }, { op: "writeSegment", lsm: 2, bytes: tables.assoc }, { op: "loadCompleted", lsm: 2 },
+      { op: "restart" },
+    ]);
+  });
 
   test("exact order: per LSM load -> LOADING check -> verified write -> completed -> LOADED check; addr(1) before assoc(2); no unload, no alloc", async () => {
     const dev = new RecDev();
-    await flashGroupTablesMv0705(asDev(dev), tables);
+    await runLoadPlan(asDev(dev), planMv0705GaFlash(tables));
     // Absolute segments: no relative-segment alloc and no unload appear anywhere,
     // and memWrite runs with verify:true (chunk-verified, per the hardware-proven path).
     expect(dev.calls).toEqual([
       ["propWrite", 1, 5, EV_LOAD],            // address table first
-      ["propRead", 1, 5],                      // must observe LOADING
+      ["propRead", 1, 5],                      // must observe LOADING (engine default assert)
       ["tableAddr", 1],
       ["memWrite", 0x1000, "1112131415", true],
       ["propWrite", 1, 5, EV_DONE],
@@ -184,7 +218,7 @@ describe("flashGroupTablesMv0705 (System 7, absolute tables)", () => {
   test("rejects when LOAD is not answered with LOADING", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(1, [STATE.UNLOADED]); // device ignored the Load event
-    await expect(flashGroupTablesMv0705(asDev(dev), tables)).rejects.toThrow(/not Loading/);
+    await expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADING/);
     // aborted before touching device memory
     expect(dev.calls.some((c) => c[0] === "memWrite")).toBe(false);
   });
@@ -192,7 +226,7 @@ describe("flashGroupTablesMv0705 (System 7, absolute tables)", () => {
   test("rejects when LOAD_COMPLETED is not answered with LOADED", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(1, [STATE.LOADING, STATE.LOADING]); // Load ok, but completion never lands
-    await expect(flashGroupTablesMv0705(asDev(dev), tables)).rejects.toThrow(/not Loaded/);
+    await expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
   });
 });

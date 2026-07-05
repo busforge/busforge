@@ -1,4 +1,4 @@
-import { KnxDevice, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { buildDeviceConfig } from "./config.ts";
@@ -355,7 +355,7 @@ export class SystemBProfile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
+        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj: cur.comObj })); // keep the device's com-object table
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -466,7 +466,7 @@ export class System7Profile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
-    // buildGroupTablesMv0705 / flashGroupTablesMv0705, hardware-verified on TP (M-0081):
+    // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
     // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
     // and byte-matched, and the revert restored the device exactly.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
@@ -498,7 +498,7 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await flashGroupTablesMv0705(dev, { addr, assoc });
+        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc }));
       },
       verify: async () => {
         ctx.onProgress?.("verify");

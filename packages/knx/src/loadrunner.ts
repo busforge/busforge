@@ -17,13 +17,20 @@ export type LoadStep =
   | { op: "disconnect" }
   | { op: "restart" }
   | { op: "unload"; lsm: number }
-  | { op: "load"; lsm: number }
-  | { op: "loadCompleted"; lsm: number }
+  // load/loadCompleted assert the resulting LSM state by default (LOADING / LOADED). A
+  // download that historically did NOT assert inline and checked completion only in a
+  // final batch (System B group tables) sets assert:false and appends `assertLoaded`
+  // steps instead, so the engine reproduces that exact wire order rather than adding
+  // inline state reads mid-bracket. (Memory writes stay verified either way.)
+  | { op: "load"; lsm: number; assert?: boolean }
+  | { op: "loadCompleted"; lsm: number; assert?: boolean }
+  | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
   | { op: "alloc"; lsm: number; size: number }          // relative-segment allocate
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
-  // planner cannot precompute it the way absolute writeMem steps can.
+  // planner cannot precompute it the way absolute writeMem steps can. Always read-back
+  // verified (like every memory write in the engine).
   | { op: "writeSegment"; lsm: number; bytes: Buffer }
   | { op: "writeProp"; obj: number; pid: number; data: Buffer }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
@@ -54,8 +61,10 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       }
       case "load": {
         await lsmEvent(dev, step.lsm, LSM.LOAD);
-        const s = await lsmState(dev, step.lsm);
-        if (s !== STATE.LOADING) throw new Error(`LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
+        if (step.assert !== false) {
+          const s = await lsmState(dev, step.lsm);
+          if (s !== STATE.LOADING) throw new Error(`LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
+        }
         break;
       }
       case "alloc": await allocSegment(dev, step.lsm, step.size); break;
@@ -65,8 +74,15 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED);
+        if (step.assert !== false) {
+          const s = await lsmState(dev, step.lsm);
+          if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+        }
+        break;
+      }
+      case "assertLoaded": {
         const s = await lsmState(dev, step.lsm);
-        if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+        if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
         break;
       }
     }

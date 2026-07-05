@@ -1,4 +1,5 @@
 import { KnxDevice, PID, OBJ } from "./device.ts";
+import type { LoadPlan } from "./loadrunner.ts";
 
 // The KNX load procedure (MV-07B0 / System B, property-mapped LSMs). Ported from
 // the proven reference; see docs/findings.md for the wire details and gotchas.
@@ -30,40 +31,58 @@ export function appId(manufacturer: number, appNumber: number, version: number):
   return Buffer.from([(manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version & 0xff]);
 }
 
-// Group-address ("grp") download: rewrites the com-object (3), association (2) and
-// address (1) tables. Pass the exact table images to write.
-export async function flashGroupTables(dev: KnxDevice, tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }) {
-  const TABLES = [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]; // dependency order
-  for (const o of TABLES) await lsmEvent(dev, o, LSM.UNLOAD);
-  await lsmEvent(dev, OBJ.COMOBJ_TABLE, LSM.LOAD); await allocSegment(dev, OBJ.COMOBJ_TABLE, tables.comObj.length);
-  await lsmEvent(dev, OBJ.ADDR_TABLE, LSM.LOAD); await allocSegment(dev, OBJ.ADDR_TABLE, tables.addr.length);
-  await lsmEvent(dev, OBJ.ASSOC_TABLE, LSM.LOAD); await allocSegment(dev, OBJ.ASSOC_TABLE, tables.assoc.length);
-  await dev.memWrite(await dev.tableAddr(OBJ.COMOBJ_TABLE), tables.comObj);
-  await dev.memWrite(await dev.tableAddr(OBJ.ASSOC_TABLE), tables.assoc);
-  await dev.memWrite(await dev.tableAddr(OBJ.ADDR_TABLE), tables.addr);
-  for (const o of TABLES) await lsmEvent(dev, o, LSM.LOAD_COMPLETED);
-  for (const o of TABLES) if ((await lsmState(dev, o)) !== STATE.LOADED) throw new Error(`LSM ${o} not Loaded after flash`);
-  await dev.restart();
+// Group-address downloads as LoadPlans for the generic executor (runLoadPlan). These
+// replace the hand-rolled flashGroupTables/flashGroupTablesMv0705 executors that used to
+// run here: every device write now goes through one verified engine. They stay in knx
+// (not the @busforge/product planner layer) because they are FIXED, application-independent
+// LSM brackets and the knx live-flash harness (flashtest.ts) builds them without depending
+// on product. Application-driven parameter planners (planAbsoluteParFlash) live in product.
+
+// System B ("relative") group-address download: rewrite the com-object (3), association (2)
+// and address (1) tables. The tables sit in relative segments, so each is unloaded and
+// re-allocated. The com-object table is rewritten unchanged (a GA edit does not alter it)
+// to keep the dependency order valid.
+//
+// This reproduces the retired flashGroupTables() bracket BYTE-FOR-BYTE on the wire. Its one
+// legacy property (vs the asserting parameter bracket) is that Load/LoadCompleted are NOT
+// state-asserted inline (assert:false); instead all three tables are checked LOADED in one
+// batch at the end (assertLoaded), exactly as the hardware-proven path did. Table writes are
+// read-back verified, like every memory write (the old memWrite call verified by default).
+// Load+alloc run in the coded order com-obj, addr, assoc; write/complete/check run com-obj,
+// assoc, addr.
+export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }): LoadPlan {
+  const C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
+  return [
+    { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
+    { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
+    { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
+    { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
+    { op: "writeSegment", lsm: C, bytes: tables.comObj },
+    { op: "writeSegment", lsm: A, bytes: tables.assoc },
+    { op: "writeSegment", lsm: D, bytes: tables.addr },
+    { op: "loadCompleted", lsm: C, assert: false },
+    { op: "loadCompleted", lsm: A, assert: false },
+    { op: "loadCompleted", lsm: D, assert: false },
+    { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
+    { op: "restart" },
+  ];
 }
 
 // MV-0705 (System 7) group-address download: the address (LSM 1) and association (LSM 2)
 // tables live at fixed absolute addresses, so unlike System B there is no relative-segment
-// alloc. Mirrors the hardware-proven absolute PARAMETER path (planAbsoluteParFlash): per LSM,
-// LOAD -> write the table at its fixed address (chunk-verified) -> LOAD_COMPLETED, then restart.
-// The com-object table (object 3) is left untouched (a GA change does not alter it). The caller
-// must already be connected (a second T_Connect resets the sequence counter; see the absolute
-// param path) and should have backed up the current tables first.
-export async function flashGroupTablesMv0705(dev: KnxDevice, tables: { addr: Buffer; assoc: Buffer }) {
-  const writeTable = async (lsm: number, bytes: Buffer) => {
-    await lsmEvent(dev, lsm, LSM.LOAD);
-    if ((await lsmState(dev, lsm)) !== STATE.LOADING) throw new Error(`LSM ${lsm} not Loading after Load`);
-    await dev.memWrite(await dev.tableAddr(lsm), bytes, { verify: true });
-    await lsmEvent(dev, lsm, LSM.LOAD_COMPLETED);
-    if ((await lsmState(dev, lsm)) !== STATE.LOADED) throw new Error(`LSM ${lsm} not Loaded after flash`);
-  };
-  await writeTable(OBJ.ADDR_TABLE, tables.addr);
-  await writeTable(OBJ.ASSOC_TABLE, tables.assoc);
-  await dev.restart();
+// alloc and no unload. Per LSM: LOAD -> write the table at its fixed address (read-back
+// verified) -> LOAD_COMPLETED, each state-asserted (the engine default), then restart. The
+// com-object table (object 3) is left untouched (a GA change does not alter it). Maps to the
+// asserting engine bracket with NO behavior delta (the retired flashGroupTablesMv0705 already
+// asserted LOADING/LOADED and wrote verified); hardware-verified on TP (M-0081). The
+// caller must already be connected (a second T_Connect resets the sequence counter).
+export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer }): LoadPlan {
+  const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE;
+  return [
+    { op: "load", lsm: D }, { op: "writeSegment", lsm: D, bytes: tables.addr }, { op: "loadCompleted", lsm: D },
+    { op: "load", lsm: A }, { op: "writeSegment", lsm: A, bytes: tables.assoc }, { op: "loadCompleted", lsm: A },
+    { op: "restart" },
+  ];
 }
 
 // Parameter ("par") downloads for BOTH memory models are driven by the generic executor:
