@@ -57,6 +57,30 @@ test("changed UNOWNED byte is never written", () => {
   expect(unplaceable).toEqual([]);
 });
 
+test("a step scoped AppliesTo=full must not shape a par download", () => {
+  const firstOwned = as4200.owned.findIndex((o) => o);
+  const dev = Buffer.from(as4200.bytes);
+  dev[firstOwned] = dev[firstOwned] ^ 0xff;
+  const current = new Map(targets.map((t) => [t.id, t.id === as4200.id ? dev : Buffer.from(t.bytes)]));
+  // same declarations as the real procedure, but scoped to the FULL download only
+  const fullOnly: LoadProcedures = {
+    style: "ProductProcedure",
+    blocks: [{ steps: [
+      { verb: "LdCtrlLoad", attrs: { LsmIdx: "3", AppliesTo: "full" } },
+      { verb: "LdCtrlAbsSegment", attrs: { LsmIdx: "3", Address: "16896", AppliesTo: "full" } },
+      { verb: "LdCtrlLoadCompleted", attrs: { LsmIdx: "3", AppliesTo: "full" } },
+      { verb: "LdCtrlRestart", attrs: { AppliesTo: "full" } },
+    ] }],
+    verbs: [], unknown: [],
+  };
+  const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(app, new Map(), fullOnly, current);
+  // the par download sees no par-applicable segment declaration -> the changed segment is
+  // unplaceable (and the caller refuses), NOT silently bracketed by full-only steps
+  expect(plan).toEqual([]);
+  expect(changedBytes).toBe(0);
+  expect(unplaceable).toEqual([{ id: as4200.id, address: 16896, changed: 1 }]);
+});
+
 test("changed segment not declared in the procedure -> reported unplaceable, never silently dropped", () => {
   const firstOwned = as4200.owned.findIndex((o) => o);
   const dev = Buffer.from(as4200.bytes);

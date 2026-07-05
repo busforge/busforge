@@ -51,6 +51,23 @@ changed LSM. A changed segment the procedure does not declare is returned as
 > diff once silently swallowed a revert: the DB held the default while the device held
 > the changed byte.)
 
+## Par-download step policy (the coverage guard)
+
+A par download deliberately does not execute every declared step: a surgical write into
+loaded segments must not erase them, and full-download bookkeeping does not apply. That
+is only honest if every par-applicable step has an **explicit disposition**
+(`assessParCoverage`, enforced at runtime by both flash profiles). A step without one
+**blocks the flash** with `LOAD_STEP_UNSUPPORTED`: the flash never runs a partial recipe
+and reports success.
+
+| Disposition | Steps (par) | Why |
+| --- | --- | --- |
+| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`/`RelSegment` (mode 0), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
+| **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (e.g. hardware type, PID 78) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED` (the check ETS runs, previously skipped silently) |
+| **caller** | `Connect`, `Disconnect` | a second T_Connect would desync the sequence counter; the session owns the lifecycle |
+| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation; hw-evidenced M-0081 1.1.x). relative: `WriteProp`/`LoadImageProp` **to PID 27 only** (MCB stamp; hw-evidenced M-0162 1.1.x + Theben 493B 1.1.x) | deliberately not executed, with hardware evidence |
+| **blocked → refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices (M-0008), `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp` | unmodeled; refusing beats a silent partial recipe |
+
 ## Coverage across the project's app programs
 
 Surveyed from the full real catalogue (`parseLoadProcedures` + the coverage test
@@ -60,13 +77,13 @@ through).
 | App program (devices) | Style | Model | Status |
 | --- | --- | --- | --- |
 | M-0081 (11) Auro detector | Product | absolute | **flashed + verified on hardware** |
-| M-0008 (9) | Product | absolute (+ LoadImageProp, LSM5) | engine-supported; not yet hw-verified |
+| M-0008 (9) | Product | absolute (+ LoadImageProp, LSM5) | **refused (par)**: declares MCB/load-image stamps we cannot compute; `LOAD_STEP_UNSUPPORTED` until hardware-testable |
 | M-008E (2) Steinel | Product | absolute (data-less) | engine-supported; data-less caveat |
 | M-0048 A-107E, A-140C (2) | Product | absolute | engine-supported |
-| M-0083 A-00B4 (1) | Product | absolute (+ CompareProp) | engine-supported |
+| M-0083 A-00B4, A-00B6 (2) | Product | absolute (+ CompareProp) | engine-supported; CompareProp executed as pre-flight |
 | M-0162 (1) MEAN WELL PSU | Merged | relative | **flashed + verified** (existing relative path) |
-| M-0048 A-493B (5) Theben HMG | Merged | relative (+ WriteProp) | blocked by module per-instance offsets (image build, not the procedure) |
-| M-0048 A-9071 (1) DALI | Merged | relative (+ CompareProp) | relative path; DCA config out of scope |
+| M-0048 A-493B (5) Theben HMG | Merged | relative (+ WriteProp) | **flashed + verified on hardware** (1.1.x, module per-instance offsets; PID-27 WriteProp is a documented skip) |
+| M-0048 A-9071 (1) DALI | Merged | relative (+ CompareProp) | relative path; CompareProp executed as pre-flight; DCA config out of scope |
 | M-0083 A-0137 (1) | Merged | relative | relative path |
 | M-0083 A-0138 (1) Gira | **Default** | (none in XML) | **gap: legacy, refused** |
 
@@ -90,8 +107,9 @@ flashing blind.
 - **Route the relative path through the engine.** The relative `flashParameters` is
   hardware-proven and stays as-is; folding it into `runLoadPlan` is a low-risk cleanup,
   validated first by asserting the planned step sequence matches it.
-- **Property-object verbs** (`LdCtrlLoadImageProp`/`WriteProp`/`CompareProp`) are parsed
-  but only needed for the absolute `par` path where the proven device did not require
-  them; they are wired when a device that needs them is hardware-tested.
+- **Property-object verbs**: `CompareProp` is executed (pre-flight check).
+  `LoadImageProp`/`WriteProp` to PID 27 (MCB) are a documented, hardware-evidenced skip
+  on relative devices and **block** the flash on absolute devices (M-0008) until a
+  device that needs them can be hardware-tested. Any other target PID blocks everywhere.
 - **DefaultProcedure (legacy)** and **module per-instance offsets** remain gaps, tracked
   in [device-memory-model.md](device-memory-model.md).

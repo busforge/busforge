@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum } from "@busforge/knx";
+import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp } from "@busforge/knx";
 import {
   toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned,
   buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage,
   decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseLoadProcedures,
-  buildAbsoluteSegmentTargets, planAbsoluteParFlash, maskInfo, parseAppConfig,
-  type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink, type MemoryModel, type SystemFamily,
+  buildAbsoluteSegmentTargets, planAbsoluteParFlash, maskInfo, parseAppConfig, assessParCoverage,
+  type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink, type MemoryModel, type SystemFamily, type ParCoverage, type LoadProcedures,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
 import type { Connection } from "./db/connections.ts";
@@ -78,6 +78,32 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
 };
+
+// Guard a par download against its own declared load procedure: every par-applicable
+// step must have an explicit disposition (executed / caller / documented skip). A step
+// the model cannot execute blocks the flash: running a partial recipe and reporting
+// "programmed and verified" is exactly the silent-skip class this codebase refuses.
+function assertParCoverage(proc: LoadProcedures, model: "absolute" | "relative"): ParCoverage {
+  const coverage = assessParCoverage(proc, model);
+  if (coverage.blocked.length) {
+    const details = [...new Set(coverage.blocked.map((b) => b.detail))].join("; ");
+    throw new ApiError("LOAD_STEP_UNSUPPORTED",
+      `the device's load procedure declares ${coverage.blocked.length} step(s) this parameter download cannot execute yet (${details}); refusing to flash rather than run a partial recipe`);
+  }
+  return coverage;
+}
+
+// Run the procedure's declared CompareProp pre-flights (the hardware/application check
+// ETS performs before a download). Read-only; a mismatch aborts before any write.
+async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise<void> {
+  for (const c of coverage.checks) {
+    const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect);
+    if (!ok) {
+      throw new ApiError("LOAD_PROC_CHECK_FAILED",
+        `load-procedure check failed: object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but the application declares ${c.expect.toString("hex")} (wrong hardware or application version?)`);
+    }
+  }
+}
 
 export interface FlashResult {
   mask: string;
@@ -298,6 +324,10 @@ export class SystemBProfile extends DeviceProfile {
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("parameter flash");
+    // The MergedProcedure fragments parameterize the proven base bracket; every
+    // par-applicable fragment step must be dispositioned (executed/skip) or the flash
+    // refuses. The declared CompareProp pre-flights run below, before any bus write.
+    const coverage = assertParCoverage(parseLoadProcedures(ctx.appXml), "relative");
     // Build + safety refusals. These run AFTER the session's connect/mask-check (vs before, in
     // the original), which is harmless: no device byte is written until below, and verifying we
     // are on the right device first is if anything safer.
@@ -314,6 +344,7 @@ export class SystemBProfile extends DeviceProfile {
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances });
     if (!target || target.size === 0) throw new ApiError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
+    await runDeclaredChecks(dev, coverage);
     const addr = await dev.tableAddr(LSM);
     const current = await dev.memRead(addr, target.size, 12, (d, t) => ctx.onProgress?.("backup", d, t));
 
@@ -418,9 +449,12 @@ export class System7Profile extends DeviceProfile {
     if (proc.style === "DefaultProcedure" || proc.blocks.length === 0) {
       throw new ApiError("LOAD_PROCEDURE_UNSUPPORTED", `device declares no usable load procedure (style ${proc.style}); cannot flash safely`);
     }
+    const coverage = assertParCoverage(proc, "absolute");
     const moduleInstances = ctx.moduleInstances;
     const targets = buildAbsoluteSegmentTargets(cfg, ctx.params, { moduleInstances }).filter((t) => t.size > 0);
     const totalBytes = targets.reduce((n, t) => n + t.size, 0);
+
+    await runDeclaredChecks(dev, coverage);
 
     // Read each parameter segment at its fixed address; this is the backup and the diff source.
     const current = new Map<string, Buffer>();

@@ -1,6 +1,6 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
-import type { LoadProcedures } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, type LoadProcedures } from "./loadproc.ts";
 import type { LoadPlan } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
@@ -110,15 +110,17 @@ export function planAbsoluteParFlash(
 ): AbsParFlashPlan {
   const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current });
 
-  // From the procedure: which LSM owns each absolute segment (by address), and the
+  // From the procedure's PAR-applicable steps (a step scoped AppliesTo="full" must not
+  // shape a par download): which LSM owns each absolute segment (by address), and the
   // order LSMs are loaded (the LdCtrlLoad sequence).
+  const parSteps = flattenSteps(procedure, "par");
   const lsmByAddress = new Map<number, number>();
   const lsmOrder: number[] = [];
-  for (const b of procedure.blocks) for (const s of b.steps) {
-    if (s.verb === "LdCtrlAbsSegment" && s.attrs.Address !== undefined && s.attrs.LsmIdx !== undefined) lsmByAddress.set(Number(s.attrs.Address), Number(s.attrs.LsmIdx));
-    if (s.verb === "LdCtrlLoad" && s.attrs.LsmIdx !== undefined) { const l = Number(s.attrs.LsmIdx); if (!lsmOrder.includes(l)) lsmOrder.push(l); }
+  for (const s of parSteps) {
+    if (s.verb === "LdCtrlAbsSegment") { const a = stepAddress(s), l = lsmIdx(s); if (a !== undefined && l !== undefined) lsmByAddress.set(a, l); }
+    if (s.verb === "LdCtrlLoad") { const l = lsmIdx(s); if (l !== undefined && !lsmOrder.includes(l)) lsmOrder.push(l); }
   }
-  const has = (verb: string) => procedure.blocks.some((b) => b.steps.some((s) => s.verb === verb));
+  const has = (verb: string) => parSteps.some((s) => s.verb === verb);
 
   const runsByLsm = new Map<number, FlashRun[]>();
   const segments: AbsParFlashPlan["segments"] = [];

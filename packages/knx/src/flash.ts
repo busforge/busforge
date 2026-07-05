@@ -81,3 +81,15 @@ export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer,
 // MV-0705 (absolute-segment) parameter downloads are driven by the device's declared
 // LoadProcedure: the planner (planAbsoluteParFlash) turns it into a LoadPlan and the
 // generic executor (runLoadPlan, loadrunner.ts) runs it. See docs/load-procedures.md.
+
+// LdCtrlCompareProp support: read a declared property and compare it against the
+// procedure's expected value (the pre-download hardware/application check ETS runs).
+// Trailing-zero padding in the expected value is tolerated: ETS pads InlineData to a
+// fixed width while devices return the property's real element size.
+export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer): Promise<{ ok: boolean; got: Buffer }> {
+  const got = await dev.propRead(obj, pid);
+  const ok =
+    got.equals(expect) ||
+    (got.length < expect.length && got.equals(expect.subarray(0, got.length)) && expect.subarray(got.length).every((b) => b === 0));
+  return { ok, got };
+}

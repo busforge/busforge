@@ -116,3 +116,138 @@ export const lsmIdx = (s: LdStep): number | undefined => (s.attrs.LsmIdx !== und
 export const stepAddress = (s: LdStep): number | undefined => (s.attrs.Address !== undefined ? Number(s.attrs.Address) : undefined);
 export const stepSize = (s: LdStep): number | undefined => (s.attrs.Size !== undefined ? Number(s.attrs.Size) : undefined);
 export const memType = (s: LdStep): number | undefined => (s.attrs.MemType !== undefined ? Number(s.attrs.MemType) : undefined);
+
+// ---- par-download step policy ----
+// The par (parameter-only) download deliberately does not execute every step a procedure
+// declares: a surgical write into loaded segments must not erase them, and full-download
+// bookkeeping (task segments, MCB stamps) does not apply. That is only honest if every
+// par-applicable step gets an EXPLICIT disposition; a step without one blocks the flash.
+// This replaces the old behavior where unexecuted steps simply vanished and the flash
+// reported success ("silent partial recipe"), and it puts LoadProcedures.unknown on the
+// runtime path instead of only in a fixture test.
+//
+// Dispositions:
+//   executed - the planner/executor or the proven base bracket performs it (CompareProp
+//              is executed as a pre-flight property check by the flash path)
+//   caller   - session lifecycle the caller owns (a second T_Connect would desync the
+//              sequence counter; see planAbsoluteParFlash)
+//   skipped  - deliberately not executed, with a documented reason and hardware evidence
+//   blocked  - not modeled: the flash must refuse rather than run a partial recipe
+
+export type ParDisposition =
+  | { kind: "executed" }
+  | { kind: "caller" }
+  | { kind: "skipped"; reason: string }
+  | { kind: "blocked"; detail: string };
+
+// PID 27 is the memory-control-block table (per-segment CRC bookkeeping ETS stamps on a
+// full download). System B par flashes are hardware-verified WITHOUT rewriting it
+// (M-0162 and Theben 493B, both flash + read-back verified), so MCB writes
+// are a justified skip there. No such evidence exists for absolute devices, so on them
+// the same verb blocks.
+const MCB_PID = 27;
+
+export function assessParStep(step: LdStep, model: "absolute" | "relative"): ParDisposition {
+  switch (step.verb) {
+    case "LdCtrlConnect":
+    case "LdCtrlDisconnect":
+      return { kind: "caller" };
+    case "LdCtrlRestart":
+      return { kind: "executed" };
+    case "LdCtrlCompareProp": {
+      const start = step.attrs.StartElement;
+      // InlineData must be strict hex: Buffer.from(str, "hex") silently truncates at the
+      // first invalid pair, which would turn a corrupt declaration into a shorter (and
+      // possibly passing) expected value instead of a refusal.
+      const hexOk = step.attrs.InlineData !== undefined && /^([0-9A-Fa-f]{2})+$/.test(step.attrs.InlineData);
+      if (!hexOk || step.attrs.ObjIdx === undefined || step.attrs.PropId === undefined || (start !== undefined && start !== "1")) {
+        return { kind: "blocked", detail: `${step.verb} with malformed/missing inline data or element addressing (not modeled)` };
+      }
+      return { kind: "executed" }; // run as a pre-flight property check
+    }
+  }
+  if (model === "absolute") {
+    switch (step.verb) {
+      case "LdCtrlLoad":
+      case "LdCtrlLoadCompleted":
+      case "LdCtrlAbsSegment":   // segment->LSM mapping consumed by the planner
+      case "LdCtrlWriteAbsMem":  // superseded by the surgical owned-byte write (strictly narrower)
+        return { kind: "executed" };
+      case "LdCtrlUnload":
+        return { kind: "skipped", reason: "full-download erase; a surgical par write must leave loaded segments intact (hw-evidenced, M-0081)" };
+      case "LdCtrlTaskSegment":
+      case "LdCtrlTaskCtrl1":
+        return { kind: "skipped", reason: "full-download task/segment allocation; a par write rewrites no app code (hw-evidenced, M-0081)" };
+    }
+  } else {
+    // The System B base bracket drives exactly ONE segment object: LSM/object 4 (the
+    // parameter segment). A fragment step addressed to any other object would be claimed
+    // "executed" while the flash never touches it, so scope every executed claim to 4.
+    const REL_PARAM_LSM = "4";
+    switch (step.verb) {
+      case "LdCtrlLoad":
+      case "LdCtrlLoadCompleted":
+      case "LdCtrlUnload": {
+        if (step.attrs.LsmIdx !== undefined && step.attrs.LsmIdx !== REL_PARAM_LSM) {
+          return { kind: "blocked", detail: `${step.verb} targets LSM ${step.attrs.LsmIdx}; the System B par download only drives the parameter segment (LSM 4)` };
+        }
+        return { kind: "executed" }; // the proven System B base bracket drives the LSM cycle
+      }
+      case "LdCtrlRelSegment": {
+        if (step.attrs.LsmIdx !== undefined && step.attrs.LsmIdx !== REL_PARAM_LSM) {
+          return { kind: "blocked", detail: `${step.verb} targets LSM ${step.attrs.LsmIdx}; the System B par download only allocates the parameter segment (LSM 4)` };
+        }
+        // allocSegment sends mode 0 / fill 0, which is exactly the declared par allocation.
+        if ((step.attrs.Mode ?? "0") !== "0" || (step.attrs.Fill ?? "0") !== "0") {
+          return { kind: "blocked", detail: `${step.verb} with Mode=${step.attrs.Mode}/Fill=${step.attrs.Fill} (par allocation variant not modeled)` };
+        }
+        return { kind: "executed" };
+      }
+      case "LdCtrlWriteRelMem": {
+        if (step.attrs.ObjIdx !== undefined && step.attrs.ObjIdx !== REL_PARAM_LSM) {
+          return { kind: "blocked", detail: `${step.verb} targets object ${step.attrs.ObjIdx}; the System B par download only writes the parameter segment (object 4)` };
+        }
+        return { kind: "executed" }; // the read-back-verified segment write
+      }
+      case "LdCtrlWriteProp":
+      case "LdCtrlLoadImageProp":
+        if (Number(step.attrs.PropId) === MCB_PID) {
+          return { kind: "skipped", reason: "MCB stamp (PID 27); System B par flashes are hardware-verified without it (M-0162, Theben 493B)" };
+        }
+        return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
+    }
+  }
+  return {
+    kind: "blocked",
+    detail: KNOWN_LD_VERBS.has(step.verb)
+      ? `${step.verb} is not modeled for a ${model} par download`
+      : `unknown load-control verb ${step.verb}`,
+  };
+}
+
+// A CompareProp the flash path must execute before writing: read obj/pid and compare
+// against the declared value (wrong hardware or application aborts the download).
+export interface DeclaredPropCheck { obj: number; pid: number; expect: Buffer; }
+
+export interface ParCoverage {
+  blocked: { verb: string; detail: string }[];
+  skipped: { verb: string; reason: string }[];
+  checks: DeclaredPropCheck[];
+}
+
+// Assess every par-applicable step of a procedure. The caller must refuse the flash when
+// `blocked` is non-empty; `checks` are the CompareProp pre-flights it must run.
+export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relative"): ParCoverage {
+  const blocked: ParCoverage["blocked"] = [];
+  const skipped: ParCoverage["skipped"] = [];
+  const checks: DeclaredPropCheck[] = [];
+  for (const step of flattenSteps(lp, "par")) {
+    const d = assessParStep(step, model);
+    if (d.kind === "blocked") blocked.push({ verb: step.verb, detail: d.detail });
+    else if (d.kind === "skipped") skipped.push({ verb: step.verb, reason: d.reason });
+    else if (step.verb === "LdCtrlCompareProp") {
+      checks.push({ obj: Number(step.attrs.ObjIdx), pid: Number(step.attrs.PropId), expect: Buffer.from(step.attrs.InlineData, "hex") });
+    }
+  }
+  return { blocked, skipped, checks };
+}

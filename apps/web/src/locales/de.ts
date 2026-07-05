@@ -137,6 +137,8 @@ const de: Messages = {
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",
     LOAD_PROCEDURE_UNSUPPORTED: "Dieses Gerät deklariert keine nutzbare Ladeprozedur (Legacy oder unbekannter Stil). Es kann noch nicht sicher geflasht werden.",
+    LOAD_STEP_UNSUPPORTED: "Die Ladeprozedur dieses Geräts deklariert Schritte, die Busforge noch nicht ausführen kann. Flashen abgelehnt, statt ein unvollständiges Rezept auszuführen.",
+    LOAD_PROC_CHECK_FAILED: "Das Gerät hat eine von der Ladeprozedur geforderte Prüfung vor dem Programmieren nicht bestanden (unerwarteter Hardware-Typ oder Applikation). Flash abgebrochen.",
     FLASH_SEGMENT_UNPLACEABLE: "Einige geänderte Parameter liegen in einem Speichersegment, das die Ladeprozedur des Geräts nicht deklariert. Flashen abgelehnt, damit nichts still verloren geht.",
     GROUP_TABLE_UNREADABLE: "Dieses Gerät speichert seine Gruppentabellen nicht im erwarteten Format (vermutlich ein Absolut-Segment-Gerät). Das Programmieren von Gruppenadressen wird dafür noch nicht unterstützt; die Parameter lassen sich trotzdem flashen.",
     GA_TABLE_TOO_LARGE: "Dieses Gerät hat keinen Platz mehr für weitere Gruppenadressen: seine reservierten Adress-/Assoziationstabellen sind voll. Entferne Verknüpfungen oder weise diesem Gerät weniger Gruppenadressen zu.",

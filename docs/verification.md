@@ -67,7 +67,7 @@ device.
 | Application program | Device | Param-image hardware byte-match (source 1) | Codec math (source 2) | Stability pinned (source 3) |
 | --- | --- | --- | --- | --- |
 | `M-0162_A-0004-11-F245` | MEAN WELL PSU 1.1.x | **yes** (full 212-byte LSM4 image, flash + read-back verified) | yes | yes |
-| `M-0048_A-493B-21-B471` | Theben 1.1.x | group/association tables only, **not** the parameter image | yes | yes |
+| `M-0048_A-493B-21-B471` | Theben 1.1.x/1.1.x | **yes** (module-instance param change flashed + restored, byte-checked on 1.1.x; see device-memory-model.md); group/association tables verified on 1.1.x | yes | yes |
 | the other 11 programs | various | **no** | yes | yes |
 
 What this means concretely:

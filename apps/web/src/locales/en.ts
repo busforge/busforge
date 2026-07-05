@@ -137,6 +137,8 @@ const en = {
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",
     LOAD_PROCEDURE_UNSUPPORTED: "This device declares no usable load procedure (legacy or unknown style). It cannot be flashed safely yet.",
+    LOAD_STEP_UNSUPPORTED: "This device's load procedure declares steps Busforge cannot execute yet. Refusing to flash rather than run a partial recipe.",
+    LOAD_PROC_CHECK_FAILED: "The device failed a check its load procedure requires before programming (unexpected hardware type or application). Flash aborted.",
     FLASH_SEGMENT_UNPLACEABLE: "Some changed parameters live in a memory segment the device's load procedure does not declare. Refusing to flash so nothing is silently dropped.",
     GROUP_TABLE_UNREADABLE: "This device does not store its group tables in the expected format (it is likely an absolute-segment device). Group address programming is not supported for it yet; its parameters can still be flashed.",
     GA_TABLE_TOO_LARGE: "This device has no room left for more group addresses: its reserved address/association tables are full. Remove some links or assign fewer group addresses to this device.",
