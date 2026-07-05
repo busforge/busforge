@@ -54,6 +54,12 @@ export function getDeviceSecurity(db: Database, projectId: string, deviceId: str
   };
 }
 
+// How many sealed tool keys exist across ALL projects. Used at startup to refuse
+// booting without the master key that can open them.
+export function countSealedToolKeys(db: Database): number {
+  return (db.query("SELECT COUNT(*) AS n FROM device_security").get() as { n: number }).n;
+}
+
 // Which devices in a project are secure, WITHOUT touching key material. For the UI
 // (badge a device as secure) and to know whether a secure session is needed.
 export function listSecureDevices(db: Database, projectId: string): { deviceId: string; source: SecuritySource }[] {

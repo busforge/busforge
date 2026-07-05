@@ -27,6 +27,12 @@ export function createSpace(db: Database, projectId: string, parentId: number | 
   return Number(r.lastInsertRowid);
 }
 
+// Does the space exist? (cheap existence check used by route guards before the
+// destructive delete captures its undo snapshot.)
+export function spaceExists(db: Database, projectId: string, id: number): boolean {
+  return !!getSpace(db, projectId, id);
+}
+
 export function renameSpace(db: Database, projectId: string, id: number, name: string): boolean {
   return db.prepare("UPDATE spaces SET name = ? WHERE id = ? AND project_id = ?").run(name, id, projectId).changes > 0;
 }

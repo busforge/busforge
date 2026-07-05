@@ -228,6 +228,13 @@ export function getGaMeta(db: Database, projectId: string, raw: number): GaMeta 
   return { address: ga.address, name: ga.name, dpt: ga.dpt, path: path.reverse() };
 }
 
+// The distinct application-program refs of a project's devices (used to make an
+// export self-contained by resolving each program into the catalog first).
+export function listDeviceAppRefs(db: Database, projectId: string): string[] {
+  const rows = db.query("SELECT DISTINCT app_ref AS appRef FROM devices WHERE project_id = ?").all(projectId) as { appRef: string }[];
+  return rows.map((r) => r.appRef);
+}
+
 // Does the project exist? (cheap existence check used by route guards.)
 export function projectExists(db: Database, id: string): boolean {
   return !!db.query("SELECT 1 FROM projects WHERE id = ?").get(id);

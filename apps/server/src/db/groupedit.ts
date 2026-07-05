@@ -115,6 +115,12 @@ export function createGroupRange(db: Database, projectId: string, parentId: numb
   return Number(r.lastInsertRowid);
 }
 
+// Does the range exist? (cheap existence check used by route guards before the
+// destructive delete captures its undo snapshot.)
+export function groupRangeExists(db: Database, projectId: string, id: number): boolean {
+  return !!db.query("SELECT 1 FROM group_ranges WHERE id = ? AND project_id = ?").get(id, projectId);
+}
+
 export function renameGroupRange(db: Database, projectId: string, id: number, name: string): boolean {
   return db.prepare("UPDATE group_ranges SET name = ? WHERE id = ? AND project_id = ?").run(name, id, projectId).changes > 0;
 }
@@ -155,6 +161,12 @@ export function createGroupAddress(db: Database, projectId: string, rangeId: num
   db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)")
     .run(projectId, rangeId, raw, address, name, dpt);
   return { raw, address };
+}
+
+// Does the address exist? (cheap existence check used by route guards before the
+// destructive delete captures its undo snapshot.)
+export function groupAddressExists(db: Database, projectId: string, raw: number): boolean {
+  return !!db.query("SELECT 1 FROM group_addresses WHERE project_id = ? AND raw = ?").get(projectId, raw);
 }
 
 export function updateGroupAddress(db: Database, projectId: string, raw: number, name: string, dpt: string): boolean {
