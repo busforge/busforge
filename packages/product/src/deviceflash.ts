@@ -101,6 +101,27 @@ export interface AbsParFlashPlan {
   unplaceable: { id: string; address: number; changed: number }[];
 }
 
+// The System B ("relative") par-download bracket as a LoadPlan for the generic executor,
+// replacing the formerly hardcoded flashParameters() in @busforge/knx. Step order is the
+// hardware-proven bracket (M-0162 full-image byte-match, Theben 493B module
+// param change): unload -> load -> alloc(size) -> write the segment (read-back verified,
+// address resolved at execution time) -> stamp the app id so LoadCompleted validates ->
+// load-completed -> restart. Connection lifecycle stays with the caller, like the
+// absolute planner. One DELIBERATE delta vs the retired executor: the engine asserts
+// LOADING after Load (it always did for the absolute path); standard LSM behavior, but
+// not yet hardware-smoked on a System B device (see docs/load-procedures.md).
+export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer): LoadPlan {
+  return [
+    { op: "unload", lsm },
+    { op: "load", lsm },
+    { op: "alloc", lsm, size: image.length },
+    { op: "writeSegment", lsm, bytes: image },
+    { op: "stampAppId", lsm, data: appIdStamp },
+    { op: "loadCompleted", lsm },
+    { op: "restart" },
+  ];
+}
+
 export function planAbsoluteParFlash(
   app: AppConfig,
   values: Map<string, string>,

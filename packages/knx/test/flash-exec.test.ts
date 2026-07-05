@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import type { KnxDevice } from "../src/device.ts";
-import { flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
+import { flashGroupTables, flashGroupTablesMv0705, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -58,29 +58,57 @@ describe("appId", () => {
   });
 });
 
-describe("flashParameters (System B bracket, LSM 4)", () => {
-  test("exact call order: unload, load, alloc, write image, stamp id, load-completed, state check, restart", async () => {
+describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoadPlan)", () => {
+  // The relative planner lives in @busforge/product; this test locks that the planned
+  // steps reproduce the RETIRED hardcoded executor's hardware-proven call order
+  // (M-0162 byte-match) exactly, with ONE deliberate, documented delta: the
+  // engine asserts LOADING after Load (an extra propRead), as it always did for the
+  // absolute path. Standard LSM behavior, but flagged in docs/load-procedures.md as
+  // not yet hardware-smoked on a System B device.
+  const relativePlan = (lsm: number, image: Buffer, id: Buffer): LoadPlan => [
+    { op: "unload", lsm },
+    { op: "load", lsm },
+    { op: "alloc", lsm, size: image.length },
+    { op: "writeSegment", lsm, bytes: image },
+    { op: "stampAppId", lsm, data: id },
+    { op: "loadCompleted", lsm },
+    { op: "restart" },
+  ];
+
+  // (The planner-shape lock, planRelativeParFlash === this bracket, lives in
+  // packages/product/test/loadplan.test.ts: knx must not depend on product.)
+
+  test("exact device call order: unload, load(+LOADING assert), alloc, write image, stamp id, load-completed(+LOADED assert), restart", async () => {
     const dev = new RecDev();
     const image = Buffer.alloc(212, 0xab); // 212 = 0xd4 exercises a non-trivial size byte
-    await flashParameters(asDev(dev), image, appId(0x0083, 0x1234, 0x21));
+    await runLoadPlan(asDev(dev), relativePlan(4, image, appId(0x0083, 0x1234, 0x21)));
     expect(dev.calls).toEqual([
       ["propWrite", 4, 5, EV_UNLD],                    // UNLOAD the app segment first
       ["propWrite", 4, 5, EV_LOAD],                    // open the load state machine
+      ["propRead", 4, 5],                              // engine asserts LOADING (the documented delta)
       ["propWrite", 4, 5, alloc("000000d4")],          // allocate 212 bytes (0x000000d4 big-endian)
-      ["tableAddr", 4],                                // segment base = PID 7 of LSM 4
-      ["memWrite", 0x4000, "ab".repeat(212), null],    // image at the segment base, device-default verify
+      ["tableAddr", 4],                                // segment base = PID 7 of LSM 4, resolved at execution
+      ["memWrite", 0x4000, "ab".repeat(212), true],    // image at the segment base, read-back verified (same as the retired executor's memWrite default)
       ["propWrite", 4, 13, "0083123421"],              // PID 13 app-id stamp so LoadCompleted validates
       ["propWrite", 4, 5, EV_DONE],                    // LOAD_COMPLETED
-      ["propRead", 4, 5],                              // read back the LSM state
+      ["propRead", 4, 5],                              // engine asserts LOADED
       ["restart"],
     ]);
   });
 
   test("a non-LOADED state after load-completed aborts before restart", async () => {
     const dev = new RecDev();
-    dev.lsmQueue.set(4, [STATE.ERROR]); // device refuses the load (e.g. app-id mismatch)
-    await expect(flashParameters(asDev(dev), Buffer.alloc(4), appId(1, 2, 3))).rejects.toThrow(/not Loaded/);
+    dev.lsmQueue.set(4, [STATE.LOADING, STATE.ERROR]); // Load ok, completion refused (e.g. app-id mismatch)
+    await expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false); // no restart into a broken load
+  });
+
+  test("a refused Load aborts BEFORE any alloc or write (the new safety property of the assert)", async () => {
+    const dev = new RecDev();
+    dev.lsmQueue.set(4, [STATE.UNLOADED]); // device ignored the Load event
+    await expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADING/);
+    expect(dev.calls.some((c) => c[0] === "memWrite")).toBe(false);
+    expect(dev.calls.filter((c) => c[0] === "propWrite" && c[2] === 5).length).toBe(2); // unload + load only, no alloc
   });
 });
 

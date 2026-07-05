@@ -1,11 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
+import { KnxDevice, SecureSession, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
 import {
   toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned,
   buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage,
   decodeGroupTables, decodeGroupTablesMv0705, unmappedParamRefs, resolveModuleInstances, parseLoadProcedures,
-  buildAbsoluteSegmentTargets, planAbsoluteParFlash, maskInfo, sameMask, parseAppConfig, assessParCoverage, verifyMaskedBytes,
+  buildAbsoluteSegmentTargets, planAbsoluteParFlash, planRelativeParFlash, maskInfo, sameMask, parseAppConfig, assessParCoverage, verifyMaskedBytes,
   type AppConfig, type AppModel, type ModuleInstance, type ComObjectLink, type MemoryModel, type SystemFamily, type ParCoverage, type LoadProcedures,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
@@ -355,7 +355,11 @@ export class SystemBProfile extends DeviceProfile {
       diffBytes,
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
-      write: () => flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => ctx.onProgress?.("write", d, t)),
+      write: () => runLoadPlan(
+        dev,
+        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version)),
+        { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
+      ),
       // The device restarts after load-completed; verify ONLY the owned bytes.
       verify: async () => {
         const verifyAddr = await dev.tableAddr(LSM);

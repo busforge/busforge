@@ -21,6 +21,10 @@ export type LoadStep =
   | { op: "loadCompleted"; lsm: number }
   | { op: "alloc"; lsm: number; size: number }          // relative-segment allocate
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
+  // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
+  // TIME: a relative segment's address is only assigned by the alloc step, so the
+  // planner cannot precompute it the way absolute writeMem steps can.
+  | { op: "writeSegment"; lsm: number; bytes: Buffer }
   | { op: "writeProp"; obj: number; pid: number; data: Buffer }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
 
@@ -30,6 +34,9 @@ const stateName = (s: number) => Object.entries(STATE).find(([, v]) => v === s)?
 
 export interface RunOpts {
   onStep?: (i: number, step: LoadStep, total: number) => void;
+  // Byte progress within a writeSegment step (a relative segment is one large write,
+  // so per-step notification alone would freeze the progress bar for its duration).
+  onWrite?: (done: number, total: number) => void;
   // re-read pause after restart is the caller's concern; the runner just fires restart
 }
 
@@ -53,6 +60,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       }
       case "alloc": await allocSegment(dev, step.lsm, step.size); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
+      case "writeSegment": await dev.memWrite(await dev.tableAddr(step.lsm), step.bytes, { verify: true, onProgress: opts.onWrite }); break;
       case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {

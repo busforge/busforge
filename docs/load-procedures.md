@@ -31,10 +31,12 @@ A device is flashable only when both are handled.
 ## What the engine does
 
 A generic step executor (`packages/knx/loadrunner.ts`, `runLoadPlan`) drives a typed
-`LoadPlan` (connect / unload / load / alloc / writeMem / writeProp / loadCompleted /
-restart / disconnect). It asserts the LSM state after every `load`/`loadCompleted`, so a
-refused or desynced transition stops before the next write. Memory writes verify by
-read-back.
+`LoadPlan` (connect / unload / load / alloc / writeMem / writeSegment / writeProp /
+stampAppId / loadCompleted / restart / disconnect) for BOTH memory models. It asserts
+the LSM state after every `load`/`loadCompleted`, so a refused or desynced transition
+stops before the next write. Memory writes verify by read-back; `writeSegment` resolves
+the segment address at execution time (a relative segment's address is only assigned by
+the alloc step).
 
 The planner (`packages/product/deviceflash.ts`, `planAbsoluteParFlash`) turns a parsed
 procedure plus the built segment images plus a **live device read** into that plan. It
@@ -104,9 +106,14 @@ flashing blind.
   code / RAM / task segments, whose bytes Busforge does not build (only the parameter
   image). Full mode is therefore limited to what we can construct; first-time
   commissioning of a virgin device is out of scope.
-- **Route the relative path through the engine.** The relative `flashParameters` is
-  hardware-proven and stays as-is; folding it into `runLoadPlan` is a low-risk cleanup,
-  validated first by asserting the planned step sequence matches it.
+- **Relative path through the engine: DONE.** `planRelativeParFlash` emits the
+  hardware-proven System B bracket as a `LoadPlan` and `runLoadPlan` executes it (the
+  hardcoded `flashParameters` executor is deleted); the planned step stream is locked
+  call-for-call against the retired executor's order in `flash-exec.test.ts` /
+  `loadplan.test.ts`. ONE deliberate delta: the engine asserts LOADING after Load
+  (as the absolute path always did). Standard LSM behavior, abort happens BEFORE any
+  write, but **not yet hardware-smoked on a System B device**: run an identity flash
+  on the PSU next time the bus is available.
 - **Property-object verbs**: `CompareProp` is executed (pre-flight check).
   `LoadImageProp`/`WriteProp` to PID 27 (MCB) are a documented, hardware-evidenced skip
   on relative devices and **block** the flash on absolute devices (M-0008) until a

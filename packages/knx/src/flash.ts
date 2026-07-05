@@ -66,18 +66,11 @@ export async function flashGroupTablesMv0705(dev: KnxDevice, tables: { addr: Buf
   await dev.restart();
 }
 
-// Parameter ("par") download: rewrites the application/parameter segment (LSM 4)
-// and stamps the application id so load-completed validates.
-export async function flashParameters(dev: KnxDevice, image: Buffer, id: Buffer, onProgress?: (done: number, total: number) => void) {
-  await lsmEvent(dev, OBJ.APP_PROGRAM, LSM.UNLOAD);
-  await lsmEvent(dev, OBJ.APP_PROGRAM, LSM.LOAD);
-  await allocSegment(dev, OBJ.APP_PROGRAM, image.length);
-  await dev.memWrite(await dev.tableAddr(OBJ.APP_PROGRAM), image, { onProgress });
-  await dev.propWrite(OBJ.APP_PROGRAM, PID.PROGRAM_ID, id);
-  await lsmEvent(dev, OBJ.APP_PROGRAM, LSM.LOAD_COMPLETED);
-  if ((await lsmState(dev, OBJ.APP_PROGRAM)) !== STATE.LOADED) throw new Error("LSM 4 not Loaded after parameter flash");
-  await dev.restart();
-}
+// Parameter ("par") downloads for BOTH memory models are driven by the generic executor:
+// the planners (planRelativeParFlash / planAbsoluteParFlash in @busforge/product) emit a
+// LoadPlan and runLoadPlan (loadrunner.ts) executes it. The formerly hardcoded System B
+// executor lived here; its proven step order is now the relative planner's output,
+// locked call-for-call in flash-exec.test.ts.
 
 // MV-0705 (absolute-segment) parameter downloads are driven by the device's declared
 // LoadProcedure: the planner (planAbsoluteParFlash) turns it into a LoadPlan and the

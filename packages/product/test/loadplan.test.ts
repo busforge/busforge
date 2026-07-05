@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, planRelativeParFlash, type LoadProcedures } from "../src/index.ts";
 
 const REAL = join(import.meta.dir, "fixtures", "real");
 const fixture = (n: string) => gunzipSync(readFileSync(join(REAL, n))).toString("utf8");
@@ -92,4 +92,21 @@ test("changed segment not declared in the procedure -> reported unplaceable, nev
   expect(plan).toEqual([]);
   expect(changedBytes).toBe(0);
   expect(unplaceable).toEqual([{ id: as4200.id, address: 16896, changed: 1 }]);
+});
+
+test("planRelativeParFlash emits exactly the hardware-proven System B bracket", () => {
+  // The oracle is the retired hardcoded executor's call order (hardware-proven on
+  // M-0162), hand-written here, NOT derived from the planner. The engine-side
+  // device-call lock for the same bracket lives in packages/knx/test/flash-exec.test.ts.
+  const image = Buffer.alloc(212, 0xab);
+  const id = Buffer.from("0083123421", "hex");
+  expect(planRelativeParFlash(4, image, id)).toEqual([
+    { op: "unload", lsm: 4 },
+    { op: "load", lsm: 4 },
+    { op: "alloc", lsm: 4, size: 212 },
+    { op: "writeSegment", lsm: 4, bytes: image },
+    { op: "stampAppId", lsm: 4, data: id },
+    { op: "loadCompleted", lsm: 4 },
+    { op: "restart" },
+  ]);
 });
