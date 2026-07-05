@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum } from "./index.ts";
 import { flashGroupTables } from "./flash.ts";
+import { readGroupTables } from "./grouptable-read.ts";
 
 // LIVE flash test on the Bun stack: change one group address (2/1/7 -> 2/1/8),
 // flash, prove on the bus the device answers on the new GA, then revert.
@@ -16,15 +17,7 @@ async function readTables() {
   const tun = new KnxIpTunnel(ip); await tun.connect();
   const dev = new KnxDevice(tun, ia); await dev.connect();
   const mask = await dev.deviceDescriptor();
-  const a1 = await dev.tableAddr(1), a2 = await dev.tableAddr(2), a3 = await dev.tableAddr(3);
-  const rd = async (addr: number, width: number) => { const h = await dev.memRead(addr, 2); const n = (h[0] << 8) | h[1]; return dev.memRead(addr, 2 + n * width); };
-  const addr = await rd(a1, 2);
-  const gcount = (addr[0] << 8) | addr[1];
-  const ah = await dev.memRead(a2, 2); const acount = (ah[0] << 8) | ah[1];
-  let assoc = await dev.memRead(a2, 2 + acount * 4); // try long
-  let long = true; for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
-  if (!long) assoc = await dev.memRead(a2, 2 + acount * 2);
-  const comObj = await rd(a3, 2);
+  const { addr, assoc, comObj } = await readGroupTables(dev); // the shared System B reader (one layout home)
   await dev.disconnect(); await tun.disconnect();
   return { mask, addr, assoc, comObj };
 }

@@ -6,6 +6,7 @@ export { KnxUsbTransport, listUsbInterfaces } from "./usb.ts";
 export { searchInterfaces } from "./discover.ts";
 export { KnxDevice } from "./device.ts";
 export * from "./flash.ts";
+export * from "./grouptable-read.ts";
 export * from "./loadrunner.ts";
 export { secureEncode, secureDecode, SCF, SCF_TOOL_DATA, type SecureFields } from "./secure.ts";
 export { SecureSession } from "./secureSession.ts";

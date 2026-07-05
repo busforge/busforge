@@ -1,5 +1,12 @@
 // Build a device's group address tables from its com-object links. Validated
-// byte-for-byte against a real device (System B / mask MV-07B0):
+// byte-for-byte against a real device (System B / mask MV-07B0).
+//
+// LAYOUT AUTHORITY: the count/entry byte widths used here are the same on-device
+// layouts the readers in @busforge/knx (grouptable-read.ts) declare as TableLayout
+// descriptors (SYSTEM_B_ADDR / SYSTEM_B_ASSOC_LONG / SYSTEM_B_ASSOC_SHORT /
+// MV0705_TABLE). grouptables.test.ts asserts this file's arithmetic against those
+// descriptors, so a layout change in either place fails the build instead of
+// desynchronizing read and write. Layout facts, System B:
 // - Address table:     [count:2][GA:2]xN, GAs sorted ascending.
 // - Association table:  [count:2][groupIdx:2][comObjNum:2]xN (long form), entries
 //   ordered by com-object number then group index.

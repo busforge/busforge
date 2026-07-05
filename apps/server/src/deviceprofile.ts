@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp } from "@busforge/knx";
+import { KnxDevice, SecureSession, flashParameters, flashGroupTables, flashGroupTablesMv0705, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705 } from "@busforge/knx";
 import {
   toAppModel, buildParameterImage, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned,
   buildDeviceConfig, buildGroupTables, buildGroupTablesMv0705, decodeParameterImage, decodeAbsoluteImage,
@@ -243,53 +243,9 @@ function moduleAwareImage(cfg: AppConfig, params: Map<string, string>, provided:
   return { model, writeValues };
 }
 
-// A group/association table starts with a device-supplied entry count; it must be bounded
-// before reading count*width bytes (see readGroupTables). An MV-0705 device whose table
-// pointer lands in parameter memory would otherwise decode to thousands of entries and hang.
-const MAX_TABLE_ENTRIES = 2048;
-
-// Read a System B device's group tables (address, association, com-object), detecting the
-// long vs short association format. `skipComObj` omits the (largest) com-object table.
-export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
-  const boundCount = (count: number, what: string): number => {
-    if (count > MAX_TABLE_ENTRIES) throw new ApiError("GROUP_TABLE_UNREADABLE", `${what} reports ${count} entries (implausible); this device's group tables are not in the expected System B format`);
-    return count;
-  };
-  const counted = async (obj: number, width: number) => {
-    const base = await dev.tableAddr(obj);
-    const h = await dev.memRead(base, 2);
-    const count = boundCount((h[0] << 8) | h[1], `group object ${obj} table`);
-    return dev.memRead(base, 2 + count * width);
-  };
-  const total = skipComObj ? 2 : 3;
-  const addr = await counted(1, 2);
-  onStep?.(1, total);
-  const gcount = (addr[0] << 8) | addr[1];
-  const a2 = await dev.tableAddr(2);
-  const ah = await dev.memRead(a2, 2);
-  const acount = boundCount((ah[0] << 8) | ah[1], "association table");
-  let assoc = await dev.memRead(a2, 2 + acount * 4);
-  let long = true;
-  for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
-  if (!long) assoc = await dev.memRead(a2, 2 + acount * 2);
-  onStep?.(2, total);
-  const comObj = skipComObj ? Buffer.alloc(0) : await counted(3, 2);
-  if (!skipComObj) onStep?.(3, total);
-  return { addr, assoc, comObj, long };
-}
-
-// Read an MV-0705 device's address + association tables. Same property-pointer addressing as
-// System B, but the count is a SINGLE byte and each entry is 2 bytes (read length 1+count*2).
-export async function readGroupTablesMv0705(dev: KnxDevice, onStep?: (done: number, total: number) => void): Promise<{ addr: Buffer; assoc: Buffer }> {
-  const readTable = async (obj: number) => {
-    const base = await dev.tableAddr(obj);
-    const count = (await dev.memRead(base, 1))[0];
-    return dev.memRead(base, 1 + count * 2);
-  };
-  const addr = await readTable(1); onStep?.(1, 2);
-  const assoc = await readTable(2); onStep?.(2, 2);
-  return { addr, assoc };
-}
+// Group-table readers (readGroupTables / readGroupTablesMv0705) live in @busforge/knx
+// (grouptable-read.ts) next to the layout descriptors the product codec is asserted
+// against, so the byte layout has one home instead of a copy per layer.
 
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -2,9 +2,9 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KnxDevice, flashGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
+import { KnxDevice, flashGroupTablesMv0705, readGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
 import { buildGroupTablesMv0705, decodeGroupTablesMv0705, type ComObjectLink } from "@busforge/product";
-import { System7Profile, readGroupTablesMv0705 } from "../src/deviceprofile.ts";
+import { System7Profile } from "../src/deviceprofile.ts";
 
 // Byte-addressed mock of the bus device, enough to drive the MV-0705 GA flash orchestration
 // (LSM bracket via property 5, table addresses via property 7, memory read/write, restart).

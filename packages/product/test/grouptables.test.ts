@@ -167,3 +167,17 @@ describe("buildGroupTablesMv0705 (System-7 layout)", () => {
     expect(r.assoc.toString("hex")).toBe("05050104050308010a020b");
   });
 });
+
+// Cross-package layout lock: the builder arithmetic here and the on-device readers in
+// @busforge/knx must describe the SAME byte layout. Deriving the expected sizes from the
+// knx TableLayout descriptors means a width change on either side fails this test
+// instead of silently desynchronizing read and write.
+test("builder output follows the shared TableLayout descriptors (@busforge/knx)", async () => {
+  const { SYSTEM_B_ADDR, SYSTEM_B_ASSOC_LONG, MV0705_TABLE } = await import("@busforge/knx");
+  const sysB = buildGroupTables([{ comObjNum: 1, gaRaws: [0x1101, 0x1102] }]); // 2 GAs, 2 associations
+  expect(sysB.addr.length).toBe(SYSTEM_B_ADDR.countBytes + 2 * SYSTEM_B_ADDR.entryBytes);
+  expect(sysB.assoc.length).toBe(SYSTEM_B_ASSOC_LONG.countBytes + 2 * SYSTEM_B_ASSOC_LONG.entryBytes);
+  const mv = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], 0x1101); // IA + 1 GA, 1 association
+  expect(mv.addr.length).toBe(MV0705_TABLE.countBytes + 2 * MV0705_TABLE.entryBytes);
+  expect(mv.assoc.length).toBe(MV0705_TABLE.countBytes + 1 * MV0705_TABLE.entryBytes);
+});
