@@ -9,7 +9,92 @@
       "hasModules": false
     },
     "modelHash": "cf0ac2c19123c9bb",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0008_A-10D7-11-2783-O000A_AS-435C": {
+        "address": 17244,
+        "size": 13,
+        "build": "434b2d8c923eb49f",
+        "owned": "1eb87c8dccc765ba",
+        "verify": "d113968ce4e873e0"
+      },
+      "M-0008_A-10D7-11-2783-O000A_AS-4369": {
+        "address": 17257,
+        "size": 6,
+        "build": "af2f1354720108f7",
+        "owned": "a7fda0b61e2047f0",
+        "verify": "a7fda0b61e2047f0"
+      },
+      "M-0008_A-10D7-11-2783-O000A_AS-436F": {
+        "address": 17263,
+        "size": 202,
+        "build": "141998b2256bd064",
+        "owned": "d2a171c5b52cc7e3",
+        "verify": "d2a171c5b52cc7e3"
+      },
+      "M-0008_A-10D7-11-2783-O000A_AS-4439": {
+        "address": 17465,
+        "size": 21,
+        "build": "773ae3b2c224cacb",
+        "owned": "c344e9487bfbd5c4",
+        "verify": "b1565b4d835edea7"
+      },
+      "M-0008_A-10D7-11-2783-O000A_AS-444E": {
+        "address": 17486,
+        "size": 256,
+        "build": "8f8aaf4aa0fcc80c",
+        "owned": "e58d85c5bc7406a3",
+        "verify": "873a8698bca08fb1"
+      },
+      "M-0008_A-10D7-11-2783-O000A_AS-454E": {
+        "address": 17742,
+        "size": 3,
+        "build": "ae28d41b548a93b5",
+        "owned": "f6e0a1e2ac41945a",
+        "verify": "2ac9a6746aca543a"
+      }
+    },
+    "flashPlan": {
+      "segments": 6,
+      "perSegment": {
+        "M-0008_A-10D7-11-2783-O000A_AS-435C": {
+          "address": 17244,
+          "size": 13,
+          "ownedBytes": 7,
+          "skippedUnowned": 6
+        },
+        "M-0008_A-10D7-11-2783-O000A_AS-4369": {
+          "address": 17257,
+          "size": 6,
+          "ownedBytes": 1,
+          "skippedUnowned": 5
+        },
+        "M-0008_A-10D7-11-2783-O000A_AS-436F": {
+          "address": 17263,
+          "size": 202,
+          "ownedBytes": 0,
+          "skippedUnowned": 202
+        },
+        "M-0008_A-10D7-11-2783-O000A_AS-4439": {
+          "address": 17465,
+          "size": 21,
+          "ownedBytes": 1,
+          "skippedUnowned": 20
+        },
+        "M-0008_A-10D7-11-2783-O000A_AS-444E": {
+          "address": 17486,
+          "size": 256,
+          "ownedBytes": 86,
+          "skippedUnowned": 170
+        },
+        "M-0008_A-10D7-11-2783-O000A_AS-454E": {
+          "address": 17742,
+          "size": 3,
+          "ownedBytes": 3,
+          "skippedUnowned": 0
+        }
+      }
+    }
   },
   "M-0048_A-107E-12-5B58.xml.gz": {
     "shape": {
@@ -21,7 +106,27 @@
       "hasModules": false
     },
     "modelHash": "3ba2e26f6ec2dda4",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0048_A-107E-12-5B58_AS-4800": {
+        "address": 18432,
+        "size": 576,
+        "build": "db0a77d1a8e34a60",
+        "owned": "cf74680ea4cd26d6",
+        "verify": "775649c9d884bcbb"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0048_A-107E-12-5B58_AS-4800": {
+          "address": 18432,
+          "size": 576,
+          "ownedBytes": 38,
+          "skippedUnowned": 538
+        }
+      }
+    }
   },
   "M-0048_A-140C-14-EB70.xml.gz": {
     "shape": {
@@ -33,7 +138,40 @@
       "hasModules": false
     },
     "modelHash": "6b68064d14d459a3",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0048_A-140C-14-EB70_AS-4800": {
+        "address": 18432,
+        "size": 1024,
+        "build": "cc29f8068c4f47dc",
+        "owned": "3c1b9058de97937a",
+        "verify": "5fd48124900ae123"
+      },
+      "M-0048_A-140C-14-EB70_AS-4C00": {
+        "address": 19456,
+        "size": 1024,
+        "build": "e2943f8d0b0e7d58",
+        "owned": "35ae5091b37e8f0f",
+        "verify": "35ae5091b37e8f0f"
+      }
+    },
+    "flashPlan": {
+      "segments": 2,
+      "perSegment": {
+        "M-0048_A-140C-14-EB70_AS-4800": {
+          "address": 18432,
+          "size": 1024,
+          "ownedBytes": 21,
+          "skippedUnowned": 1003
+        },
+        "M-0048_A-140C-14-EB70_AS-4C00": {
+          "address": 19456,
+          "size": 1024,
+          "ownedBytes": 0,
+          "skippedUnowned": 1024
+        }
+      }
+    }
   },
   "M-0048_A-493B-21-B471.xml.gz": {
     "shape": {
@@ -79,7 +217,27 @@
       "hasModules": false
     },
     "modelHash": "f59bfdbc0d1291ee",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0081_A-FE01-11-75D9_AS-4200": {
+        "address": 16896,
+        "size": 256,
+        "build": "dc3d3d5fc9e64ec1",
+        "owned": "a1bde7c65b1a2587",
+        "verify": "a1bde7c65b1a2587"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0081_A-FE01-11-75D9_AS-4200": {
+          "address": 16896,
+          "size": 256,
+          "ownedBytes": 18,
+          "skippedUnowned": 238
+        }
+      }
+    }
   },
   "M-0081_A-FF31-31-D6FF.xml.gz": {
     "shape": {
@@ -91,7 +249,27 @@
       "hasModules": false
     },
     "modelHash": "cd3dc845a1306858",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0081_A-FF31-31-D6FF_AS-456A": {
+        "address": 17770,
+        "size": 352,
+        "build": "56296f10f47d1da8",
+        "owned": "ca5ed0252f4f65a7",
+        "verify": "ca5ed0252f4f65a7"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0081_A-FF31-31-D6FF_AS-456A": {
+          "address": 17770,
+          "size": 352,
+          "ownedBytes": 37,
+          "skippedUnowned": 315
+        }
+      }
+    }
   },
   "M-0083_A-00B4-32-3919.xml.gz": {
     "shape": {
@@ -103,7 +281,27 @@
       "hasModules": true
     },
     "modelHash": "9d547ae5d071ad18",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0083_A-00B4-32-3919_AS-44C8": {
+        "address": 17608,
+        "size": 372,
+        "build": "999de3ca3a6803e8",
+        "owned": "7412166755abd766",
+        "verify": "c24905be7336cd6e"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0083_A-00B4-32-3919_AS-44C8": {
+          "address": 17608,
+          "size": 372,
+          "ownedBytes": 60,
+          "skippedUnowned": 312
+        }
+      }
+    }
   },
   "M-0083_A-00B6-32-9642.xml.gz": {
     "shape": {
@@ -115,7 +313,27 @@
       "hasModules": true
     },
     "modelHash": "2112e9456fd4e267",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0083_A-00B6-32-9642_AS-4468": {
+        "address": 17512,
+        "size": 168,
+        "build": "6fde62750dff17d8",
+        "owned": "fc49342d815bf44e",
+        "verify": "f47578784fb091f5"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0083_A-00B6-32-9642_AS-4468": {
+          "address": 17512,
+          "size": 168,
+          "ownedBytes": 28,
+          "skippedUnowned": 140
+        }
+      }
+    }
   },
   "M-0083_A-0137-20-7EB2.xml.gz": {
     "shape": {
@@ -144,7 +362,27 @@
       "hasModules": false
     },
     "modelHash": "73ac77c0cc512c85",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-0083_A-0138-21-F18E-O0072_AS-0100": {
+        "address": 256,
+        "size": 256,
+        "build": "5225ea3b90bab43f",
+        "owned": "6a760a3052278ea6",
+        "verify": "5269db8247625b6a"
+      }
+    },
+    "flashPlan": {
+      "segments": 1,
+      "perSegment": {
+        "M-0083_A-0138-21-F18E-O0072_AS-0100": {
+          "address": 256,
+          "size": 256,
+          "ownedBytes": 9,
+          "skippedUnowned": 247
+        }
+      }
+    }
   },
   "M-008E_A-7079-10-9C41.xml.gz": {
     "shape": {
@@ -156,7 +394,40 @@
       "hasModules": false
     },
     "modelHash": "ac5ec92fb49fbe68",
-    "lsms": {}
+    "lsms": {},
+    "absolute": {
+      "M-008E_A-7079-10-9C41_AS-4700": {
+        "address": 18176,
+        "size": 1024,
+        "build": "310a50a4b862c155",
+        "owned": "dd94321c8c22178b",
+        "verify": "a66aaf38949a1996"
+      },
+      "M-008E_A-7079-10-9C41_AS-4B00": {
+        "address": 19200,
+        "size": 256,
+        "build": "f1a39a8ac74777a2",
+        "owned": "2694c68db889919c",
+        "verify": "67f022195ee40514"
+      }
+    },
+    "flashPlan": {
+      "segments": 2,
+      "perSegment": {
+        "M-008E_A-7079-10-9C41_AS-4700": {
+          "address": 18176,
+          "size": 1024,
+          "ownedBytes": 28,
+          "skippedUnowned": 996
+        },
+        "M-008E_A-7079-10-9C41_AS-4B00": {
+          "address": 19200,
+          "size": 256,
+          "ownedBytes": 2,
+          "skippedUnowned": 254
+        }
+      }
+    }
   },
   "M-0162_A-0004-11-F245.xml.gz": {
     "shape": {

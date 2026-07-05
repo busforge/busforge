@@ -39,6 +39,30 @@ describe("real catalogue (per-manufacturer regression)", () => {
         expect(snapshot(xml)).toEqual(golden[name]);
       });
 
+      test("absolute-segment build + flash plan stay pinned (sections present iff the app declares absolute segments)", () => {
+        // Stability lock, not a correctness proof: the golden hashes prove the default
+        // absolute build, its owned/verify masks and the surgical flash plan are
+        // UNCHANGED since the reviewed regeneration; device-correctness is pinned by
+        // the hardware byte-matches (docs/mv0705-spike-findings.md). The presence
+        // checks are explicit because toEqual treats a missing key like `undefined`:
+        // a fixture silently gaining or losing its absolute sections (e.g. the parser
+        // dropping AbsoluteSegments) must fail HERE, loudly, not blur through.
+        const app = parseAppConfig(xml);
+        const snap = snapshot(xml);
+        const hasAbs = app.absoluteSegments.length > 0;
+        expect(snap.absolute !== undefined).toBe(hasAbs);
+        expect(snap.flashPlan !== undefined).toBe(hasAbs);
+        expect(golden[name].absolute !== undefined).toBe(hasAbs);
+        expect(golden[name].flashPlan !== undefined).toBe(hasAbs);
+        if (!hasAbs) return;
+        expect(snap.absolute).toEqual(golden[name].absolute!);
+        expect(snap.flashPlan).toEqual(golden[name].flashPlan!);
+        // Both sections describe the same targeted-segment set (the image build and the
+        // flash plan can never drift apart on which segments they cover).
+        expect(Object.keys(snap.flashPlan!.perSegment).sort()).toEqual(Object.keys(snap.absolute!).sort());
+        expect(snap.flashPlan!.segments).toBe(Object.keys(snap.flashPlan!.perSegment).length);
+      });
+
       test("every type base is a known enum value (no parser leak)", () => {
         const app = parseAppConfig(xml);
         for (const t of app.types.values()) expect(CONFIG_BASES.has(t.base)).toBe(true);

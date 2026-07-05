@@ -91,11 +91,15 @@ export class KnxUsbTransport implements KnxTransport {
   private conResolve: (() => void) | null = null;
 
   // Identify the device by HID path (preferred, disambiguates multiple sticks)
-  // or by vendor/product id.
-  constructor(private readonly target: { path?: string; vendorId?: number; productId?: number }) {}
+  // or by vendor/product id. hidModule is a test seam; when omitted the real
+  // node-hid module is loaded lazily as before.
+  constructor(
+    private readonly target: { path?: string; vendorId?: number; productId?: number },
+    private readonly hidModule?: NodeHid,
+  ) {}
 
   async connect(): Promise<void> {
-    const hid = await loadHid();
+    const hid = this.hidModule ?? (await loadHid());
     this.dev = this.target.path
       ? new hid.HID(this.target.path)
       : new hid.HID(this.target.vendorId!, this.target.productId!);

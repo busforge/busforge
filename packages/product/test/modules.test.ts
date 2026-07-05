@@ -112,6 +112,74 @@ describe("module instances (Theben 493B channel device)", () => {
   });
 });
 
+// Second-manufacturer module pin: the MDT M-0083_A-00B6 (the one MV-0705 module device
+// in the corpus, absolute-segment memory; see docs/device-memory-model.md). Its module
+// mechanics are the OPPOSITE corner to the Theben 493B: no <Repeat>, no allocator-bound
+// args. The Dynamic declares fixed <Module> nodes, gated by a <choose>, and every
+// instance binds its base arguments to LITERAL values (the catalogue ships the resolved
+// allocation). All expectations below are hand-read from the fixture XML, with the
+// arithmetic in the comments, so this pins the resolver/materializer against the
+// source, not against its own output.
+const MDT = "M-0083_A-00B6-32-9642";
+
+describe("module instances (MDT M-0083 MV-0705 device, literal-arg modules)", () => {
+  const xml = readRealFixture(`${MDT}.xml.gz`);
+  const app = parseAppConfig(xml);
+
+  test("instance set follows the input-mode selector (hand-derived from the choose tree)", () => {
+    // From the fixture XML: Channel "Inputs A-B" holds <choose ParamRefId="P-5_R-8">
+    // (P-5 "Function Input A / B", PT-EingangType: 0 = not active, 2 = channels single,
+    // 1 = channels grouped; parameter default Value="2", the ref adds no override) with
+    //   <when test="2"> MD-2_M-2 (input A) + MD-2_M-3 (input B)
+    //   <when test="1"> MD-1_M-1 (grouped A/B)
+    // and no default <when>, so P-5 = 0 instantiates neither. Channel "Logic" holds
+    // MD-3_M-49..M-52 (logic blocks 1-4) UNGATED, so those 4 exist in every config.
+    const logic = ["MD-3_M-49_MI-1", "MD-3_M-50_MI-1", "MD-3_M-51_MI-1", "MD-3_M-52_MI-1"];
+    // Default config: P-5 falls back to its parameter default 2 -> single inputs A + B.
+    expect(resolveModuleInstances(app, new Map()).map((i) => i.id).sort())
+      .toEqual(["MD-2_M-2_MI-1", "MD-2_M-3_MI-1", ...logic]);
+    // Explicit selector value 1 -> the grouped module replaces the two single ones.
+    expect(resolveModuleInstances(app, new Map([[`${MDT}_P-5_R-8`, "1"]])).map((i) => i.id).sort())
+      .toEqual(["MD-1_M-1_MI-1", ...logic]);
+    // Inputs off (0): no matching when, no default branch -> only the logic modules.
+    expect(resolveModuleInstances(app, new Map([[`${MDT}_P-5_R-8`, "0"]])).map((i) => i.id).sort())
+      .toEqual(logic);
+  });
+
+  test("per-instance base offsets are the literal arg bindings from the XML", () => {
+    // Hand-read from the fixture (NumericArg Value attributes, no AllocatorRefId):
+    //   MD-2_M-2 (input A): <NumericArg RefId="..._MD-2_A-2" Value="0"/>
+    //   MD-2_M-3 (input B): <NumericArg RefId="..._MD-2_A-2" Value="46"/>
+    // A-2 ("BaseMemOffs") declares Allocates="46", and the literals are exactly the
+    // sequence an allocator would hand out (0, 0+46), i.e. 46 bytes of parameter
+    // memory per input channel.
+    const instances = resolveModuleInstances(app, new Map());
+    const arg = (mi: string, ref: string) => instances.find((i) => i.id === mi)!.args.find((a) => a.refId === ref)!.value;
+    expect(arg("MD-2_M-2_MI-1", "MD-2_A-2")).toBe("0");
+    expect(arg("MD-2_M-3_MI-1", "MD-2_A-2")).toBe("46");
+    // Logic blocks, same pattern: MD-3_A-1 ("ParamOffsBase") literals 0, 13, 26, 39
+    // (13 bytes per logic block).
+    expect(["M-49", "M-50", "M-51", "M-52"].map((m) => arg(`MD-3_${m}_MI-1`, "MD-3_A-1"))).toEqual(["0", "13", "26", "39"]);
+  });
+
+  test("materializes an absolute-segment module param at offset = static + literal base", () => {
+    // MD-2_P-34 declares in the fixture XML:
+    //   <Memory CodeSegment="..._AS-4468" Offset="13" BitOffset="0" BaseOffset="..._MD-2_A-2"/>
+    // so its materialized segment-relative offset is static 13 + the instance's A-2:
+    //   input A (M-2, A-2 = 0):  13 + 0  = 13
+    //   input B (M-3, A-2 = 46): 13 + 46 = 59
+    const instances = resolveModuleInstances(app, new Map());
+    const model = toAppModel(app, { instances });
+    const a = model.refs.get(`${MDT}_MD-2_M-2_MI-1_P-34_R-3`);
+    expect(a).toBeDefined();
+    expect(model.params.get(a!.paramId)?.offset).toBe(13 + 0);
+    expect(model.params.get(a!.paramId)?.codeSegment).toBe(`${MDT}_AS-4468`);
+    const b = model.refs.get(`${MDT}_MD-2_M-3_MI-1_P-34_R-3`);
+    expect(b).toBeDefined();
+    expect(model.params.get(b!.paramId)?.offset).toBe(13 + 46);
+  });
+});
+
 describe("unresolved module arguments refuse instead of guessing (no silent base-0 placement)", () => {
   const xml = readRealFixture(`${APP}.xml.gz`);
   const env = new Map([[`${APP}_P-57_R-57`, "6"]]);

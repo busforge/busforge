@@ -45,6 +45,10 @@ describe("SecureSession round-trip (two parties, shared tool key)", () => {
   });
 });
 
+// Vectors reproduced byte-for-byte from Calimero's SecureApplicationLayerTest:
+// https://github.com/calimero-project/calimero-core/blob/118b2cb4db6782d76d218d07103589160e9f40a0/test/io/calimero/secure/SecureApplicationLayerTest.java
+// (constants encryptedSyncReq / encryptedSyncRes, exercised by the encryptSyncRequest
+// and encryptSyncResponse test methods).
 describe("SecureSession Sync (Calimero vectors)", () => {
   test("buildSyncRequest reproduces the Calimero encryptSyncRequest vector byte-for-byte", () => {
     const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 1n });

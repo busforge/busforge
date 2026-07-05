@@ -5,13 +5,17 @@ import { createHash } from "node:crypto";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { parseApplication } from "../src/application.ts";
 import { buildParameterImage, decodeParameterImage } from "../src/image.ts";
+import { buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
+import { planAbsoluteSegmentFlash } from "../src/deviceflash.ts";
 
 // Golden-master snapshot of a manufacturer ApplicationProgram, used to pin the
 // parse + image projection against real catalogue data (one device per
 // manufacturer, gzipped under fixtures/real/, no personal data). The snapshot is a
 // content hash of the byte-relevant image model plus, where a default image builds,
-// its byte hash and the decoded read-back hash. A regression in the parser or the
-// projection changes a hash and fails real-catalogue.test.ts.
+// its byte hash and the decoded read-back hash. For absolute-segment (MV-0705) devices
+// it additionally pins the default absolute build (bytes + owned/verify masks) and the
+// surgical flash plan shape. A regression in the parser or the projection changes a
+// hash and fails real-catalogue.test.ts.
 
 export const REAL_DIR = join(import.meta.dir, "fixtures", "real");
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -26,6 +30,18 @@ export interface AppSnapshot {
   shape: { types: number; params: number; refs: number; comObjects: number; segments: number; hasModules: boolean };
   modelHash: string;
   lsms: Record<string, { build: string; decodeHash: string }>;
+  // Absolute-segment (MV-0705) sections, present iff the app declares AbsoluteSegments.
+  // Like `lsms`, these are stability locks, not correctness proofs: the hashes pin
+  // "the default build/masks/plan have not changed", correctness is pinned separately
+  // by the hardware byte-matches (docs/mv0705-spike-findings.md).
+  // `absolute`: per TARGETED segment (a declared segment no parameter points at builds
+  // no image and is deliberately absent) the default-image byte hash plus the
+  // owned/verify byte-mask hashes from buildAbsoluteSegmentTargets.
+  absolute?: Record<string, { address: number; size: number; build: string; owned: string; verify: string }>;
+  // `flashPlan`: the surgical write plan for a default config against an unknown device
+  // (planAbsoluteSegmentFlash with no `current` read-back). writtenBytes === ownedBytes
+  // in that case, so it is not duplicated here.
+  flashPlan?: { segments: number; perSegment: Record<string, { address: number; size: number; ownedBytes: number; skippedUnowned: number }> };
 }
 
 export function listRealFixtures(): string[] {
@@ -55,5 +71,34 @@ export function snapshot(xml: string): AppSnapshot {
     const decodeHash = sha(JSON.stringify([...decodeParameterImage(model, lsm, img)].sort()));
     lsms[String(lsm)] = { build: sha(img.toString("hex")), decodeHash };
   }
-  return { shape: { types: model.types.size, params: model.params.size, refs: model.refs.size, comObjects: app.comObjects.size, segments: model.segments.length, hasModules: app.hasModules }, modelHash, lsms };
+
+  // Absolute-segment (MV-0705) sections. Same default-config stance as `lsms` (empty
+  // value map); for a module device buildAbsoluteSegmentTargets re-runs the allocators
+  // internally, exactly what the production flash path does when no imported instance
+  // set exists, so no resolution logic is added here. Everything is keyed by segment id
+  // (order-independent) and emitted in sorted key order (byte-stable golden.json).
+  let absolute: AppSnapshot["absolute"];
+  let flashPlan: AppSnapshot["flashPlan"];
+  if (app.absoluteSegments.length) {
+    const maskHash = (m: boolean[]) => sha(m.map((b) => (b ? "1" : "0")).join(""));
+    absolute = {};
+    for (const t of [...buildAbsoluteSegmentTargets(app, new Map())].sort((a, b) => a.id.localeCompare(b.id))) {
+      absolute[t.id] = { address: t.address, size: t.size, build: sha(t.bytes.toString("hex")), owned: maskHash(t.owned), verify: maskHash(t.verify) };
+    }
+    const fp = planAbsoluteSegmentFlash(app, new Map(), {});
+    const perSegment: NonNullable<AppSnapshot["flashPlan"]>["perSegment"] = {};
+    for (const s of [...fp.segments].sort((a, b) => a.id.localeCompare(b.id))) {
+      perSegment[s.id] = { address: s.address, size: s.size, ownedBytes: s.ownedBytes, skippedUnowned: s.skippedUnowned };
+    }
+    flashPlan = { segments: fp.segments.length, perSegment };
+  }
+
+  return {
+    shape: { types: model.types.size, params: model.params.size, refs: model.refs.size, comObjects: app.comObjects.size, segments: model.segments.length, hasModules: app.hasModules },
+    modelHash,
+    lsms,
+    // Spread keeps the keys entirely absent (not `undefined`) for purely relative
+    // fixtures, so golden.json carries no empty placeholder sections.
+    ...(absolute && flashPlan ? { absolute, flashPlan } : {}),
+  };
 }

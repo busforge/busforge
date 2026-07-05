@@ -42,9 +42,13 @@ describe("KNX Data Secure CCM (round-trip)", () => {
   });
 });
 
-// Known-answer vectors reproduced byte-for-byte from Calimero's
-// SecureApplicationLayerTest (calimero-project/calimero-core). These prove interop
-// correctness (the device/ETS will accept our frames), not just self-consistency.
+// Known-answer vectors reproduced byte-for-byte from Calimero's SecureApplicationLayerTest:
+// https://github.com/calimero-project/calimero-core/blob/118b2cb4db6782d76d218d07103589160e9f40a0/test/io/calimero/secure/SecureApplicationLayerTest.java
+// (constants encryptedPropertyWrite / encryptedSyncReq, exercised by the encryptPropertyWrite
+// and encryptSyncRequest test methods). The property-write bytes are the KNX AN158 v07
+// "KNX Data Security AS" Annex A example (xknx quotes the same bytes with that attribution).
+// These prove interop correctness (the device/ETS will accept our frames), not just
+// self-consistency.
 describe("KNX Data Secure CCM (Calimero known-answer vectors)", () => {
   const katKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
 
@@ -71,5 +75,53 @@ describe("KNX Data Secure CCM (Calimero known-answer vectors)", () => {
     // wire layer (SecureSession), so the crypto bytes are what we check here.
     expect(body.subarray(0, 7).toString("hex")).toBe("92000000000001");
     expect(body.subarray(7).toString("hex")).toBe("c1cf4506f09b" + "d79fab55");
+  });
+});
+
+// Known-answer vectors for the GROUP-address path (S-A_Data, AT = 0x80 in B0[11],
+// group key instead of tool key, SCF = 0x10). Calimero's test tree has NO group
+// vector (checked test/io/calimero/secure/ at commit 118b2cb4), so these come from
+// xknx, the other independent interoperating Data Secure implementation:
+// https://github.com/XKNX/xknx/blob/0d41b0479b3ad0eab918ea1b26cd6c84314b5ea5/test/secure_tests/data_secure_test.py
+// (test methods test_data_secure_group_send and test_data_secure_group_receive).
+//
+// The group key is the GA 1024 (0/4/0) entry of xknx's ETS-generated keyring
+// https://github.com/XKNX/xknx/blob/918353c9f756d6fca8bd96e42f36cf02b9cab2cc/test/secure_tests/resources/SecureTest.knxkeys
+// (Key="B8nWiBBMs/wH3I3aYKmHlw==", Created="2023-01-30T19:17:06", password "test").
+// Regenerate: AES-128-CBC-decrypt(base64(Key)) with
+//   key = PBKDF2-HMAC-SHA256("test", "1.keyring.ets.knx.org", 65536 iter, 16 bytes)
+//   iv  = sha256("2023-01-30T19:17:06")[0..16]
+// which yields dfdf23a59fbb40404091d1c162087e8b.
+describe("KNX Data Secure CCM (xknx group-address known-answer vectors)", () => {
+  const groupKey = Buffer.from("dfdf23a59fbb40404091d1c162087e8b", "hex");
+  const ga = 0x0400; // 0/4/0 = raw 1024
+  const aadFor = (scf: number) => Buffer.from([scf]);
+
+  test("secured GroupValueRead 5.0.1 -> 0/4/0 (test_data_secure_group_send)", () => {
+    // xknx: seq 160170101607, secured_apdu cd18, MAC 4afe5744, full L_Data payload
+    // bce0500104000e_03f11000254ae1cb67cd184afe5744 (we check from the TPCI|APCI on).
+    const body = secureEncode({
+      key: groupKey, src: 0x5001, dst: ga, dstIsGroup: true,
+      seq: Buffer.from("00254ae1cb67", "hex"), // 160170101607
+      scf: 0x10, tpci: 0x03, aad: Buffer.from([0x10]),
+      plaintext: Buffer.from("0000", "hex"), // GroupValueRead APDU
+    });
+    const wire = Buffer.concat([Buffer.from([0x03, 0xf1]), body]).toString("hex");
+    expect(wire).toBe("03f110" + "00254ae1cb67" + "cd18" + "4afe5744");
+  });
+
+  test("secured GroupValueResponse 4.0.9 -> 0/4/0 decodes (test_data_secure_group_receive)", () => {
+    // xknx cEMI 29003ce04009040011_03f1_10002446cfef4ac085e7092ab062b44d;
+    // seq 155806854986, plaintext = GroupValueResponse (116, 41, 41).
+    const body = Buffer.from("10" + "002446cfef4a" + "c085e7092a" + "b062b44d", "hex");
+    const got = secureDecode(body, { key: groupKey, src: 0x4009, dst: ga, dstIsGroup: true, tpci: 0x03, aadFor });
+    expect(got).not.toBeNull();
+    expect(got!.seq.toString("hex")).toBe("002446cfef4a");
+    expect(got!.plaintext.toString("hex")).toBe("0040742929"); // A_GroupValue_Response + 74 29 29
+  });
+
+  test("the AT bit is load-bearing: decoding the group vector as P2P fails the MAC", () => {
+    const body = Buffer.from("10002446cfef4ac085e7092ab062b44d", "hex");
+    expect(secureDecode(body, { key: groupKey, src: 0x4009, dst: ga, dstIsGroup: false, tpci: 0x03, aadFor })).toBeNull();
   });
 });

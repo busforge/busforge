@@ -2,24 +2,37 @@ import dgram from "node:dgram";
 import { SVC, knxFrame, hpai, KNXPORT } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
 
+// Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
+export interface TunnelSocket {
+  bind(port: number, cb: () => void): void;
+  on(ev: "message", cb: (m: Buffer) => void): void;
+  send(buf: Buffer, port: number, ip: string, cb: () => void): void;
+  close(): void;
+}
+
 // KNXnet/IP tunnelling connection. Handles the KNXnet/IP layer (connect,
 // tunnelling request/ack both directions) and surfaces incoming cEMI L_Data
 // (source IA + raw TPDU) to a listener. The connection-oriented KNX transport
 // lives one layer up in KnxDevice.
 export class KnxIpTunnel implements KnxTransport {
-  private sock!: dgram.Socket;
+  private sock!: TunnelSocket;
   channel = 0;
   assignedIa = 0;
   private txSeq = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
 
-  constructor(private ifaceIp: string, private port = KNXPORT) {}
+  // createSocket is a test seam; the default is the real UDP socket as before.
+  constructor(
+    private ifaceIp: string,
+    private port = KNXPORT,
+    private readonly createSocket: () => TunnelSocket = () => dgram.createSocket("udp4"),
+  ) {}
 
   private send(buf: Buffer) { return new Promise<void>((r) => this.sock.send(buf, this.port, this.ifaceIp, () => r())); }
 
   async connect(): Promise<void> {
-    this.sock = dgram.createSocket("udp4");
+    this.sock = this.createSocket();
     await new Promise<void>((r) => this.sock.bind(0, () => r()));
     this.sock.on("message", (m) => this.onMessage(m));
 

@@ -1,0 +1,199 @@
+import { test, expect, describe } from "bun:test";
+import { KnxIpTunnel, type TunnelSocket } from "../src/connection.ts";
+import { cemiLData, iaToNum } from "../src/frame.ts";
+
+// Offline tests for KnxIpTunnel against a scripted fake UDP socket. Every
+// expected datagram is hand-derived from frame.ts/connection.ts:
+//   knxFrame(svc, body) = [06 10 | svc u16 BE | total length u16 BE | body]
+//   hpai(ip, port)      = [08 01 | 4 ip octets | port u16 BE]
+//   SVC: CONNECT_REQ 0x0205, CONNECT_RES 0x0206, DISCONNECT_REQ 0x0209,
+//        TUNNEL_REQ 0x0420, TUNNEL_ACK 0x0421
+
+class FakeUdpSocket implements TunnelSocket {
+  sent: Buffer[] = [];
+  closed = false;
+  private msgCb: ((m: Buffer) => void) | null = null;
+  bind(_port: number, cb: () => void): void { cb(); }
+  on(_ev: "message", cb: (m: Buffer) => void): void { this.msgCb = cb; }
+  send(buf: Buffer, _port: number, _ip: string, cb: () => void): void {
+    this.sent.push(Buffer.from(buf));
+    cb();
+  }
+  close(): void { this.closed = true; }
+  inject(m: Buffer): void { this.msgCb!(m); }
+}
+
+// Flush pending microtasks/immediate timers so async internals settle.
+const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+
+const CHANNEL = 0x15;
+const ASSIGNED_IA = iaToNum("1.1.250"); // 0x11fa
+
+// CONNECT_RESPONSE, 24 bytes total:
+//   06 10 02 06 00 18                  KNXnet/IP header, svc 0x0206, len 24
+//   15 00                              channel id 0x15, status 0x00 (ok)
+//   08 01 c6 33 64 02 0e 57            gateway data HPAI 198.51.100.2:3671
+//   04 04 11 fa                        CRD: len 4, tunnel conn, IA 1.1.250
+// connection.ts parses: channel = body[0], status = body[1],
+// assignedIa = body.readUInt16BE(2 + 8 + 2) -> the two bytes after 04 04.
+const CONNECT_RES = Buffer.from([
+  0x06, 0x10, 0x02, 0x06, 0x00, 0x18,
+  CHANNEL, 0x00,
+  0x08, 0x01, 0xc6, 0x33, 0x64, 0x02, 0x0e, 0x57,
+  0x04, 0x04, 0x11, 0xfa,
+]);
+
+async function connected() {
+  const sock = new FakeUdpSocket();
+  const tunnel = new KnxIpTunnel("192.0.2.10", 3671, () => sock);
+  const p = tunnel.connect();
+  await tick(); // let bind resolve and the CONNECT_REQUEST go out
+  sock.inject(CONNECT_RES);
+  await p;
+  sock.sent.length = 0; // only look at traffic after connect
+  return { sock, tunnel };
+}
+
+describe("KnxIpTunnel", () => {
+  test("connect sends two NAT-mode HPAIs and parses channel + assigned IA", async () => {
+    const sock = new FakeUdpSocket();
+    const tunnel = new KnxIpTunnel("192.0.2.10", 3671, () => sock);
+    const p = tunnel.connect();
+    await tick();
+
+    expect(sock.sent.length).toBe(1);
+    // CONNECT_REQUEST, 26 bytes:
+    //   06 10 02 05 00 1a          header: svc CONNECT_REQ, total len 26
+    //   08 01 00 00 00 00 00 00    control HPAI: len 8, proto 0x01 (UDP),
+    //                              IP 0.0.0.0, port 0  <-- NAT mode
+    //   08 01 00 00 00 00 00 00    data HPAI: identical NAT-mode HPAI
+    //   04 04 02 00                CRI: len 4, tunnel connection,
+    //                              link layer (0x02), reserved
+    // The 0.0.0.0:0 HPAIs are the hard-won Docker-bridge-NAT fix: the
+    // gateway must reply to the observed packet source, not an address we
+    // name (a container-internal 172.x IP would be unroutable and the
+    // tunnel would time out). Lock the exact bytes.
+    const natHpai = [0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x02, 0x05, 0x00, 0x1a,
+      ...natHpai,
+      ...natHpai,
+      0x04, 0x04, 0x02, 0x00,
+    ]);
+
+    sock.inject(CONNECT_RES);
+    await p;
+    expect(tunnel.channel).toBe(CHANNEL);
+    expect(tunnel.assignedIa).toBe(ASSIGNED_IA);
+  });
+
+  test("incoming TUNNELING_REQUEST is ACKed and surfaced via onCemi", async () => {
+    const { sock, tunnel } = await connected();
+    const calls: { src: number; dst: number; tpdu: Buffer; isGroup: boolean }[] = [];
+    tunnel.onCemi = (src, dst, tpdu, isGroup) => calls.push({ src, dst, tpdu, isGroup });
+
+    // TUNNELING_REQUEST seq 5 carrying a group L_Data.ind, 21 bytes:
+    //   06 10 04 20 00 15                 header: svc TUNNEL_REQ, len 21
+    //   04 15 05 00                       conn header: len 4, channel 0x15,
+    //                                     seq 5, reserved
+    //   29 00 bc e0 12 11 0a 03 01 00 81  cEMI: L_Data.ind, no add. info,
+    //                                     ctrl bc e0 (group-addressed),
+    //                                     src 1.2.17, dst GA 1/2/3 (0x0a03),
+    //                                     len 1, TPDU 00 81 (GroupValueWrite 1)
+    const req = Buffer.from([
+      0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
+      0x04, CHANNEL, 0x05, 0x00,
+      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+    ]);
+    sock.inject(req);
+    await tick();
+
+    // Expected TUNNELING_ACK, 10 bytes: header (svc 0x0421, len 10) +
+    // [04 len, channel 0x15 echoed, seq 5 echoed, status 00]
+    expect(sock.sent.length).toBe(1);
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x04, 0x21, 0x00, 0x0a,
+      0x04, CHANNEL, 0x05, 0x00,
+    ]);
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.src).toBe(iaToNum("1.2.17"));
+    expect(calls[0]!.dst).toBe(0x0a03); // GA 1/2/3
+    expect(calls[0]!.isGroup).toBe(true);
+    expect(calls[0]!.tpdu.equals(Buffer.from([0x00, 0x81]))).toBe(true);
+  });
+
+  test("duplicate TUNNELING_REQUEST (same seq) is ACKed AND delivered again (current behavior)", async () => {
+    // connection.ts does NOT track the server sequence counter: onMessage()
+    // ACKs whatever seq arrives and always forwards the cEMI. A gateway
+    // retransmission (same seq, e.g. because our ACK was lost) is therefore
+    // delivered to onCemi twice. This locks that actual behavior; it is an
+    // observation, not an endorsement of duplicate delivery.
+    const { sock, tunnel } = await connected();
+    let calls = 0;
+    tunnel.onCemi = () => calls++;
+
+    const req = Buffer.from([
+      0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
+      0x04, CHANNEL, 0x05, 0x00, // same seq 5 both times
+      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+    ]);
+    sock.inject(req);
+    await tick();
+    sock.inject(req);
+    await tick();
+
+    expect(calls).toBe(2); // duplicate NOT suppressed
+    expect(sock.sent.length).toBe(2); // both ACKed
+    expect(sock.sent[0]!.equals(sock.sent[1]!)).toBe(true);
+  });
+
+  test("sendCemi carries the local seq counter and increments per ACKed send", async () => {
+    const { sock, tunnel } = await connected();
+    // cemiLData(1.1.250, 1.2.17, [0x80]) = 11 00 bc 60 11 fa 12 11 00 80 (10 B)
+    const cemi = cemiLData(ASSIGNED_IA, iaToNum("1.2.17"), Buffer.from([0x80]));
+
+    const p1 = tunnel.sendCemi(cemi);
+    await tick();
+    // TUNNELING_REQUEST, 20 bytes: header 06 10 04 20 00 14 +
+    // conn header [04, channel 0x15, seq 0x00, 00] + the 10-byte cEMI
+    expect(sock.sent.length).toBe(1);
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x04, 0x20, 0x00, 0x14,
+      0x04, CHANNEL, 0x00, 0x00,
+      ...cemi,
+    ]);
+    // TUNNELING_ACK for seq 0: 06 10 04 21 00 0a + [04, channel, seq 0, status 0]
+    sock.inject(Buffer.from([0x06, 0x10, 0x04, 0x21, 0x00, 0x0a, 0x04, CHANNEL, 0x00, 0x00]));
+    await p1;
+
+    const p2 = tunnel.sendCemi(cemi);
+    await tick();
+    expect(sock.sent.length).toBe(2);
+    // second send: seq incremented to 0x01
+    expect([...sock.sent[1]!]).toEqual([
+      0x06, 0x10, 0x04, 0x20, 0x00, 0x14,
+      0x04, CHANNEL, 0x01, 0x00,
+      ...cemi,
+    ]);
+    sock.inject(Buffer.from([0x06, 0x10, 0x04, 0x21, 0x00, 0x0a, 0x04, CHANNEL, 0x01, 0x00]));
+    await p2;
+  });
+
+  test("disconnect sends DISCONNECT_REQUEST with the channel id and closes the socket", async () => {
+    const { sock, tunnel } = await connected();
+    await tunnel.disconnect();
+
+    // DISCONNECT_REQUEST, 16 bytes:
+    //   06 10 02 09 00 10          header: svc DISCONNECT_REQ, total len 16
+    //   15 00                      channel id 0x15, reserved
+    //   08 01 00 00 00 00 00 00    NAT-mode control HPAI (0.0.0.0:0 again)
+    expect(sock.sent.length).toBe(1);
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x02, 0x09, 0x00, 0x10,
+      CHANNEL, 0x00,
+      0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    expect(sock.closed).toBe(true);
+  });
+});
