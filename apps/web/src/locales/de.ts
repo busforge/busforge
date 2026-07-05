@@ -133,6 +133,8 @@ const de: Messages = {
     GA_RANGE_NOT_LEAF: "Adressen gehören in eine Mittelgruppe, nicht in eine Hauptgruppe.",
     GA_FIELDS_REQUIRED: "Pflichtfelder fehlen.",
     CHANNEL_MODULES_UNSUPPORTED: "Das Programmieren der Kanalmodule dieses Geräts wird noch nicht unterstützt. Flashen abgelehnt, um die Konfiguration zu schützen.",
+    MODULE_ARG_UNRESOLVED: "Einem Kanalmodul dieses Geräts fehlt das Argument, das seinen Speicher platziert. Eine geratene Platzierung könnte einen anderen Kanal überschreiben, daher abgelehnt.",
+    COMOBJ_ARG_UNRESOLVED: "Einem Kanalmodul dieses Geräts fehlt das Argument, das seine Kommunikationsobjekte nummeriert. Eine geratene Nummerierung wird abgelehnt.",
     EMPTY_IMAGE: "Das Parameter-Image ist leer. Flashen abgelehnt.",
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",

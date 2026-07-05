@@ -1,3 +1,4 @@
+export { ProductError } from "./errors.ts";
 export * from "./application.ts";
 export * from "./image.ts";
 export * from "./project.ts";

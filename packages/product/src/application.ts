@@ -1,4 +1,5 @@
 import { parseAppConfig, type AppConfig, type CfgType, type ModuleInstance } from "./appconfig.ts";
+import { ProductError } from "./errors.ts";
 
 // The memory-image model used to build/decode a parameter image: parameter types
 // (sizes), parameters (with memory location), parameter refs, and the default
@@ -119,7 +120,19 @@ function materializeModuleParams(
       if (!param || param.patchAlways) continue; // ETS-managed marker, never authored
       const refId = rewrite(r.id);
       const paramId = rewrite(r.paramId);
-      const base = param.baseOffsetArg ? argVal.get(param.baseOffsetArg) ?? 0 : 0;
+      // A memory param whose BaseOffset argument is missing (or non-numeric) on this
+      // instance has an UNKNOWN placement. The old `?? 0` fallback placed it at the
+      // module's base 0, i.e. over channel 1's memory, where a flash would then write
+      // it and verify against the same wrong model. Refuse instead of guessing.
+      let base = 0;
+      if (param.baseOffsetArg !== undefined && param.offset !== undefined) { // non-memory params place nothing
+        const v = argVal.get(param.baseOffsetArg);
+        if (v === undefined || Number.isNaN(v)) {
+          throw new ProductError("MODULE_ARG_UNRESOLVED",
+            `module instance ${inst.id}: memory placement of ${refId} needs argument ${param.baseOffsetArg}, which the instance does not carry; refusing to place it at base 0`);
+        }
+        base = v;
+      }
       const offset = param.offset === undefined ? undefined : param.offset + base;
       const t = app.types.get(param.typeId);
       if (t && !types.has(t.id)) types.set(t.id, { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed });

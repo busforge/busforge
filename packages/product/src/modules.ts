@@ -1,5 +1,6 @@
 import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
 import { matchTest } from "./config.ts";
+import { ProductError } from "./errors.ts";
 
 // Re-run a device's module allocators to produce the same ModuleInstance set that ETS
 // pins into a project 0.xml. This is the FROM-SCRATCH path: when there is no imported
@@ -74,11 +75,17 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
               val = na.value; // a literal binding (e.g. a fixed object base)
             } else if (na.allocatorRefId !== undefined) {
               const cur = alloc.get(na.allocatorRefId);
-              if (cur !== undefined) {
-                val = String(cur);
-                const allocates = def.args.find((d) => d.id === na.argId)?.allocates ?? 0;
-                alloc.set(na.allocatorRefId, cur + allocates);
+              // An arg bound to an undeclared allocator means the whole allocation chain
+              // (this instance AND every later one) is unknowable. Silently omitting the
+              // arg used to make downstream placement fall back to base offset 0, i.e.
+              // channel-1 memory. Refuse instead: a wrong placement is flashable damage.
+              if (cur === undefined) {
+                throw new ProductError("MODULE_ARG_UNRESOLVED",
+                  `module instance ${instId}: argument ${strip(na.argId)} is bound to allocator ${strip(na.allocatorRefId)}, which the application does not declare; cannot place this module's memory`);
               }
+              val = String(cur);
+              const allocates = def.args.find((d) => d.id === na.argId)?.allocates ?? 0;
+              alloc.set(na.allocatorRefId, cur + allocates);
             }
             if (val !== undefined) args.push({ refId: strip(na.argId), value: val });
           }

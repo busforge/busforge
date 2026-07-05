@@ -111,3 +111,50 @@ describe("module instances (Theben 493B channel device)", () => {
     expect(on.imageValues.get(setpoint)).toBe("40");
   });
 });
+
+describe("unresolved module arguments refuse instead of guessing (no silent base-0 placement)", () => {
+  const xml = readRealFixture(`${APP}.xml.gz`);
+  const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
+
+  test("an argument bound to an UNDECLARED allocator aborts instance resolution", () => {
+    // Rename the declared allocator so the args' AllocatorRefId dangles: the whole
+    // allocation chain is unknowable, and the old behavior silently dropped the arg
+    // (downstream placement then fell back to channel-1 memory).
+    const broken = parseAppConfig(xml.replaceAll(`<Allocator Id="${APP}_L-49"`, `<Allocator Id="${APP}_L-4949"`));
+    expect(() => resolveModuleInstances(broken, env)).toThrow(/MODULE_ARG_UNRESOLVED|allocator/);
+    try { resolveModuleInstances(broken, env); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("MODULE_ARG_UNRESOLVED"); }
+  });
+
+  test("a memory param whose BaseOffset argument is missing on the instance refuses materialization", () => {
+    const app2 = parseAppConfig(xml);
+    const instances = resolveModuleInstances(app2, env);
+    const hmg = instances.filter((i) => i.refId === "MD-7_M-19");
+    expect(hmg.length).toBe(6);
+    // Strip the base-offset argument (MD-7_A-1) from channel 3: its params' placement
+    // becomes unknowable. The old `?? 0` placed them over channel 1's memory.
+    const tampered = instances.map((i) => (i.id === "MD-7_M-19_MI-3" ? { ...i, args: i.args.filter((a) => a.refId !== "MD-7_A-1") } : i));
+    try { toAppModel(app2, { instances: tampered }); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("MODULE_ARG_UNRESOLVED"); }
+    // The untampered set still materializes fine (the guard is not over-broad).
+    expect(() => toAppModel(app2, { instances })).not.toThrow();
+  });
+
+  test("a com-object whose BaseNumber argument is missing on the instance refuses the config build", () => {
+    const app2 = parseAppConfig(xml);
+    // Find the argument the ACTIVE module's (MD-7, the six HMG channels) com-objects
+    // use for numbering (ObjOffsBase): only an instantiated module's numbering is
+    // actually resolved, so the tampering must hit an instance the env activates.
+    const baseNumArg = [...app2.comObjects.entries()]
+      .filter(([id]) => id.startsWith(`${APP}_MD-7_`))
+      .map(([, o]) => o.baseNumber).find((b) => b !== undefined)!;
+    expect(baseNumArg).toBeDefined();
+    const instances = resolveModuleInstances(app2, env);
+    const argRef = baseNumArg.startsWith(`${APP}_`) ? baseNumArg.slice(APP.length + 1) : baseNumArg;
+    const tampered = instances.map((i) => ({ ...i, args: i.args.filter((a) => a.refId !== argRef) }));
+    try { buildDeviceConfig(app2, env, undefined, tampered); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("COMOBJ_ARG_UNRESOLVED"); }
+    // Untampered instances build fine.
+    expect(() => buildDeviceConfig(app2, env, undefined, instances)).not.toThrow();
+  });
+});

@@ -133,6 +133,8 @@ const en = {
     GA_RANGE_NOT_LEAF: "Add addresses to a middle group, not a main group.",
     GA_FIELDS_REQUIRED: "Missing required fields.",
     CHANNEL_MODULES_UNSUPPORTED: "Programming this device's channel modules is not supported yet. Refusing to flash to protect its configuration.",
+    MODULE_ARG_UNRESOLVED: "A channel module of this device is missing the argument that places its memory. Refusing to guess a placement that could overwrite another channel.",
+    COMOBJ_ARG_UNRESOLVED: "A channel module of this device is missing the argument that numbers its communication objects. Refusing to guess the numbering.",
     EMPTY_IMAGE: "The parameter image came out empty. Refusing to flash.",
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",
