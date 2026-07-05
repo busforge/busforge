@@ -1,12 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { KnxDevice } from "@busforge/knx";
-import { parseAppConfig } from "@busforge/product";
+import { parseAppConfig, ProductError } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
-import { ApiError } from "../src/errors.ts";
 
 // The LoadProcedure coverage guard on the real flash entrypoints: a par download whose
 // procedure declares steps outside the explicit disposition policy must refuse with a
@@ -17,8 +15,8 @@ const REAL = join(import.meta.dir, "..", "..", "..", "packages", "product", "tes
 const fixture = (n: string) => gunzipSync(readFileSync(join(REAL, n))).toString("utf8");
 
 const ctxFor = (appXml: string) => ({
-  projectId: "p", deviceId: "d", appXml, params: new Map<string, string>(),
-  dataDir: mkdtempSync(join(tmpdir(), "flash-guard-")), dryRun: false,
+  deviceId: "d", appXml, params: new Map<string, string>(), dryRun: false,
+  persistBackups: () => "backup", // guard tests abort before any backup is taken
 });
 
 // A device stub that fails loudly on any unexpected bus operation. Individual tests
@@ -33,9 +31,9 @@ describe("LoadProcedure par coverage guard", () => {
     const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz");
     const profile = classify(parseAppConfig(xml));
     const err = await profile.flashParameters(dev(), "0705", ctxFor(xml)).then(() => null, (e) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("LOAD_STEP_UNSUPPORTED");
-    expect((err as ApiError).message).toContain("LdCtrlLoadImageProp");
+    expect(err).toBeInstanceOf(ProductError);
+    expect((err as ProductError).code).toBe("LOAD_STEP_UNSUPPORTED");
+    expect((err as ProductError).message).toContain("LdCtrlLoadImageProp");
   });
 
   test("M-0083 A-00B4 (absolute, declares CompareProp): mismatching device aborts with LOAD_PROC_CHECK_FAILED", async () => {
@@ -44,8 +42,8 @@ describe("LoadProcedure par coverage guard", () => {
     const err = await profile
       .flashParameters(dev({ propRead: async () => Buffer.from("baadf00d", "hex") }), "0705", ctxFor(xml))
       .then(() => null, (e) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("LOAD_PROC_CHECK_FAILED");
+    expect(err).toBeInstanceOf(ProductError);
+    expect((err as ProductError).code).toBe("LOAD_PROC_CHECK_FAILED");
   });
 
   test("M-0083 A-00B4: matching device (real property width, zero-padded declaration) passes the check and proceeds to the backup read", async () => {
@@ -66,8 +64,8 @@ describe("LoadProcedure par coverage guard", () => {
     const err = await profile
       .flashParameters(dev({ propRead: async () => Buffer.from("ffff", "hex") }), "07B0", ctxFor(xml))
       .then(() => null, (e) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("LOAD_PROC_CHECK_FAILED");
+    expect(err).toBeInstanceOf(ProductError);
+    expect((err as ProductError).code).toBe("LOAD_PROC_CHECK_FAILED");
   });
 
   test("hardware-proven procedures stay flashable: M-0081 passes the guard (no blocked steps)", async () => {

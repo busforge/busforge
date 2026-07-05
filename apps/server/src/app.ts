@@ -92,7 +92,7 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
 
     return err("NOT_FOUND", "not found", 404);
   } catch (e) {
-    // Coded errors (ApiError / KnxprojError) carry a client-localizable code;
+    // Coded errors (ApiError / ProductError / KnxprojError) carry a client-localizable code;
     // anything else is an unexpected failure surfaced raw under INTERNAL.
     const code = errorCode(e);
     const status = e instanceof ApiError ? e.status : code ? 400 : 500;

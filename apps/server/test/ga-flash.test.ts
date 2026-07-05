@@ -1,7 +1,4 @@
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { KnxDevice, flashGroupTablesMv0705, readGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
 import { buildGroupTablesMv0705, decodeGroupTablesMv0705, type ComObjectLink } from "@busforge/product";
 import { System7Profile } from "../src/deviceprofile.ts";
@@ -57,9 +54,8 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const o = buildGroupTablesMv0705(orig, ia);
     dev.seedTables(o.addr, o.assoc);
     const repointed: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040c] }, { comObjNum: 5, gaRaws: [0x180a] }]; // same count
-    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
     const res = await new System7Profile("system-7", "MV-0705", null).flashGroupTables(asDev(dev), "MV-0705", {
-      projectId: "p", deviceId: "d", ia: "1.2.17", links: repointed, dataDir, dryRun: false,
+      deviceId: "d", ia: "1.2.17", links: repointed, dryRun: false, persistBackups: () => "backup",
     });
     expect(res.kind).toBe("flashed");
     expect(res.kind === "flashed" && res.verified).toBe(true);
@@ -77,9 +73,8 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const dev = new MockDevice();
     const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia); // 1 GA today
     dev.seedTables(small.addr, small.assoc);
-    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
     const res = await new System7Profile("system-7", "MV-0705", cfgCap(22, 22)).flashGroupTables(asDev(dev), "MV-0705", {
-      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false, // grow 1 -> 4, within 22
+      deviceId: "d", ia: "1.2.17", links: grownLinks, dryRun: false, persistBackups: () => "backup", // grow 1 -> 4, within 22
     });
     expect(res.kind).toBe("flashed");
     const built = buildGroupTablesMv0705(grownLinks, ia);
@@ -90,9 +85,8 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const dev = new MockDevice();
     const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
     dev.seedTables(small.addr, small.assoc);
-    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
     await expect(new System7Profile("system-7", "MV-0705", cfgCap(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
-      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false, // 4 GAs > capacity 3
+      deviceId: "d", ia: "1.2.17", links: grownLinks, dryRun: false, persistBackups: () => "backup", // 4 GAs > capacity 3
     })).rejects.toThrow(/GA_TABLE_TOO_LARGE|reserves only/);
     expect((await dev.memRead(0x1000, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
   });
@@ -101,9 +95,8 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const dev = new MockDevice();
     const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
     dev.seedTables(small.addr, small.assoc);
-    const dataDir = mkdtempSync(join(tmpdir(), "ga-flash-"));
     await expect(new System7Profile("system-7", "MV-0705", null).flashGroupTables(asDev(dev), "MV-0705", {
-      projectId: "p", deviceId: "d", ia: "1.2.17", links: grownLinks, dataDir, dryRun: false,
+      deviceId: "d", ia: "1.2.17", links: grownLinks, dryRun: false, persistBackups: () => "backup",
     })).rejects.toThrow(/reserves only/);
   });
 });

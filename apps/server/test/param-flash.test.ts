@@ -1,7 +1,5 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { rmSync } from "node:fs";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { KnxDevice, LSM, STATE } from "@busforge/knx";
@@ -67,12 +65,18 @@ function seeded(oneByteDrift: boolean): MockDevice {
   return dev;
 }
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+// Recording backup hook: the profile hands the device's CURRENT bytes over BEFORE any
+// write (runFlashOp's structural ordering); the log lets tests assert exactly that.
 const ctxFor = (dryRun: boolean) => {
-  const dataDir = mkdtempSync(join(tmpdir(), "param-flash-"));
-  tmps.push(dataDir); // flashParameters writes backup .bin files in here
-  return { projectId: "p", deviceId: "d", appXml: xml, params, moduleInstances: [], dataDir, dryRun };
+  const backups: { file: string; bytes: Buffer }[] = [];
+  const events: string[] = [];
+  return {
+    ctx: {
+      deviceId: "d", appXml: xml, params, moduleInstances: [], dryRun,
+      persistBackups: (files: { file: string; bytes: Buffer }[]) => { backups.push(...files); events.push("backup-persisted"); return "backup"; },
+    },
+    backups, events,
+  };
 };
 
 describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)", () => {
@@ -89,7 +93,18 @@ describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)",
   test("real flash of a one-byte drift: writes ONLY that byte, verifies, LSM ends LOADED", async () => {
     const dev = seeded(true);
     const profile = classify(cfg);
-    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(false));
+    const { ctx, backups, events } = ctxFor(false);
+    // interleave write events into the same log so the backup-before-write order is provable
+    const origWrite = dev.memWrite.bind(dev);
+    dev.memWrite = async (a: number, b: Buffer, o?: { verify?: boolean }) => { events.push("device-write"); return origWrite(a, b, o); };
+    const res = await profile.flashParameters(asDev(dev), "0705", ctx);
+
+    // The device's pre-flash state reached the backup hook BEFORE the first write, and
+    // it carries the drifted byte (a backup of the OLD state, not the new image).
+    expect(events[0]).toBe("backup-persisted");
+    expect(events.filter((e) => e === "device-write").length).toBeGreaterThan(0);
+    expect(events.indexOf("device-write")).toBeGreaterThan(events.indexOf("backup-persisted"));
+    expect(backups.length).toBeGreaterThan(0);
 
     expect(res.kind).toBe("flashed");
     if (res.kind !== "flashed") throw new Error("unreachable"); // narrow for TS
@@ -123,7 +138,7 @@ describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)",
     const dev = seeded(true);
     const before = new Map(dev.mem);
     const profile = classify(cfg);
-    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(true));
+    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(true).ctx);
 
     expect(res.kind).toBe("dryRun");
     if (res.kind !== "dryRun") throw new Error("unreachable");
@@ -138,7 +153,7 @@ describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)",
     const dev = seeded(false); // owned bytes = exact target
     const before = new Map(dev.mem);
     const profile = classify(cfg);
-    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(false));
+    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(false).ctx);
 
     expect(res.kind).toBe("unchanged");
     expect(dev.writes).toEqual([]);
