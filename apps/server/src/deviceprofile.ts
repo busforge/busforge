@@ -114,6 +114,40 @@ export type FlashResult =
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
+// One prepared flash operation, handed to runFlashOp by a profile after it has read the
+// device's current state and computed the diff. The profile supplies only the
+// model-specific pieces; the safety-critical sequencing lives in runFlashOp.
+interface FlashOp {
+  imageBytes: number;
+  diffBytes: number;
+  backup: string;                                 // representative path reported in the result
+  backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
+  write: () => Promise<void>;                     // the model-specific download (device restarts after)
+  verify: () => Promise<boolean>;                 // post-restart read-back comparison
+}
+
+// The one flash sequence every memory model runs: persist the backups, short-circuit an
+// unchanged device and a dry run, write, reconnect across the device's restart, verify.
+// Centralized so the invariants (backup BEFORE any write, verify AFTER the restart,
+// a "flashed" result always carrying a real verified flag) hold structurally for every
+// current and future profile instead of by convention in four hand-rolled copies.
+async function runFlashOp(
+  dev: KnxDevice, mask: string,
+  ctx: { projectId: string; deviceId: string; dataDir: string; dryRun: boolean },
+  op: FlashOp,
+): Promise<FlashResult> {
+  const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
+  mkdirSync(backupDir, { recursive: true });
+  for (const b of op.backups) writeFileSync(join(backupDir, b.file), b.bytes);
+  const backup = join(backupDir, op.backup);
+  if (op.diffBytes === 0) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
+  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup };
+  await op.write();
+  await reconnectAfterRestart(dev);
+  const verified = await op.verify();
+  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup };
+}
+
 // The programmed-baseline read back off the bus (see readState). `paramBase` is sparse like
 // device_parameters; the caller persists only the aspects whose *Read flag is true.
 export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; }
@@ -347,25 +381,24 @@ export class SystemBProfile extends DeviceProfile {
     const addr = await dev.tableAddr(LSM);
     const current = await dev.memRead(addr, target.size, 12, (d, t) => ctx.onProgress?.("backup", d, t));
 
-    const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
-    mkdirSync(backupDir, { recursive: true });
-    const backup = join(backupDir, `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`);
-    writeFileSync(backup, current);
-
     const { image, diffBytes } = mergeRelativeTarget(current, target);
-    if (diffBytes === 0) return { kind: "unchanged", mask, imageBytes: image.length, backup };
-    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: image.length, diffBytes, backup };
-
-    await flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => ctx.onProgress?.("write", d, t));
-
-    // The device restarts after load-completed; reconnect and verify ONLY the owned bytes.
-    await reconnectAfterRestart(dev);
-    const verifyAddr = await dev.tableAddr(LSM);
-    const { ok: verified } = await verifySettled(
-      () => dev.memRead(verifyAddr, image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t)),
-      (back) => verifyRelativeOwned(back, target),
-    );
-    return { kind: "flashed", mask, imageBytes: image.length, diffBytes, verified, backup };
+    const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes: image.length,
+      diffBytes,
+      backup: backupFile,
+      backups: [{ file: backupFile, bytes: current }],
+      write: () => flashParameters(dev, image, appId(model.manufacturer, model.appNumber, model.version), (d, t) => ctx.onProgress?.("write", d, t)),
+      // The device restarts after load-completed; verify ONLY the owned bytes.
+      verify: async () => {
+        const verifyAddr = await dev.tableAddr(LSM);
+        const { ok } = await verifySettled(
+          () => dev.memRead(verifyAddr, image.length, 12, (d, t) => ctx.onProgress?.("verify", d, t)),
+          (back) => verifyRelativeOwned(back, target),
+        );
+        return ok;
+      },
+    });
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
@@ -373,28 +406,29 @@ export class SystemBProfile extends DeviceProfile {
     // The dry-run preview compares only address + association; the com-object table is read
     // only to write it back unchanged on a real flash, so skip it when previewing.
     const cur = await readGroupTables(dev, undefined, ctx.dryRun);
-    const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
-    mkdirSync(backupDir, { recursive: true });
-    const stamp = Date.now();
-    const backup = join(backupDir, `${ctx.deviceId}-GA-${stamp}`);
-    writeFileSync(`${backup}-addr.bin`, cur.addr);
-    writeFileSync(`${backup}-assoc.bin`, cur.assoc);
-    if (!ctx.dryRun) writeFileSync(`${backup}-comobj.bin`, cur.comObj);
-
-    const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
-    const imageBytes = addr.length + assoc.length;
-    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { kind: "unchanged", mask, imageBytes, backup };
-    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes, diffBytes, backup };
-
-    ctx.onProgress?.("write");
-    await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
-    await reconnectAfterRestart(dev);
-    ctx.onProgress?.("verify");
-    const { ok: verified } = await verifySettled(
-      () => readGroupTables(dev),
-      (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
-    );
-    return { kind: "flashed", mask, imageBytes, diffBytes, verified, backup };
+    const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes: addr.length + assoc.length,
+      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc), // 0 iff both tables match
+      backup: prefix,
+      backups: [
+        { file: `${prefix}-addr.bin`, bytes: cur.addr },
+        { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
+        ...(ctx.dryRun ? [] : [{ file: `${prefix}-comobj.bin`, bytes: cur.comObj }]),
+      ],
+      write: async () => {
+        ctx.onProgress?.("write");
+        await flashGroupTables(dev, { addr, assoc, comObj: cur.comObj }); // keep the device's com-object table
+      },
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const { ok } = await verifySettled(
+          () => readGroupTables(dev),
+          (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+        );
+        return ok;
+      },
+    });
   }
 }
 
@@ -457,42 +491,42 @@ export class System7Profile extends DeviceProfile {
 
     // Read each parameter segment at its fixed address; this is the backup and the diff source.
     const current = new Map<string, Buffer>();
-    const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
-    mkdirSync(backupDir, { recursive: true });
     const stamp = Date.now();
     let read = 0;
     for (const t of targets) {
       const onDev = await dev.memRead(t.address, t.size, 12, (d) => ctx.onProgress?.("backup", read + d, totalBytes));
       read += t.size;
       current.set(t.id, onDev);
-      writeFileSync(join(backupDir, `${ctx.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`), onDev);
     }
-    const backup = join(backupDir, `${ctx.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`);
 
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances });
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
       throw new ApiError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
     }
-    if (changedBytes === 0) return { kind: "unchanged", mask, imageBytes: totalBytes, backup };
-    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: totalBytes, diffBytes: changedBytes, backup };
-
-    let wrote = 0;
-    await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
-
-    await reconnectAfterRestart(dev);
-    let verified = true;
-    for (const t of targets) {
-      // Verify only user-facing owned bytes (t.verify). Access="None" device-internal markers
-      // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
-      // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
-      const { ok } = await verifySettled(
-        () => dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n)),
-        (back) => { for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) return false; return true; },
-      );
-      if (!ok) { verified = false; break; }
-    }
-    return { kind: "flashed", mask, imageBytes: totalBytes, diffBytes: changedBytes, verified, backup };
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes: totalBytes,
+      diffBytes: changedBytes,
+      backup: `${ctx.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`,
+      backups: targets.map((t) => ({ file: `${ctx.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`, bytes: current.get(t.id)! })),
+      write: async () => {
+        let wrote = 0;
+        await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
+      },
+      verify: async () => {
+        for (const t of targets) {
+          // Verify only user-facing owned bytes (t.verify). Access="None" device-internal markers
+          // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
+          // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
+          const { ok } = await verifySettled(
+            () => dev.memRead(t.address, t.size, 12, (d, n) => ctx.onProgress?.("verify", d, n)),
+            (back) => { for (let i = 0; i < t.size; i++) if (t.verify[i] && back[i] !== t.bytes[i]) return false; return true; },
+          );
+          if (!ok) return false;
+        }
+        return true;
+      },
+    });
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
@@ -517,27 +551,28 @@ export class System7Profile extends DeviceProfile {
       throw new ApiError("GA_TABLE_TOO_LARGE",
         `the group tables would need address ${addr.length} B / association ${assoc.length} B, but this device reserves only ${maxAddr} B / ${maxAssoc} B${cap?.addressMaxEntries !== undefined ? ` (${cap.addressMaxEntries} group addresses)` : ""}. Remove links or assign fewer group addresses.`);
     }
-    const backupDir = join(ctx.dataDir, "projects", ctx.projectId, "backups");
-    mkdirSync(backupDir, { recursive: true });
-    const stamp = Date.now();
-    const backup = join(backupDir, `${ctx.deviceId}-GA-${stamp}`);
-    writeFileSync(`${backup}-addr.bin`, cur.addr);
-    writeFileSync(`${backup}-assoc.bin`, cur.assoc);
-
-    const diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc);
-    const imageBytes = addr.length + assoc.length;
-    if (addr.equals(cur.addr) && assoc.equals(cur.assoc)) return { kind: "unchanged", mask, imageBytes, backup };
-    if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes, diffBytes, backup };
-
-    ctx.onProgress?.("write");
-    await flashGroupTablesMv0705(dev, { addr, assoc });
-    await reconnectAfterRestart(dev);
-    ctx.onProgress?.("verify");
-    const { ok: verified } = await verifySettled(
-      () => readGroupTablesMv0705(dev),
-      (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
-    );
-    return { kind: "flashed", mask, imageBytes, diffBytes, verified, backup };
+    const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes: addr.length + assoc.length,
+      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc), // 0 iff both tables match
+      backup: prefix,
+      backups: [
+        { file: `${prefix}-addr.bin`, bytes: cur.addr },
+        { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
+      ],
+      write: async () => {
+        ctx.onProgress?.("write");
+        await flashGroupTablesMv0705(dev, { addr, assoc });
+      },
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const { ok } = await verifySettled(
+          () => readGroupTablesMv0705(dev),
+          (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+        );
+        return ok;
+      },
+    });
   }
 }
 
