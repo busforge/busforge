@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
+import { encode } from "../src/image.ts";
 import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
@@ -32,13 +33,28 @@ test("decodeAbsoluteImage reads back the values the absolute build wrote (round-
   const active = buildDeviceConfig(app, new Map(), undefined, instances).imageValues;
   const seg = targets.find((t) => t.size > 0)!;
   const decoded = decodeAbsoluteImage(m, seg.id, seg.bytes);
-  expect(decoded.size).toBeGreaterThan(0);
+  // Expected counts, derived from the fixture XML (not from running this loop):
+  // AS-4200 is targeted by exactly 48 <Parameter><Memory CodeSegment=...AS-4200>
+  // entries (grep count), all typed 8-bit Value/Number (integer-decodable, so none
+  // are skipped by the codec), and exactly 611 <ParameterRef> elements point at
+  // those 48 parameters (grep count) -> decoded carries one entry per such ref.
+  expect(decoded.size).toBe(611);
   let checked = 0;
   for (const [ref, v] of decoded) {
     const a = active.get(ref);
     if (a !== undefined && /^-?\d+$/.test(a)) { expect(v).toBe(a); checked++; }
   }
-  expect(checked).toBeGreaterThan(0);
+  // `active` (imageValues) is the default-config walk of the fixture's <Dynamic>:
+  // each ParameterBlock's unconditional ParameterRefRefs plus the branches of
+  // chooses whose gate's catalogue default matches a <when> test. Re-deriving that
+  // walk independently from the XML (defaults from Parameter/@Value overridden by
+  // ParameterRef/@Value; 7 of the 17 reachable chooses take a branch) reaches 33
+  // refs, of which exactly these 18 resolve to AS-4200 parameters, all with
+  // integer defaults: R-3, R-4, R-6, R-7, R-9, R-10, R-11, R-12, R-15, R-21,
+  // R-36, R-38, R-39, R-42, R-45, R-48, R-50, R-106. So the decode/active
+  // cross-check above must fire for exactly those 18, no fewer (a visibility or
+  // codec regression that silently shrinks the overlap must fail here).
+  expect(checked).toBe(18);
 });
 
 test("builds one absolute-segment image at the fixed address, sized from the segment", () => {
@@ -328,6 +344,81 @@ test("a top-level param displaced by an active module instance is not owned", ()
   const model = toAppModel(app, { includeUnions: true, instances });
   const ch1 = model.params.get(model.refs.get(`${APP}_MD-7_M-19_MI-1_P-1_R-1`)!.paramId)!;
   expect(target.owned[ch1.offset!]).toBe(true);
+});
+
+// DPT-9 (2-byte KNX float) parameters whose STORED value is not byte-canonical. Two
+// distinct cases, both absent from the real-fixture corpus (see the round-trip test in
+// real-catalogue.test.ts, which points here):
+//  - a stored DEFAULT the codec must round: "21.001" is below DPT-9's resolution at
+//    that magnitude, so encode writes the rounded value's bytes and decode returns the
+//    rounded value, not the stored string;
+//  - a manufacturer <Data> pattern that is a valid but NON-canonical encoding (same
+//    value, non-minimal exponent): decode -> re-encode normalizes it, flipping bytes.
+// P-F (active, default "21.001") sits at offset 0; P-G (has a ref but is never
+// referenced in <Dynamic>, i.e. inactive) sits at offset 2 over the <Data> bytes
+// DE AD (segment <Data> base64 "AADerQ==" = 00 00 DE AD).
+const floatXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0006"><ApplicationPrograms>
+<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Float Default">
+<Static>
+<ParameterTypes><ParameterType Id="M-0006_A-0001-01-0001_PT-F"><TypeFloat SizeInBit="16"/></ParameterType></ParameterTypes>
+<Parameters>
+<Parameter Id="M-0006_A-0001-01-0001_P-F" ParameterType="M-0006_A-0001-01-0001_PT-F" Text="Setpoint" Value="21.001"><Memory CodeSegment="M-0006_A-0001-01-0001_AS-1" Offset="0" BitOffset="0"/></Parameter>
+<Parameter Id="M-0006_A-0001-01-0001_P-G" ParameterType="M-0006_A-0001-01-0001_PT-F" Text="Hidden" Value="1"><Memory CodeSegment="M-0006_A-0001-01-0001_AS-1" Offset="2" BitOffset="0"/></Parameter>
+</Parameters>
+<ParameterRefs>
+<ParameterRef Id="M-0006_A-0001-01-0001_P-F_R" RefId="M-0006_A-0001-01-0001_P-F"/>
+<ParameterRef Id="M-0006_A-0001-01-0001_P-G_R" RefId="M-0006_A-0001-01-0001_P-G"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0006_A-0001-01-0001_AS-1" Address="100" Size="4"><Data>AADerQ==</Data></AbsoluteSegment></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0006_A-0001-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0006_A-0001-01-0001_P-F_R"/>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("a DPT-9 float default the codec must round: encode writes the rounded bytes, decode returns the rounded value, owned iff written", () => {
+  // Hand-derived bytes for "21.001" per encodeDpt9 (image.ts): mant = round(21.001*100)
+  // = 2100; 2100 > 2047, so mant = round(2100/2) = 1050, exp = 1; raw = (1<<11) | 1050
+  // = 0x0C1A. That equals the canonical encoding of 21.0 (image.ts reference vector),
+  // i.e. the ".001" is below DPT-9 resolution here and is rounded away at encode time.
+  const app = parseAppConfig(floatXml);
+  const t = buildAbsoluteSegmentTargets(app, new Map())[0];
+  expect([...t.bytes]).toEqual([0x0c, 0x1a, 0xde, 0xad]); // P-F encoded, P-G's <Data> untouched
+  // Ownership follows the write: the active float's two bytes are owned and (being
+  // user-facing) verified; the inactive P-G wrote nothing, so it owns nothing.
+  expect(t.owned).toEqual([true, true, false, false]);
+  expect(t.verify).toEqual([true, true, false, false]);
+  // decode returns the ROUNDED value, not the stored default string. decodeDpt9(0x0C1A):
+  // mant = 0x41A = 1050, exp = 1 -> 1050*2/100 = 21. This is the defined round-trip:
+  // a re-flash from the decoded value reproduces the same bytes (asserted below).
+  const m = toAppModel(app, { includeUnions: true, instances: [] });
+  const decoded = decodeAbsoluteImage(m, t.id, t.bytes);
+  expect(decoded.get("M-0006_A-0001-01-0001_P-F_R")).toBe("21");
+  const copy = Buffer.from(t.bytes);
+  const type = m.types.get(m.params.get("M-0006_A-0001-01-0001_P-F")!.typeId)!;
+  expect(encode(copy, 0, 0, type, "21")).toBe(true);
+  expect(copy.equals(t.bytes)).toBe(true); // 0x0C1A is canonical: re-encode is a no-op
+});
+
+test("a non-canonical DPT-9 <Data> pattern decodes to its value but re-encodes to the canonical bytes", () => {
+  // The inactive P-G keeps the manufacturer bytes DE AD. Hand-derived decode
+  // (decodeDpt9): sign set, exp = (0xDEAD>>11)&0xF = 11, mant = 0x6AD = 1709 -> 1709 -
+  // 2048 = -339; value = -339 * 2^11 / 100 = -6942.72. Re-encoding that value
+  // (encodeDpt9): mant = -694272, halved 9 times (each step even, so no rounding loss)
+  // -> mant = -1356, exp = 9; raw = 0x8000 | (9<<11) | (-1356 & 0x7FF = 0x2B4) =
+  // 0xCAB4. Same value, minimal exponent: the encoder normalizes, so decode->encode is
+  // NOT byte-identity on a non-canonical stored pattern. This is exactly why the
+  // real-catalogue round-trip test may assume clean inverses only because no corpus
+  // fixture places a float over such a pattern; the behavior itself is pinned here.
+  const app = parseAppConfig(floatXml);
+  const t = buildAbsoluteSegmentTargets(app, new Map())[0];
+  const m = toAppModel(app, { includeUnions: true, instances: [] });
+  const decoded = decodeAbsoluteImage(m, t.id, t.bytes);
+  expect(decoded.get("M-0006_A-0001-01-0001_P-G_R")).toBe("-6942.72");
+  const copy = Buffer.from(t.bytes);
+  const type = m.types.get(m.params.get("M-0006_A-0001-01-0001_P-G")!.typeId)!;
+  expect(encode(copy, 2, 0, type, "-6942.72")).toBe(true);
+  expect([...copy.subarray(2)]).toEqual([0xca, 0xb4]); // normalized, no longer DE AD
 });
 
 test("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does not crash the build)", () => {

@@ -126,9 +126,11 @@ describe("real catalogue (per-manufacturer regression)", () => {
           for (const tg of buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances })) {
             // Each re-encode writes the decoded value back to the byte it came from, so it is a
             // no-op against the original regardless of write order or union overlap (idempotent
-            // on the copy). Caveat: a Float (DPT-9 / float32-NaN) param landing on a non-canonical
+            // on the copy). A Float (DPT-9 / float32-NaN) param landing on a non-canonical
             // manufacturer <Data>/0xFF default would re-encode to a canonical pattern and flip a
-            // byte; none of the 13 fixtures place one, so this stays a clean inverse here.
+            // byte; none of the 13 fixtures place one, so this stays a clean inverse here. That
+            // normalization path is pinned on a synthetic app in deviceimage.test.ts ("a
+            // non-canonical DPT-9 <Data> pattern..."), alongside the rounded-default case.
             const stored = decodeAbsoluteImage(absModel, tg.id, tg.bytes);
             const copy = Buffer.from(tg.bytes);
             for (const ref of absModel.refs.values()) {
