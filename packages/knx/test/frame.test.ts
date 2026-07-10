@@ -1,5 +1,22 @@
 import { test, expect } from "bun:test";
-import { decodeGroupApdu } from "../src/frame.ts";
+import { decodeGroupApdu, formatGa, numToGa } from "../src/frame.ts";
+
+// formatGa is the single level-aware GA formatter. Three-level is main(5)/middle(3)/sub(8),
+// two-level main(5)/sub(11); the raw is a 16-bit address. Hand-derived from the bit grid.
+test("formatGa renders three-level and two-level from the same raw", () => {
+  expect(formatGa(1, 3)).toBe("0/0/1");
+  expect(formatGa(256, 3)).toBe("0/1/0");
+  expect(formatGa(2048, 3)).toBe("1/0/0");
+  // Same raws, two-level: no middle byte, the low 11 bits are the sub.
+  expect(formatGa(2048, 2)).toBe("1/0");
+  expect(formatGa(2049, 2)).toBe("1/1");
+  expect(formatGa(2053, 2)).toBe("1/5");
+});
+
+test("numToGa is the three-level default", () => {
+  expect(numToGa(2049)).toBe("1/0/1");
+  expect(numToGa(2049)).toBe(formatGa(2049, 3));
+});
 
 // decodeGroupApdu owns the bus-level layout of an unnumbered group T_Data APDU: the
 // 10-bit APCI (low 2 bits of octet 0 + all of octet 1), and the value split (trailing

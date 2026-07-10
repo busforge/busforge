@@ -295,6 +295,13 @@ const MIGRATIONS: string[] = [
      AND id NOT IN (SELECT MIN(id) FROM devices WHERE instance_id != '' GROUP BY project_id, instance_id);
   CREATE UNIQUE INDEX idx_devices_project_instance ON devices(project_id, instance_id) WHERE instance_id != '';
   `,
+  // The project's group-address style as a level count (2 or 3), from GroupAddressStyle.
+  // Persisted so the GA formatter and the edit endpoints use the project's real style
+  // instead of guessing from already-formatted address strings. Existing projects default
+  // to 3 (ETS's default and the historical behaviour) until re-imported.
+  `
+  ALTER TABLE projects ADD COLUMN ga_levels INTEGER NOT NULL DEFAULT 3;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { Levels } from "@busforge/knx";
 import { getConnection } from "./connections.ts";
 
 // THE single definition of a project's portable, project-level properties: the
@@ -16,11 +17,15 @@ export interface ProjectProperties {
   // connection's DETAILS live in the global `connections` library and are never
   // part of a project, only this reference travels with it.
   connectionId: string | null;
+  // The project's group-address style as a level count (2 or 3). Immutable per project
+  // but carried here so a .busforge re-import preserves it (a re-imported TwoLevel project
+  // keeps formatting "m/s"); snapshot restore re-applies the same value harmlessly.
+  groupAddressLevels: Levels;
 }
 
 // Read a project's properties, or null when the project does not exist.
 export function readProjectProperties(db: Database, projectId: string): ProjectProperties | null {
-  return (db.query("SELECT name, connection_id AS connectionId FROM projects WHERE id = ?")
+  return (db.query("SELECT name, connection_id AS connectionId, ga_levels AS groupAddressLevels FROM projects WHERE id = ?")
     .get(projectId) as ProjectProperties | null) ?? null;
 }
 
@@ -30,5 +35,5 @@ export function readProjectProperties(db: Database, projectId: string): ProjectP
 // missing connection should gracefully fall back to "none" so the user re-picks.
 export function applyProjectProperties(db: Database, projectId: string, p: ProjectProperties): void {
   const connectionId = p.connectionId && getConnection(db, p.connectionId) ? p.connectionId : null;
-  db.prepare("UPDATE projects SET name = ?, connection_id = ? WHERE id = ?").run(p.name, connectionId, projectId);
+  db.prepare("UPDATE projects SET name = ?, connection_id = ?, ga_levels = ? WHERE id = ?").run(p.name, connectionId, p.groupAddressLevels ?? 3, projectId);
 }

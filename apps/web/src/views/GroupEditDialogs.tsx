@@ -20,15 +20,12 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { errMsg } from "../lib/apiError.ts";
+import { formatGa, type Levels } from "@busforge/knx/ga";
 
-export type Levels = 2 | 3;
+export type { Levels };
 
-// Mirror of the server's address math (apps/server/src/db/groupedit.ts), so the
-// dialog can preview the address a new group address will get.
-function formatAddress(raw: number, levels: Levels): string {
-  if (levels === 2) return `${raw >> 11}/${raw & 0x7ff}`;
-  return `${raw >> 11}/${(raw >> 8) & 0x7}/${raw & 0xff}`;
-}
+// The address preview a new group address will get. Level math lives in the shared
+// dependency-free @busforge/knx/ga (formatGa), the same formatter the server uses.
 function gaRawInRange(rangeStart: number, sub: number, levels: Levels): number {
   const block = levels === 3 ? 256 : 2048;
   return Math.floor(rangeStart / block) * block + sub;
@@ -230,7 +227,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
     : editor.usedSubs.includes(s) ? t("groupEdit.addressTaken")
     : null;
   const invalid = !!nameError || !!subError;
-  const preview = isCreate && !subError ? formatAddress(gaRawInRange(editor.rangeStart, s, levels), levels) : null;
+  const preview = isCreate && !subError ? formatGa(gaRawInRange(editor.rangeStart, s, levels), levels) : null;
 
   const submit = () => {
     if (invalid) return;

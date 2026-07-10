@@ -1,4 +1,5 @@
 // The parsed view-model of a .knxproj, shared by the loader and the server API.
+import type { Levels } from "@busforge/knx";
 
 export interface Device {
   id: string;           // the 0.xml DeviceInstance Id, e.g. "P-07C7-0_DI-1"
@@ -102,6 +103,7 @@ export interface GroupRangeNode {
 
 export interface Project {
   name: string;
+  groupAddressLevels: Levels; // group-address style (2 or 3), from GroupAddressStyle
   topology: Topology;
   locations: SpaceNode[];         // building structure from 0.xml <Locations> (empty if none)
   devices: Device[];

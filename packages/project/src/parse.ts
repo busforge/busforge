@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { numToGa } from "@busforge/knx";
+import { formatGa, type Levels } from "@busforge/knx";
 import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity } from "./model.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
@@ -25,10 +25,14 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const doc = p.parse(xml0);
 
   const installation = firstByKey(doc, "Installation");
+  // Parse project.xml's <ProjectInformation> once; both the name and the group-address
+  // style come from it (falling back to the 0.xml Installation).
+  const projectInfo = projectXml ? firstByKey(p.parse(projectXml), "ProjectInformation") : undefined;
+  const groupAddressLevels = parseGroupAddressLevels(projectInfo, installation);
   const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames);
   const locations = parseLocations(installation?.Locations);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
-  const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
+  const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses, groupAddressLevels);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
   const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
   const gaIdToRaw = new Map<string, number>();
@@ -38,7 +42,23 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
   const deviceSecurity = devices.map((d) => parseDeviceSecurity(doc, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks, malformedDevices };
+  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks, malformedDevices };
+}
+
+// The project's group-address style, as a level count. ETS stores GroupAddressStyle on
+// <ProjectInformation> in Project.xml; some exports also carry it on the 0.xml
+// <Installation>. Prefer the former, fall back to the latter, and default to three-level
+// (ETS's default and the historical behaviour) when it is absent. "Free" style renders
+// three-level here, its default display. Getting this right is what makes a TwoLevel
+// project's addresses format as "m/s" instead of a phantom-middle "m/0/s".
+function parseGroupAddressLevels(projectInfo: any, installation: any): Levels {
+  const toLevels = (s: unknown): Levels | undefined => {
+    const v = String(s ?? "");
+    if (v === "TwoLevel") return 2;
+    if (v === "ThreeLevel" || v === "Free") return 3;
+    return undefined;
+  };
+  return toLevels(projectInfo?.GroupAddressStyle) ?? toLevels(installation?.GroupAddressStyle) ?? 3;
 }
 
 // A device's Data-Secure commissioning secrets, or undefined for a non-secure device.
@@ -134,12 +154,8 @@ function findDeviceInstance(node: any, id: string): any {
   return undefined;
 }
 
-function parseName(projectXml: string | undefined, installation: any, fallbackName: string): string {
-  if (projectXml) {
-    const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-    const info = firstByKey(p.parse(projectXml), "ProjectInformation");
-    if (info?.Name) return String(info.Name);
-  }
+function parseName(projectInfo: any, installation: any, fallbackName: string): string {
+  if (projectInfo?.Name) return String(projectInfo.Name);
   if (installation?.Name) return String(installation.Name);
   return fallbackName;
 }
@@ -197,11 +213,11 @@ function parseLocations(node: any): SpaceNode[] {
   return arr<any>(node?.Space).map(toSpace);
 }
 
-function parseGroupAddresses(node: any): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {
+function parseGroupAddresses(node: any, levels: Levels): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {
   const flat: GroupAddress[] = [];
   const toGa = (g: any): GroupAddress => {
     const raw = Number(g.Address);
-    const ga: GroupAddress = { address: numToGa(raw), raw, name: String(g.Name ?? ""), dpt: dptDisplay(g.DatapointType) };
+    const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: String(g.Name ?? ""), dpt: dptDisplay(g.DatapointType) };
     flat.push(ga);
     return ga;
   };

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "type": "module",
   "module": "src/index.ts",
-  "exports": { ".": "./src/index.ts", "./dpt": "./src/dpt.ts" },
+  "exports": { ".": "./src/index.ts", "./dpt": "./src/dpt.ts", "./ga": "./src/ga.ts" },
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": { "typecheck": "tsc --noEmit", "test": "bun test" },
   "optionalDependencies": { "node-hid": "^3.3.0" }

@@ -63,14 +63,6 @@ function countGas(nodes: GroupRangeNode[]): number {
   return n;
 }
 
-// Detect the project's level count (two/three) from any address's segment count.
-function detectLevels(ranges: GroupRangeNode[]): Levels {
-  let max = 0;
-  const scan = (n: GroupRangeNode) => { for (const a of n.addresses) max = Math.max(max, a.address.split("/").length); n.children.forEach(scan); };
-  ranges.forEach(scan);
-  return max === 2 ? 2 : 3;
-}
-
 // Smallest number in 0..max not already taken.
 function nextFree(used: Set<number>, max: number): number {
   for (let i = 0; i <= max; i++) if (!used.has(i)) return i;
@@ -101,7 +93,9 @@ export function GroupAddressesView() {
   const filter = q.trim().toLowerCase();
 
   const [editor, setEditor] = useState<Editor>(null);
-  const levels = useMemo(() => detectLevels(project?.groupRanges ?? []), [project]);
+  // The project's persisted group-address style, not inferred from formatted strings, so a
+  // two-level project (even an empty one) edits and previews as m/s from the start.
+  const levels: Levels = project?.groupAddressLevels ?? 3;
   const block = levels === 3 ? 256 : 2048;
 
   // Datalist suggestions for the DPT field: the datapoint types already in use.

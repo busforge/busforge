@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
+import type { Levels } from "@busforge/knx";
 import { ApiError } from "../errors.ts";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 import { getConnection, type Connection } from "./connections.ts";
@@ -31,6 +32,7 @@ export interface StoredProject {
   id: string;
   name: string;
   connectionId: string | null; // id of the saved connection in use, or null
+  groupAddressLevels: Levels;  // group-address style (2 or 3), so the UI formats without guessing
   devices: DeviceWithChanges[];
   groupRanges: GroupRangeNode[];
   locations: SpaceNode[];      // building structure (empty for projects without it)
@@ -78,7 +80,7 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 
 // Persist a freshly parsed project (rows only; the caller stores the source file).
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
-  const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, ?)");
+  const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
   const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
@@ -105,7 +107,7 @@ export function insertProject(db: Database, id: string, project: Project, source
   }
 
   db.transaction(() => {
-    insProject.run(id, project.name, now, sourceFile);
+    insProject.run(id, project.name, now, sourceFile, project.groupAddressLevels);
     for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
@@ -162,8 +164,8 @@ export function listProjects(db: Database): ProjectSummary[] {
 }
 
 export function getProject(db: Database, id: string): StoredProject | null {
-  const p = db.query("SELECT id, name, connection_id AS connectionId FROM projects WHERE id = ?").get(id) as
-    | { id: string; name: string; connectionId: string | null } | null;
+  const p = db.query("SELECT id, name, connection_id AS connectionId, ga_levels AS groupAddressLevels FROM projects WHERE id = ?").get(id) as
+    | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
 
   const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
@@ -210,7 +212,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
   // unencrypted export leaks them in clear (and badge secure devices later).
   const secureDeviceCount = (db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = ?").get(id) as { n: number }).n;
 
-  return { id: p.id, name: p.name, connectionId: p.connectionId, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length, secureDeviceCount };
+  return { id: p.id, name: p.name, connectionId: p.connectionId, groupAddressLevels: p.groupAddressLevels, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length, secureDeviceCount };
 }
 
 export function deleteProject(db: Database, id: string): boolean {

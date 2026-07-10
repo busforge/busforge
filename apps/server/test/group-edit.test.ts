@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { openDb } from "../src/db/schema.ts";
 import {
-  detectLevels, formatAddress, mainRangeBounds, midRangeBounds, gaRawInRange, maxSub,
+  mainRangeBounds, midRangeBounds, gaRawInRange, maxSub,
   createGroupRange, renameGroupRange, deleteGroupRange,
   createGroupAddress, updateGroupAddress, deleteGroupAddress,
   countLinksForRaws, rangeLinkImpact,
@@ -12,20 +12,9 @@ import type { Database } from "bun:sqlite";
 // --- pure address math --------------------------------------------------------
 
 describe("address math", () => {
-  test("detectLevels from address segment counts", () => {
-    expect(detectLevels([{ address: "0/0/1" }])).toBe(3);
-    expect(detectLevels([{ address: "0/1" }])).toBe(2);
-    expect(detectLevels([])).toBe(3); // default
-  });
-
-  test("formatAddress round-trips the bit grid", () => {
-    expect(formatAddress(1, 3)).toBe("0/0/1");
-    expect(formatAddress(256, 3)).toBe("0/1/0");
-    expect(formatAddress(2048, 3)).toBe("1/0/0");
-    expect(formatAddress(2048, 2)).toBe("1/0");
-    expect(formatAddress(2049, 2)).toBe("1/1");
-  });
-
+  // Address formatting itself now lives in @busforge/knx (formatGa), tested there. The
+  // level count is no longer inferred from strings; it is the project's stored ga_levels,
+  // exercised by the "two-level project stores m/s" CRUD test below.
   test("range bounds and ga raw", () => {
     expect(mainRangeBounds(1)).toEqual({ start: 2048, end: 4095 });
     expect(midRangeBounds(2048, 2)).toEqual({ start: 2560, end: 2815 }); // 1/2/x
@@ -109,6 +98,22 @@ describe("group-address CRUD", () => {
     const { db, pid } = seed();
     const r = createGroupAddress(db, pid, midId(db, pid), 2, "DG Flur", "1.001");
     expect(r).toEqual({ raw: 2, address: "0/0/2" });
+  });
+
+  test("a two-level project stores the created address as m/s (from ga_levels, not inferred)", () => {
+    // A project whose stored group-address style is two-level. createGroupAddress must format
+    // via the project's ga_levels, so a main group (leaf, no middle) holds addresses as "m/s".
+    // Under the old string-inference this depended on a pre-existing address to learn from;
+    // now the persisted style is authoritative even for the very first address.
+    const db = openDb(":memory:");
+    const pid = "p2";
+    db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, 'Two', 1, '', 2)").run(pid);
+    // Two-level: addresses live directly in a main group (the leaf). Main 1 spans 2048..4095.
+    const main = Number(db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, NULL, 'Licht', 2048, 4095)").run(pid).lastInsertRowid);
+    const r = createGroupAddress(db, pid, main, 5, "Küche", "1.001");
+    expect(r).toEqual({ raw: 2053, address: "1/5" });
+    // And it is stored as m/s, not the phantom-middle "1/0/5".
+    expect((db.query("SELECT address FROM group_addresses WHERE project_id = ? AND raw = 2053").get(pid) as { address: string }).address).toBe("1/5");
   });
 
   test("rejects a duplicate address", () => {

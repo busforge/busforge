@@ -62,9 +62,12 @@ describe("schema/migrations", () => {
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
-      PRAGMA user_version = ${SCHEMA_VERSION - 1};`);
+      PRAGMA user_version = ${SCHEMA_VERSION - 2};`);
     old.close();
-    const db = openDb(path); // runs only the final migration (dedup + partial unique index)
+    // Runs the pending tail: the instance-id dedup+unique-index migration (second-to-last)
+    // and the ga_levels column add (last). The ALTER adds ga_levels to this minimal projects
+    // table harmlessly; the dedup is what this test asserts.
+    const db = openDb(path);
     const dupRows = db.query("SELECT ia FROM devices WHERE project_id='p' AND instance_id='DI-1'").all() as { ia: string }[];
     expect(dupRows).toEqual([{ ia: "1.1.1" }]); // lowest-rowid survivor kept, the other dropped
     // The two legacy '' rows are untouched (partial index excludes them).
@@ -96,6 +99,21 @@ describe("projects", () => {
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
     expect(listProjects(db)).toMatchObject([{ id: "p1", name: "Demo", deviceCount: 2, gaCount: 2 }]);
     expect(getProject(db, "ghost")).toBeNull();
+    expect(getProject(db, "p1")!.groupAddressLevels).toBe(3); // sample has no style -> default
+  });
+
+  test("group-address style persists through insert -> getProject and .busforge round-trip", () => {
+    const projectXml = `<KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><ProjectInformation Name="Two" GroupAddressStyle="TwoLevel" /></Project></KNX>`;
+    const proj = parseProject(sampleXml, projectXml, "Two");
+    expect(proj.groupAddressLevels).toBe(2);
+    const db = fresh();
+    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    expect(getProject(db, "p1")!.groupAddressLevels).toBe(2); // survives the knxproj import
+    // And the .busforge export carries it (ProjectProperties), so a re-import keeps two-level.
+    const MK = Buffer.alloc(32, 7);
+    const data = exportProject(db, "p1", 5, MK)!;
+    importProjectExport(db, data, "p2", 6, MK);
+    expect(getProject(db, "p2")!.groupAddressLevels).toBe(2);
   });
 
   test("seeds and reads a device's module instances", () => {

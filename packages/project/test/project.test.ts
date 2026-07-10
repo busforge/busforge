@@ -51,6 +51,26 @@ describe("0.xml parser", () => {
   test("parses group addresses with 3-level address and DPT display", () => {
     expect(proj.groupAddresses).toHaveLength(2);
     expect(proj.groupAddresses[0]).toMatchObject({ address: "0/0/1", name: "Kitchen On/Off", dpt: "1.001" });
+    expect(proj.groupAddressLevels).toBe(3); // no GroupAddressStyle present -> ETS default
+  });
+
+  test("a TwoLevel GroupAddressStyle formats addresses as m/s, not a phantom middle group", () => {
+    // Same 0.xml, but the project.xml declares a two-level group-address style. The raw
+    // address 1 must render "0/1" (main 0, sub 1), not the three-level "0/0/1". This is the
+    // core of the two-level rendering bug: the style is read from ProjectInformation, and
+    // formatGa uses it, instead of hardcoding three levels.
+    const projectXml = `<KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><ProjectInformation Name="X" GroupAddressStyle="TwoLevel" /></Project></KNX>`;
+    const two = parseProject(xml0, projectXml, "fallback");
+    expect(two.groupAddressLevels).toBe(2);
+    expect(two.groupAddresses[0].address).toBe("0/1");
+  });
+
+  test("GroupAddressStyle also read from the 0.xml Installation as a fallback", () => {
+    // Some exports carry the style on <Installation> in 0.xml rather than in project.xml.
+    const twoLevel0 = xml0.replace('<Installation Name="Demo"', '<Installation GroupAddressStyle="TwoLevel" Name="Demo"');
+    const p = parseProject(twoLevel0, undefined, "x");
+    expect(p.groupAddressLevels).toBe(2);
+    expect(p.groupAddresses[0].address).toBe("0/1");
   });
 
   test("parses the building structure (Locations) into a space tree with device refs", () => {

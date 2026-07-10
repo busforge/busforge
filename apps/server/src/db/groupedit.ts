@@ -1,15 +1,15 @@
 import type { Database } from "bun:sqlite";
+import { formatGa, type Levels } from "@busforge/knx";
 import { ApiError } from "../errors.ts";
 
 // Editing the group-address structure (ranges and addresses). KNX group addresses
-// are laid out on a fixed bit grid; the project's "level" count (two or three) is
-// detected from existing addresses so the same code serves both styles without a
-// stored style flag. All raw values are 16-bit (0..65535).
+// are laid out on a fixed bit grid; the project's "level" count (two or three) is the
+// project's stored group-address style (projects.ga_levels), not guessed from the
+// already-formatted address strings. All raw values are 16-bit (0..65535).
 //
 //   three-level:  main(5 bits) / middle(3 bits) / sub(8 bits)   -> "m/n/s"
 //   two-level:    main(5 bits) / sub(11 bits)                    -> "m/s"
 
-export type Levels = 2 | 3;
 const MAIN_BLOCK = 2048; // raw span of one main group (2^11)
 const MID_BLOCK = 256; //   raw span of one middle group (2^8)
 
@@ -17,19 +17,6 @@ export const MAX_MAIN = 31;
 export const MAX_MID = 7;
 
 // --- pure address math --------------------------------------------------------
-
-// Detect the level count from existing addresses (segment count). Defaults to
-// three-level (the common case) when there is nothing to learn from.
-export function detectLevels(addresses: { address: string }[]): Levels {
-  let max = 0;
-  for (const a of addresses) max = Math.max(max, a.address.split("/").length);
-  return max === 2 ? 2 : 3;
-}
-
-export function formatAddress(raw: number, levels: Levels): string {
-  if (levels === 2) return `${raw >> 11}/${raw & 0x7ff}`;
-  return `${raw >> 11}/${(raw >> 8) & 0x7}/${raw & 0xff}`;
-}
 
 // The raw span [start, end] of a main group.
 export function mainRangeBounds(mainNumber: number): { start: number; end: number } {
@@ -62,8 +49,8 @@ export function maxSub(levels: Levels): number {
 interface RangeRow { id: number; parentId: number | null; rangeStart: number; rangeEnd: number; }
 
 function projectLevels(db: Database, projectId: string): Levels {
-  const rows = db.query("SELECT address FROM group_addresses WHERE project_id = ? LIMIT 200").all(projectId) as { address: string }[];
-  return detectLevels(rows);
+  const row = db.query("SELECT ga_levels AS levels FROM projects WHERE id = ?").get(projectId) as { levels: Levels } | null;
+  return row?.levels === 2 ? 2 : 3;
 }
 
 function getRange(db: Database, projectId: string, id: number): RangeRow | null {
@@ -157,7 +144,7 @@ export function createGroupAddress(db: Database, projectId: string, rangeId: num
   const raw = gaRawInRange(range.rangeStart, sub, levels);
   const exists = db.query("SELECT 1 FROM group_addresses WHERE project_id = ? AND raw = ?").get(projectId, raw);
   if (exists) throw new ApiError("GA_ADDRESS_TAKEN", "that address is already in use");
-  const address = formatAddress(raw, levels);
+  const address = formatGa(raw, levels);
   db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)")
     .run(projectId, rangeId, raw, address, name, dpt);
   return { raw, address };
