@@ -14,12 +14,17 @@ class RecDev {
   state = new Map<number, number>(); // tracked LSM state per object
   lsmQueue = new Map<number, number[]>(); // injected propRead(obj,5) answers, shifted first
   addrOf: Record<number, number> = { 1: 0x1000, 2: 0x2000, 3: 0x3000, 4: 0x4000 };
+  writeFailAt: number | null = null;   // 1-based memWrite index to throw on (simulates a transport error or a read-back verify mismatch mid-download)
+  writeFailMsg = "memWrite verify mismatch";
+  private writeCount = 0;
   async connect() { this.calls.push(["connect"]); }
   async disconnect() { this.calls.push(["disconnect"]); }
   async restart() { this.calls.push(["restart"]); }
   async tableAddr(obj: number) { this.calls.push(["tableAddr", obj]); return this.addrOf[obj]; }
   async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
+    this.writeCount++;
     this.calls.push(["memWrite", addr, data.toString("hex"), opts.verify ?? null]);
+    if (this.writeFailAt !== null && this.writeCount === this.writeFailAt) throw new Error(this.writeFailMsg);
   }
   async propWrite(obj: number, pid: number, data: Buffer) {
     this.calls.push(["propWrite", obj, pid, data.toString("hex")]);
@@ -276,6 +281,43 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.LOADING]); // completion refused, machine stuck in LOADING
     await expect(runLoadPlan(asDev(dev), [{ op: "loadCompleted", lsm: 4 }])).rejects.toThrow(/not LOADED after LOAD_COMPLETED \(got LOADING\)/);
+  });
+
+  // A memory write can throw mid-bracket: a lost T_ACK, or (the common case) a read-back
+  // verify mismatch (memWrite verify:true). The executor's promise is that on ANY throw it
+  // stops immediately, never completes the load and never restarts into a half-written
+  // segment, and the device is left re-runnable. These lock that promise, which the
+  // happy-path call-order tests could not.
+  const bracket = (lsm: number): LoadPlan => [
+    { op: "unload", lsm }, { op: "load", lsm },
+    { op: "writeMem", address: 0x4000, bytes: Buffer.from("dead", "hex") },
+    { op: "writeMem", address: 0x4002, bytes: Buffer.from("beef", "hex") },
+    { op: "loadCompleted", lsm }, { op: "restart" },
+  ];
+
+  test("a write that throws mid-bracket aborts BEFORE loadCompleted and restart; LSM stays LOADING (recoverable)", async () => {
+    const dev = new RecDev();
+    dev.writeFailAt = 2; // second writeMem throws (e.g. its read-back verify failed)
+    await expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow(/verify mismatch/);
+    // The load opened (LOADING) but was never completed, and no restart happened: the device
+    // is addressable and can be re-flashed, not bricked in a half-open, restarted state.
+    expect(dev.state.get(4)).toBe(STATE.LOADING);
+    expect(dev.calls.some((c) => c[0] === "propWrite" && c[1] === 4 && c[3] === EV_DONE)).toBe(false);
+    expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
+    // The first write went out, the second threw: no write AFTER the failing one.
+    expect(dev.calls.filter((c) => c[0] === "memWrite").length).toBe(2);
+  });
+
+  test("re-running the plan after a mid-write failure completes (the device was left recoverable)", async () => {
+    const dev = new RecDev();
+    dev.writeFailAt = 1;
+    await expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow();
+    // Recovery: the same plan, now with a healthy device, runs to completion and restarts.
+    dev.writeFailAt = null;
+    dev.calls = [];
+    await runLoadPlan(asDev(dev), bracket(4));
+    expect(dev.state.get(4)).toBe(STATE.LOADED);
+    expect(dev.calls.at(-1)).toEqual(["restart"]);
   });
 });
 

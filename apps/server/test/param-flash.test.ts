@@ -134,6 +134,21 @@ describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)",
     expect(dev.writes).toEqual([{ addr: targets[0].address + flip, len: 1 }]);
   }, 15_000); // reconnectAfterRestart sleeps 3 s (not injectable through flashParameters)
 
+  test("verify has teeth: a device that does not persist the write reports verified:false, NOT a fake success", async () => {
+    // Guards against the mock being a "perfect memory" where verify can never fail. Here the
+    // device drops the write on restart (re-stamps the verifiable owned byte to a wrong value),
+    // exactly the class of real failure a post-restart read-back must catch.
+    const dev = seeded(true);
+    const badByte = targets[0].address + flip; // a VERIFIABLE owned byte (flip = verify index)
+    dev.restart = async () => { dev.mem.set(badByte, targets[0].bytes[flip] ^ 0xff); }; // write did not stick
+    const profile = classify(cfg);
+    const res = await profile.flashParameters(asDev(dev), "0705", ctxFor(false).ctx);
+
+    expect(res.kind).toBe("flashed");
+    if (res.kind !== "flashed") throw new Error("unreachable");
+    expect(res.verified).toBe(false); // the read-back mismatch is surfaced, not swallowed
+  }, 15_000); // reconnectAfterRestart + verifySettled retries
+
   test("dryRun of the same drift: reports diffBytes=1 and writes NOTHING", async () => {
     const dev = seeded(true);
     const before = new Map(dev.mem);
