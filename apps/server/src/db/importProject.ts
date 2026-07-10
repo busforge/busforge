@@ -47,10 +47,16 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   // 400 rather than crashing later: busforgeGaps calls appProgramId(appRef).split(...) and
   // importProjectExport binds these into insDev, both of which throw a generic 500 on a
   // missing field. Everything dereferenced downstream is a string.
+  const seenDeviceIds = new Set<string>();
   for (const dev of d.devices as Record<string, unknown>[]) {
     if (typeof dev.id !== "string" || typeof dev.ia !== "string" || typeof dev.name !== "string" || typeof dev.appRef !== "string") {
       throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     }
+    // Duplicate instance ids would merge their per-device config last-wins on insert; refuse
+    // with the same coded error the knxproj import uses (insertProject), so both paths fail
+    // cleanly before touching the DB instead of hitting the raw unique index mid-transaction.
+    if (seenDeviceIds.has(dev.id)) throw new ApiError("DUPLICATE_DEVICE_INSTANCE", `two devices share the instance id ${dev.id}`);
+    seenDeviceIds.add(dev.id);
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.

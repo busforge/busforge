@@ -276,6 +276,25 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id)
   );
   `,
+  // A device's instance_id must be unique within its project: it is the key the
+  // per-device tables (device_parameters/_links/_modules/_security, all device_id) join
+  // on, so two device rows sharing one would silently merge their config last-wins. The
+  // index is PARTIAL (WHERE instance_id != '') so legacy rows from before instance_id was
+  // populated (added with DEFAULT '') do not block the migration; every real id is unique.
+  //
+  // A DB imported before this guard could already hold such duplicate rows (a malformed
+  // 0.xml merged silently). Creating the index over them would throw and brick startup
+  // (migrate() runs outside any request handler), so first collapse each duplicate group to
+  // its lowest-rowid row. That is a safe repair: the per-device config keyed on the shared
+  // instance_id already pointed at one merged device, so dropping the extra row loses no
+  // config that was not already ambiguous. On a clean DB (the normal case) this deletes
+  // nothing.
+  `
+  DELETE FROM devices
+   WHERE instance_id != ''
+     AND id NOT IN (SELECT MIN(id) FROM devices WHERE instance_id != '' GROUP BY project_id, instance_id);
+  CREATE UNIQUE INDEX idx_devices_project_instance ON devices(project_id, instance_id) WHERE instance_id != '';
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

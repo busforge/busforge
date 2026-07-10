@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
-import { openDb } from "../src/db/schema.ts";
+import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
@@ -49,6 +49,33 @@ describe("schema/migrations", () => {
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  test("the instance-id unique migration collapses pre-existing duplicate rows instead of bricking", () => {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-dup-"));
+    const path = join(dir, "dup.db");
+    // A DB one version BEFORE the unique-index migration, already holding two device rows
+    // that share a real instance id (a malformed import from before the guard existed). A
+    // raw CREATE UNIQUE INDEX over them would throw and brick startup; the migration must
+    // first collapse the duplicate group to one row.
+    const old = new Database(path, { create: true });
+    old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
+      CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
+      INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
+      INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
+      PRAGMA user_version = ${SCHEMA_VERSION - 1};`);
+    old.close();
+    const db = openDb(path); // runs only the final migration (dedup + partial unique index)
+    const dupRows = db.query("SELECT ia FROM devices WHERE project_id='p' AND instance_id='DI-1'").all() as { ia: string }[];
+    expect(dupRows).toEqual([{ ia: "1.1.1" }]); // lowest-rowid survivor kept, the other dropped
+    // The two legacy '' rows are untouched (partial index excludes them).
+    expect((db.query("SELECT COUNT(*) AS n FROM devices WHERE project_id='p' AND instance_id=''").get() as { n: number }).n).toBe(2);
+    // And the index is now active: a fresh real-id collision is rejected.
+    const ins = db.prepare("INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-9',?, 'n','','',0)");
+    ins.run("1.1.5");
+    expect(() => ins.run("1.1.6")).toThrow();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("projects", () => {
@@ -89,6 +116,39 @@ describe("projects", () => {
       { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
     ]);
     expect(getDeviceModules(db, "p1", "ghost")).toEqual([]);
+  });
+
+  test("two devices sharing an instance id are refused, not silently merged", () => {
+    // A malformed 0.xml with two DeviceInstances under the same Id. Without the guard both
+    // rows import and their device_parameters merge last-wins (device_id collides); the guard
+    // refuses the import with a coded error instead.
+    const xml0 = `<?xml version="1.0" encoding="utf-8"?>
+      <KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><Installations><Installation><Topology>
+        <Area Address="1"><Line Address="1">
+          <DeviceInstance Id="DI-DUP" Address="5" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1" />
+          <DeviceInstance Id="DI-DUP" Address="6" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1" />
+        </Line></Area>
+      </Topology></Installation></Installations></Project></KNX>`;
+    const proj = parseProject(xml0, undefined, "x");
+    expect(proj.devices.length).toBe(2); // parser keeps both; the store is where the clash surfaces
+    const db = fresh();
+    const code = (() => { try { insertProject(db, "p1", proj, "/tmp/p1", 1000); return null; } catch (e) { return (e as { code?: string }).code; } })();
+    expect(code).toBe("DUPLICATE_DEVICE_INSTANCE");
+    // Nothing was persisted (the pre-check runs before the insert transaction opens).
+    expect(db.query("SELECT COUNT(*) AS n FROM devices WHERE project_id = 'p1'").get()).toEqual({ n: 0 });
+  });
+
+  test("the partial unique index tolerates legacy empty instance ids", () => {
+    // Rows from before instance_id was populated carry '' and must not collide under the
+    // WHERE instance_id != '' partial index; only real ids are constrained.
+    const db = fresh();
+    db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES ('p1','x',1,'')").run();
+    const ins = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES ('p1','', ?, 'n','', '', 0, '')");
+    expect(() => { ins.run("1.1.1"); ins.run("1.1.2"); }).not.toThrow();
+    // But two real ids that collide DO trip the index.
+    const insId = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES ('p1','DI-1', ?, 'n','', '', 0, '')");
+    insId.run("1.1.3");
+    expect(() => insId.run("1.1.4")).toThrow();
   });
 
   test("getDeviceModules rejects a corrupt device_modules row instead of miscasting it", () => {
@@ -435,6 +495,19 @@ describe("device security persistence", () => {
     catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
     // A well-formed device passes.
     expect(() => validateExport({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n", appRef: "M-1_A-1_1" }] })).not.toThrow();
+  });
+
+  test("validateExport rejects a .busforge with duplicate device instance ids (same code as knxproj import)", () => {
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    // A tampered artifact with two devices sharing an id must fail cleanly with the coded
+    // DUPLICATE_DEVICE_INSTANCE before insert, not hit the raw unique index mid-transaction
+    // (a generic 500). Both import paths (knxproj + .busforge) refuse consistently.
+    const dup = { ...base, devices: [
+      { id: "DI-1", ia: "1.1.1", name: "a", appRef: "M-1_A-1_1" },
+      { id: "DI-1", ia: "1.1.2", name: "b", appRef: "M-1_A-1_1" },
+    ] };
+    try { validateExport(dup); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("DUPLICATE_DEVICE_INSTANCE"); }
   });
 
   test("busforgeGaps: empty catalog match on a prototype-chain key is NOT treated as present", () => {

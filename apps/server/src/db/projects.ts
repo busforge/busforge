@@ -94,6 +94,16 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const c of node.children) insertRange(c, rangeId);
   };
 
+  // Two DeviceInstances sharing an instance id would each insert a device row and then
+  // merge their per-device config (device_parameters etc. join on device_id, last write
+  // wins). Surface that as a coded refusal rather than importing a silently-merged device;
+  // the partial UNIQUE index on (project_id, instance_id) is the storage-level backstop.
+  const seenIds = new Set<string>();
+  for (const d of project.devices) {
+    if (seenIds.has(d.id)) throw new ApiError("DUPLICATE_DEVICE_INSTANCE", `two devices share the instance id ${d.id}`);
+    seenIds.add(d.id);
+  }
+
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile);
     for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);

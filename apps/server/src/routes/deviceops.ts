@@ -111,7 +111,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // device's tables while reporting success.
     const gaApp = loadApp(state, id, deviceId);
     if (gaApp && !classify(gaApp).capabilities().flashLinks) {
-      return err("GROUP_TABLE_UNREADABLE", "this device's memory model does not support programming its group addresses yet");
+      // A WRITE-capability refusal, not the read-side GROUP_TABLE_UNREADABLE: this fires only
+      // for a recognised-but-unimplemented family (UnsupportedProfile). System B and MV-0705
+      // both program group addresses, so they never reach here.
+      return err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
     // Auto restore point of the about-to-be-programmed config (real flash only).

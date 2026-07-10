@@ -847,7 +847,7 @@ describe("device configuration", () => {
 
   test("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
     // GA flash is hardware-verified for MV-0705 now (identity + re-point + revert),
-    // so the capability guard must NOT refuse it: the request gets past GROUP_TABLE_UNREADABLE
+    // so the capability guard must NOT refuse it: the request gets past GA_FLASH_UNSUPPORTED
     // and only fails later on the unreachable test connection.
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
@@ -857,7 +857,22 @@ describe("device configuration", () => {
     // connection) and reached the actual flash attempt, which then fails only on the unreachable
     // test gateway. A regression that re-gated or broke an earlier guard would surface as one of
     // these codes and fail the test, rather than silently passing a weaker negative assertion.
-    expect(["GROUP_TABLE_UNREADABLE", "APP_PROGRAM_MISSING", "INTERFACE_NOT_SET", "DEVICE_NOT_FOUND"]).not.toContain(code);
+    expect(["GA_FLASH_UNSUPPORTED", "APP_PROGRAM_MISSING", "INTERFACE_NOT_SET", "DEVICE_NOT_FOUND"]).not.toContain(code);
+  });
+
+  test("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {
+    // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile, flashLinks
+    // false. The write guard must refuse with its OWN code (not the read-side
+    // GROUP_TABLE_UNREADABLE), so the message can say "recognised family, GA programming not
+    // implemented" instead of the old, now-false "likely an absolute-segment device".
+    const state = freshState();
+    const { projectId, deviceId } = await importConfig(state);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-0138-21-F18E-O0072.xml.gz"), "M-TEST_A-1"]);
+    const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }) }), state))!.json()) as any;
+    await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error?.code).toBe("GA_FLASH_UNSUPPORTED");
   });
 
   test("importGaps lists devices whose application program is absent and counts unresolved links", () => {
