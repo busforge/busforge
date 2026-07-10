@@ -37,6 +37,18 @@ class FakeHidDevice {
   }
 }
 
+// Like FakeHidDevice but never answers FEAT_GET (it throws on that write instead), so
+// connect()'s feature handshake fails fast and the transport comes up with rxExpected==0
+// (no frame ever completed). Mirrors a real interface that does not implement the Bus
+// Access feature service, which connect() explicitly tolerates.
+class FeatureLessHidDevice extends FakeHidDevice {
+  write(d: number[]): number {
+    if (d[7] === 0x0f && d[8] === 0x01) throw new Error("no feature service"); // FEAT_GET rejects
+    this.writes.push(d);
+    return d.length;
+  }
+}
+
 // node-hid module fake: new HID(...) returns the given device regardless of
 // path/vid/pid form (a JS constructor may return any object).
 function fakeHidModule(dev: FakeHidDevice) {
@@ -175,24 +187,31 @@ describe("KnxUsbTransport", () => {
     expect(calls[0]!.equals(tpdu)).toBe(true);
   });
 
-  test("a lone end-packet without a start does not deliver a frame", async () => {
-    const { dev, t } = await connected();
+  test("an orphan continuation with no start in progress (rxExpected==0) is dropped, not parsed", async () => {
+    // Bring the transport up against an interface that never answers FEAT_GET, so the
+    // feature handshake fails and no frame ever completes: rxExpected stays 0. This is
+    // the reachable-in-production precondition (an interface without the feature service),
+    // and the one the old code got wrong: with rxExpected==0 it appended the orphan and
+    // delivered it, since rx.length(>=1) >= 0 is always true, handing a bogus body to
+    // handleTransfer (byte 4 read as protocol id, subarray(8) as an empty cEMI -> a
+    // garbage onCemi). Guarded now: a continuation with no start in progress returns early.
+    const dev = new FeatureLessHidDevice();
+    const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+    await t.connect(); // FEAT_GET throws -> handshake caught -> up with rxExpected 0
     const calls: Buffer[] = [];
     t.onCemi = (_s, _d, tpdu) => calls.push(tpdu);
 
-    // Actual current behavior, derived from usb.ts onData(): a continuation
-    // packet is appended to the (empty) rx buffer and only delivered once
-    // rx.length >= rxExpected. rxExpected is NOT reset after a completed
-    // frame; the feature-response frame during connect() left it at
-    // 8 + 2 = 10, so this 5-byte orphan stays below the threshold and is
-    // silently buffered, never delivered. (Residual gap, noted, not "fixed"
-    // by the test: on a transport that never completed any frame,
-    // rxExpected is 0 and an orphan end-packet would reach handleTransfer,
-    // where only the protocol-id byte check stands between it and a bogus
-    // parse.)
-    const orphanEnd = report([0x01, 0x26, 5, 0xde, 0xad, 0xbe, 0xef, 0x01]);
-    dev.inject(orphanEnd);
+    // end-packet (type 6), no preceding start (type 1/5): protocol id byte would be 0x01.
+    dev.inject(report([0x01, 0x26, 5, 0xde, 0xad, 0xbe, 0xef, 0x01]));
     expect(calls.length).toBe(0);
+
+    // And a well-formed frame afterwards still reassembles normally (the guard only drops
+    // orphans, it does not wedge the receiver).
+    const tpdu = Buffer.from([0x42, 0x40, 0x00, 0x00]);
+    const cemi = Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x11, 0x11, 0x05, 0x03, ...tpdu]);
+    dev.inject(tunnelReport(cemi));
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.equals(tpdu)).toBe(true);
   });
 
   test("sendCemi resolves on L_Data.con, and the con is not surfaced via onCemi", async () => {

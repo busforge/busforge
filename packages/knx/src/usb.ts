@@ -176,12 +176,16 @@ export class KnxUsbTransport implements KnxTransport {
       // start frame: transfer header present, body length in bytes 2..3
       this.rx = Buffer.from(data);
       this.rxExpected = HEADER_LEN + (data.length >= 4 ? data.readUInt16BE(2) : 0);
-    } else {
+    } else if (this.rxExpected > 0) {
+      // continuation only makes sense mid-frame; append to the started buffer
       this.rx = Buffer.concat([this.rx, data]);
+    } else {
+      return; // orphan continuation/end with no start in progress: nothing to reassemble
     }
     if (packetType & 0x02 && this.rx.length >= this.rxExpected) {
       const frame = this.rx;
       this.rx = Buffer.alloc(0);
+      this.rxExpected = 0; // frame consumed; the next one must open with a start packet
       this.handleTransfer(frame);
     }
   }

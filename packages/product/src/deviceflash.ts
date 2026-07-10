@@ -150,7 +150,11 @@ export function planAbsoluteParFlash(
   for (const seg of fp.segments) {
     if (!seg.runs.length) continue; // no changed owned bytes in this segment
     const lsm = lsmByAddress.get(seg.address);
-    if (lsm === undefined) { unplaceable.push({ id: seg.id, address: seg.address, changed: seg.writtenBytes }); continue; }
+    // Unplaceable if we have no LSM for this segment's address, OR the LSM exists but the
+    // procedure never loads it (no LdCtrlLoad, so it is absent from lsmOrder). The plan is
+    // built by iterating lsmOrder, so an un-loaded LSM's runs would be silently omitted while
+    // still counted as changed: a partial write reported as success. Refuse instead.
+    if (lsm === undefined || !lsmOrder.includes(lsm)) { unplaceable.push({ id: seg.id, address: seg.address, changed: seg.writtenBytes }); continue; }
     changedBytes += seg.writtenBytes;
     segments.push({ id: seg.id, address: seg.address, lsm, changed: seg.writtenBytes });
     runsByLsm.set(lsm, [...(runsByLsm.get(lsm) ?? []), ...seg.runs]);

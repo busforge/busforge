@@ -94,6 +94,31 @@ test("changed segment not declared in the procedure -> reported unplaceable, nev
   expect(unplaceable).toEqual([{ id: as4200.id, address: 16896, changed: 1 }]);
 });
 
+test("segment declared but its LSM never loaded -> unplaceable, not a silent under-write", () => {
+  const firstOwned = as4200.owned.findIndex((o) => o);
+  const dev = Buffer.from(as4200.bytes);
+  dev[firstOwned] = dev[firstOwned] ^ 0xff;
+  const current = new Map(targets.map((t) => [t.id, t.id === as4200.id ? dev : Buffer.from(t.bytes)]));
+  // The segment IS declared (LdCtrlAbsSegment maps its address to LSM3), but the procedure
+  // never emits an LdCtrlLoad for LSM3, so LSM3 is absent from the load order. The plan is
+  // assembled by walking lsmOrder; without this guard LSM3's changed run would be counted in
+  // changedBytes yet dropped from the plan -> a partial write reported as a full success.
+  const noLoad: LoadProcedures = {
+    style: "ProductProcedure",
+    blocks: [{ steps: [
+      { verb: "LdCtrlAbsSegment", attrs: { LsmIdx: "3", Address: "16896" } },
+      { verb: "LdCtrlLoadCompleted", attrs: { LsmIdx: "3" } },
+      { verb: "LdCtrlRestart", attrs: {} },
+    ] }],
+    verbs: [], unknown: [],
+  };
+  const { plan, changedBytes, segments, unplaceable } = planAbsoluteParFlash(app, new Map(), noLoad, current);
+  expect(plan).toEqual([]);
+  expect(changedBytes).toBe(0);
+  expect(segments).toEqual([]);
+  expect(unplaceable).toEqual([{ id: as4200.id, address: 16896, changed: 1 }]);
+});
+
 test("planRelativeParFlash emits exactly the hardware-proven System B bracket", () => {
   // The oracle is the retired hardcoded executor's call order (hardware-proven on
   // M-0162), hand-written here, NOT derived from the planner. The engine-side
