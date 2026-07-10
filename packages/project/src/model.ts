@@ -102,4 +102,5 @@ export interface Project {
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
   deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
+  malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
 }

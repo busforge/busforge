@@ -46,13 +46,14 @@ export function resolveAppXml(state: AppState, projectId: string, appRef: string
 
 // Gaps an import does not fully cover, surfaced so the device/GA counts are not the
 // only success signal: devices whose application program was missing from the archive
-// (they import but cannot be opened, configured, or flashed) and group-address link
-// tokens that referenced an address not in the tree (silently dropped during parse).
-export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number } {
+// (they import but cannot be opened, configured, or flashed), group-address link tokens
+// that referenced an address not in the tree (silently dropped during parse), and
+// DeviceInstances the parser dropped as unkeyable/unaddressable (missing Id or address).
+export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number } {
   const devicesWithoutProgram = project.devices
     .filter((d) => !programs.has(appProgramId(d.appRef)))
     .map((d) => ({ ia: d.ia, name: d.name }));
-  return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks };
+  return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks, malformedDevices: project.malformedDevices };
 }
 
 // Load and cache a device's parsed application program from the catalog.

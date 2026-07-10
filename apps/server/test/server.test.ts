@@ -660,6 +660,36 @@ describe("busforge re-import (export round-trip)", () => {
     expect(imp.devicesWithoutProgram.length).toBe(projA.devices.length);
   });
 
+  test("restoring a snapshot imported from another project does not collide on global range ids", async () => {
+    const state = freshState();
+    // Project B: its group ranges occupy some global group_ranges.id values (1..N).
+    const b = await importCfg(state);
+    const snap = (await (await handleApi(req(`/api/projects/${b.id}/snapshots`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ label: "rp" }),
+    }), state))!.json()) as any;
+    expect(snap.id).toBeTruthy();
+
+    // Export B and re-import it as project C. importProjectExport remaps C's LIVE ranges to
+    // fresh ids, but the carried snapshot payload still references B's original range ids,
+    // which B still occupies. Before the fix, restoring that snapshot re-inserted those ids
+    // verbatim and collided with B's rows (PRIMARY KEY), crashing the transaction as a 500.
+    const { bytes } = await exportArtifact(state, b.id);
+    const cform = new FormData();
+    cform.set("file", new File([bytes], "p.busforge"));
+    const c = (await (await handleApi(req("/api/projects/import-busforge", { method: "POST", body: cform }), state))!.json()) as any;
+
+    const cSnaps = (await (await handleApi(req(`/api/projects/${c.id}/snapshots`), state))!.json()) as any[];
+    const rp = cSnaps.find((s) => s.label === "rp")!;
+    const res = (await handleApi(req(`/api/projects/${c.id}/snapshots/${rp.id}/restore`, { method: "POST" }), state))!;
+    expect(res.status).toBe(200); // no collision, no 500
+
+    // C keeps its group structure, and B's ranges are untouched by the restore.
+    const projC = (await (await handleApi(req(`/api/projects/${c.id}`), state))!.json()) as any;
+    const projB = (await (await handleApi(req(`/api/projects/${b.id}`), state))!.json()) as any;
+    expect(projC.groupRanges.length).toBeGreaterThan(0);
+    expect(projB.groupRanges.length).toBeGreaterThan(0);
+  });
+
   test("encrypted export round-trips through the endpoints; wrong/absent password is rejected", async () => {
     const state = freshState();
     const a = await importCfg(state);
@@ -837,7 +867,7 @@ describe("device configuration", () => {
     expect(importGaps(proj, new Map()).devicesWithoutProgram.length).toBeGreaterThan(0);
     // All programs present -> no gaps; clean project surfaces empty, not undefined.
     const all = new Map(proj.devices.map((d) => [appProgramId(d.appRef), "<x/>"]));
-    expect(importGaps(proj, all)).toEqual({ devicesWithoutProgram: [], unresolvedLinks: 0 });
+    expect(importGaps(proj, all)).toEqual({ devicesWithoutProgram: [], unresolvedLinks: 0, malformedDevices: 0 });
   });
 
   test("tasks endpoint is empty until a bus operation runs", async () => {

@@ -81,6 +81,7 @@ const en = {
     gapNoProgram: "{{count}} device(s) have no application program in this file and cannot be opened, configured, or flashed",
     gapBaggage: "The file's embedded device data store (e.g. a DALI gateway backup) could not be read and was not imported.",
     gapUnresolvedLinks: "{{count}} group-address link(s) reference an address not in the project and were dropped",
+    gapMalformedDevices: "{{count}} device(s) had no id or a missing address in the file and were skipped",
   },
   export: {
     title: "Export project",

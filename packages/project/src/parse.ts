@@ -25,7 +25,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const doc = p.parse(xml0);
 
   const installation = firstByKey(doc, "Installation");
-  const topology = parseTopology(installation?.Topology, productNames);
+  const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames);
   const locations = parseLocations(installation?.Locations);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses);
@@ -38,7 +38,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
   const deviceSecurity = devices.map((d) => parseDeviceSecurity(doc, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
 
-  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks };
+  return { name: parseName(projectXml, installation, fallbackName), topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks, malformedDevices };
 }
 
 // A device's Data-Secure commissioning secrets, or undefined for a non-secure device.
@@ -131,28 +131,41 @@ function parseName(projectXml: string | undefined, installation: any, fallbackNa
   return fallbackName;
 }
 
-function parseTopology(topo: any, productNames: Map<string, string>): Topology {
+function parseTopology(topo: any, productNames: Map<string, string>): { topology: Topology; malformedDevices: number } {
   const areas: TopologyArea[] = [];
+  let malformedDevices = 0;
   for (const area of arr<any>(topo?.Area)) {
     const lines = arr<any>(area.Line).map((line) => {
       // Devices may sit directly under Line or under a Segment (ETS6).
       const devNodes = [...arr<any>(line.DeviceInstance), ...arr<any>(line.Segment).flatMap((s: any) => arr<any>(s.DeviceInstance))];
-      const devices: Device[] = devNodes.map((d) => ({
-        id: String(d.Id ?? ""),
-        ia: `${Number(area.Address)}.${Number(line.Address)}.${Number(d.Address)}`,
-        // ETS falls back to the catalogue product name when a device has no
-        // user-given instance name.
-        name: String(d.Name || productNames.get(String(d.ProductRefId ?? "")) || ""),
-        productRef: String(d.ProductRefId ?? ""),
-        appRef: String(d.Hardware2ProgramRefId ?? ""),
-        manufacturer: manufacturerOf(String(d.ProductRefId ?? "")),
-        comment: [d.Comment, d.Description].map((x) => String(x ?? "").trim()).filter(Boolean).join(" "),
-      }));
+      const devices: Device[] = [];
+      for (const d of devNodes) {
+        const id = String(d.Id ?? "");
+        const ia = `${Number(area.Address)}.${Number(line.Address)}.${Number(d.Address)}`;
+        // A DeviceInstance without an Id cannot be correlated to its params/links/security
+        // (findDeviceInstance keys on Id): keeping it would import a phantom that silently
+        // drops all of them. A non-numeric address yields a "NaN.NaN.x" IA the device can
+        // never be reached at. Both are genuinely unprocessable, so drop and COUNT them
+        // rather than guess a default (see the no-silent-skip rule); the count is surfaced
+        // to the user alongside unresolvedLinks.
+        if (!id || ia.includes("NaN")) { malformedDevices++; continue; }
+        devices.push({
+          id,
+          ia,
+          // ETS falls back to the catalogue product name when a device has no
+          // user-given instance name.
+          name: String(d.Name || productNames.get(String(d.ProductRefId ?? "")) || ""),
+          productRef: String(d.ProductRefId ?? ""),
+          appRef: String(d.Hardware2ProgramRefId ?? ""),
+          manufacturer: manufacturerOf(String(d.ProductRefId ?? "")),
+          comment: [d.Comment, d.Description].map((x) => String(x ?? "").trim()).filter(Boolean).join(" "),
+        });
+      }
       return { address: Number(line.Address), name: String(line.Name ?? ""), devices };
     });
     areas.push({ address: Number(area.Address), name: String(area.Name ?? ""), lines });
   }
-  return { areas };
+  return { topology: { areas }, malformedDevices };
 }
 
 // The building structure: <Locations> holds a tree of <Space> elements (ETS6),

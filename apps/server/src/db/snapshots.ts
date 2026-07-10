@@ -141,29 +141,44 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
     const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
     for (const l of payload.deviceLinks) insLink.run(projectId, l.deviceId, l.comObjRefId, l.slot, l.gaRaw);
 
-    // Group-address structure: only rewritten for snapshots that captured it.
-    // Addresses are deleted before ranges (they reference ranges), then ranges
-    // re-inserted parents-first (payload is id-ordered) and addresses after, so
-    // the self- and cross-table foreign keys hold throughout.
+    // Group-address structure: only rewritten for snapshots that captured it. Ids are
+    // NOT re-inserted verbatim: group_ranges.id / group_addresses.id are GLOBAL autoincrement
+    // keys, and a snapshot carried inside a .busforge artifact holds the SOURCE db's ids, so
+    // reusing them would collide with another project's rows in the importing db (and even in
+    // the same db after rowid reuse). We let sqlite assign fresh ids and remap the payload's
+    // parent/range references through an idMap (payload is id-ordered, so a parent is always
+    // mapped before its child needs it), exactly as importProjectExport does for a live import.
     if (payload.groupRanges && payload.groupAddresses) {
       db.prepare("DELETE FROM group_addresses WHERE project_id = ?").run(projectId);
       db.prepare("DELETE FROM group_ranges WHERE project_id = ?").run(projectId);
-      const insRange = db.prepare("INSERT INTO group_ranges (id, project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?, ?)");
-      for (const r of payload.groupRanges) insRange.run(r.id, projectId, r.parentId, r.name, r.rangeStart, r.rangeEnd);
-      const insGa = db.prepare("INSERT INTO group_addresses (id, project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?, ?)");
-      for (const g of payload.groupAddresses) insGa.run(g.id, projectId, g.rangeId, g.raw, g.address, g.name, g.dpt);
+      const rangeIdMap = new Map<number, number>(); // payload range id -> new row id
+      const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
+      for (const r of payload.groupRanges) {
+        const parent = r.parentId == null ? null : rangeIdMap.get(r.parentId) ?? null;
+        const newId = Number(insRange.run(projectId, parent, r.name, r.rangeStart, r.rangeEnd).lastInsertRowid);
+        rangeIdMap.set(r.id, newId);
+      }
+      const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
+      for (const g of payload.groupAddresses) insGa.run(projectId, g.rangeId == null ? null : rangeIdMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt);
     }
 
-    // Building structure: only rewritten for snapshots that captured it. Membership
-    // rows reference spaces, so they are cleared first; spaces re-insert parents-
-    // first (payload is id-ordered) with explicit ids, then membership after.
+    // Building structure: only rewritten for snapshots that captured it. spaces.id is a global
+    // key too, so it is remapped on restore for the same reason as the group ranges above.
     if (payload.spaces && payload.spaceDevices) {
       db.prepare("DELETE FROM space_devices WHERE project_id = ?").run(projectId);
       db.prepare("DELETE FROM spaces WHERE project_id = ?").run(projectId);
-      const insSpace = db.prepare("INSERT INTO spaces (id, project_id, parent_id, ext_id, type, name, ord) VALUES (?, ?, ?, ?, ?, ?, ?)");
-      for (const s of payload.spaces) insSpace.run(s.id, projectId, s.parentId, s.extId, s.type, s.name, s.ord);
+      const spaceIdMap = new Map<number, number>(); // payload space id -> new row id
+      const insSpace = db.prepare("INSERT INTO spaces (project_id, parent_id, ext_id, type, name, ord) VALUES (?, ?, ?, ?, ?, ?)");
+      for (const s of payload.spaces) {
+        const parent = s.parentId == null ? null : spaceIdMap.get(s.parentId) ?? null;
+        const newId = Number(insSpace.run(projectId, parent, s.extId, s.type, s.name, s.ord).lastInsertRowid);
+        spaceIdMap.set(s.id, newId);
+      }
       const insSd = db.prepare("INSERT INTO space_devices (project_id, space_id, device_id) VALUES (?, ?, ?)");
-      for (const sd of payload.spaceDevices) insSd.run(projectId, sd.spaceId, sd.deviceId);
+      for (const sd of payload.spaceDevices) {
+        const sid = spaceIdMap.get(sd.spaceId);
+        if (sid !== undefined) insSd.run(projectId, sid, sd.deviceId);
+      }
     }
   })();
   return { ok: true, gaStructureRestored };

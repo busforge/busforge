@@ -90,6 +90,23 @@ describe("0.xml parser", () => {
     expect(p.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
   });
 
+  test("drops a device with no Id and surfaces the count instead of importing a phantom that silently loses its data", () => {
+    const noId = parseProject(xml0.replace('Id="P-TEST-0_DI-1" ', ""), undefined, "fallback");
+    expect(noId.malformedDevices).toBe(1);
+    expect(noId.devices.map((d) => d.id)).toEqual(["P-TEST-0_DI-2"]); // the id-less device is gone, not an "" phantom
+    expect(noId.devices.some((d) => d.id === "")).toBe(false);
+  });
+
+  test("drops a device with a missing address (unreachable NaN IA) and counts it", () => {
+    const noAddr = parseProject(xml0.replace('Address="10" ', ""), undefined, "fallback");
+    expect(noAddr.malformedDevices).toBe(1);
+    expect(noAddr.devices.every((d) => !d.ia.includes("NaN"))).toBe(true);
+  });
+
+  test("a well-formed project reports zero malformed devices", () => {
+    expect(proj.malformedDevices).toBe(0);
+  });
+
   test("merges duplicate com-object RefIds instead of producing colliding rows that abort the import", () => {
     const dup = xml0.replace(
       '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" />',

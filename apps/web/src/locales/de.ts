@@ -83,6 +83,7 @@ const de: Messages = {
     gapNoProgram: "{{count}} Gerät(e) haben kein Applikationsprogramm in dieser Datei und lassen sich nicht öffnen, konfigurieren oder flashen",
     gapBaggage: "Der eingebettete Gerätedaten-Speicher der Datei (z. B. ein DALI-Gateway-Backup) konnte nicht gelesen werden und wurde nicht importiert.",
     gapUnresolvedLinks: "{{count}} Gruppenadress-Verknüpfung(en) verweisen auf eine Adresse, die nicht im Projekt ist, und wurden verworfen",
+    gapMalformedDevices: "{{count}} Gerät(e) hatten in der Datei keine Id oder keine Adresse und wurden übersprungen",
   },
   export: {
     title: "Projekt exportieren",
