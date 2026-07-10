@@ -135,4 +135,18 @@ describe(".busforge export/import carries the structure", () => {
     expect(re.locations[0].name).toBe("Haus");
     expect(re.locations[0].children[0].children[0]).toMatchObject({ name: "Küche", deviceIds: ["P-TEST-0_DI-1"] });
   });
+
+  test("the source 0.xml Space Id (extId) survives the round-trip, not a stale rowid", () => {
+    // The old code exported readSpaces (id = rowid) and re-imported by writing node.id
+    // into ext_id, replacing the real Space Id with a rowid string every round-trip. With
+    // extId carried separately, the source id must come back unchanged after export+import.
+    const db = freshProject();
+    const MK = Buffer.alloc(32, 1);
+    expect(getProject(db, "P")!.locations[0].extId).toBe("P-TEST-0_BP-1");
+    const data = exportProject(db, "P", 5, MK)!;
+    importProjectExport(db, data, "P2", 6, MK);
+    const re = getProject(db, "P2")!;
+    expect(re.locations[0].extId).toBe("P-TEST-0_BP-1"); // source id preserved
+    expect(re.locations[0].extId).not.toBe(re.locations[0].id); // NOT the rowid
+  });
 });

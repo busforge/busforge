@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { deviceParamValues } from "../src/project.ts";
+import { deviceParamValues } from "../src/parse.ts";
 
 // deviceParamValues is the 0.xml stored-value extraction feeding every flash (the
 // device's ParameterInstanceRef Values are the instance overrides laid over the

@@ -91,6 +91,17 @@ describe("projects", () => {
     expect(getDeviceModules(db, "p1", "ghost")).toEqual([]);
   });
 
+  test("getDeviceModules rejects a corrupt device_modules row instead of miscasting it", () => {
+    const db = fresh();
+    db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES ('p1','x',1,'')").run();
+    // A row whose JSON is well-formed JSON but NOT a ModuleInstance[] (args entry missing
+    // `value`). The blind cast would have handed this straight to the image builder, where it
+    // would fail far from the cause; the shape guard makes it fail loudly at the read boundary.
+    db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES ('p1','DI-1',?)")
+      .run(JSON.stringify([{ id: "MI-1", refId: "M-1", args: [{ refId: "A-1" }] }]));
+    expect(() => getDeviceModules(db, "p1", "DI-1")).toThrow("corrupt store");
+  });
+
   test("a project with duplicate com-object RefIds inserts without colliding on the link PK", () => {
     // Two ComObjectInstanceRefs sharing a RefId would, unmerged, produce two (refId, slot)
     // rows that collide on the device_links PK and abort the whole import. The parser merges

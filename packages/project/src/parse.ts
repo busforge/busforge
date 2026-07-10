@@ -114,6 +114,19 @@ function parseDeviceModules(doc: any, deviceId: string) {
   }));
 }
 
+// A single device's stored parameter values (ParameterRef id -> value) and its
+// application ref, straight from a raw decrypted 0.xml. The full parseProject builds
+// every device; the hardware read-back harnesses work one device at a time and only
+// need this. Throws on an unknown id rather than returning a misleading empty map.
+export function deviceParamValues(xml0: string, deviceId: string): { appRef: string; values: Map<string, string> } {
+  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const dev = findDeviceInstance(p.parse(xml0), deviceId);
+  if (!dev) throw new Error(`device ${deviceId} not found`);
+  const values = new Map<string, string>();
+  for (const r of arr<any>(dev.ParameterInstanceRefs?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(String(r.RefId), String(r.Value));
+  return { appRef: String(dev.Hardware2ProgramRefId ?? ""), values };
+}
+
 function findDeviceInstance(node: any, id: string): any {
   if (node == null || typeof node !== "object") return undefined;
   for (const d of arr<any>(node.DeviceInstance)) if (d.Id === id) return d;
@@ -174,7 +187,8 @@ function parseTopology(topo: any, productNames: Map<string, string>): { topology
 // exports, in which case this returns an empty array.
 function parseLocations(node: any): SpaceNode[] {
   const toSpace = (s: any): SpaceNode => ({
-    id: String(s.Id ?? ""),
+    id: "", // not addressable until stored (the DB assigns the row id); source id is extId
+    extId: String(s.Id ?? ""),
     type: String(s.Type ?? ""),
     name: String(s.Name ?? ""),
     deviceIds: arr<any>(s.DeviceInstanceRef).map((r) => String(r.RefId ?? "")).filter(Boolean),
@@ -192,7 +206,7 @@ function parseGroupAddresses(node: any): { groupRanges: GroupRangeNode[]; groupA
     return ga;
   };
   const toRange = (r: any): GroupRangeNode => ({
-    id: String(r.Id ?? ""),
+    id: "", // not addressable until stored (the DB assigns the row id); the XML id is discarded
     name: String(r.Name ?? ""),
     rangeStart: Number(r.RangeStart ?? 0),
     rangeEnd: Number(r.RangeEnd ?? 0),

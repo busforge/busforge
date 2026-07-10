@@ -14,8 +14,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../packages/project/src/zip.ts";
-import { loadKnxproj, readAppProgram, deriveWinzipPassword, appProgramId } from "../packages/project/src/index.ts";
-import { parseApplication, buildParameterImage, deviceParamValues } from "../packages/product/src/index.ts";
+import { loadKnxproj, readAppProgram, deriveWinzipPassword, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
+import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
 
 const [projPath, password, ip, outDir] = process.argv.slice(2);

@@ -104,7 +104,11 @@ export interface ModuleDefModel { id: string; args: ModuleArg[]; dynamic: DynNod
 export interface Allocator { id: string; start: number; maxInclusive: number; }
 
 // A device's module instances (from 0.xml), pinning each instance's resolved
-// argument values. id/refId are prefix-stripped as ETS stores them.
+// argument values. id/refId are as ETS stores them. Structurally identical to
+// @busforge/project's ModuleInstanceData (the parsed form): the same wire contract,
+// serialized into the server's device_modules JSON and read back as this type
+// (validated at that boundary in db/deviceparams.ts). Product's core stays free of
+// 0.xml/knxproj knowledge, so this DTO is redeclared rather than imported from project.
 export interface ModuleInstance { id: string; refId: string; args: { refId: string; value: string }[]; }
 
 // A device whose real configuration lives in a manufacturer ETS "DCA" (Device

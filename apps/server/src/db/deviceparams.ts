@@ -31,12 +31,30 @@ export function deleteDeviceParam(db: Database, projectId: string, deviceId: str
     .run(projectId, deviceId, refId);
 }
 
-// The application program ref for a device (to locate its app XML), and the
-// project's stored source-file path.
+// Shape-check a parsed device_modules payload. The JSON is written from
+// @busforge/project's ModuleInstanceData (parseDeviceModules) and read back here as
+// @busforge/product's structurally-identical ModuleInstance; the two type names are the
+// same wire contract, joined only by this stored JSON. A row can only be malformed via
+// external tampering or an un-migrated schema change, so a mismatch is a corrupt store,
+// not user input: fail loudly here rather than hand a mis-typed object to the image
+// builder, where it would explode far from the cause.
+function isModuleInstances(x: unknown): x is ModuleInstance[] {
+  return Array.isArray(x) && x.every((m) =>
+    !!m && typeof m === "object" &&
+    typeof (m as ModuleInstance).id === "string" && typeof (m as ModuleInstance).refId === "string" &&
+    Array.isArray((m as ModuleInstance).args) &&
+    (m as ModuleInstance).args.every((a) => !!a && typeof a.refId === "string" && typeof a.value === "string"));
+}
+
+// A device's module instances (resolved arg values), read whole to expand its
+// configuration. Empty when the device has no module instances.
 export function getDeviceModules(db: Database, projectId: string, deviceId: string): ModuleInstance[] {
   const r = db.query("SELECT instances FROM device_modules WHERE project_id = ? AND device_id = ?")
     .get(projectId, deviceId) as { instances: string } | null;
-  return r ? (JSON.parse(r.instances) as ModuleInstance[]) : [];
+  if (!r) return [];
+  const parsed: unknown = JSON.parse(r.instances);
+  if (!isModuleInstances(parsed)) throw new Error(`device_modules row ${projectId}/${deviceId} is not a ModuleInstance[] (corrupt store)`);
+  return parsed;
 }
 
 export function getDeviceAppRef(db: Database, projectId: string, deviceId: string): string | null {

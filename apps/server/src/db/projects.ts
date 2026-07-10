@@ -45,7 +45,10 @@ export function insertSpaces(db: Database, projectId: string, locations: SpaceNo
   const insSpace = db.prepare("INSERT INTO spaces (project_id, parent_id, ext_id, type, name, ord) VALUES (?, ?, ?, ?, ?, ?)");
   const insSpaceDev = db.prepare("INSERT INTO space_devices (project_id, space_id, device_id) VALUES (?, ?, ?)");
   const walk = (node: SpaceNode, parentId: number | null, ord: number) => {
-    const sid = Number(insSpace.run(projectId, parentId, node.id, node.type, node.name, ord).lastInsertRowid);
+    // Persist the source 0.xml id (extId) as ext_id, NOT node.id: a stored tree's node.id
+    // is the DB row id, so writing it would clobber the provenance on a .busforge round-trip.
+    // (`?? ""` tolerates a pre-extId .busforge export whose payload lacks the field.)
+    const sid = Number(insSpace.run(projectId, parentId, node.extId ?? "", node.type, node.name, ord).lastInsertRowid);
     for (const did of node.deviceIds) insSpaceDev.run(projectId, sid, did);
     node.children.forEach((c, i) => walk(c, sid, i));
   };
@@ -54,15 +57,15 @@ export function insertSpaces(db: Database, projectId: string, locations: SpaceNo
 
 // Rebuild a project's location tree (spaces parent_id adjacency + device
 // membership). SpaceNode.id is the DB row id (as a string), which the edit/assign
-// endpoints address; the source 0.xml Space Id stays in the ext_id column for
-// provenance but is not needed by the client.
+// endpoints address; the source 0.xml Space Id is carried separately in extId
+// (from the ext_id column) so it survives a .busforge export round-trip.
 export function readSpaces(db: Database, projectId: string): SpaceNode[] {
-  const rows = db.query("SELECT id, parent_id AS parentId, type, name FROM spaces WHERE project_id = ? ORDER BY ord, id")
-    .all(projectId) as { id: number; parentId: number | null; type: string; name: string }[];
+  const rows = db.query("SELECT id, parent_id AS parentId, ext_id AS extId, type, name FROM spaces WHERE project_id = ? ORDER BY ord, id")
+    .all(projectId) as { id: number; parentId: number | null; extId: string; type: string; name: string }[];
   const devRows = db.query("SELECT space_id AS spaceId, device_id AS deviceId FROM space_devices WHERE project_id = ? ORDER BY rowid")
     .all(projectId) as { spaceId: number; deviceId: string }[];
   const nodes = new Map<number, SpaceNode>();
-  for (const r of rows) nodes.set(r.id, { id: String(r.id), type: r.type, name: r.name, deviceIds: [], children: [] });
+  for (const r of rows) nodes.set(r.id, { id: String(r.id), extId: r.extId, type: r.type, name: r.name, deviceIds: [], children: [] });
   for (const d of devRows) nodes.get(d.spaceId)?.deviceIds.push(d.deviceId);
   const roots: SpaceNode[] = [];
   for (const r of rows) {

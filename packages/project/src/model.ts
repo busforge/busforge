@@ -29,7 +29,9 @@ export interface DeviceParam { refId: string; value: string; }
 export interface DeviceParams { deviceId: string; values: DeviceParam[]; }
 
 // A device's module instances (from 0.xml), pinning each instance's resolved
-// argument values, used to expand channel/module configuration.
+// argument values, used to expand channel/module configuration. Structurally identical
+// to @busforge/product's ModuleInstance (the consuming form): serialized into the
+// server's device_modules JSON here and re-validated on read (db/deviceparams.ts).
 export interface ModuleInstanceData { id: string; refId: string; args: DeviceParam[]; }
 export interface DeviceModules { deviceId: string; instances: ModuleInstanceData[]; }
 
@@ -65,7 +67,11 @@ export interface Topology {
 // Each space carries the ids of the device instances placed directly in it
 // (DeviceInstanceRef RefId == Device.id). Empty for a project without locations.
 export interface SpaceNode {
-  id: string;          // the 0.xml Space Id
+  // The addressable node id the edit/assign endpoints take: the DB row id in a STORED
+  // tree (readSpaces), empty in a freshly PARSED tree that has no row yet. Never the
+  // source 0.xml id (that is extId), so a node never lies about which id it carries.
+  id: string;
+  extId: string;       // the source 0.xml Space Id (provenance, persisted as spaces.ext_id)
   type: string;        // "Building" | "Floor" | "Room" | "DistributionBoard" | ...
   name: string;
   deviceIds: string[]; // device instance ids placed directly in this space
@@ -82,6 +88,10 @@ export interface GroupAddress {
 // A node of the group-address tree (main group, then middle group), carrying
 // the human names ETS assigned to each range.
 export interface GroupRangeNode {
+  // The addressable range id: the DB row id in a STORED tree (getProject), the form the
+  // group-range edit endpoints take. Empty in a freshly PARSED tree (the source 0.xml
+  // range id is discarded at import; no column persists it and nothing addresses a
+  // pre-store range), so a parsed range never presents a non-addressable id as if it were one.
   id: string;
   name: string;
   rangeStart: number;

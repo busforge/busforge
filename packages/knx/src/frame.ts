@@ -69,3 +69,20 @@ export function cemiLDataGroup(src: number, ga: number, tpdu: Buffer): Buffer {
   return Buffer.concat([head, tpdu]);
 }
 export const groupValueRead = () => Buffer.from([0x00, 0x00]); // unnumbered, APCI GroupValueRead
+
+// Decode an unnumbered group T_Data APDU (the TPDU of a group-addressed L_Data). The
+// 10-bit APCI is the low 2 bits of octet 0 plus all of octet 1; the top 4 APCI bits
+// select the group service. The value is the trailing octets for a >2-byte APDU, or the
+// low 6 bits of octet 1 packed into a single byte for the compact 2-byte form. This is
+// the group-telegram counterpart to parseApdu (which handles numbered T_Data_Connected).
+export type GroupApci = "GroupValueRead" | "GroupValueResponse" | "GroupValueWrite" | "Unknown";
+export interface GroupApdu { apci: GroupApci; value: Buffer; }
+export function decodeGroupApdu(tpdu: Buffer): GroupApdu {
+  const top = (((tpdu[0] & 0x03) << 8) | (tpdu[1] ?? 0)) & 0x03c0;
+  const apci: GroupApci =
+    top === 0x000 ? "GroupValueRead" :
+    top === 0x040 ? "GroupValueResponse" :
+    top === 0x080 ? "GroupValueWrite" : "Unknown";
+  const value = tpdu.length > 2 ? Buffer.from(tpdu.subarray(2)) : Buffer.from([(tpdu[1] ?? 0) & 0x3f]);
+  return { apci, value };
+}

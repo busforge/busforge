@@ -1,5 +1,6 @@
 import fs from "node:fs";
-import { parseApplication, buildParameterImage, deviceParamValues } from "./index.ts";
+import { parseApplication, buildParameterImage } from "./index.ts";
+import { deviceParamValues } from "../../project/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../../knx/src/index.ts";
 
 // Read-only validation: build the parameter image from the project + product data
