@@ -153,6 +153,7 @@ const en = {
     TUNNEL_CONNECT_TIMEOUT: "The KNX interface did not respond. Check that it is powered on and reachable at the configured address.",
     TUNNEL_CONNECT_REJECTED: "The KNX interface refused the connection. Another client may be connected, or the interface is busy.",
     TUNNEL_ACK_TIMEOUT: "The KNX interface stopped acknowledging. Check the connection to the gateway and try again.",
+    USB_SEND_NOT_CONFIRMED: "The USB interface did not confirm the frame reached the bus. Check that the interface is on the bus and functioning.",
     DEVICE_NOT_ANSWERING: "The device is not answering on the bus. Check that it is powered, on the line, and at the expected address.",
     DEVICE_READ_REFUSED: "The device refused a memory read. It may be busy or in an unexpected state; try again.",
     FLASH_VERIFY_MISMATCH: "The device did not store what was written (read-back mismatch). The flash was stopped; the device is left recoverable.",

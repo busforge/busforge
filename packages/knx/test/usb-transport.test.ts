@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxUsbTransport } from "../src/usb.ts";
+import { KnxError } from "../src/errors.ts";
 import { cemiLData, iaToNum } from "../src/frame.ts";
 
 // Offline tests for KnxUsbTransport against a fake node-hid device. Every
@@ -214,16 +215,19 @@ describe("KnxUsbTransport", () => {
     expect(calls.length).toBe(0); // con consumed internally, not delivered
   });
 
-  // The one deliberately slow test: usb.ts documents a 1.5 s fallback so a
-  // quiet/absent bus never hangs the caller.
-  test("sendCemi resolves after ~1.5 s when no con arrives", async () => {
+  // The one deliberately slow test: with no L_Data.con within ~1.5 s the interface never
+  // confirmed the frame reached the bus, so sendCemi REJECTS with a coded error rather than
+  // resolving (a silent success would resurface one layer up as a misleading timeout).
+  test("sendCemi rejects with a coded error after ~1.5 s when no con arrives", async () => {
     const { dev, t } = await connected();
     const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
     const t0 = Date.now();
-    await t.sendCemi(cemi);
+    const err = await t.sendCemi(cemi).catch((e) => e);
     const dt = Date.now() - t0;
+    expect(err).toBeInstanceOf(KnxError);
+    expect(err.code).toBe("USB_SEND_NOT_CONFIRMED");
     expect(dt).toBeGreaterThanOrEqual(1400);
     expect(dt).toBeLessThan(3000);
-    expect(dev.writes.length).toBe(1); // the report still went out
+    expect(dev.writes.length).toBe(1); // the report still went out before we gave up
   }, 5000);
 });

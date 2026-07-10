@@ -1,5 +1,6 @@
 import type { KnxTransport } from "./transport.ts";
 import { parseCemiLData } from "./transport.ts";
+import { KnxError } from "./errors.ts";
 
 // KNX USB transport (KNX spec 9/3 "KNX USB Transfer Protocol"). A KNX-USB
 // interface is a vendor-defined HID device exchanging fixed 64-byte reports.
@@ -114,9 +115,15 @@ export class KnxUsbTransport implements KnxTransport {
   }
 
   async sendCemi(cemi: Buffer): Promise<void> {
-    // Wait for the interface's L_Data.con (it acknowledges putting the frame on
-    // the bus); resolve on timeout so a quiet/absent bus never hangs the caller.
-    const con = new Promise<void>((res) => { this.conResolve = res; setTimeout(res, 1500); });
+    // Wait for the interface's L_Data.con: its LOCAL confirmation that it put the frame on
+    // the bus, independent of whether any device answers. A working interface always sends
+    // it, so no .con within the window means the frame did NOT reach the bus. Reject (not
+    // resolve) so that failure surfaces here with a clear code, instead of masquerading as a
+    // successful send and reappearing one layer up as a misleading "device not answering".
+    const con = new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => { this.conResolve = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
+      this.conResolve = () => { clearTimeout(t); this.conResolve = null; resolve(); };
+    });
     this.transfer(PROTO_KNX_TUNNEL, EMI_CEMI, cemi);
     await con;
   }

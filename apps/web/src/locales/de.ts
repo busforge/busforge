@@ -153,6 +153,7 @@ const de: Messages = {
     TUNNEL_CONNECT_TIMEOUT: "Die KNX-Schnittstelle hat nicht geantwortet. Prüfe, ob sie eingeschaltet und unter der konfigurierten Adresse erreichbar ist.",
     TUNNEL_CONNECT_REJECTED: "Die KNX-Schnittstelle hat die Verbindung abgelehnt. Möglicherweise ist ein anderer Client verbunden oder die Schnittstelle ist belegt.",
     TUNNEL_ACK_TIMEOUT: "Die KNX-Schnittstelle antwortet nicht mehr (kein Acknowledge). Prüfe die Verbindung zum Gateway und versuche es erneut.",
+    USB_SEND_NOT_CONFIRMED: "Die USB-Schnittstelle hat nicht bestätigt, dass der Frame auf den Bus gelangt ist. Prüfe, ob die Schnittstelle am Bus hängt und funktioniert.",
     DEVICE_NOT_ANSWERING: "Das Gerät antwortet nicht auf dem Bus. Prüfe, ob es mit Strom versorgt, an der Linie und unter der erwarteten Adresse erreichbar ist.",
     DEVICE_READ_REFUSED: "Das Gerät hat einen Speicher-Lesezugriff verweigert. Es ist evtl. beschäftigt oder in einem unerwarteten Zustand; versuche es erneut.",
     FLASH_VERIFY_MISMATCH: "Das Gerät hat nicht das Geschriebene gespeichert (Rücklese-Abweichung). Das Flashen wurde gestoppt; das Gerät bleibt wiederherstellbar.",
