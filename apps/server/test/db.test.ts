@@ -14,7 +14,7 @@ import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, g
 import { createProject, addDevice } from "../src/db/projects.ts";
 import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
 import { exportProject } from "../src/db/exportProject.ts";
-import { importProjectExport, validateExport } from "../src/db/importProject.ts";
+import { importProjectExport, validateExport, busforgeGaps } from "../src/db/importProject.ts";
 import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu } from "../src/telegram.ts";
@@ -414,6 +414,27 @@ describe("device security persistence", () => {
     expect(() => validateExport({ ...base, deviceSecurity: [{ deviceId: "d" }] })).toThrow(/deviceSecurity/);
     try { validateExport({ ...base, deviceSecurity: [{ deviceId: "d", toolKey: "x", serialNumber: "y", sequenceNumber: "1", source: "bogus" }] }); expect.unreachable(); }
     catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
+  });
+
+  test("validateExport rejects a malformed device entry (missing string fields) as a coded 400", () => {
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    // A version-valid artifact with a device missing appRef must fail cleanly, not crash
+    // later in busforgeGaps' appProgramId(appRef).split(...) as a generic 500.
+    try { validateExport({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n" }] }); expect.unreachable(); }
+    catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
+    // A well-formed device passes.
+    expect(() => validateExport({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n", appRef: "M-1_A-1_1" }] })).not.toThrow();
+  });
+
+  test("busforgeGaps: empty catalog match on a prototype-chain key is NOT treated as present", () => {
+    // appProgramId("toString") === "toString"; `"toString" in {}` is true (prototype), but
+    // importProjectExport stores via Object.entries (own keys only). hasOwn keeps the two in
+    // sync: the device is correctly reported as a husk, not silently swallowed.
+    const gaps = busforgeGaps({ devices: [{ id: "x", ia: "1.1.1", name: "n", appRef: "toString" }], catalog: {} } as any);
+    expect(gaps.devicesWithoutProgram).toEqual([{ ia: "1.1.1", name: "n" }]);
+    // A healthy device with its program present reports no gap.
+    const ok = busforgeGaps({ devices: [{ id: "x", ia: "1.1.2", name: "m", appRef: "M-TEST_A-1" }], catalog: { "M-TEST_A-1": "<xml/>" } } as any);
+    expect(ok.devicesWithoutProgram).toEqual([]);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
+import { appProgramId } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage } from "./baggage.ts";
@@ -42,6 +43,15 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "baggage"]) {
     if (!Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `missing ${key}`);
   }
+  // Validate each device's identity/reference fields so a crafted artifact fails as a clean
+  // 400 rather than crashing later: busforgeGaps calls appProgramId(appRef).split(...) and
+  // importProjectExport binds these into insDev, both of which throw a generic 500 on a
+  // missing field. Everything dereferenced downstream is a string.
+  for (const dev of d.devices as Record<string, unknown>[]) {
+    if (typeof dev.id !== "string" || typeof dev.ia !== "string" || typeof dev.name !== "string" || typeof dev.appRef !== "string") {
+      throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
+    }
+  }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
   for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity"]) {
@@ -59,6 +69,19 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     }
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
+}
+
+// Gaps in a .busforge artifact, the analogue of importGaps for the knxproj path: devices
+// whose application program is not in the carried catalog. They re-import as un-configurable
+// husks, e.g. because the source project already had husk devices, or a legacy project's
+// source_file was gone when it was exported so exportProject could not backfill the catalog.
+// Derived from the artifact itself (device appRef vs catalog keys), so it needs no
+// export-format change and stays in sync with what importProjectExport actually stores.
+export function busforgeGaps(data: ProjectExport): { devicesWithoutProgram: { ia: string; name: string }[] } {
+  const devicesWithoutProgram = data.devices
+    .filter((d) => !Object.hasOwn(data.catalog, appProgramId(d.appRef))) // hasOwn, not `in`: catalog is stored by own keys (Object.entries), so a prototype key like "toString" is NOT a match
+    .map((d) => ({ ia: d.ia, name: d.name }));
+  return { devicesWithoutProgram };
 }
 
 // Recreate the project from a validated artifact under id `id`. One transaction.

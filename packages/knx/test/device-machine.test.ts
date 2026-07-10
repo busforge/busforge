@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
+import { SecureSession } from "../src/secureSession.ts";
 import { parseApdu, APCI } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
 
@@ -134,5 +135,33 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(await dev.deviceDescriptor()).toBe("MV-07B0");
     // and the read itself: octet0 = 0x40|0<<2|(0x300>>8 = 3) = 0x43; octet1 = 0x300&0xff = 00
     expect(tun.sent[0].toString("hex")).toBe("4300");
+  });
+
+  // A secure device retransmits its response when our T_ACK is lost. The retransmission
+  // carries the same 48-bit secure sequence, so the receive-side replay guard flags it as a
+  // replay. device.onCemi must still T_ACK it (so the device stops retransmitting) but must
+  // NOT re-deliver it. Regression guard for the replay-protection change.
+  test("secure: a replayed device response is re-ACKed at the transport layer, not re-delivered", async () => {
+    const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+    const tun = new FakeTransport();
+    // The KnxDevice's own session (src = our tunnel IA, dst = the device).
+    const ourSession = new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV });
+    const dev = new KnxDevice(tun, "1.2.11", ourSession);
+    // The paired far side (the device) that produces the secured response.
+    const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
+    const wrapped = farSide.wrapManagement(Buffer.from("0340abcd", "hex"), 5); // T-seq 5
+
+    const ackForSeq5 = (0xc2 | (5 << 2)).toString(16); // tpAck(5) = 0xd6
+    // First delivery: MAC-valid and fresh -> device ACKs it.
+    tun.reply([...wrapped]);
+    expect(tun.sent.map((f) => f.toString("hex"))).toContain(ackForSeq5);
+    const acksAfterFirst = tun.sent.filter((f) => f.toString("hex") === ackForSeq5).length;
+
+    // Bit-identical retransmission (our first ACK was lost): still ACKed, so a SECOND ACK
+    // goes out. Before the fix, the replay was dropped before the ACK and the device would
+    // exhaust its retries and disconnect mid-operation.
+    tun.reply([...wrapped]);
+    const acksAfterReplay = tun.sent.filter((f) => f.toString("hex") === ackForSeq5).length;
+    expect(acksAfterReplay).toBe(acksAfterFirst + 1);
   });
 });

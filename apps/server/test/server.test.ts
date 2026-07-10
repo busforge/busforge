@@ -626,6 +626,40 @@ describe("busforge re-import (export round-trip)", () => {
     expect(tel[0]).toMatchObject({ src: "1.1.1", kind: "GroupValueWrite" });
   });
 
+  test("a husk device (app program missing) surfaces as a gap on analyze AND import, not a silent loss", async () => {
+    const state = freshState();
+    const a = await importCfg(state);
+    const projA = (await (await handleApi(req(`/api/projects/${a.id}`), state))!.json()) as any;
+    // A healthy export (program present) must report NO gap: guards against a keying bug
+    // that would flag every device as a husk and show a permanent false warning.
+    const { bytes: healthy } = await exportArtifact(state, a.id);
+    const hform = new FormData();
+    hform.set("file", new File([healthy], "p.busforge"));
+    const healthyAnalysis = (await (await handleApi(req("/api/projects/analyze", { method: "POST", body: hform }), state))!.json()) as any;
+    expect(healthyAnalysis.devicesWithoutProgram).toEqual([]);
+
+    // Turn the device into a husk: drop its app program from the catalog. A DB-imported
+    // project has no source file, so the export cannot backfill it -> the artifact ships
+    // without that program, exactly the loss the audit flagged.
+    state.db.run("DELETE FROM app_programs");
+    const { bytes } = await exportArtifact(state, a.id);
+
+    // Analyze the artifact: the preview must report the missing-program gap, not a clean count.
+    const aform = new FormData();
+    aform.set("file", new File([bytes], "p.busforge"));
+    const analysis = (await (await handleApi(req("/api/projects/analyze", { method: "POST", body: aform }), state))!.json()) as any;
+    expect(analysis.kind).toBe("busforge");
+    expect(analysis.devicesWithoutProgram.length).toBe(projA.devices.length);
+    expect(analysis.devicesWithoutProgram[0]).toMatchObject({ ia: projA.devices[0].ia });
+
+    // Import the artifact: the same gap rides in the import result.
+    const iform = new FormData();
+    iform.set("file", new File([bytes], "p.busforge"));
+    const imp = (await (await handleApi(req("/api/projects/import-busforge", { method: "POST", body: iform }), state))!.json()) as any;
+    expect(imp.deviceCount).toBe(projA.devices.length);
+    expect(imp.devicesWithoutProgram.length).toBe(projA.devices.length);
+  });
+
   test("encrypted export round-trips through the endpoints; wrong/absent password is rejected", async () => {
     const state = freshState();
     const a = await importCfg(state);

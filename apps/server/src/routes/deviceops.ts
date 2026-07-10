@@ -6,7 +6,7 @@ import { createSnapshot } from "../db/snapshots.ts";
 import { getDeviceParams, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify } from "../deviceprofile.ts";
-import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unflashableParamRefs, secureCredsFor } from "../deviceservice.ts";
+import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -145,6 +145,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
     }
     const dryParams = url.searchParams.get("dry") === "1";
+    // Snapshot the stored config ONCE, before the (long, bus-bound) flash is queued, and use
+    // the same snapshot for both the image and the post-flash baseline decision. A param edit
+    // that lands while the flash runs must not change which refs count as "written" (the GA
+    // path resolves flashedRefIds pre-enqueue for exactly this reason).
+    const flashParams = getDeviceParams(db, id, deviceId);
+    const flashModules = getDeviceModules(db, id, deviceId);
+    const keepDrift = unwrittenParamRefs(state, id, deviceId, flashParams, flashModules);
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
     const result = await state.queue.enqueue(
@@ -155,16 +162,17 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return flashDeviceParameters({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
-          params: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), dataDir: state.dataDir,
+          params: flashParams, moduleInstances: flashModules, dataDir: state.dataDir,
           dryRun: dryParams, onProgress: progress,
         });
       },
     );
     // The device's parameter segment now matches our values: clear the marker, EXCEPT for
-    // params the flash can never write (memory-backed text/colour, encode() refuses them):
-    // their rows were not programmed, so adopting them into the baseline would clear a
-    // "changed" chip for a value that never reached the device.
-    if (result.kind === "flashed" && result.verified) resetParamBase(db, id, deviceId, unflashableParamRefs(state, id, deviceId));
+    // params the flash did NOT write (keepDrift): memory-backed text/colour the codec refuses,
+    // AND currently-hidden overrides the image builder skipped. Their rows were not programmed,
+    // so adopting them into the baseline would clear a "changed" chip for a value that never
+    // reached the device.
+    if (result.kind === "flashed" && result.verified) resetParamBase(db, id, deviceId, keepDrift);
     return json(result);
   }
 

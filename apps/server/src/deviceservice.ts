@@ -11,6 +11,11 @@ import { ApiError } from "./errors.ts";
 import { fullRef, stripRef } from "./refids.ts";
 import type { AppState } from "./app.ts";
 
+// A device's stored parameter overrides / module instances, read once so a flash and its
+// post-flash baseline decision share one consistent snapshot (see unwrittenParamRefs).
+type StoredParams = Map<string, string>;
+type StoredModules = ReturnType<typeof getDeviceModules>;
+
 // The project-model <-> device-model translation layer: everything that resolves
 // a device's application program, builds its config view, and maps between the
 // project's stored state and what is read from / flashed to the device. No HTTP
@@ -126,10 +131,12 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
 // currently-hidden text param is covered too. A ref we cannot resolve at all is kept
 // conservatively: we cannot prove the flash wrote it. Memory-less params are NOT kept:
 // there is nothing on the device to program or drift, so adopting them is honest.
-export function unflashableParamRefs(state: AppState, projectId: string, deviceId: string): Set<string> {
+// `params` lets the caller pass a snapshot read once before a flash, so the "unwritten"
+// decision matches the exact values the flash used even if a concurrent edit lands mid-flash.
+export function unflashableParamRefs(state: AppState, projectId: string, deviceId: string, params?: StoredParams): Set<string> {
   const refs = new Set<string>();
   const app = loadApp(state, projectId, deviceId);
-  const stored = getDeviceParams(state.db, projectId, deviceId);
+  const stored = params ?? getDeviceParams(state.db, projectId, deviceId);
   if (!app) return new Set(stored.keys());
   for (const refId of stored.keys()) {
     // A module-instance ref (…_MI-n_…) resolves through its ModuleDef ref.
@@ -144,6 +151,29 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
     else if (resolved.hasMemory && !IMAGE_WRITABLE_BASES.has(resolved.base)) refs.add(refId);
   }
   return refs;
+}
+
+// Stored param refs a parameter flash did NOT write, so resetParamBase must keep them as
+// drift instead of adopting them into the baseline. A stored override goes unwritten for
+// two reasons: (1) its type is not image-representable (unflashableParamRefs), or (2) it is
+// currently HIDDEN, i.e. not in the active config view, so the image builder skipped it
+// (deviceimage.ts: `active.get(ref.id) === undefined` keeps the <Data> default rather than
+// writing the override). Adopting either into the baseline would clear a "changed" chip for
+// a value that never reached the device; on re-activating the branch the device still holds
+// its default. Mirrors the links side (resetLinkBase adopts only actually-flashed refs), and
+// uses the same active set (deviceParamRefs) that read-back drift uses, so the two agree.
+// `params`/`modules`: pass the snapshot the flash used (read once before enqueue) so the
+// baseline decision cannot diverge from the flashed image when a param edit lands while the
+// flash runs on the bus (the GA path resolves flashedRefIds pre-enqueue for the same reason).
+export function unwrittenParamRefs(state: AppState, projectId: string, deviceId: string, params?: StoredParams, modules?: StoredModules): Set<string> {
+  const stored = params ?? getDeviceParams(state.db, projectId, deviceId);
+  const mods = modules ?? getDeviceModules(state.db, projectId, deviceId);
+  const keep = unflashableParamRefs(state, projectId, deviceId, stored);
+  const active = deviceParamRefs(state, projectId, deviceId, stored, mods);
+  for (const refId of stored.keys()) {
+    if (!active.has(refId)) keep.add(refId);
+  }
+  return keep;
 }
 
 // One device's communication object on a group address, for the GA details
@@ -275,10 +305,10 @@ export function resolveDeviceLinks(state: AppState, projectId: string, deviceId:
 // view's keys): for module devices these are instance-expanded, so they differ
 // from the flat application model. Used to keep read-back drift consistent with
 // what the UI shows.
-export function deviceParamRefs(state: AppState, projectId: string, deviceId: string): Set<string> {
+export function deviceParamRefs(state: AppState, projectId: string, deviceId: string, params?: StoredParams, modules?: StoredModules): Set<string> {
   const app = loadApp(state, projectId, deviceId);
   if (!app) return new Set();
-  const view = buildDeviceConfig(app, getDeviceParams(state.db, projectId, deviceId), undefined, getDeviceModules(state.db, projectId, deviceId));
+  const view = buildDeviceConfig(app, params ?? getDeviceParams(state.db, projectId, deviceId), undefined, modules ?? getDeviceModules(state.db, projectId, deviceId));
   const refs = new Set<string>();
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") refs.add(it.param.refId);
   return refs;

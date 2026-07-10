@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { setDeviceParam, setDeviceLink, getDeviceChangedKeys } from "../src/db/deviceparams.ts";
+import { deviceParamRefs } from "../src/deviceservice.ts";
 import type { FlashResult } from "../src/deviceprofile.ts";
 
 // Route-level fake-green lock for the flash endpoints: the baseline (device_param_base /
@@ -166,6 +167,36 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
     const after = getDeviceChangedKeys(state.db, projectId, deviceId).params;
     expect(after.has(VALUE_REF)).toBe(false); // written and verified -> adopted
     expect(after.has(TEXT_REF)).toBe(true);   // never written -> the drift chip survives
+  });
+
+  test("a HIDDEN (inactive) override with a writable type keeps its drift chip; a visible one is adopted", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    // P-16_R-16 is a memory-backed Value(8-bit) param on M-0081 that the default dynamic
+    // structure hides: it is NOT in the active config view, so buildAbsoluteSegmentTargets
+    // skips it (active.get(ref) === undefined) and the flash never writes it. Its type is
+    // perfectly image-writable, so the old unflashableParamRefs (type-only) would have
+    // adopted it into the baseline, fabricating "in sync" for a value that never reached
+    // the device. PARAM_REF (P-4_R-4) is visible and genuinely written.
+    const HIDDEN_REF = "M-0081_A-FE01-11-75D9_P-16_R-16";
+    setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
+    setDeviceParam(state.db, projectId, deviceId, HIDDEN_REF, "1");
+    // Precondition: the hidden ref really is outside the active view (guards against the
+    // fixture/setup accidentally making it visible, which would invalidate the assertion).
+    const active = deviceParamRefs(state, projectId, deviceId);
+    expect(active.has(PARAM_REF)).toBe(true);
+    expect(active.has(HIDDEN_REF)).toBe(false);
+    const before = getDeviceChangedKeys(state.db, projectId, deviceId).params;
+    expect(before.has(PARAM_REF)).toBe(true);
+    expect(before.has(HIDDEN_REF)).toBe(true);
+
+    paramFlashImpl = async () => flashed(true);
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(200);
+
+    const after = getDeviceChangedKeys(state.db, projectId, deviceId).params;
+    expect(after.has(PARAM_REF)).toBe(false);  // visible + written -> adopted
+    expect(after.has(HIDDEN_REF)).toBe(true);  // hidden, never written -> stays drift
   });
 });
 

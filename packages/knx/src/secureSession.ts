@@ -12,7 +12,13 @@ import { secureEncode, secureDecode, SCF, SCF_TOOL_DATA } from "./secure.ts";
 // read-back of a device is the end-to-end proof. See docs/knx-secure-design.md.
 
 const APCI_LO = 0xf1; // SecureService & 0xFF
-const SYNC_REQ_LATENCY_TOLERANCE = 6; // bytes of serial carried in clear on a Sync.req
+const SERIAL_LEN = 6; // bytes of device serial carried in clear on a Sync.req
+
+// The outcome of decoding an inbound secure TPDU. See SecureSession.unwrap.
+export type SecureInbound =
+  | { status: "ok"; apdu: Buffer } // authenticated and fresh: deliver
+  | { status: "replay" }           // authenticated but already seen: ACK, do not deliver
+  | { status: "invalid" };         // MAC failed / malformed: drop
 
 function seq6(n: bigint): Buffer {
   const b = Buffer.alloc(6);
@@ -35,6 +41,12 @@ export class SecureSession {
   // Our outgoing tool-access sequence. Set from a Sync at session start; strictly
   // increasing per sent secure frame (0 is never sent).
   private seq: bigint;
+  // The lowest sequence we will still accept from the peer. Data Secure requires the
+  // receiver to enforce a monotone sender sequence: a frame carrying seq < recvSeq is a
+  // replay (or a stale desynced frame) and is dropped even though its MAC verifies.
+  // Seeded from the Sync response (the device's declared next sequence); before the
+  // first Sync it is 0, so the very first received frame is always accepted.
+  private recvSeq = 0n;
 
   constructor(opts: { toolKey: Buffer; src: number; dst: number; serial?: Buffer; seq?: bigint }) {
     this.toolKey = opts.toolKey;
@@ -45,6 +57,8 @@ export class SecureSession {
   }
 
   get sequence(): bigint { return this.seq; }
+  // The lowest sequence unwrap will still accept from the peer (for tests/diagnostics).
+  get receiveSequence(): bigint { return this.recvSeq; }
   // Adopt a sequence learned from a Sync response (only ever move forward).
   setSequence(n: bigint): void { if (n > this.seq) this.seq = n; }
 
@@ -62,22 +76,35 @@ export class SecureSession {
     return Buffer.concat([Buffer.from([outerTpci, APCI_LO]), body]);
   }
 
-  // Decode a secure response TPDU (from the device) into the inner service APDU, or
-  // null when the MAC does not verify. src/dst are swapped: the device is the source.
-  unwrap(secureTpdu: Buffer): Buffer | null {
-    if (secureTpdu.length < 2) return null;
+  // Decode a secure response TPDU (from the device) into the inner service APDU. Three
+  // outcomes, because the caller must treat them differently at the transport layer:
+  //  - "ok":      authenticated and fresh; deliver it.
+  //  - "replay":  authenticated but its sequence was already seen; a transport-layer
+  //               retransmission (our T_ACK was lost). The caller must still T_ACK it so
+  //               the device stops retransmitting, but must NOT re-deliver it.
+  //  - "invalid": MAC failed or malformed; drop entirely (no ACK, no deliver).
+  // src/dst are swapped: the device is the source.
+  unwrap(secureTpdu: Buffer): SecureInbound {
+    if (secureTpdu.length < 2) return { status: "invalid" };
     const outerTpci = secureTpdu[0];
     const res = secureDecode(secureTpdu.subarray(2), {
       key: this.toolKey, src: this.dst, dst: this.src, dstIsGroup: false,
       tpci: outerTpci, aadFor: (scf) => Buffer.from([scf]),
     });
-    return res ? res.plaintext : null;
+    if (!res) return { status: "invalid" };
+    // Replay guard: a MAC-valid frame whose sequence is not ahead of the last one we
+    // accepted is a replay/retransmission. Only advance on a fresh frame, so a replay
+    // never moves the window.
+    const seq = seqNum(res.seq);
+    if (seq < this.recvSeq) return { status: "replay" };
+    this.recvSeq = seq + 1n;
+    return { status: "ok", apdu: res.plaintext };
   }
 
   // Build a Sync.req TPDU: a random challenge as payload, the device's 6-byte serial
   // carried in clear (and in the AAD), the sequence slot = our current sequence.
   buildSyncRequest(serial: Buffer, challenge: Buffer, tSeq: number): Buffer {
-    if (serial.length !== SYNC_REQ_LATENCY_TOLERANCE) throw new Error("serial must be 6 bytes");
+    if (serial.length !== SERIAL_LEN) throw new Error("serial must be 6 bytes");
     const outerTpci = 0x40 | ((tSeq & 0x0f) << 2) | 0x03;
     const scf = SCF.TOOL | SCF.AUTH_CONF | SCF.S_A_SYNC_REQ; // 0x92
     const seq = this.take();
@@ -110,6 +137,10 @@ export class SecureSession {
     const deviceSeq = seqNum(res.plaintext.subarray(0, 6));
     const ourSeq = seqNum(res.plaintext.subarray(6, 12));
     this.setSequence(ourSeq);
+    // The device just declared its next outgoing sequence: accept from there on. The
+    // Sync response is itself replay-proof (its MAC binds our fresh random challenge),
+    // so adopting the window directly here is the intended resync point.
+    this.recvSeq = deviceSeq;
     return { deviceSeq, ourSeq };
   }
 }

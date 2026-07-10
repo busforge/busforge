@@ -8,7 +8,7 @@ import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "
 import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
 import { putBaggage } from "../db/baggage.ts";
 import { exportProject } from "../db/exportProject.ts";
-import { importProjectExport, validateExport } from "../db/importProject.ts";
+import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
 import { putDeviceSecurity } from "../db/deviceSecurity.ts";
@@ -111,7 +111,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     }
     const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
     validateExport(data);
-    return json({ kind: "busforge", name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, snapshotCount: data.snapshots?.length ?? 0, ...countSpacesByType(data.spaces ?? []), modifiedAt: data.exportedAt ?? null });
+    // Surface the same gap the knxproj preview does: devices whose app program is not in
+    // the artifact re-import as husks. The count alone must not read as a clean transfer.
+    return json({ kind: "busforge", name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, snapshotCount: data.snapshots?.length ?? 0, ...countSpacesByType(data.spaces ?? []), modifiedAt: data.exportedAt ?? null, ...busforgeGaps(data) });
   }
 
   // /api/projects/import-busforge  (POST: re-import a .busforge project artifact)
@@ -125,7 +127,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     validateExport(data); // throws a coded ImportError on a bad shape/version
     const id = randomUUID();
     importProjectExport(db, data, id, state.now(), state.masterKey);
-    return json({ id, name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length }, 201);
+    // Report husk devices (app program not in the artifact) the same way /import does, so a
+    // re-import never propagates the loss silently as "N devices imported".
+    return json({ id, name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, ...busforgeGaps(data) }, 201);
   }
 
   const id = seg[2];
@@ -173,8 +177,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // the password rides in the body, never the URL/history. See busforgeArtifact.ts.
   if (seg.length === 4 && seg[3] === "export" && req.method === "POST") {
     const body = (await req.json().catch(() => ({}))) as { password?: string };
-    // Ensure every referenced app program is in the catalog (backfills a legacy
-    // project from its file) so the export is self-contained.
+    // Backfill every referenced app program into the catalog (a legacy project resolves
+    // its from the file) so the export carries what it can. A husk device (or a legacy
+    // project whose source file is gone) still exports WITHOUT its program; that loss is
+    // not hidden: analyze/import-busforge report it as devicesWithoutProgram on re-import.
     for (const appRef of listDeviceAppRefs(db, id)) resolveAppXml(state, id, appRef);
     const data = exportProject(db, id, state.now(), state.masterKey);
     if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);

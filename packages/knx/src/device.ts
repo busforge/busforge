@@ -51,12 +51,15 @@ export class KnxDevice {
     if (outer.control) { if (outer.seq === this.seq) this.ackResolve?.(); return; }
     // For a secure session the data frame is a wrapped secure APDU: ACK the outer
     // numbered frame, then deliver the decrypted inner APDU. A failed MAC is dropped
-    // (the request times out and can re-sync) rather than surfaced as fake data.
+    // (the request times out and can re-sync) rather than surfaced as fake data. A
+    // MAC-valid REPLAY (a retransmission after our T_ACK was lost) is still ACKed so the
+    // device stops retransmitting, but is not re-delivered.
     let p = outer;
     if (this.secure) {
       const inner = this.secure.unwrap(tpdu);
-      if (!inner) return;
-      p = parseApdu(inner);
+      if (inner.status === "invalid") return;
+      if (inner.status === "replay") { this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {}); return; }
+      p = parseApdu(inner.apdu);
     }
     this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => this.respResolve?.(p)).catch(() => {});
   }

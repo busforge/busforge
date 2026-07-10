@@ -11,22 +11,22 @@ describe("SecureSession round-trip (two parties, shared tool key)", () => {
     const device = new SecureSession({ toolKey, src: DEV, dst: US });
     const service = Buffer.from("0300", "hex"); // A_DeviceDescriptor_Read
     const wrapped = client.wrapManagement(service, 0);
-    expect(device.unwrap(wrapped)).toEqual(service);
+    expect(device.unwrap(wrapped)).toEqual({ status: "ok", apdu: service });
   });
 
   test("the device's secured response is recovered by the client", () => {
     const client = new SecureSession({ toolKey, src: US, dst: DEV });
     const device = new SecureSession({ toolKey, src: DEV, dst: US, seq: 10n });
     const response = Buffer.from("0340abcd", "hex"); // A_DeviceDescriptor_Response + data
-    expect(client.unwrap(device.wrapManagement(response, 0))).toEqual(response);
+    expect(client.unwrap(device.wrapManagement(response, 0))).toEqual({ status: "ok", apdu: response });
   });
 
-  test("a tampered secure frame does not unwrap (null, never unauthenticated data)", () => {
+  test("a tampered secure frame is invalid (never unauthenticated data)", () => {
     const client = new SecureSession({ toolKey, src: US, dst: DEV });
     const device = new SecureSession({ toolKey, src: DEV, dst: US });
     const wrapped = client.wrapManagement(Buffer.from("0300", "hex"), 0);
     wrapped[wrapped.length - 1] ^= 0xff;
-    expect(device.unwrap(wrapped)).toBeNull();
+    expect(device.unwrap(wrapped)).toEqual({ status: "invalid" });
   });
 
   test("the sequence counter advances per sent frame and never repeats", () => {
@@ -42,6 +42,39 @@ describe("SecureSession round-trip (two parties, shared tool key)", () => {
     expect(s.sequence).toBe(5n);
     s.setSequence(20n);
     expect(s.sequence).toBe(20n);
+  });
+
+  test("a replayed (MAC-valid) frame is delivered once, then flagged replay (not invalid)", () => {
+    const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 4n });
+    const device = new SecureSession({ toolKey, src: DEV, dst: US });
+    const service = Buffer.from("0300", "hex");
+    const wrapped = client.wrapManagement(service, 0); // carries seq 4
+    // First delivery: authentic, delivered.
+    expect(device.unwrap(wrapped)).toEqual({ status: "ok", apdu: service });
+    // Bit-identical re-delivery (a retransmission after a lost T_ACK): same MAC, same seq.
+    // It is a replay, NOT invalid: the caller must still ACK it but not re-deliver.
+    expect(device.unwrap(Buffer.from(wrapped))).toEqual({ status: "replay" });
+  });
+
+  test("a fresh frame after a replay still delivers (window only blocks the stale seq)", () => {
+    const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 4n });
+    const device = new SecureSession({ toolKey, src: DEV, dst: US });
+    const first = client.wrapManagement(Buffer.from("0300", "hex"), 0);  // seq 4
+    const second = client.wrapManagement(Buffer.from("0301", "hex"), 1); // seq 5
+    expect(device.unwrap(first).status).toBe("ok");
+    expect(device.unwrap(Buffer.from(first))).toEqual({ status: "replay" }); // replay of seq 4
+    expect(device.unwrap(second)).toEqual({ status: "ok", apdu: Buffer.from("0301", "hex") }); // seq 5 delivered
+  });
+
+  test("a failed MAC does not advance the replay window", () => {
+    const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 4n });
+    const device = new SecureSession({ toolKey, src: DEV, dst: US });
+    const good = client.wrapManagement(Buffer.from("0300", "hex"), 0); // seq 4
+    const tampered = Buffer.from(good);
+    tampered[tampered.length - 1] ^= 0xff;
+    expect(device.unwrap(tampered)).toEqual({ status: "invalid" }); // dropped, must not consume seq 4
+    expect(device.receiveSequence).toBe(0n);
+    expect(device.unwrap(good).status).toBe("ok"); // the authentic seq-4 frame still lands
   });
 });
 
@@ -65,5 +98,8 @@ describe("SecureSession Sync (Calimero vectors)", () => {
     const res = client.applySyncResponse(vector, Buffer.from("000000000003", "hex"));
     expect(res).not.toBeNull();
     expect(client.sequence).toBe(res!.ourSeq);
+    // The Sync seeds the replay window from the device's declared next sequence, so a
+    // frame recorded before this session (seq < deviceSeq) cannot replay into it.
+    expect(client.receiveSequence).toBe(res!.deviceSeq);
   });
 });
