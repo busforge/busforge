@@ -1,6 +1,7 @@
 import dgram from "node:dgram";
 import { SVC, knxFrame, hpai, KNXPORT } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
+import { KnxError } from "./errors.ts";
 
 // Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
 export interface TunnelSocket {
@@ -47,16 +48,19 @@ export class KnxIpTunnel implements KnxTransport {
     await this.send(knxFrame(SVC.CONNECT_REQ, body));
     const res = await done;
     const b = res.subarray(6);
-    if (b[1] !== 0) throw new Error(`connect status 0x${b[1].toString(16)}`);
+    if (b[1] !== 0) throw new KnxError("TUNNEL_CONNECT_REJECTED", `connect status 0x${b[1].toString(16)}`);
     this.channel = b[0];
     this.assignedIa = b.readUInt16BE(2 + 8 + 2); // channel/status + HPAI(8) + CRD type/len(2)
   }
 
   private connectResWaiter: { match: (m: Buffer) => boolean; resolve: (m: Buffer) => void } | null = null;
+  // Only used for the CONNECT_RES waiter: a timeout here means the gateway never answered
+  // the connect request (offline, wrong IP, or blocked), the most common bus-connect failure
+  // and fully user-actionable, so it gets a coded error like the reject/ack-timeout paths.
   private once(match: (m: Buffer) => boolean, ms: number, what: string) {
     return new Promise<Buffer>((resolve, reject) => {
       this.connectResWaiter = { match, resolve: (m) => { this.connectResWaiter = null; resolve(m); } };
-      setTimeout(() => reject(new Error(`${what} timeout`)), ms);
+      setTimeout(() => reject(new KnxError("TUNNEL_CONNECT_TIMEOUT", `${what} timeout`)), ms);
     });
   }
 
@@ -83,7 +87,7 @@ export class KnxIpTunnel implements KnxTransport {
       await this.send(frame);
       if (await ack) { this.txSeq = (this.txSeq + 1) & 0xff; return; }
     }
-    throw new Error("tunnelling ack timeout");
+    throw new KnxError("TUNNEL_ACK_TIMEOUT", "tunnelling ack timeout");
   }
 
   async disconnect() {

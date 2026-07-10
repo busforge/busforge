@@ -1,5 +1,6 @@
 import { KnxDevice, PID } from "./device.ts";
 import { lsmEvent, lsmState, allocSegment, LSM, STATE } from "./flash.ts";
+import { KnxError } from "./errors.ts";
 
 // Generic executor for a device's load procedure, expressed as a flat list of typed
 // operations (a LoadPlan). The PLANNER (which turns a parsed <LoadProcedure> + built
@@ -63,7 +64,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         await lsmEvent(dev, step.lsm, LSM.LOAD);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm);
-          if (s !== STATE.LOADING) throw new Error(`LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
+          if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
         }
         break;
       }
@@ -76,13 +77,13 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm);
-          if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+          if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
         }
         break;
       }
       case "assertLoaded": {
         const s = await lsmState(dev, step.lsm);
-        if (s !== STATE.LOADED) throw new Error(`LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
+        if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
         break;
       }
     }

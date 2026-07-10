@@ -15,6 +15,8 @@
 // device and written back unchanged, so flashing only re-points which group
 // addresses a com-object uses, never its flags.
 
+import { ProductError } from "./errors.ts";
+
 export interface ComObjectLink { comObjNum: number; gaRaws: number[]; }
 export interface GroupTables { addr: Buffer; assoc: Buffer; }
 
@@ -49,7 +51,7 @@ export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number): G
   const entries = links
     .flatMap((l) => l.gaRaws.map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })))
     .sort((a, b) => a.co - b.co || a.gi - b.gi);
-  if (gas.length + 1 > 255 || entries.length > 255) throw new Error("MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
+  if (gas.length + 1 > 255 || entries.length > 255) throw new ProductError("GA_TABLE_TOO_LARGE", "MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
 
   const addr = Buffer.alloc(1 + 2 + gas.length * 2);
   addr[0] = 1 + gas.length;

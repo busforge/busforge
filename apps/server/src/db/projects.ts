@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
+import { ApiError } from "../errors.ts";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 import { getConnection, type Connection } from "./connections.ts";
 
@@ -125,7 +126,7 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
       if (!used.has(`${line}.${addr}`)) { ia = `1.${line}.${addr}`; break; }
     }
   }
-  if (!ia) throw new Error("no free individual address in area 1");
+  if (!ia) throw new ApiError("NO_FREE_IA", "no free individual address in area 1");
   const instanceId = `BF-${randomUUID()}`;
   db.prepare(
     "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, '')",

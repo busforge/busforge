@@ -10,3 +10,4 @@ export * from "./grouptable-read.ts";
 export * from "./loadrunner.ts";
 export { secureEncode, secureDecode, SCF, SCF_TOOL_DATA, type SecureFields } from "./secure.ts";
 export { SecureSession } from "./secureSession.ts";
+export { KnxError } from "./errors.ts";

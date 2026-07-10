@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { ProductError } from "./errors.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -207,7 +208,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
   const root = p.parse(xml) as ONode[];
   const app = deepFirst(root, "ApplicationProgram");
-  if (!app) throw new Error("no ApplicationProgram");
+  if (!app) throw new ProductError("APP_PROGRAM_MISSING", "no ApplicationProgram in the parsed file");
   const appAttrs = attrsOf(app);
   const appKids = kidsOf(app);
   const staticNode = firstByTag(appKids, "Static");

@@ -9,9 +9,10 @@ export class ApiError extends Error {
   }
 }
 
-// Duck-typed code accessor: any thrown value may carry a string `code` (e.g.
-// KnxprojError from @busforge/project, which the server does not import). Returns
-// the code if present, else undefined.
+// Duck-typed code accessor: any thrown value may carry a string `code` (ApiError here,
+// plus KnxprojError / ProductError / KnxError thrown from the @busforge/* packages).
+// Reading it duck-typed keeps this mapper decoupled from those classes. Returns the code
+// if present, else undefined.
 export function errorCode(e: unknown): string | undefined {
   const c = (e as { code?: unknown } | null | undefined)?.code;
   return typeof c === "string" ? c : undefined;

@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import type { KnxDevice } from "../src/device.ts";
 import { planSystemBGaFlash, planMv0705GaFlash, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
+import { KnxError } from "../src/errors.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
 // appended to `calls` as a plain tuple so a whole procedure can be asserted as ONE
@@ -271,10 +272,13 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
     expect(steps).toEqual(plan.map((s: LoadStep, i: number): [number, string, number] => [i, s.op, plan.length]));
   });
 
-  test("load step names the actual state in its error", async () => {
+  test("load step names the actual state in its error, as a coded KnxError (localizable, not a raw 500)", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.ERROR]);
-    await expect(runLoadPlan(asDev(dev), [{ op: "load", lsm: 4 }])).rejects.toThrow(/not LOADING after LOAD \(got ERROR\)/);
+    const err = await runLoadPlan(asDev(dev), [{ op: "load", lsm: 4 }]).catch((e) => e);
+    expect(err).toBeInstanceOf(KnxError);
+    expect(err.code).toBe("LOAD_STATE_UNEXPECTED"); // the server's errorCode() maps this to a 400 + localized message
+    expect(err.message).toMatch(/not LOADING after LOAD \(got ERROR\)/);
   });
 
   test("loadCompleted step rejects when the state is not LOADED", async () => {

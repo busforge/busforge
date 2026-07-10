@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { KnxTransport } from "./transport.ts";
 import type { SecureSession } from "./secureSession.ts";
 import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, APCI, type ParsedApdu } from "./frame.ts";
+import { KnxError } from "./errors.ts";
 
 // Interface-object property ids and standard table-object numbers used across the
 // management/flash layer. Named once here so a transposed literal (5 vs 7 vs 13) in
@@ -79,7 +80,7 @@ export class KnxDevice {
       await this.tun.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
       const rsp = await this.rawNext();
       await this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res
-      if (!sec.applySyncResponse(rsp, challenge)) throw new Error("secure Sync failed (MAC mismatch)");
+      if (!sec.applySyncResponse(rsp, challenge)) throw new KnxError("SECURE_SYNC_FAILED", "secure Sync failed (MAC mismatch)");
       this.seq = (this.seq + 1) & 0x0f; // the Sync request consumed this T-sequence
     } finally { this.rawInbox = null; this.rawNotify = null; }
   }
@@ -117,7 +118,7 @@ export class KnxDevice {
       this.seq = (this.seq + 1) & 0x0f;
       return r;
     }
-    throw new Error("no reliable response (device not answering)");
+    throw new KnxError("DEVICE_NOT_ANSWERING", "no reliable response (device not answering)");
   }
 
   // ---- reads (verified on hardware) ----
@@ -140,7 +141,7 @@ export class KnxDevice {
     const out = Buffer.alloc(len);
     let pos = 0;
     while (pos < len) {
-      if (signal?.aborted) throw new Error("read aborted");
+      if (signal?.aborted) throw new KnxError("READ_ABORTED", "read aborted");
       let want = Math.min(chunk, len - pos);
       let data: Buffer;
       for (;;) {
@@ -149,7 +150,7 @@ export class KnxDevice {
         const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, want), true);
         data = r!.data.subarray(2); // skip echoed address
         if (data.length >= want) { data = data.subarray(0, want); break; }
-        if (want === 1) throw new Error(`memRead: device refused byte @0x${a.toString(16)}`);
+        if (want === 1) throw new KnxError("DEVICE_READ_REFUSED", `memRead: device refused byte @0x${a.toString(16)}`);
         want = Math.max(1, want >> 1); // shrink to fit within the device read boundary
       }
       data.copy(out, pos);
@@ -187,7 +188,7 @@ export class KnxDevice {
     }
     if (opts.verify ?? true) {
       const back = await this.memRead(addr, data.length);
-      if (!back.equals(data)) throw new Error(`memWrite verify mismatch @0x${addr.toString(16)}`);
+      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `memWrite verify mismatch @0x${addr.toString(16)}`);
     }
   }
   async restart(): Promise<void> {

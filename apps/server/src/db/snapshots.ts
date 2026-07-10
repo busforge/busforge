@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { SCHEMA_VERSION } from "./schema.ts";
 import { readProjectProperties, applyProjectProperties, type ProjectProperties } from "./projectProps.ts";
+import { ApiError } from "../errors.ts";
 
 // ETS-style restore points. A snapshot freezes the project's CONFIG layer only:
 // the project properties (see projectProps.ts), parameter values, and
@@ -46,7 +47,7 @@ const AUTO_KEEP = 20;
 // Serialize the current config layer of a project into a snapshot payload.
 export function serializeConfig(db: Database, projectId: string): SnapshotPayload {
   const project = readProjectProperties(db, projectId);
-  if (!project) throw new Error(`project ${projectId} not found`);
+  if (!project) throw new ApiError("PROJECT_NOT_FOUND", `project ${projectId} not found`, 404);
   const deviceParameters = db.query("SELECT device_id AS deviceId, param_ref_id AS paramRefId, value FROM device_parameters WHERE project_id = ? ORDER BY device_id, param_ref_id")
     .all(projectId) as SnapshotPayload["deviceParameters"];
   const deviceLinks = db.query("SELECT device_id AS deviceId, com_obj_ref_id AS comObjRefId, slot, ga_raw AS gaRaw FROM device_links WHERE project_id = ? ORDER BY device_id, com_obj_ref_id, slot")
