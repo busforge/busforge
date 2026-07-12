@@ -25,6 +25,29 @@ export class GroupTableUnreadable extends Error {
   constructor(message: string) { super(message); this.name = "GroupTableUnreadable"; }
 }
 
+// A device that was never programmed has no tables and no parameter segment: its load-state
+// machines point nowhere. Reading them anyway walks memory at address 0 and decodes whatever
+// happens to be there into a "baseline", which is the fabricated-success class this codebase
+// exists to refuse. Distinct from GROUP_TABLE_UNREADABLE on purpose: "you must download an
+// application to this device first" is a different (and actionable) statement than "I do not
+// understand this device's tables". Hardware-observed on a virgin OpenKNX device, whose LSM
+// pointers all read 0.
+export class DeviceNotProgrammed extends Error {
+  readonly code = "DEVICE_NOT_PROGRAMMED";
+  constructor(message: string) { super(message); this.name = "DeviceNotProgrammed"; }
+}
+
+// The load-state machine's table pointer. Zero means the LSM holds nothing: no application has
+// ever been loaded into it. Every reader goes through this so no path can read from address 0.
+export async function loadedTableAddr(dev: KnxDevice, obj: number, what: string): Promise<number> {
+  const base = await dev.tableAddr(obj);
+  if (base === 0) {
+    throw new DeviceNotProgrammed(
+      `this device has no ${what} (its load-state machine ${obj} points at address 0): no application has been loaded into it yet, so there is nothing to read back. It needs a full download first.`);
+  }
+  return base;
+}
+
 // A group/association table starts with a device-supplied entry count; it must be
 // bounded before reading count*width bytes. An MV-0705 device whose table pointer lands
 // in parameter memory would otherwise decode to thousands of entries and hang.
@@ -40,7 +63,7 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
     return count;
   };
   const counted = async (obj: number, layout: TableLayout) => {
-    const base = await dev.tableAddr(obj);
+    const base = await loadedTableAddr(dev, obj, `group object ${obj} table`);
     const h = await dev.memRead(base, layout.countBytes);
     const count = boundCount(readCount(h, layout), `group object ${obj} table`);
     return dev.memRead(base, layout.countBytes + count * layout.entryBytes);
@@ -49,7 +72,7 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
   const addr = await counted(1, SYSTEM_B_ADDR);
   onStep?.(1, total);
   const gcount = readCount(addr, SYSTEM_B_ADDR);
-  const a2 = await dev.tableAddr(2);
+  const a2 = await loadedTableAddr(dev, 2, "association table");
   const ah = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes);
   const acount = boundCount(readCount(ah, SYSTEM_B_ASSOC_LONG), "association table");
   let assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes + acount * SYSTEM_B_ASSOC_LONG.entryBytes);
@@ -69,7 +92,7 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
 // addressing as System B, but the count is a SINGLE byte and each entry is 2 bytes.
 export async function readGroupTablesMv0705(dev: KnxDevice, onStep?: (done: number, total: number) => void): Promise<{ addr: Buffer; assoc: Buffer }> {
   const readTable = async (obj: number) => {
-    const base = await dev.tableAddr(obj);
+    const base = await loadedTableAddr(dev, obj, `group object ${obj} table`);
     const count = (await dev.memRead(base, MV0705_TABLE.countBytes))[0];
     return dev.memRead(base, MV0705_TABLE.countBytes + count * MV0705_TABLE.entryBytes);
   };

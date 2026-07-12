@@ -145,6 +145,7 @@ const de: Messages = {
     IA_ALREADY_IN_USE: "Auf dieser Adresse antwortet bereits ein anderes Gerät. Sie zu vergeben würde zwei Geräte mit derselben Adresse auf den Bus bringen, deshalb lehnt Busforge ab.",
     IA_WRITE_UNVERIFIED: "Die Adresse wurde geschrieben, aber das Gerät antwortet dort nicht. Lies seinen Zustand aus, bevor du weitermachst: es hält womöglich noch seine alte Adresse.",
     USB_LINK_LAYER_UNAVAILABLE: "Das USB-Interface lässt sich nicht in den Modus schalten, in dem es Telegramme auf den Bus legt. In diesem Zustand nimmt es Frames an und sendet keinen davon, deshalb lehnt Busforge seine Nutzung ab.",
+    DEVICE_NOT_PROGRAMMED: "In dieses Gerät wurde noch nie eine Applikation geladen, es gibt also nichts auszulesen. Es braucht zuerst einen vollständigen Download, den Busforge noch nicht kann.",
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",
     LOAD_PROCEDURE_UNSUPPORTED: "Dieses Gerät deklariert keine nutzbare Ladeprozedur (Legacy oder unbekannter Stil). Es kann noch nicht sicher geflasht werden.",

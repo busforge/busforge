@@ -1,4 +1,4 @@
-import { KnxDevice, planSystemBGaFlash, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -313,7 +313,10 @@ export class SystemBProfile extends DeviceProfile {
     // last writer of an overlapping region. Same shape as the System 7 path below.
     const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances }) : null;
     if (target) {
-      const img = await dev.memRead(await dev.tableAddr(LSM), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
+      // loadedTableAddr, not tableAddr: a device that was never programmed points its parameter
+      // segment at address 0, and reading there would decode whatever bytes happen to live at the
+      // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
+      const img = await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
       foldDeviceValues(
         paramBase,
         decodeParameterImage(model, LSM, img),
@@ -360,7 +363,10 @@ export class SystemBProfile extends DeviceProfile {
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
 
     await runDeclaredChecks(dev, coverage);
-    const addr = await dev.tableAddr(LSM);
+    // A parameter (par) download rewrites an EXISTING segment; on a never-programmed device
+    // there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
+    // needs a full download, which is a different operation (docs/commissioning.md).
+    const addr = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t));
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
