@@ -27,7 +27,22 @@ const FEAT_SET = 0x03;
 // feature identifiers
 const FEAT_ACTIVE_EMI = 0x05;
 // cEMI message codes
-const LDATA_CON = 0x2e;
+const LDATA_IND = 0x29; // a telegram received FROM the bus
+const LDATA_CON = 0x2e; // the interface confirming it put OUR frame on the bus
+// cEMI LOCAL device management (addresses the interface itself, never the bus)
+const MPROP_WRITE_REQ = 0xf6;
+const MPROP_WRITE_CON = 0xf5;
+const MPROP_READ_REQ = 0xfc;
+const MPROP_READ_CON = 0xfb;
+
+// The cEMI server's communication mode decides what the interface does with an L_Data.req.
+// Some interfaces come up with it UNSET (0xff) and then silently drop every frame we hand
+// them: no error, no L_Data.con, nothing on the bus. Hardware-observed on a Weinzierl/ABB
+// 147b:5120, where it is exactly why nothing ever reached the bus. So the mode is set, and
+// verified, at connect time. Data Link Layer is the plain "put my frames on the bus" mode.
+const IOT_CEMI_SERVER = 8;
+const PID_COMM_MODE = 52;
+const COMM_MODE_DATA_LINK_LAYER = 0x00;
 
 // Weinzierl is the OEM behind most KNX-USB sticks (ABB, Gira, Jung, MDT, ...);
 // the product string is the reliable discriminator across rebrands.
@@ -90,6 +105,7 @@ export class KnxUsbTransport implements KnxTransport {
   private rxExpected = 0;
   private featResolve: ((body: Buffer) => void) | null = null;
   private conResolve: (() => void) | null = null;
+  private propResolve: ((cemi: Buffer) => void) | null = null;
 
   // Identify the device by HID path (preferred, disambiguates multiple sticks)
   // or by vendor/product id. hidModule is a test seam; when omitted the real
@@ -112,6 +128,54 @@ export class KnxUsbTransport implements KnxTransport {
       this.setFeature(FEAT_ACTIVE_EMI, Buffer.from([EMI_CEMI]));
       await this.getFeature(FEAT_ACTIVE_EMI);
     } catch { /* interface may not implement the feature service */ }
+    await this.enterDataLinkLayer();
+  }
+
+  // Put the cEMI server into Data Link Layer mode, i.e. "put the frames I hand you on the bus".
+  //
+  // This is NOT optional and NOT best-effort. A Weinzierl/ABB 147b:5120 comes up with its
+  // communication mode UNSET (reads 0xff) and then accepts every L_Data.req we send, confirms
+  // nothing, and puts nothing on the bus. Silence, no error. Setting the mode is what makes the
+  // interface actually transmit (hardware-verified: the first L_Data.con this transport ever saw
+  // arrived immediately after this write). If we cannot establish the mode, we refuse to connect
+  // rather than hand back a transport that will swallow everything written to it.
+  private async enterDataLinkLayer(): Promise<void> {
+    let mode: number | undefined;
+    try {
+      mode = (await this.propRead(IOT_CEMI_SERVER, 1, PID_COMM_MODE))[0];
+      if (mode === COMM_MODE_DATA_LINK_LAYER) return; // interface already transmits
+      await this.propWrite(IOT_CEMI_SERVER, 1, PID_COMM_MODE, Buffer.from([COMM_MODE_DATA_LINK_LAYER]));
+      mode = (await this.propRead(IOT_CEMI_SERVER, 1, PID_COMM_MODE))[0];
+    } catch (e) {
+      throw new KnxError("USB_LINK_LAYER_UNAVAILABLE",
+        `the USB interface did not answer local device management, so its communication mode could not be established (${e instanceof Error ? e.message : String(e)}); refusing to use an interface that may silently drop every frame`);
+    }
+    if (mode !== COMM_MODE_DATA_LINK_LAYER) {
+      throw new KnxError("USB_LINK_LAYER_UNAVAILABLE",
+        `the USB interface refused Data Link Layer mode (its communication mode still reads 0x${(mode ?? 0xff).toString(16)}); in this state it accepts frames and puts none of them on the bus, so refusing to use it`);
+    }
+  }
+
+  // ---- cEMI local device management (talks to the INTERFACE, never to the bus) ----
+  private devMgmt(req: Buffer, conCode: number): Promise<Buffer> {
+    return new Promise<Buffer>((resolve, reject) => {
+      const t = setTimeout(() => { this.propResolve = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not answer a local property request")); }, 1500);
+      this.propResolve = (cemi) => {
+        if (cemi[0] !== conCode) return; // a different confirmation; keep waiting
+        clearTimeout(t); this.propResolve = null;
+        // Header: code | IOT(2) | OI(1) | PID(1) | nrOfElem(high nibble) + startIndex. A zero
+        // element count means the interface REFUSED and the body is an error code, not data.
+        if ((cemi[5] & 0xf0) === 0) { reject(new KnxError("USB_LINK_LAYER_UNAVAILABLE", `the interface rejected a property access (error 0x${(cemi[7] ?? 0).toString(16)})`)); return; }
+        resolve(cemi.subarray(7));
+      };
+      this.transfer(PROTO_KNX_TUNNEL, EMI_CEMI, req);
+    });
+  }
+  private propRead(iot: number, instance: number, pid: number): Promise<Buffer> {
+    return this.devMgmt(Buffer.from([MPROP_READ_REQ, (iot >> 8) & 0xff, iot & 0xff, instance, pid, 0x10, 0x01]), MPROP_READ_CON);
+  }
+  private propWrite(iot: number, instance: number, pid: number, data: Buffer): Promise<Buffer> {
+    return this.devMgmt(Buffer.concat([Buffer.from([MPROP_WRITE_REQ, (iot >> 8) & 0xff, iot & 0xff, instance, pid, 0x10, 0x01]), data]), MPROP_WRITE_CON);
   }
 
   async sendCemi(cemi: Buffer): Promise<void> {
@@ -200,6 +264,11 @@ export class KnxUsbTransport implements KnxTransport {
     if (protocolId === PROTO_KNX_TUNNEL) {
       const cemi = body;
       if (cemi[0] === LDATA_CON) { this.conResolve?.(); this.conResolve = null; return; }
+      // Local device-management confirmations are about the INTERFACE, not the bus. They must
+      // not fall through to the L_Data parser, which would read their property header as a
+      // source/destination address and deliver a phantom telegram to the upper layer.
+      if (cemi[0] === MPROP_READ_CON || cemi[0] === MPROP_WRITE_CON) { this.propResolve?.(cemi); return; }
+      if (cemi[0] !== LDATA_IND) return; // anything else is not a bus telegram; drop it, don't misparse it
       const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
       this.onCemi?.(src, dst, tpdu, isGroup);
     }

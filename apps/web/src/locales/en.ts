@@ -144,6 +144,7 @@ const en = {
     PROG_MODE_MULTIPLE_DEVICES: "More than one device is in programming mode. An address write reaches all of them and would give them the SAME address, so Busforge refuses. Leave exactly one device in programming mode.",
     IA_ALREADY_IN_USE: "Another device already answers on that address. Assigning it would put two devices with the same address on the bus, so Busforge refuses.",
     IA_WRITE_UNVERIFIED: "The address was written but the device does not answer there. Read its state before continuing: it may still hold its old address.",
+    USB_LINK_LAYER_UNAVAILABLE: "The USB interface would not switch into the mode that puts telegrams on the bus. In that state it accepts frames and sends none of them, so Busforge refuses to use it.",
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",
     LOAD_PROCEDURE_UNSUPPORTED: "This device declares no usable load procedure (legacy or unknown style). It cannot be flashed safely yet.",

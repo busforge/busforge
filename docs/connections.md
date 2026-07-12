@@ -138,11 +138,23 @@ The UI is split by responsibility:
   active EMI to cEMI and read it back, multi-frame reassembly of feature
   responses, clean disconnect. Proven through the UI end-to-end (the picker scans
   and selects the real device).
-- **USB transport, bus level: NOT yet verified.** No bus was attached during
-  development, so an actual `L_Data` round-trip (T_Connect to a device, memory
-  read/write, `L_Data.con`/`.ind`) over USB is unproven. The framing is correct
-  by construction and mirrors the IP path, but per the project's honest bar this
-  is not "supported" until byte-verified against a device on a real bus.
+- **USB transport, bus level: hardware-verified (2026-07-12).** Against a real bus
+  through the same Weinzierl/ABB `147B:5120`: broadcast (`A_IndividualAddress_Read`),
+  point-to-point `T_Connect` + device-descriptor read + property reads, and
+  `L_Data.con` handling. What it took is worth knowing, because the framing was
+  correct all along and the bus stayed silent anyway:
+
+  **The interface must be put into Data Link Layer mode, or it transmits nothing.**
+  The cEMI server object (interface object type 8) carries a communication mode
+  property (PID 52). This interface comes up with it **unset** (reads `0xff`), and in
+  that state it accepts every `L_Data.req` handed to it, confirms none of them, and
+  puts none of them on the bus. No error, anywhere. Writing `0x00` (Data Link Layer)
+  during `connect()` is what makes it transmit; the very first `L_Data.con` this
+  transport ever saw arrived immediately after that write. This is standard, not a
+  quirk of one stick: the reference stack does the same
+  (calimero `KNXNetworkLinkUsb.linkLayerMode()`). `connect()` now establishes the mode
+  and **verifies** it, and refuses the interface (`USB_LINK_LAYER_UNAVAILABLE`) if it
+  cannot, rather than handing back a transport that silently swallows everything.
 - **KNXnet/IP discovery**: returns cleanly with no gateway present; finding a real
   gateway is unverified (no IP interface was online).
 - **IP transport** is unchanged and remains hardware-proven as before.

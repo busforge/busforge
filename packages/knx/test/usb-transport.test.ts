@@ -18,6 +18,11 @@ import { cemiLData, iaToNum } from "../src/frame.ts";
 // on("data"/"error", cb), write(number[]): number, close().
 class FakeHidDevice {
   writes: number[][] = [];
+  // The interface's cEMI server: its communication mode decides whether an L_Data.req is put
+  // on the bus at all. A real Weinzierl/ABB 147b:5120 comes up UNSET (0xff), which is why
+  // connect() has to establish Data Link Layer mode (0x00). See usb.ts enterDataLinkLayer.
+  commMode = 0xff;
+  acceptsCommMode = true;
   private dataCb: ((d: Buffer) => void) | null = null;
   on(ev: "data" | "error", cb: (arg: never) => void): void {
     if (ev === "data") this.dataCb = cb as unknown as (d: Buffer) => void;
@@ -29,7 +34,21 @@ class FakeHidDevice {
     // transfer header starts at byte 3, so d[7] = protocol id and
     // d[8] = service id; FEAT_GET is protocol 0x0f service 0x01.
     if (d[7] === 0x0f && d[8] === 0x01) this.dataCb?.(featResponseReport());
+    // Local device management (protocol 0x01 = KNX tunnel, but a cEMI M_Prop* message code):
+    // the cEMI body starts at byte 11. Answer the comm-mode property the transport reads/writes.
+    if (d[7] === 0x01 && (d[11] === 0xfc || d[11] === 0xf6)) this.dataCb?.(this.propAnswer(d));
     return d.length;
+  }
+  // M_PropRead.con (0xfb) / M_PropWrite.con (0xf5): echo IOT | OI | PID | nrOfElem+startIndex,
+  // then the value (read) or nothing (write). A refusal is signalled by a ZERO element count.
+  private propAnswer(d: number[]): Buffer {
+    const [code, iotHi, iotLo, oi, pid] = [d[11], d[12], d[13], d[14], d[15]];
+    if (code === 0xf6) { // write
+      if (!this.acceptsCommMode) return tunnelReport(Buffer.from([0xf5, iotHi, iotLo, oi, pid, 0x00, 0x01, 0x08])); // refused
+      this.commMode = d[18];
+      return tunnelReport(Buffer.from([0xf5, iotHi, iotLo, oi, pid, 0x10, 0x01]));
+    }
+    return tunnelReport(Buffer.from([0xfb, iotHi, iotLo, oi, pid, 0x10, 0x01, this.commMode]));
   }
   close(): void {}
   inject(report: Buffer): void {
@@ -44,8 +63,7 @@ class FakeHidDevice {
 class FeatureLessHidDevice extends FakeHidDevice {
   write(d: number[]): number {
     if (d[7] === 0x0f && d[8] === 0x01) throw new Error("no feature service"); // FEAT_GET rejects
-    this.writes.push(d);
-    return d.length;
+    return super.write(d); // cEMI device management is a separate service; it still answers that
   }
 }
 
@@ -95,9 +113,9 @@ function tunnelReport(cemi: Buffer): Buffer {
 async function connected() {
   const dev = new FakeHidDevice();
   const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
-  await t.connect(); // writes FEAT_SET + FEAT_GET, fake answers the GET
-  expect(dev.writes.length).toBe(2);
-  dev.writes.length = 0; // only look at traffic after the feature handshake
+  await t.connect(); // FEAT_SET + FEAT_GET, then the comm-mode read/write/read
+  expect(dev.commMode).toBe(0x00); // connect() put the interface into Data Link Layer mode
+  dev.writes.length = 0; // only look at traffic after the connect handshake
   return { dev, t };
 }
 
@@ -249,4 +267,57 @@ describe("KnxUsbTransport", () => {
     expect(dt).toBeLessThan(3000);
     expect(dev.writes.length).toBe(1); // the report still went out before we gave up
   }, 5000);
+});
+
+describe("Data Link Layer mode (what makes the interface actually transmit)", () => {
+  // HARDWARE-FOUND. A Weinzierl/ABB 147b:5120 comes up with its cEMI server's communication
+  // mode UNSET (reads 0xff). In that state it accepts every L_Data.req, confirms nothing, and
+  // puts nothing on the bus: no error anywhere, the frame simply evaporates. It is exactly why
+  // this transport had never once reached a real device. Setting the mode is what fixed it (the
+  // first L_Data.con this transport ever saw arrived immediately after that write), and it is
+  // what the reference stack does too (calimero KNXNetworkLinkUsb.linkLayerMode()).
+
+  test("connect() puts an UNSET interface into Data Link Layer mode", async () => {
+    const dev = new FakeHidDevice();
+    expect(dev.commMode).toBe(0xff); // as the real interface comes up
+    await new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev)).connect();
+    expect(dev.commMode).toBe(0x00); // Data Link Layer: "put my frames on the bus"
+
+    // and it did so by writing the cEMI server object's comm-mode property (IOT 8, PID 52)
+    const propWrite = dev.writes.find((w) => w[7] === 0x01 && w[11] === 0xf6);
+    expect(propWrite).toBeDefined();
+    expect(propWrite!.slice(12, 16)).toEqual([0x00, 0x08, 0x01, 0x34]); // IOT 8, instance 1, PID 52
+    expect(propWrite![18]).toBe(0x00); // the value: Data Link Layer
+  });
+
+  test("an interface already in Data Link Layer mode is left alone", async () => {
+    const dev = new FakeHidDevice();
+    dev.commMode = 0x00; // already transmitting
+    await new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev)).connect();
+    expect(dev.writes.some((w) => w[7] === 0x01 && w[11] === 0xf6)).toBe(false); // no write needed
+    expect(dev.commMode).toBe(0x00);
+  });
+
+  test("an interface that REFUSES the mode is refused right back, not used", async () => {
+    // The alternative is a transport that swallows everything written to it while every layer
+    // above reports "device not answering". Refuse to connect instead.
+    const dev = new FakeHidDevice();
+    dev.acceptsCommMode = false;
+    const err = await new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev)).connect().then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(KnxError);
+    expect((err as KnxError).code).toBe("USB_LINK_LAYER_UNAVAILABLE");
+  });
+
+  test("a device-management confirmation is never delivered as a bus telegram", async () => {
+    // M_PropRead.con is about the INTERFACE, not the bus. Handing it to the L_Data parser would
+    // read its property header as a source/destination address and invent a phantom telegram.
+    const dev = new FakeHidDevice();
+    const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+    await t.connect();
+    const seen: number[] = [];
+    t.onCemi = (src) => { seen.push(src); };
+    dev.inject(tunnelReport(Buffer.from([0xfb, 0x00, 0x08, 0x01, 0x34, 0x10, 0x01, 0x00]))); // M_PropRead.con
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toEqual([]);
+  });
 });
