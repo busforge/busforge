@@ -195,20 +195,33 @@ export function planSystemBFullDownload(tables: {
     // (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above), and the
     // device's CRC over the finished segment proves the whole 21601 bytes at the end.
     ...sparseRuns(tables.params).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
-    // Let it commit. Everything below talks to the device again, and a device mid-flash-commit
-    // answers nothing.
-    { op: "awaitReady" },
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },
-    // LoadCompleted makes the device write its whole memory image to flash (saveMemory), which is
-    // the longest pause of the entire download.
-    { op: "awaitReady" },
     // The device believes any table it is handed (thelsing/knx validates nothing on LoadCompleted),
     // so the only proof that the four brackets closed is to read their states back.
+    { op: "awaitReady" },
     { op: "assertLoaded", lsm: P }, { op: "assertLoaded", lsm: C },
     { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
     { op: "verifyMode", on: false }, // leave the device as we found it
+    // AND NOW LEAVE IT ALONE, or everything above is thrown away.
+    //
+    // This device does not persist its configuration when it is told the load is complete. It
+    // persists it on a TIMER, from its main loop, five seconds after the last time its memory was
+    // touched (thelsing/knx Memory::loop: `if (_saveTimeout != 0 && millis() - _saveTimeout > 5000)
+    // writeMemory()`), and that deferred save is the only thing that writes the load states and the
+    // metadata the device validates on boot. LoadCompleted itself only flushes the flash buffer.
+    //
+    // Two consequences, and both bit us:
+    //   - Restart before the timer expires and the device boots with metadata that never described
+    //     the download. It discards everything and comes back factory-fresh, having cheerfully
+    //     reported every load state as LOADED a second earlier (those live in RAM).
+    //   - The timer is ARMED only when memory is freed (the unloads) and merely REFRESHED by
+    //     writes: `if (_saveTimeout != 0) _saveTimeout = millis()`. So if it ever expires DURING
+    //     the download, the save fires with every load state still LOADING and then never fires
+    //     again. Which is why there is no waiting around between the unloads and here: a pause
+    //     longer than five seconds anywhere in the bracket silently costs the whole download.
+    { op: "settle", ms: 8000 },
     { op: "restart" },
   ];
 }

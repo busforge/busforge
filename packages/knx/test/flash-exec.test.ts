@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
-import { planSystemBGaFlash, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, sparseRuns, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, sparseRuns, STATE } from "../src/flash.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
@@ -492,5 +492,40 @@ describe("sparse writes (only the bytes that carry information)", () => {
     const rebuilt = Buffer.alloc(1000); // what the device holds after alloc(fill)
     for (const r of sparseRuns(original)) r.bytes.copy(rebuilt, r.offset);
     expect(rebuilt).toEqual(original); // nothing was lost by not sending the zeros
+  });
+});
+
+describe("the download must not restart the device before it has saved", () => {
+  // HARDWARE-FOUND, and it cost the device a dozen times. This device does not persist its
+  // configuration when it is told the load is complete: it persists it on a TIMER, from its main
+  // loop, five seconds after its memory was last touched (thelsing/knx Memory::loop). Restart it
+  // before that and it boots with metadata that never described the download, discards everything,
+  // and comes back factory-fresh, having reported every load state as LOADED a second earlier
+  // (those live in RAM).
+  //
+  // Worse, the timer is ARMED only when memory is freed and merely REFRESHED by writes
+  // (`if (_saveTimeout != 0) _saveTimeout = millis()`), so if it expires DURING the download the
+  // save fires with every load state still LOADING and then never fires again. Which is why the
+  // bracket must stay tight and the ONLY long pause belongs at the end.
+  const plan = planSystemBFullDownload({
+    params: Buffer.alloc(64, 1), comObj: Buffer.from([0, 1, 0x4f, 0]),
+    addr: Buffer.from([0, 0]), assoc: Buffer.from([0, 0]), programId: Buffer.alloc(5),
+  });
+
+  test("it settles before the restart, and the settle is the LAST thing before it", () => {
+    const restart = plan.findIndex((s) => s.op === "restart");
+    expect(restart).toBeGreaterThan(0);
+    const before = plan[restart - 1];
+    expect(before.op).toBe("settle");
+    expect((before as { ms: number }).ms).toBeGreaterThanOrEqual(6000); // the device's threshold is 5 s
+  });
+
+  test("nothing waits around between the unloads and the load-completed bracket", () => {
+    // A pause longer than the device's five-second save threshold anywhere in here fires the save
+    // early, with the load states still LOADING, and the download is silently lost.
+    const first = plan.findIndex((s) => s.op === "unload");
+    const done = plan.findIndex((s) => s.op === "loadCompleted");
+    const waits = plan.slice(first, done).filter((s) => s.op === "settle" || s.op === "awaitReady");
+    expect(waits).toEqual([]);
   });
 });

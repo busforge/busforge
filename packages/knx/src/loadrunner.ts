@@ -48,6 +48,10 @@ export type LoadStep =
   // and a small MCU can be gone for seconds doing it. See the executor for why this is not
   // optional.
   | { op: "awaitReady"; tries?: number; delayMs?: number }
+  // Leave the device alone for a while. Some devices persist their configuration on a timer from
+  // their main loop rather than when they are told to; restarting one before it has had that
+  // quiet moment throws the whole download away. See planSystemBFullDownload.
+  | { op: "settle"; ms: number }
   | { op: "writeProp"; obj: number; pid: number; data: Buffer }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
 
@@ -85,6 +89,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       }
       case "alloc": await allocSegment(dev, step.lsm, step.size, step.fill ?? false); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
+      case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
       case "verifyMode": await dev.setVerifyMode(step.on); break;
       // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of
       // memory writes an RP2040-class device commits its flash, and while it does that it services
