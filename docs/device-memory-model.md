@@ -123,6 +123,31 @@ actively-placed branch; injecting an assigned alternative would let two members 
 same byte (the relative builder iterates refs unordered). The active branch's own placement
 still writes it. M-0083 has ten such union-member assigns, all left to their active branch.
 
+## Bit-field layout: fields are NOT necessarily byte-aligned
+
+A parameter occupies `SizeInBit` bits starting at `BitOffset`, counted **MSB-first** from the
+byte at its `Offset`. Both numbers matter, and a field straddles byte boundaries whenever
+`BitOffset + SizeInBit` is not a multiple of 8. Manufacturers pack memory exactly this way:
+
+| Product | Type | Layout |
+| --- | --- | --- |
+| OpenKNX RaumController | `PT-DelayTime` | 14 bits at BitOffset 2 (the low 14 bits of a 2-byte word) |
+| Theben 493B | `P-70` | 11 bits at BitOffset 5 (3 low bits of one byte + all of the next) |
+| M-0008 | `P-2782` | 14 bits at BitOffset 0 |
+
+The codec (`image.ts`) therefore computes a field's byte span as `ceil((BitOffset + SizeInBit) / 8)`
+and splices the value into the big-endian word it spans, touching no neighbouring bit. It used to
+compute the span as `SizeInBit >> 3` (**floor**, so 14 bits came out as *one* byte) and ignore
+`BitOffset` entirely for anything 8 bits or wider. That placed such a field in the wrong bits, and
+threw a raw `RangeError` out of the byte writer as soon as its value exceeded 255.
+
+The bug was latent on the existing corpus (110 such parameters exist across the 13 catalogue
+fixtures, but none of them is ever *written*: they resolve to no value, so the encoder never runs
+on them, and the byte-match stayed green). It is not latent on OpenKNX, whose very first
+operation, enabling a channel, writes a 14-bit delay. A value that does not fit its declared type
+is now refused rather than masked into the field, so a corrupt input cannot become wrong bits on
+the device.
+
 ## Support matrix (honest)
 
 | Capability | State | Proven on |

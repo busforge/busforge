@@ -149,12 +149,17 @@ describe("malformed or unsupported layouts degrade safely (no silent corruption)
     const m = mk({ Tu8: { sizeInBit: 8 } }, { P: { type: "Tu8", offset: 0 } }, [{ id: "S", lsm: 4, size: NaN as unknown as number, data: Buffer.alloc(0) }]);
     expect(() => buildParameterImage(m, 4, new Map())).toThrow(/malformed segment size/);
   });
-  // ETS never allocates a sub-byte field across a byte boundary; refuse loudly rather
-  // than silently truncate the high bits (a wrong-bytes flash). This is a by-design
-  // refusal of an impossible input, not a deferred bug.
-  test("a straddling bit field is refused, not silently truncated", () => {
+  // This used to assert a REFUSAL, on the premise that "ETS never allocates a sub-byte field
+  // across a byte boundary". A real product database disproved it: OpenKNX packs fields exactly
+  // that way (and the Theben 493B has 11-bit fields at BitOffset 5). The codec now places any
+  // field MSB-first across the bytes it spans, so the straddling case is programmed correctly
+  // instead of refused. See image.test.ts for the wide non-aligned cases.
+  test("a straddling bit field is placed across the boundary, MSB-first", () => {
     const m = mk({ Tb3: { base: "Value", sizeInBit: 3 } }, { P: { type: "Tb3", offset: 0, bit: 6 } }, seg());
-    expect(() => buildParameterImage(m, 4, new Map([["R-P", "5"]]))).toThrow(/byte boundary/);
+    const img = buildParameterImage(m, 4, new Map([["R-P", "5"]])); // 5 = 0b101 over bits 6..8
+    expect(img[0] & 0x03).toBe(0b10); // the field's top 2 bits close out byte 0
+    expect(img[1] & 0x80).toBe(0b1 << 7); // its last bit opens byte 1
+    expect(decodeParameterImage(m, 4, img).get("R-P")).toBe("5");
   });
   test("an integer type wider than 48 bits is refused rather than emitting cryptic/truncated bytes", () => {
     const m = mk({ Tw: { base: "Number", sizeInBit: 64 } }, { P: { type: "Tw", offset: 0 } }, seg(Buffer.alloc(16)));

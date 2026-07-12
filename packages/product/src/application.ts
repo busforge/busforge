@@ -50,13 +50,14 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
   }
 }
 
-// Project the unified config model onto the flat image model. Module-def and union
-// parameters/types/refs are dropped: the legacy image parser only read the top-level
-// Static, and modules are not byte-placed (their per-instance offsets are unresolved,
-// so the flash path still refuses them via unmappedParamRefs).
+// Project the unified config model onto the flat image model. Module-def parameters/types/refs
+// are dropped from the flat pass and re-added per instance by materializeModuleParams below,
+// with their per-instance offsets resolved (hardware-verified; see docs/device-memory-model.md).
 // `includeUnions` keeps union parameters (overlapping-memory branches) in the model.
-// Default OFF so the proven RelativeSegment image path (buildParameterImage) and its
-// golden snapshot stay byte-identical to the legacy parser, which never placed them.
+// Default OFF so the legacy full-image path (buildParameterImage) and its golden snapshot stay
+// byte-identical; every path that actually programs or reads a device opts IN (the surgical
+// segment builders and both profiles), because a model without unions decodes nothing at the
+// offsets those builders write.
 // The MV-0705 absolute-segment build opts in: union branches are real parameter
 // memory there, and visibility resolution writes only the active branch.
 export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean; instances?: ModuleInstance[] } = {}): AppModel {

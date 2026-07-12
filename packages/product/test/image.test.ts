@@ -96,3 +96,66 @@ describe("parameter image codec", () => {
     expect(img[0]).toBe(0xc0);
   });
 });
+
+describe("wide fields that are NOT byte-aligned (bit offset + size not a multiple of 8)", () => {
+  // A KNX parameter field occupies `sizeInBit` bits starting at BitOffset, counted MSB-first
+  // from the byte at Offset, and may therefore straddle byte boundaries. Manufacturer product
+  // databases use this to pack memory: OpenKNX's PT-DelayTime is 14 bits at BitOffset 2, and
+  // the Theben 493B has 11-bit fields at BitOffset 5. The codec used to compute a field's width
+  // as `sizeInBit >> 3` (FLOOR: 14 bits -> 1 byte) and ignore BitOffset entirely for anything
+  // 8 bits or wider, so such a field was written into the wrong bits (and threw a raw
+  // RangeError as soon as its value exceeded 255). These pin the general MSB-first layout.
+  const wide = (sizeInBit: number, bitOffset: number, signed = false): AppModel => ({
+    mask: "MV-TEST", manufacturer: 0, appNumber: 0, version: 0,
+    types: new Map([["T", { id: "T", base: "Number" as const, sizeInBit, signed }]]),
+    params: new Map([["P", { id: "P", typeId: "T", value: "0", offset: 1, bitOffset }]]),
+    refs: new Map([["R", { id: "R", paramId: "P" }]]),
+    segments: [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }],
+  });
+
+  test("a 14-bit field at BitOffset 2 spans two bytes and round-trips (OpenKNX PT-DelayTime)", () => {
+    const m = wide(14, 2);
+    const img = buildParameterImage(m, 4, new Map([["R", "300"]]));
+    // 300 = 0b00_0100101100 in the low 14 bits of the 2-byte big-endian word at offset 1.
+    expect(img.readUInt16BE(1)).toBe(300);
+    expect(decodeParameterImage(m, 4, img).get("R")).toBe("300");
+  });
+
+  test("an 11-bit field at BitOffset 5 lands in the low 11 bits of the 2-byte word (Theben 493B)", () => {
+    const m = wide(11, 5);
+    const img = buildParameterImage(m, 4, new Map([["R", "1000"]]));
+    expect(img.readUInt16BE(1) & 0x07ff).toBe(1000);
+    expect(decodeParameterImage(m, 4, img).get("R")).toBe("1000");
+  });
+
+  test("it writes ONLY its own bits: the neighbouring bits are preserved", () => {
+    const m = wide(11, 5);
+    m.segments[0].data = Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+    const img = buildParameterImage(m, 4, new Map([["R", "0"]]));
+    // Byte 1's top 5 bits belong to other parameters and must survive; the field's own
+    // 11 bits (3 low bits of byte 1 + all of byte 2) go to zero.
+    expect(img[1]).toBe(0xf8);
+    expect(img[2]).toBe(0x00);
+    expect(img[0]).toBe(0xff); // untouched
+    expect(img[3]).toBe(0xff);
+  });
+
+  test("a sub-byte field crossing a byte boundary is placed, not refused", () => {
+    const m = wide(4, 6); // bits 6..9: the 2 low bits of byte 1, the 2 high bits of byte 2
+    const img = buildParameterImage(m, 4, new Map([["R", "11"]])); // 11 = 0b1011
+    expect(img[1] & 0x03).toBe(0b10); // the field's high half
+    expect(img[2] & 0xc0).toBe(0b11 << 6); // its low half
+    expect(decodeParameterImage(m, 4, img).get("R")).toBe("11");
+  });
+
+  test("signed non-aligned fields round-trip through two's complement", () => {
+    const m = wide(12, 3, true);
+    const img = buildParameterImage(m, 4, new Map([["R", "-500"]]));
+    expect(decodeParameterImage(m, 4, img).get("R")).toBe("-500");
+  });
+
+  test("a value that does not fit its declared type is REFUSED, never truncated into the wrong bits", () => {
+    const m = wide(11, 5);
+    expect(() => buildParameterImage(m, 4, new Map([["R", "5000"]]))).toThrow(/out of range|does not fit/i);
+  });
+});

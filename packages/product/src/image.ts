@@ -1,4 +1,5 @@
 import type { AppModel, ParamType } from "./application.ts";
+import { ProductError } from "./errors.ts";
 
 // Build the parameter memory image for a load-state-machine segment from the
 // default segment data plus the effective parameter values. Effective value =
@@ -98,12 +99,20 @@ function parseIPv4(s: string): [number, number, number, number] | undefined {
   return octets as [number, number, number, number];
 }
 
-// Integer-codec width limit and byte-width rule, shared by encode/decode here and the
+// Integer-codec width limit and byte-span rule, shared by encode/decode here and the
 // ownership mechanics in deviceimage.ts (which previously mirrored them by comment only).
-// writeUIntBE/IntBE cap at 6 bytes; anything wider is an ETS-computed table, not a
-// static parameter (see deviceimage.ts).
+// The integer codec caps at 6 bytes; anything wider is an ETS-computed table, not a static
+// parameter (see deviceimage.ts).
 export const MAX_INT_BYTES = 6;
-export const byteWidth = (sizeInBit: number): number => (sizeInBit >= 8 ? sizeInBit >> 3 : 1);
+
+// How many bytes a parameter field TOUCHES. A field is `sizeInBit` bits starting at bit
+// `bitOffset`, counted MSB-first from the byte at its Offset, so it straddles byte boundaries
+// whenever bitOffset + sizeInBit is not a multiple of 8, and it spans one byte more than its
+// width alone suggests. This used to be `sizeInBit >> 3` (FLOOR, and blind to the bit offset),
+// which under-counted every field that is not byte-aligned: a 14-bit field came out as 1 byte.
+// Manufacturers pack memory exactly this way (OpenKNX PT-DelayTime = 14 bits at bit 2; Theben
+// 493B = 11 bits at bit 5), so the width has to follow the field, not the type alone.
+export const byteWidth = (sizeInBit: number, bitOffset = 0): number => Math.max(1, Math.ceil((bitOffset + sizeInBit) / 8));
 
 // The type bases encode() can represent in the parameter image. MUST stay in sync with
 // encode() below: everything else (Text, Time, Color, BinaryValue, Other) writes nothing
@@ -134,30 +143,35 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
   if (type.base !== "Value" && type.base !== "Number") return false;
   const v = Number(valStr);
   if (!Number.isFinite(v)) return false;
-  const sizeInBit = type.sizeInBit;
-  if (sizeInBit >= 8) {
-    const bytes = sizeInBit >> 3;
-    if (offset + bytes > img.length) return false;
-    // No manufacturer numeric type exceeds MAX_INT_BYTES in practice; refuse loudly
-    // rather than emit truncated/cryptic bytes if one appears.
-    if (bytes > MAX_INT_BYTES) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
-    if (type.signed && v < 0) img.writeIntBE(v, offset, bytes);
-    else img.writeUIntBE(v, offset, bytes);
-    return true;
-  } else {
-    if (offset >= img.length) return false;
-    // A sub-byte field crossing a byte boundary; ETS never allocates these, so refuse
-    // rather than silently truncate the high bits into one byte.
-    if (bit + sizeInBit > 8) throw new Error(`bit field crossing a byte boundary not supported (${sizeInBit} bits at bit ${bit})`);
-    // KNX numbers BitOffset from the MOST significant bit of the byte (big-endian bit
-    // order): a w-bit field at BitOffset b occupies bits [b .. b+w) counted from the
-    // top, i.e. shifted left by (8 - b - w). Verified against real device memory
-    // (M-0048/M-0081); LSB-first placement only matched byte-aligned devices.
-    const shift = 8 - bit - sizeInBit;
-    const mask = (1 << sizeInBit) - 1;
-    img[offset] = (img[offset] & ~(mask << shift)) | ((v & mask) << shift);
-    return true;
+
+  const { sizeInBit } = type;
+  const span = byteWidth(sizeInBit, bit);
+  if (span > MAX_INT_BYTES) throw new Error(`integer parameter wider than 48 bits not supported (${sizeInBit} bits at offset ${offset})`);
+  if (offset + span > img.length) return false;
+
+  // A value outside its declared type is corrupt input. Masking it into the field would put
+  // silently wrong bits on the device, so refuse; the old code got a RangeError out of the
+  // byte writer here, which is the same refusal by accident and only for unsigned overflow.
+  // Coded, so the HTTP layer surfaces an honest 400 instead of a raw 500 INTERNAL.
+  const range = 2 ** sizeInBit;
+  const [min, max] = type.signed ? [-(range / 2), range / 2 - 1] : [0, range - 1];
+  if (v < min || v > max) {
+    throw new ProductError("PARAM_VALUE_OUT_OF_RANGE",
+      `parameter value ${v} does not fit its declared ${sizeInBit}-bit type (allowed ${min}..${max})`);
   }
+  const field = v < 0 ? v + range : v; // two's complement WITHIN the field's width
+
+  // Splice the field into the big-endian word it lives in. KNX numbers BitOffset from the MOST
+  // significant bit (big-endian bit order), so a w-bit field at bit b inside a span of n bytes
+  // sits shifted left by (n*8 - b - w). Hardware-verified MSB-first (M-0048/M-0081: LSB-first
+  // only ever matched byte-aligned devices). Byte arithmetic rather than shifts because a span
+  // reaches 48 bits, past what JS bitwise operators handle; every value here stays exact.
+  const shift = 2 ** (span * 8 - bit - sizeInBit);
+  let word = 0;
+  for (let i = 0; i < span; i++) word = word * 256 + img[offset + i];
+  word += (field - (Math.floor(word / shift) % range)) * shift; // replace ONLY this field's bits
+  for (let i = span - 1; i >= 0; i--) { img[offset + i] = word % 256; word = Math.floor(word / 256); }
+  return true;
 }
 
 // Inverse of encode. Returns the decoded value as a string, or undefined for
@@ -174,16 +188,15 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
   }
   if (type.base !== "Value" && type.base !== "Number") return undefined; // text/time/other
-  const sizeInBit = type.sizeInBit;
-  if (sizeInBit >= 8) {
-    const bytes = sizeInBit >> 3;
-    if (bytes > MAX_INT_BYTES || offset + bytes > img.length) return undefined; // mirror encode's refusal
-    return String(type.signed ? img.readIntBE(offset, bytes) : img.readUIntBE(offset, bytes));
-  }
-  if (offset >= img.length || bit + sizeInBit > 8) return undefined;
-  const shift = 8 - bit - sizeInBit; // MSB-first bit numbering (mirror of encode)
-  const mask = (1 << sizeInBit) - 1;
-  let v = (img[offset] >> shift) & mask;
-  if (type.signed && v & (1 << (sizeInBit - 1))) v -= 1 << sizeInBit; // two's complement
+  const { sizeInBit } = type;
+  const span = byteWidth(sizeInBit, bit);
+  if (span > MAX_INT_BYTES || offset + span > img.length) return undefined; // mirror encode's refusal
+  // Exact inverse of encode's splice: lift the field out of its big-endian word, MSB-first.
+  const shift = 2 ** (span * 8 - bit - sizeInBit);
+  const range = 2 ** sizeInBit;
+  let word = 0;
+  for (let i = 0; i < span; i++) word = word * 256 + img[offset + i];
+  let v = Math.floor(word / shift) % range;
+  if (type.signed && v >= range / 2) v -= range; // two's complement within the field
   return String(v);
 }

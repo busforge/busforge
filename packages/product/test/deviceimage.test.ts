@@ -432,3 +432,45 @@ test("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does 
   const target = buildRelativeSegmentTarget(app, env, 4, { moduleInstances: instances })!;
   expect(target.owned[842]).toBe(false); // computed link table: preserved, not authored
 });
+
+// A field that is not byte-aligned spans more bytes than its width alone suggests: 12 bits at
+// BitOffset 6 touches THREE bytes (2 bits + 8 + 2). The ownership mask must claim all of them,
+// or the flash writes only part of the field and sources the rest from the live device read: the
+// device keeps its old bits while the verify, which checks owned bytes only, reports success.
+// That is the fake-green this codebase refuses, so pin the span here. The byte-match corpus
+// cannot pin it (none of its 110 non-aligned params is ever actually written, see
+// docs/device-memory-model.md), and neither can a width that ignores the bit offset: only a span
+// computed as ceil((BitOffset + SizeInBit) / 8) gets this right.
+const nonAlignedXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms>
+<ApplicationProgram Id="M-0002_A-0002-01-0001" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Non-aligned">
+<Static>
+<ParameterTypes><ParameterType Id="M-0002_A-0002-01-0001_PT-12"><TypeNumber SizeInBit="12" Type="unsignedInt" minInclusive="0" maxInclusive="4000"/></ParameterType></ParameterTypes>
+<Parameters>
+<Parameter Id="M-0002_A-0002-01-0001_P-1" ParameterType="M-0002_A-0002-01-0001_PT-12" Text="Delay" Value="0"><Memory CodeSegment="M-0002_A-0002-01-0001_RS-04-00000" Offset="1" BitOffset="6"/></Parameter>
+</Parameters>
+<ParameterRefs><ParameterRef Id="M-0002_A-0002-01-0001_P-1_R-1" RefId="M-0002_A-0002-01-0001_P-1"/></ParameterRefs>
+<Code><RelativeSegment Id="M-0002_A-0002-01-0001_RS-04-00000" Offset="0" Size="8" LoadStateMachine="4"/></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0002_A-0002-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0002_A-0002-01-0001_P-1_R-1"/>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("a non-byte-aligned wide field owns EVERY byte it spans (not just the first)", () => {
+  const nonAlignedApp = parseAppConfig(nonAlignedXml);
+  const ref = "M-0002_A-0002-01-0001_P-1_R-1";
+  const target = buildRelativeSegmentTarget(nonAlignedApp, new Map([[ref, "3000"]]), 4)!;
+
+  // 12 bits at BitOffset 6 of the byte at offset 1 -> bytes 1, 2 AND 3.
+  expect(target.owned.slice(1, 4)).toEqual([true, true, true]);
+  expect(target.verify.slice(1, 4)).toEqual([true, true, true]);
+  expect(target.owned[0]).toBe(false); // and nothing outside the field
+  expect(target.owned[4]).toBe(false);
+
+  // The verify must therefore catch a device that kept the field's last byte: a flash whose
+  // ownership stopped short would call such a device correct.
+  const deviceKeptLastByte = Buffer.from(target.bytes);
+  deviceKeptLastByte[3] ^= 0xc0; // the 2 bits of the field that live in byte 3
+  expect(verifyRelativeOwned(deviceKeptLastByte, target)).toBe(false);
+});
