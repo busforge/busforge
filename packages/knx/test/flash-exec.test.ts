@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice } from "../src/device.ts";
 import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, sparseRuns, STATE } from "../src/flash.ts";
+import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
@@ -529,3 +529,23 @@ describe("the download must not restart the device before it has saved", () => {
     expect(waits).toEqual([]);
   });
 });
+
+describe("master reset over the bus", () => {
+  // A_Restart carries its type in the low bits of the APCI: a plain restart is one thing, a master
+  // reset (which then takes an erase code) is another. Getting the bytes wrong here means either a
+  // no-op or wiping the wrong thing, so pin the frame.
+  test("builds A_Restart with the MasterReset type and the erase code", async () => {
+    const sent: Buffer[] = [];
+    const tun = { assignedIa: 0, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async (c: Buffer) => { sent.push(Buffer.from(c)); } };
+    const dev = new KnxDevice(tun as any, "1.2.32");
+    await dev.masterReset(ERASE.FACTORY_RESET);
+
+    const cemi = sent[0];
+    const tpdu = cemi.subarray(9); // after the 9-byte cEMI L_Data head
+    const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
+    expect(apci & 0x3c0).toBe(0x380);       // A_Restart
+    expect(apci & 0x3f).toBe(RESTART_MASTER); // ...with the master-reset type in the low bits
+    expect(tpdu[2]).toBe(ERASE.FACTORY_RESET); // erase code
+    expect(tpdu[3]).toBe(0);                   // channel
+  });
+})

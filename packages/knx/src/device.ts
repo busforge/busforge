@@ -22,6 +22,19 @@ export const PID = {
 // telegrams later.
 export const VERIFY_MODE = 0x04;
 
+// A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
+// which then takes an erase code saying how much to throw away.
+export const RESTART_MASTER = 0x01;
+export const ERASE = {
+  CONFIRMED_RESTART: 0x01,
+  FACTORY_RESET: 0x02,          // everything, including the individual address
+  RESET_IA: 0x03,
+  RESET_APPLICATION: 0x04,
+  RESET_PARAMETERS: 0x05,
+  RESET_LINKS: 0x06,
+  FACTORY_RESET_KEEP_IA: 0x07,
+} as const;
+
 export const OBJ = {
   ADDR_TABLE: 1,   // group address table
   ASSOC_TABLE: 2,  // association table
@@ -262,6 +275,21 @@ export class KnxDevice {
   async restart(): Promise<void> {
     // device reboots; no reliable KNX ack expected, fire once
     try { await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART))); } catch {}
+    this.seq = (this.seq + 1) & 0x0f;
+  }
+
+  // Factory-reset the device over the bus (A_Restart with RestartType = MasterReset and an erase
+  // code). This is the standard KNX service, not a back door: it is how a device is returned to the
+  // state it left the factory in, and on a device whose only other reset is a button or a console,
+  // it is the only way to do it at all. It DESTROYS the configuration, and for most erase codes the
+  // individual address with it, so the caller has to mean it.
+  //
+  // Erase codes (thelsing/knx knx_types.h EraseCode, and the KNX standard): see ERASE above.
+  async masterReset(eraseCode: number = ERASE.FACTORY_RESET, channel = 0): Promise<void> {
+    try {
+      await this.tun.sendCemi(cemiLData(this.me, this.dst,
+        apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel]))));
+    } catch { /* the device reboots; no reliable ack is expected */ }
     this.seq = (this.seq + 1) & 0x0f;
   }
 }

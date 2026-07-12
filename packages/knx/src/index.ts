@@ -4,7 +4,7 @@ export { parseCemiLData } from "./transport.ts";
 export { KnxIpTunnel } from "./connection.ts";
 export { KnxUsbTransport, listUsbInterfaces } from "./usb.ts";
 export { searchInterfaces } from "./discover.ts";
-export { KnxDevice, PID, OBJ } from "./device.ts";
+export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER } from "./device.ts";
 export * from "./individualaddress.ts";
 export * from "./flash.ts";
 export * from "./grouptable-read.ts";
