@@ -11,3 +11,4 @@ export * from "./deviceflash.ts";
 export * from "./loadproc.ts";
 export * from "./modules.ts";
 export * from "./profiles.ts";
+export * from "./comobjbuild.ts";

@@ -26,6 +26,11 @@ export const APCI = {
   // address, which is what makes them the only way to reach a device that has none yet.
   // The Response carries no payload; the responding device's address is the frame's SOURCE.
   INDIVIDUAL_ADDRESS_WRITE: 0x0c0, INDIVIDUAL_ADDRESS_READ: 0x100, INDIVIDUAL_ADDRESS_RESPONSE: 0x140,
+  // Addressing a device by its SERIAL NUMBER instead of by its programming mode. Also broadcast,
+  // but it names exactly one device, so it needs no button pressed and cannot hit a bystander.
+  // That matters most in the situation it exists for: several unconfigured devices on one line,
+  // all sitting on the factory address, where nothing else can tell them apart.
+  IA_SERIAL_READ: 0x3dc, IA_SERIAL_RESPONSE: 0x3dd, IA_SERIAL_WRITE: 0x3de,
 } as const;
 
 // The KNX broadcast address: destination 0x0000 with the group/broadcast address type, which

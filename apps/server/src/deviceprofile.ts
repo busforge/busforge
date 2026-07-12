@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, type AssignIaResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask,
-  type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type ReadStateCtx,
+  type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
@@ -24,7 +24,7 @@ import { ApiError } from "./errors.ts";
 export {
   classify, classifyByMask, DeviceProfile, SystemBProfile, System7Profile, UnsupportedProfile,
   reconnectAfterRestart, verifySettled,
-  type FlashResult, type DeviceReadback, type DeviceCapabilities, type ParamFlashCtx, type GaFlashCtx, type ReadStateCtx,
+  type FlashResult, type DeviceReadback, type DeviceCapabilities, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
 } from "@busforge/product";
 
 // Credentials for a KNX Data Secure session: the device\'s tool key + serial, from
@@ -101,6 +101,15 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: GaFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
+}
+
+// Commission a device from nothing: application id, parameter image, com-object table and group
+// tables in one bracket. Unlike a parameter download this AUTHORS the com-object table, because a
+// virgin device has none to keep. Hardware-verified only where docs/commissioning.md says so.
+export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+  const profile = classify(parseAppConfig(opts.appXml));
+  const ctx: FullDownloadCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.downloadFull(dev, mask, ctx), opts.secure);
 }
 
 // Read a device\'s current state back off the bus into a programmed baseline (drift

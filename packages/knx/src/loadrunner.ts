@@ -1,6 +1,7 @@
 import { KnxDevice, PID } from "./device.ts";
 import { lsmEvent, lsmState, allocSegment, LSM, STATE } from "./flash.ts";
 import { KnxError } from "./errors.ts";
+import { loadedTableAddr } from "./grouptable-read.ts";
 
 // Generic executor for a device's load procedure, expressed as a flat list of typed
 // operations (a LoadPlan). The PLANNER (which turns a parsed <LoadProcedure> + built
@@ -26,13 +27,27 @@ export type LoadStep =
   | { op: "load"; lsm: number; assert?: boolean }
   | { op: "loadCompleted"; lsm: number; assert?: boolean }
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
-  | { op: "alloc"; lsm: number; size: number }          // relative-segment allocate
+  | { op: "alloc"; lsm: number; size: number; fill?: boolean } // relative-segment allocate; `fill` zeroes it first (a full download does, a par download does not)
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
   // verified (like every memory write in the engine).
-  | { op: "writeSegment"; lsm: number; bytes: Buffer }
+  // `verify: false` skips the per-write read-back of the whole segment. Only ever correct when
+  // something else proves the bytes (the full download echo-checks every chunk as it writes it and
+  // then compares the device's own segment CRC); a write nobody verifies is a write that did not
+  // happen. `echo` requires the device to be in verify mode (see the verifyMode op).
+  // `offset`: where in the segment these bytes go. A full download allocates the segment with
+  // fill, so the device has already zeroed it and only the bytes that are NOT zero need to be
+  // sent (see planSystemBFullDownload).
+  | { op: "writeSegment"; lsm: number; bytes: Buffer; offset?: number; verify?: boolean; echo?: boolean }
+  // Put the device into (or out of) verify mode, in which it answers every memory write with what
+  // actually landed in its memory. A download's `LdCtrlWriteRelMem Verify="true"` asks for this.
+  | { op: "verifyMode"; on: boolean }
+  // Wait for the device to be able to talk again. After a long segment write it commits its flash,
+  // and a small MCU can be gone for seconds doing it. See the executor for why this is not
+  // optional.
+  | { op: "awaitReady"; tries?: number; delayMs?: number }
   | { op: "writeProp"; obj: number; pid: number; data: Buffer }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
 
@@ -68,9 +83,38 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         }
         break;
       }
-      case "alloc": await allocSegment(dev, step.lsm, step.size); break;
+      case "alloc": await allocSegment(dev, step.lsm, step.size, step.fill ?? false); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
-      case "writeSegment": await dev.memWrite(await dev.tableAddr(step.lsm), step.bytes, { verify: true, onProgress: opts.onWrite }); break;
+      case "verifyMode": await dev.setVerifyMode(step.on); break;
+      // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of
+      // memory writes an RP2040-class device commits its flash, and while it does that it services
+      // nothing: no T_ACK, no response. The request machine gives up after three attempts (about
+      // 4.5 s) and the next step then hammers a device that is simply busy, until its watchdog
+      // resets it mid-commit and it discards its whole configuration on the next boot.
+      //
+      // So wait for it, with a real budget, and re-establish the connection each time (a device
+      // that was away has dropped ours). Failing here is honest: the device never came back.
+      case "awaitReady": {
+        const tries = step.tries ?? 12, delayMs = step.delayMs ?? 2000;
+        let lastErr: unknown;
+        for (let i = 0; i < tries; i++) {
+          try { await dev.connect(); await dev.deviceDescriptor(); lastErr = undefined; break; }
+          catch (e) {
+            lastErr = e;
+            try { await dev.disconnect(); } catch { /* it was never up */ }
+            if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs));
+          }
+        }
+        if (lastErr) {
+          throw new KnxError("DEVICE_NOT_ANSWERING",
+            `the device stopped answering after a segment write and did not come back within ${Math.round((tries * (delayMs + 4500)) / 1000)} s; it may be committing its flash, or it may have reset`);
+        }
+        break;
+      }
+      // loadedTableAddr, not tableAddr: a load-state machine whose allocation failed still reports
+      // its table reference as 0, and writing a 21601-byte parameter image over the bottom of the
+      // device's memory is not something to discover later from a failed assert.
+      case "writeSegment": await dev.memWrite((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echo: step.echo, onProgress: opts.onWrite }); break;
       case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {

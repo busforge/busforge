@@ -269,3 +269,24 @@ export function getProjectConnection(db: Database, id: string): Connection | nul
 export function setProjectConnection(db: Database, id: string, connectionId: string | null): boolean {
   return db.prepare("UPDATE projects SET connection_id = ? WHERE id = ?").run(connectionId, id).changes > 0;
 }
+
+// Set a device's individual address: the address it SHOULD hold, which is what the assignment
+// (POST .../assign-ia) then writes into the physical device. Commissioning is not possible
+// without choosing the address, so this is part of it, not a nicety.
+//
+// Two devices in one project must not claim the same address, or the project itself describes a
+// bus that cannot work. That is refused here rather than discovered on the bus. Changing the
+// address does NOT touch the programmed baseline: the device on the bus still holds whatever it
+// holds until an assignment actually moves it, and pretending otherwise would be the fake-green
+// this codebase refuses.
+export function setDeviceAddress(db: Database, projectId: string, deviceId: string, ia: string): { id: string; ia: string } {
+  if (!/^(1[0-5]|[0-9])\.(1[0-5]|[0-9])\.(2[0-4][0-9]|25[0-5]|1?[0-9]?[0-9])$/.test(ia)) {
+    throw new ApiError("IA_INVALID", `"${ia}" is not a valid individual address (area.line.device, e.g. 1.2.32)`);
+  }
+  const dev = db.query("SELECT instance_id FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId);
+  if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+  const taken = db.query("SELECT name FROM devices WHERE project_id = ? AND ia = ? AND instance_id != ?").get(projectId, ia, deviceId) as { name: string } | null;
+  if (taken) throw new ApiError("IA_TAKEN", `${ia} is already used by "${taken.name}" in this project`);
+  db.prepare("UPDATE devices SET ia = ? WHERE project_id = ? AND instance_id = ?").run(ia, projectId, deviceId);
+  return { id: deviceId, ia };
+}

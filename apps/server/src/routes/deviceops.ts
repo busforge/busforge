@@ -5,7 +5,7 @@ import { isConnectionReady } from "../transport.ts";
 import { createSnapshot } from "../db/snapshots.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { json, err } from "../httputil.ts";
@@ -186,6 +186,48 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // actually flashed (skipped links stay as drift; see resetLinkBase / resolveDeviceLinks).
     // An unverified flash keeps the old baseline: nothing was confirmed on the device.
     if (result.kind === "flashed" && result.verified) resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
+    return json(result);
+  }
+
+  // /api/projects/:id/devices/:deviceId/download  -> COMMISSION the device from nothing:
+  // application id + parameter image + com-object table + group tables, in one bracket.
+  //
+  // This is the only write that AUTHORS the com-object table rather than keeping the device's, and
+  // the device's firmware validates none of it, so the read-back afterwards is the only proof. The
+  // programmed baseline is adopted ONLY if that read-back verified.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "download" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
+    const app = loadApp(state, id, deviceId);
+    if (app && !classify(app).capabilities().fullDownload) {
+      return err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
+    }
+    const resolved = resolveDeviceLinks(state, id, deviceId);
+    if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+    const dlParams = getDeviceParams(db, id, deviceId);
+    const dlModules = getDeviceModules(db, id, deviceId);
+    const keepDrift = unwrittenParamRefs(state, id, deviceId, dlParams, dlModules);
+    const dryDl = url.searchParams.get("dry") === "1";
+    if (!dryDl) createSnapshot(db, id, { kind: "auto", reason: "before-download" }, state.now());
+    const result = await state.queue.enqueue(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" },
+      async (progress) => {
+        if (bus.activeProjectId) await bus.disconnect();
+        return downloadDeviceFull({
+          projectId: id, deviceId, ia: dev.ia, appXml,
+          connection: conn, secure: secureCredsFor(state, id, deviceId), dataDir: state.dataDir,
+          params: dlParams, links: resolved.links, moduleInstances: dlModules,
+          dryRun: dryDl, onProgress: progress,
+        });
+      },
+    );
+    // The device now holds this configuration, parameters AND links: baseline both, but only on a
+    // verified download. An unverified one leaves every baseline alone, so the UI keeps showing the
+    // configuration as unprogrammed, which is the truth.
+    if (result.kind === "flashed" && result.verified) {
+      resetParamBase(db, id, deviceId, keepDrift);
+      resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
+    }
     return json(result);
   }
 

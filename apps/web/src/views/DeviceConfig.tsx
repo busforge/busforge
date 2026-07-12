@@ -282,13 +282,45 @@ export function DeviceConfig() {
 
   const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
 
-  const renderItem = (item: CfgItem, key: string | number) => {
+  // `compact` renders an item as a GRID CELL: no full-width row, no repeated label
+  // (in an ETS grid the author labels the cells with separators, in a table with the
+  // column headers), so the cells of one row line up as ETS lays them out.
+  const renderItem = (item: CfgItem, key: string | number, compact = false) => {
     if (item.kind === "separator") {
       if (item.uiHint === "HorizontalRuler") return <Separator key={key} className="my-2" />;
       if (!item.text) return null;
       if (item.uiHint === "Error") return <p key={key} className="py-1 text-xs text-destructive">{item.text}</p>;
+      // In a grid cell a plain separator is the label of its row, not a section
+      // heading; only an explicit Headline keeps the heading weight.
+      if (compact) {
+        return (
+          <span key={key} className={cn("block min-w-0 whitespace-pre-wrap text-sm", item.uiHint === "Headline" ? "font-semibold text-foreground" : "text-foreground")}>
+            {item.text}
+          </span>
+        );
+      }
       // Any other text separator is a section heading in ETS.
       return <div key={key} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
+    }
+    // An ETS <Button> runs a manufacturer script action (EventHandler) inside ETS.
+    // busforge has no ETS script host, so the control is rendered DISABLED and says
+    // which action it would run: a button that looked alive but did nothing would be
+    // worse than no button at all.
+    if (item.kind === "button") {
+      const why = t("device.buttonNotSupported", { handler: item.button.handler || "?" });
+      return (
+        <Tooltip key={key}>
+          <TooltipTrigger asChild>
+            <span className={cn("inline-flex", compact ? "min-w-0 max-w-full" : "my-1")} data-testid={`button-${item.button.handler}`}>
+              <Button type="button" variant="outline" size="sm" disabled aria-disabled className="min-w-0 justify-start">
+                <AlertTriangle className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span className="truncate">{item.button.text}</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{why}</TooltipContent>
+        </Tooltip>
+      );
     }
     if (item.kind === "comObject") {
       const co = item.comObject;
@@ -332,7 +364,7 @@ export function DeviceConfig() {
     }
     return (
       <ParamRow
-        key={key} param={item.param} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
+        key={key} param={item.param} compact={compact} changedTitle={t("device.changedDot")} revertTitle={t("device.revertRow")} reverting={saving}
         onChange={(v) => {
           const before = view;
           setParam.mutate({ refId: item.param.refId, value: v }, {
@@ -345,6 +377,68 @@ export function DeviceConfig() {
         }}
         onRevert={() => revertParam.mutate(item.param.refId, { onError })}
       />
+    );
+  };
+
+  // A block's items. A Grid/Table ParameterBlock (ETS Layout=) places its items by
+  // Cell="row,column"; anything else is the plain top-to-bottom list.
+  const renderItems = (block: CfgBlock, keyPrefix: string) =>
+    block.layout ? renderGrid(block, keyPrefix) : block.items.map((item, i) => renderItem(item, `${keyPrefix}-${i}`));
+
+  // ETS grid: <Rows>/<Columns> declare the geometry (column widths, and for a Table the
+  // header captions), every item names its cell. Cells are rendered in place; several
+  // items can legitimately land in one cell (two active choose branches), so a cell
+  // holds a list and never drops one. Items WITHOUT a cell (com-objects, or an item
+  // whose Cell we could not read) follow below the grid instead of disappearing.
+  const renderGrid = (block: CfgBlock, keyPrefix: string) => {
+    const cells = new Map<string, CfgItem[]>();
+    const loose: CfgItem[] = [];
+    let maxRow = block.rows?.length ?? 0;
+    let maxCol = block.cols?.length ?? 0;
+    for (const item of block.items) {
+      const cell = item.kind === "comObject" || item.kind === "unsupported" ? undefined : item.cell;
+      if (!cell) { loose.push(item); continue; }
+      maxRow = Math.max(maxRow, cell.row);
+      maxCol = Math.max(maxCol, cell.col);
+      const key = `${cell.row},${cell.col}`;
+      const at = cells.get(key);
+      if (at) at.push(item); else cells.set(key, [item]);
+    }
+    // A Table shows the authored headers, so it needs a leading column for the row
+    // captions and a leading row for the column captions; a Grid has neither.
+    const table = block.layout === "Table";
+    const off = table ? 1 : 0;
+    // ETS authors a column width as a percentage. Anything else is a width we cannot
+    // read, and interpolating it raw would invalidate the whole grid-template-columns
+    // declaration and collapse the block: fall back to an auto track for that column.
+    const width = (w?: string) => (w && /^\d+(\.\d+)?(%|px|rem|em)$/.test(w) ? w : "auto");
+    const widths = Array.from({ length: maxCol }, (_, i) => `minmax(0, ${width(block.cols?.[i]?.width)})`);
+    const template = (table ? "auto " : "") + widths.join(" ");
+    return (
+      <div key={keyPrefix} className="my-1 grid items-center gap-x-3 gap-y-1" style={{ gridTemplateColumns: template }}>
+        {table && block.cols?.map((c, i) => c.text ? (
+          <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: i + 2 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
+        ) : null)}
+        {table && block.rows?.map((r, i) => r.text ? (
+          <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: i + 2, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
+        ) : null)}
+        {[...cells].map(([key, items]) => {
+          const [row, col] = key.split(",").map(Number);
+          return (
+            <div key={`${keyPrefix}-${key}`} style={{ gridRow: row + off, gridColumn: col + off }} className="min-w-0">
+              {items.map((item, i) => renderItem(item, `${keyPrefix}-${key}-${i}`, true))}
+            </div>
+          );
+        })}
+        {/* Pinned to the row AFTER the last one: CSS auto-placement would otherwise drop
+            this full-width block into the first empty row (e.g. a row whose items all sit
+            in an inactive choose branch), i.e. into the middle of the grid. */}
+        {loose.length > 0 && (
+          <div style={{ gridRow: maxRow + off + 1, gridColumn: "1 / -1" }} className="min-w-0">
+            {loose.map((item, i) => renderItem(item, `${keyPrefix}-loose-${i}`))}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -536,7 +630,7 @@ export function DeviceConfig() {
                   {g.head.items.length === 0 && g.children.length === 0 && (
                     <p className="text-sm text-muted-foreground">{t("device.emptySection")}</p>
                   )}
-                  {g.head.items.map((item: CfgItem, i: number) => renderItem(item, i))}
+                  {renderItems(g.head, g.head.id)}
                   {g.children.map((child: CfgBlock) => {
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
                     return (
@@ -553,7 +647,7 @@ export function DeviceConfig() {
                           {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                           <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
                         </h4>
-                        {child.items.map((item: CfgItem, i: number) => renderItem(item, `${child.id}-${i}`))}
+                        {renderItems(child, child.id)}
                       </section>
                     );
                   })}
@@ -570,7 +664,7 @@ export function DeviceConfig() {
   );
 }
 
-function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRevert }: { param: CfgParamView; changedTitle: string; revertTitle: string; reverting?: boolean; onChange: (value: string) => void; onRevert: () => void }) {
+function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChange, onRevert }: { param: CfgParamView; compact?: boolean; changedTitle: string; revertTitle: string; reverting?: boolean; onChange: (value: string) => void; onRevert: () => void }) {
   const { t } = useTranslation();
   // The displayed string for the current value: hh:mm:ss for a seconds-based TypeTime,
   // a plain decimal for a TypeFloat (ETS stores those in scientific notation), else raw.
@@ -623,22 +717,48 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
     if (v !== param.value) onChange(v);
   };
 
+  // In a grid cell the control has no visible label of its own (the author's separator or
+  // the table's column header names it), so carry the parameter's own text as the control's
+  // accessible name instead of leaving it nameless.
+  const label = compact ? param.name.trim() || undefined : undefined;
+
   return (
     <div
-      style={param.indent ? { marginLeft: `${param.indent * 1}rem` } : undefined}
+      // In a grid cell the label is the author's separator / column header and the row
+      // chrome (own label column, indent, fixed control width) would break the layout,
+      // so the cell shows the control alone and keeps the label as its tooltip.
+      style={param.indent && !compact ? { marginLeft: `${param.indent * 1}rem` } : undefined}
+      title={label}
       className={cn(
-        "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+        compact
+          ? "flex min-w-0 items-center gap-1.5 border-l-2 py-1 pl-1.5"
+          : "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
         param.changed ? "border-primary bg-primary/5" : "border-transparent",
       )}
     >
-      <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
-        {param.changed ? <ChangedDot title={changedTitle} /> : null}
-        {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
-        <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
-      </span>
+      {compact ? (
+        param.changed ? <ChangedDot title={changedTitle} /> : null
+      ) : (
+        <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
+          {param.changed ? <ChangedDot title={changedTitle} /> : null}
+          {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
+          <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
+        </span>
+      )}
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
-      <div className={cn("flex shrink-0 items-center gap-2", CONTROL_W)}>
-        {param.readOnly ? (
+      <div className={cn("flex items-center gap-2", compact ? "min-w-0 flex-1" : cn("shrink-0", CONTROL_W))}>
+        {/* A type we cannot edit stays explicit even when it is read-only: rendering it
+            as a plain read-only value would show an empty field (e.g. a TypePicture,
+            whose image lives in the manufacturer baggage we do not import) and pass the
+            gap off as a value. */}
+        {param.control === "unsupported" ? (
+          <span className="flex w-full min-w-0 items-center gap-2" data-testid={`param-${param.refId}`}>
+            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-3" />{t("device.unsupportedType", { type: param.typeLabel ?? "?" })}
+            </span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{param.value}</span>
+          </span>
+        ) : param.readOnly ? (
           param.control === "color" ? (
             <span className="flex w-full items-center gap-2 text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>
               <span style={{ background: param.value }} className="inline-block size-5 shrink-0 rounded border border-input" />
@@ -652,7 +772,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           // Radix Selects is the page's main render cost. Native is browser-cheap
           // and fully functional, so the whole list stays visible without lag.
           <select
-            value={param.value} onChange={(e) => onChange(e.target.value)}
+            value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
             className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             data-testid={`param-${param.refId}`}
           >
@@ -662,7 +782,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           // ETS UIHint="Slider": a bounded range with a live numeric readout.
           <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
             <input
-              type="range" value={local} min={param.min} max={param.max} step={param.step ?? 1}
+              type="range" value={local} min={param.min} max={param.max} step={param.step ?? 1} aria-label={label}
               onChange={(e) => setLocal(e.target.value)}
               onPointerUp={() => local !== param.value && onChange(local)}
               onKeyUp={() => local !== param.value && onChange(local)}
@@ -673,21 +793,21 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           </span>
         ) : param.control === "number" ? (
           <Input
-            type="number" value={local} min={param.min} max={param.max} step={param.float ? "any" : param.step}
+            type="number" value={local} min={param.min} max={param.max} step={param.float ? "any" : param.step} aria-label={label}
             onChange={(e) => setLocal(e.target.value)}
             onBlur={commitNumber}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : param.control === "text" ? (
-          <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} data-testid={`param-${param.refId}`} />
+          <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} aria-label={label} data-testid={`param-${param.refId}`} />
         ) : param.control === "color" ? (
           // TypeColor (RGB): native colour picker. Values are stored as #RRGGBB;
           // ETS uses upper-case, so normalise typed/picked input to upper-case to
           // match the stored default (no upper/lower drift) and read back exactly.
           <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
             <input
-              type="color" value={(local || "#000000").toLowerCase()}
+              type="color" value={(local || "#000000").toLowerCase()} aria-label={label}
               onChange={(e) => setLocal(e.target.value.toUpperCase())}
               onBlur={() => local !== param.value && onChange(local)}
               className="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background p-0.5"
@@ -700,7 +820,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
           isDuration ? (
             <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
               <Input
-                type="text" value={local}
+                type="text" value={local} aria-label={label}
                 onChange={(e) => setLocal(e.target.value)}
                 onBlur={commitDuration}
                 onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -710,7 +830,7 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
             </span>
           ) : (
             <Input
-              type="number" value={local} min={param.min} max={param.max} step={param.step}
+              type="number" value={local} min={param.min} max={param.max} step={param.step} aria-label={label}
               onChange={(e) => setLocal(e.target.value)}
               onBlur={commitNumber}
               onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -724,18 +844,14 @@ function ParamRow({ param, changedTitle, revertTitle, reverting, onChange, onRev
             onChange={(e) => setLocal(e.target.value)}
             onBlur={commitIp}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-            aria-invalid={local.trim() !== "" && !isValidIPv4(local)}
+            aria-invalid={local.trim() !== "" && !isValidIPv4(local)} aria-label={label}
             className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : (
-          // Type we cannot edit yet: show the value read-only with an explicit
-          // "not supported" badge so the gap is visible, never a blank control.
-          <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="size-3" />{t("device.unsupportedType", { type: param.typeLabel ?? "?" })}
-            </span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{param.value}</span>
-          </span>
+          // Defensive fallback only: every control the engine emits is handled above (an
+          // unsupported type takes the first branch, and "display" is always read-only).
+          // A future control kind shows its value read-only instead of an empty cell.
+          <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
         )}
         {param.suffix && <span className="shrink-0 text-xs text-muted-foreground">{param.suffix}</span>}
       </div>

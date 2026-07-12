@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, Tag, Usb, X } from "lucide-react";
+import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, Rocket, Tag, Usb, X } from "lucide-react";
 import { toast } from "sonner";
 import type { BusStatus, ConnectionType, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
@@ -13,7 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { errMsg, localizeError } from "../lib/apiError.ts";
 
-const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network, "assign-ia": Tag };
+const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network, "assign-ia": Tag, download: Rocket };
 const pct = (t: Task) => (t.total > 0 ? Math.round((t.done / t.total) * 100) : null);
 const dotColor = (s: BusStatus) => (s === "connected" ? "bg-ok" : s === "connecting" ? "bg-primary" : "bg-muted-foreground");
 // A flash mid-write would corrupt the device, so only queued tasks and running reads can be cancelled.

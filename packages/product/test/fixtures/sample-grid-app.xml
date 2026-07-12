@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ETS grid layouts, modelled on the OpenKNX RaumController: a ParameterBlock with
+     Layout="Grid"/"Table" declares its geometry in <Rows>/<Columns> (which hold NO
+     items) and every item inside places itself with Cell="row,column". Buttons run a
+     manufacturer <Script> EventHandler. -->
+<KNX xmlns="http://knx.org/xml/project/20">
+  <ManufacturerData>
+    <Manufacturer RefId="M-TEST">
+      <ApplicationPrograms>
+        <ApplicationProgram Id="M-TEST_A-11" ApplicationNumber="11" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Grid App" DefaultLanguage="en-US">
+          <Static>
+            <Code>
+              <RelativeSegment Id="M-TEST_A-11_RS-4" LoadStateMachine="4" Size="4" Data="AAAAAA==" />
+            </Code>
+            <ParameterTypes>
+              <ParameterType Id="M-TEST_A-11_PT-Num"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
+              <ParameterType Id="M-TEST_A-11_PT-Base">
+                <TypeRestriction Base="Value" SizeInBit="8">
+                  <Enumeration Text="Seconds" Value="0" Id="M-TEST_A-11_PT-Base_EN-0" DisplayOrder="1" />
+                  <Enumeration Text="Minutes" Value="1" Id="M-TEST_A-11_PT-Base_EN-1" DisplayOrder="2" />
+                </TypeRestriction>
+              </ParameterType>
+              <ParameterType Id="M-TEST_A-11_PT-Text"><TypeText SizeInBit="80" /></ParameterType>
+            </ParameterTypes>
+            <Parameters>
+              <Parameter Id="M-TEST_A-11_P-1" Name="DelayTime" ParameterType="M-TEST_A-11_PT-Num" Text="Time" Value="5">
+                <Memory CodeSegment="M-TEST_A-11_RS-4" Offset="0" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-11_P-2" Name="DelayBase" ParameterType="M-TEST_A-11_PT-Base" Text="Time base" Value="1">
+                <Memory CodeSegment="M-TEST_A-11_RS-4" Offset="1" BitOffset="0" />
+              </Parameter>
+              <!-- Internal (hidden in ETS) but still written to memory: it must reach the
+                   image even though it sits in a grid cell. -->
+              <Parameter Id="M-TEST_A-11_P-3" Name="Internal" ParameterType="M-TEST_A-11_PT-Num" Text="Internal" Value="7" Access="None">
+                <Memory CodeSegment="M-TEST_A-11_RS-4" Offset="2" BitOffset="0" />
+              </Parameter>
+              <!-- Placed by a choose branch INSIDE the grid, so its Cell must survive the
+                   choose walk. -->
+              <Parameter Id="M-TEST_A-11_P-4" Name="Extra" ParameterType="M-TEST_A-11_PT-Num" Text="Extra" Value="9">
+                <Memory CodeSegment="M-TEST_A-11_RS-4" Offset="3" BitOffset="0" />
+              </Parameter>
+              <Parameter Id="M-TEST_A-11_P-5" Name="GroupName" ParameterType="M-TEST_A-11_PT-Text" Text="Group name" Value="g1" />
+              <Parameter Id="M-TEST_A-11_P-6" Name="Comment" ParameterType="M-TEST_A-11_PT-Text" Text="Comment" Value="" />
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-TEST_A-11_P-1_R-1" RefId="M-TEST_A-11_P-1" />
+              <ParameterRef Id="M-TEST_A-11_P-2_R-2" RefId="M-TEST_A-11_P-2" />
+              <ParameterRef Id="M-TEST_A-11_P-3_R-3" RefId="M-TEST_A-11_P-3" />
+              <ParameterRef Id="M-TEST_A-11_P-4_R-4" RefId="M-TEST_A-11_P-4" />
+              <ParameterRef Id="M-TEST_A-11_P-5_R-5" RefId="M-TEST_A-11_P-5" />
+              <ParameterRef Id="M-TEST_A-11_P-6_R-6" RefId="M-TEST_A-11_P-6" />
+            </ParameterRefs>
+            <ComObjectTable>
+              <ComObject Id="M-TEST_A-11_O-1" Name="Heartbeat" Number="1" Text="Heartbeat" FunctionText="out" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+            </ComObjectTable>
+            <ComObjectRefs>
+              <ComObjectRef Id="M-TEST_A-11_O-1_R-1" RefId="M-TEST_A-11_O-1" />
+            </ComObjectRefs>
+          </Static>
+          <Dynamic>
+            <ChannelIndependentBlock>
+              <ParameterBlock Id="M-TEST_A-11_PB-1" Name="main" Text="Main">
+                <ParameterBlock Id="M-TEST_A-11_PB-2" Name="StartupDelay" Text="Startup" Inline="true" Layout="Grid">
+                  <Rows>
+                    <Row Id="M-TEST_A-11_PB-2_R-1" Name="Row1" />
+                    <Row Id="M-TEST_A-11_PB-2_R-2" Name="Row2" />
+                  </Rows>
+                  <Columns>
+                    <Column Id="M-TEST_A-11_PB-2_C-1" Name="Col1" Width="45%" />
+                    <Column Id="M-TEST_A-11_PB-2_C-2" Name="Col2" Width="15%" />
+                    <Column Id="M-TEST_A-11_PB-2_C-3" Name="Col3" Width="20%" />
+                  </Columns>
+                  <ParameterSeparator Id="M-TEST_A-11_PS-1" Text="Startup delay" Cell="1,1" />
+                  <ParameterRefRef RefId="M-TEST_A-11_P-1_R-1" Cell="1,2" />
+                  <ParameterRefRef RefId="M-TEST_A-11_P-2_R-2" Cell="1,3" />
+                  <!-- internal param, hidden from the UI but part of the memory image -->
+                  <ParameterRefRef RefId="M-TEST_A-11_P-3_R-3" Cell="2,1" />
+                  <!-- a com-object inside a layout block carries no Cell -->
+                  <ComObjectRefRef RefId="M-TEST_A-11_O-1_R-1" />
+                  <choose ParamRefId="M-TEST_A-11_P-2_R-2">
+                    <when test="1">
+                      <ParameterRefRef RefId="M-TEST_A-11_P-4_R-4" Cell="2,2" />
+                    </when>
+                  </choose>
+                </ParameterBlock>
+                <ParameterBlock Id="M-TEST_A-11_PB-3" Name="Groups" Text="Groups" Inline="true" Layout="Table">
+                  <Rows>
+                    <Row Id="M-TEST_A-11_PB-3_R-1" Text="Group 1" />
+                  </Rows>
+                  <Columns>
+                    <Column Id="M-TEST_A-11_PB-3_C-1" Text="Name" Width="50%" />
+                    <Column Id="M-TEST_A-11_PB-3_C-2" Text="Comment" Width="50%" />
+                  </Columns>
+                  <ParameterRefRef RefId="M-TEST_A-11_P-5_R-5" Cell="1,1" />
+                  <ParameterRefRef RefId="M-TEST_A-11_P-6_R-6" Cell="1,2" />
+                  <Button Id="M-TEST_A-11_B-1" Text="Replace newlines" Cell="1,3" EventHandler="newline" EventHandlerParameters="{ &quot;textbox&quot;:&quot;Comment&quot; }" />
+                </ParameterBlock>
+                <!-- a Button outside any grid: no Cell, rendered in document flow -->
+                <Button Id="M-TEST_A-11_B-2" Text="Read meter" EventHandler="readMeter" EventHandlerOnline="readMeter" />
+              </ParameterBlock>
+            </ChannelIndependentBlock>
+          </Dynamic>
+        </ApplicationProgram>
+      </ApplicationPrograms>
+    </Manufacturer>
+    <Languages>
+      <Language Identifier="de-DE">
+        <TranslationUnit RefId="M-TEST_A-11">
+          <TranslationElement RefId="M-TEST_A-11_PB-3_C-1">
+            <Translation AttributeName="Text" Text="Name" />
+          </TranslationElement>
+          <TranslationElement RefId="M-TEST_A-11_PB-3_C-2">
+            <Translation AttributeName="Text" Text="Kommentar" />
+          </TranslationElement>
+          <TranslationElement RefId="M-TEST_A-11_B-1">
+            <Translation AttributeName="Text" Text="Zeilenumbrüche ersetzen" />
+          </TranslationElement>
+        </TranslationUnit>
+      </Language>
+    </Languages>
+  </ManufacturerData>
+</KNX>

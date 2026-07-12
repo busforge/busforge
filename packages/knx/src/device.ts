@@ -8,11 +8,20 @@ import { KnxError } from "./errors.ts";
 // management/flash layer. Named once here so a transposed literal (5 vs 7 vs 13) in
 // the least-debuggable layer becomes impossible.
 export const PID = {
+  DEVICE_CONTROL: 14,    // device object: programming mode, verify mode, ... (see VERIFY_MODE)
   LOAD_STATE_CONTROL: 5, // LSM events (write) / LSM state (read)
   TABLE_REFERENCE: 7,    // the table/segment base address of a load object
   PROGRAM_ID: 13,        // manufacturer+app+version stamp validated by LoadCompleted
   MCB_TABLE: 27,         // memory control block (per-segment CRC bookkeeping)
 } as const;
+// PID_DEVICE_CONTROL bit 2. With it set, the device answers EVERY A_Memory_Write with an
+// A_Memory_Response carrying what actually ended up in its memory (thelsing/knx
+// BauSystemB::memoryWriteIndication: `if (_deviceObj.verifyMode()) memoryReadIndication(...)`).
+// This is what a load procedure's `LdCtrlWriteRelMem Verify="true"` asks for, and it is the only
+// way to learn that a write did NOT land at the moment it happens rather than a thousand
+// telegrams later.
+export const VERIFY_MODE = 0x04;
+
 export const OBJ = {
   ADDR_TABLE: 1,   // group address table
   ASSOC_TABLE: 2,  // association table
@@ -29,6 +38,20 @@ export const OBJ = {
 // management APDU is wrapped (and responses unwrapped) transparently, and connect()
 // runs a Sync first to learn the device's tool-access sequence. Without it the path
 // is byte-for-byte the plain one. Hardware-verified on an MDT IP interface.
+
+// A_Memory_Read/Write carry a 2-BYTE address, so they reach 0x0000..0xFFFF and no further. A
+// device may well allocate a segment above that (the KNX answer is A_MemoryExtended, which this
+// transport does not speak yet). Truncating the address silently would write the right bytes to
+// the WRONG place, which on a load-state machine means a device that comes up believing a table
+// it never received. Refuse instead, and say what is missing.
+function assertAddressable(addr: number, len: number, what: string): void {
+  const last = addr + len - 1;
+  if (addr < 0 || last > 0xffff) {
+    throw new KnxError("MEMORY_ADDRESS_TOO_HIGH",
+      `${what} at 0x${addr.toString(16)}..0x${last.toString(16)} is beyond the 16-bit address these memory services reach; this device needs A_MemoryExtended, which Busforge does not implement yet`);
+  }
+}
+
 export class KnxDevice {
   private dst: number;
   private seq = 0;
@@ -132,6 +155,7 @@ export class KnxDevice {
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+    assertAddressable(addr, len, "memory read");
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
     // MemoryRead that spans an internal memory boundary (they answer with an empty data
     // response); the old concat-and-advance-by-requested-length loop then produced a buffer
@@ -173,7 +197,29 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_WRITE, tail), true);
     return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
   }
-  async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
+  // Switch the device's verify mode (PID_DEVICE_CONTROL bit 2) on or off, preserving the other
+  // bits of that byte (it also carries programming mode: clobbering it would silently put the
+  // device into, or out of, programming mode).
+  async setVerifyMode(on: boolean): Promise<void> {
+    const cur = await this.propRead(0, PID.DEVICE_CONTROL);
+    // An empty answer means the device declined the read, not that the byte is zero. Treating the
+    // two as the same would write a FABRICATED device-control byte back, clearing programming mode
+    // and whatever else lives in it.
+    if (cur.length === 0) {
+      throw new KnxError("DEVICE_CONTROL_UNREADABLE",
+        "the device did not answer a read of its device-control property, so its verify mode cannot be set without inventing the rest of that byte");
+    }
+    const want = on ? cur[0] | VERIFY_MODE : cur[0] & ~VERIFY_MODE;
+    await this.propWrite(0, PID.DEVICE_CONTROL, Buffer.from([want]));
+    const back = await this.propRead(0, PID.DEVICE_CONTROL);
+    if (back.length === 0 || ((back[0] & VERIFY_MODE) !== 0) !== on) {
+      throw new KnxError("DEVICE_CONTROL_UNREADABLE",
+        `the device did not take verify mode (device control reads 0x${(back[0] ?? 0).toString(16)}); a download would then write blind, so refusing`);
+    }
+  }
+
+  async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
+    assertAddressable(addr, data.length, "memory write");
     const chunk = opts.chunk ?? 12;
     const total = Math.ceil(data.length / chunk);
     let done = 0;
@@ -182,7 +228,29 @@ export class KnxDevice {
       const slice = data.subarray(pos, pos + n);
       const a = addr + pos;
       const tail = Buffer.concat([Buffer.from([(a >> 8) & 0xff, a & 0xff]), slice]);
-      await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), false); // T_ACK only
+      // `echo`: the device is in verify mode and answers each write with what actually landed in
+      // its memory. Checking that HERE is what turns a dropped write into an immediate, located
+      // failure instead of a silent one discovered (or not) at the end. It also paces us to the
+      // speed the device can really absorb, which a fire-and-forget T_ACK does not.
+      if (opts.echo) {
+        const r = await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), true);
+        // The response echoes the address it is about. Checking it is what stops a stale or
+        // retransmitted echo for an EARLIER chunk from being accepted as this chunk's proof, which
+        // is a real risk here: long stretches of the com-object table are identical zero bytes, so
+        // the payload alone cannot tell two chunks apart.
+        const echoedAt = r!.data.length >= 2 ? r!.data.readUInt16BE(0) : -1;
+        if (echoedAt !== a) {
+          throw new KnxError("FLASH_VERIFY_MISMATCH",
+            `the device answered a write to 0x${a.toString(16)} with an echo for 0x${echoedAt.toString(16)}; refusing to take that as proof`);
+        }
+        const back = r!.data.subarray(2, 2 + n);
+        if (!back.equals(slice)) {
+          throw new KnxError("FLASH_VERIFY_MISMATCH",
+            `the device did not store the bytes written to 0x${a.toString(16)}: it reports ${back.toString("hex")} where ${slice.toString("hex")} was written`);
+        }
+      } else {
+        await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), false); // T_ACK only
+      }
       pos += n;
       opts.onProgress?.(++done, total);
     }

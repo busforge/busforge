@@ -10,6 +10,7 @@ const moduleApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", 
 const accessApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-access-app.xml"), "utf8"));
 const unsupportedApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-unsupported-app.xml"), "utf8"));
 const orderApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-order-app.xml"), "utf8"));
+const gridApp = parseAppConfig(readFileSync(join(import.meta.dir, "fixtures", "sample-grid-app.xml"), "utf8"));
 
 const params = (v: { blocks: { items: CfgItem[] }[] }) =>
   v.blocks.flatMap((b) => b.items).filter((i): i is { kind: "param"; param: CfgParamView } => i.kind === "param");
@@ -336,5 +337,125 @@ describe("localization", () => {
     expect(resolveLanguage(app, "en")).toBe("en-US"); // matches the default
     expect(resolveLanguage(app, "fr")).toBe("en-US"); // unknown -> default base text
     expect(resolveLanguage(app, undefined)).toBe("en-US"); // none -> default
+  });
+});
+
+// ETS grid layouts (OpenKNX RaumController pattern): a ParameterBlock with
+// Layout="Grid"/"Table" declares its geometry in <Rows>/<Columns> and every item
+// inside places itself with Cell="row,column"; a <Button> names a manufacturer
+// <Script> action busforge cannot run.
+describe("grid layouts (Rows/Columns/Cell) and Buttons", () => {
+  const block = (v: ReturnType<typeof buildDeviceConfig>, name: string) => v.blocks.find((b) => b.name === name)!;
+  const grid = (lang?: string) => block(buildDeviceConfig(gridApp, new Map(), lang), "Startup");
+  const table = (lang?: string) => block(buildDeviceConfig(gridApp, new Map(), lang), "Groups");
+
+  test("<Rows>/<Columns> are the block's geometry, not unsupported elements", () => {
+    const v = buildDeviceConfig(gridApp, new Map());
+    // The whole point: no amber "Element Rows/Columns/Button" markers anywhere.
+    expect(v.blocks.flatMap((b) => b.items).filter((i) => i.kind === "unsupported")).toEqual([]);
+    const g = grid();
+    expect(g.layout).toBe("Grid");
+    expect(g.rows).toHaveLength(2);
+    // A Grid's columns are anonymous geometry: a width, no header caption.
+    expect(g.cols).toEqual([{ text: undefined, width: "45%" }, { text: undefined, width: "15%" }, { text: undefined, width: "20%" }]);
+  });
+
+  test("items carry their ETS cell, including through a choose branch", () => {
+    const items = grid().items;
+    const sep = items.find((i): i is Extract<CfgItem, { kind: "separator" }> => i.kind === "separator" && i.text === "Startup delay");
+    expect(sep?.cell).toEqual({ row: 1, col: 1 });
+    const byName = (n: string) => items.find((i): i is Extract<CfgItem, { kind: "param" }> => i.kind === "param" && i.param.name === n);
+    expect(byName("Time")?.cell).toEqual({ row: 1, col: 2 });
+    expect(byName("Time base")?.cell).toEqual({ row: 1, col: 3 });
+    // Placed by an active <when> INSIDE the grid: the cell must survive the choose walk.
+    expect(byName("Extra")?.cell).toEqual({ row: 2, col: 2 });
+    // A com-object in a layout block has no Cell (ETS never places one), so it stays
+    // unplaced and the renderer keeps it below the grid instead of dropping it.
+    const co = items.find((i) => i.kind === "comObject");
+    expect(co).toBeDefined();
+    expect(co && "cell" in co).toBe(false);
+  });
+
+  test("an inactive choose branch places nothing in the grid", () => {
+    // P-2 = 0 deselects the <when test="1"> that placed "Extra" at cell 2,2.
+    const v = buildDeviceConfig(gridApp, new Map([["M-TEST_A-11_P-2_R-2", "0"]]));
+    const items = block(v, "Startup").items;
+    expect(items.find((i) => i.kind === "param" && i.param.name === "Extra")).toBeUndefined();
+    expect(v.imageValues.has("M-TEST_A-11_P-4_R-4")).toBe(false);
+  });
+
+  test("a Table's rows and columns carry the (translated) header captions", () => {
+    const t = table();
+    expect(t.layout).toBe("Table");
+    expect(t.rows?.map((r) => r.text)).toEqual(["Group 1"]);
+    expect(t.cols?.map((c) => c.text)).toEqual(["Name", "Comment"]);
+    expect(t.cols?.map((c) => c.width)).toEqual(["50%", "50%"]);
+    expect(table("de")?.cols?.map((c) => c.text)).toEqual(["Name", "Kommentar"]);
+  });
+
+  test("a Button is surfaced as the named script action it is, never as a live control", () => {
+    // In a grid cell (with its Cell) and in the plain flow (without one).
+    const inCell = table().items.find((i) => i.kind === "button");
+    expect(inCell).toEqual({ kind: "button", button: { text: "Replace newlines", handler: "newline" }, cell: { row: 1, col: 3 } });
+    const flow = block(buildDeviceConfig(gridApp, new Map()), "Main").items.find((i) => i.kind === "button");
+    expect(flow).toEqual({ kind: "button", button: { text: "Read meter", handler: "readMeter" }, cell: undefined });
+    // The label is translated like any other ETS text.
+    const de = block(buildDeviceConfig(gridApp, new Map(), "de"), "Groups").items.find((i) => i.kind === "button");
+    expect(de?.kind === "button" && de.button.text).toBe("Zeilenumbrüche ersetzen");
+  });
+
+  // A layout we cannot read must not quietly swallow its own geometry: the block stays a
+  // plain list and the <Rows>/<Columns> surface as unsupported, exactly as before support
+  // existed. Silently consuming them would hide whatever they carry.
+  test("an unreadable grid geometry is refused, not consumed", () => {
+    const dyn = (block: string) => `<KNX><ApplicationProgram Id="M-TEST_A-12" DefaultLanguage="en-US"><Static>
+      <Parameters><Parameter Id="M-TEST_A-12_P-1" ParameterType="M-TEST_A-12_PT-1" Text="P" Value="1" /></Parameters>
+      <ParameterRefs><ParameterRef Id="M-TEST_A-12_P-1_R-1" RefId="M-TEST_A-12_P-1" /></ParameterRefs>
+      <ParameterTypes><ParameterType Id="M-TEST_A-12_PT-1"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType></ParameterTypes>
+      </Static><Dynamic><ParameterBlock Id="M-TEST_A-12_PB-1" Text="B">${block}</ParameterBlock></Dynamic></ApplicationProgram></KNX>`;
+    const items = (xml: string) => buildDeviceConfig(parseAppConfig(xml), new Map()).blocks.flatMap((b) => b.items);
+    const labels = (xml: string) => items(xml).filter((i) => i.kind === "unsupported").map((i) => i.label);
+
+    // A <Row> that carries an item is NOT the geometry we understand: refuse the whole
+    // grid rather than dropping the item with it.
+    const nested = dyn(`<Rows><Row Id="M-TEST_A-12_PB-1_R-1"><ParameterRefRef RefId="M-TEST_A-12_P-1_R-1" /></Row></Rows>
+      <Columns><Column Id="M-TEST_A-12_PB-1_C-1" Width="50%" /></Columns>
+      <ParameterRefRef RefId="M-TEST_A-12_P-1_R-1" Cell="1,1" />`);
+    expect(labels(nested)).toEqual(["Rows", "Columns"]);
+    expect(buildDeviceConfig(parseAppConfig(nested), new Map()).blocks[0]?.layout).toBeUndefined();
+
+    // An unknown Layout: keep the block a list AND surface its geometry.
+    const unknown = dyn(`<Rows><Row Id="M-TEST_A-12_PB-1_R-1" /></Rows>
+      <Columns><Column Id="M-TEST_A-12_PB-1_C-1" Width="50%" /></Columns>
+      <ParameterRefRef RefId="M-TEST_A-12_P-1_R-1" Cell="1,1" />`).replace('Id="M-TEST_A-12_PB-1" Text="B"', 'Id="M-TEST_A-12_PB-1" Text="B" Layout="Hexagons"');
+    expect(labels(unknown)).toEqual(["Rows", "Columns"]);
+    // Either way the parameter itself still renders and still reaches the image.
+    expect(items(nested).some((i) => i.kind === "param")).toBe(true);
+    expect(buildDeviceConfig(parseAppConfig(unknown), new Map()).imageValues.get("M-TEST_A-12_P-1_R-1")).toBe("1");
+  });
+
+  test("a Cell that is not a 1-based row,column leaves the item unplaced (never mis-placed)", () => {
+    const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-grid-app.xml"), "utf8")
+      .replace('RefId="M-TEST_A-11_P-1_R-1" Cell="1,2"', 'RefId="M-TEST_A-11_P-1_R-1" Cell="0,2"');
+    const items = buildDeviceConfig(parseAppConfig(xml), new Map()).blocks.flatMap((b) => b.items);
+    const p = items.find((i) => i.kind === "param" && i.param.name === "Time");
+    expect(p).toBeDefined(); // still rendered
+    expect(p?.kind === "param" && p.cell).toBeUndefined(); // but not placed at row 0
+  });
+
+  test("parameters inside a grid block still reach the memory image", () => {
+    // The image walk must descend into a Grid/Table block exactly like a list block:
+    // a parameter that renders in a cell but never reaches imageValues would be left at
+    // the segment default on the device, silently ignoring its configured value.
+    const v = buildDeviceConfig(gridApp, new Map([["M-TEST_A-11_P-1_R-1", "42"]]));
+    expect(v.imageValues.get("M-TEST_A-11_P-1_R-1")).toBe("42"); // edited, in a cell
+    expect(v.imageValues.get("M-TEST_A-11_P-2_R-2")).toBe("1"); // default, in a cell
+    expect(v.imageValues.get("M-TEST_A-11_P-4_R-4")).toBe("9"); // in a cell inside a choose
+    // Access="None" is hidden from the UI but ETS still writes it: it must be in the
+    // image even though it only ever appears in a grid cell.
+    expect(v.imageValues.get("M-TEST_A-11_P-3_R-3")).toBe("7");
+    expect(block(v, "Startup").items.find((i) => i.kind === "param" && i.param.name === "Internal")).toBeUndefined();
+    // A com-object placed inside a grid block reaches the com-object table too.
+    expect(v.imageComObjects.get(1)).toMatchObject({ number: 1, objectSize: "1 Bit" });
   });
 });

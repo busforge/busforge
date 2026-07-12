@@ -11,7 +11,7 @@ import { ApiError } from "../errors.ts";
 // belongs in a config restore point.
 
 export type SnapshotKind = "manual" | "auto";
-export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit" | "before-space-edit";
+export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-download" | "before-restore" | "before-ga-edit" | "before-space-edit";
 
 // Metadata for the history list (everything but the payload).
 export interface SnapshotMeta {

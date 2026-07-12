@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { buildDeviceConfig } from "@busforge/product";
-import { addDevice, projectExists } from "../db/projects.ts";
+import { addDevice, setDeviceAddress, projectExists } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
@@ -29,6 +29,15 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   // /api/projects/:id/devices/:deviceId/config?lang=
+  // /api/projects/:id/devices/:deviceId/address -> set the address this device SHOULD hold.
+  // Writing it into the physical device is a separate, explicit step (POST .../assign-ia), so
+  // this never silently moves anything on the bus.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "address" && req.method === "PUT") {
+    const body = (await req.json().catch(() => ({}))) as { ia?: string };
+    if (!body.ia) return err("IA_REQUIRED", "an individual address is required");
+    return json(setDeviceAddress(db, id, decodeURIComponent(seg[4]), body.ia));
+  }
+
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {
     return json(buildDeviceView(state, id, decodeURIComponent(seg[4]), url.searchParams.get("lang") ?? undefined));
   }

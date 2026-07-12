@@ -6,7 +6,7 @@ import { errorCode } from "./errors.ts";
 // Instead of rejecting a concurrent request, we queue it: jobs run strictly FIFO,
 // one at a time, and each carries live state + progress for the UI to display.
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
 
 export interface Task {

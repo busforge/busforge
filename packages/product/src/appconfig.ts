@@ -61,24 +61,45 @@ export interface CfgAbsSegment { id: string; address: number; size: number; data
 // pre-reserved segment; beyond it would overrun adjacent memory. Absent => capacity unknown.
 export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
+// A com-object's telegram priority, which the com-object table (L3) encodes in the low two bits of
+// its flags byte. These are the values the ETS product schema uses (ComObjectPriority_t), NOT the
+// names a device's firmware gives the underlying KNX priority classes. Absent means Low, which is
+// the schema's default and what every ordinary telegram carries.
+export type ComObjPriority = "Low" | "High" | "Alert";
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
-  objectSize: string; dpt: string; flags: ComObjFlags; textParamRefId?: string; baseNumber?: string;
+  objectSize: string; dpt: string; flags: ComObjFlags; priority: ComObjPriority;
+  textParamRefId?: string; baseNumber?: string;
 }
 export interface CfgComObjectRef {
   id: string; refId: string; text?: string; functionText?: string; objectSize?: string;
-  dpt?: string; flags: Partial<ComObjFlags>; textParamRefId?: string;
+  dpt?: string; flags: Partial<ComObjFlags>; priority?: ComObjPriority; textParamRefId?: string;
 }
 
+// A ParameterBlock's layout. ETS renders a block as a plain list (the default), or as
+// a "Grid" / "Table" whose <Rows>/<Columns> children declare the geometry ONLY: they
+// carry no items. Every item inside such a block instead names its own place with
+// Cell="row,column" (1-based, see DynCell). A Grid's rows/columns are anonymous
+// (Name + Width) and the author labels the cells with ParameterSeparators; a Table's
+// rows/columns carry the header Text shown left of / above the cells.
+export type BlockLayout = "Grid" | "Table";
+export interface DynGridLine { id: string; text?: string; width?: string }
+export interface DynCell { row: number; col: number }
+
 export type DynNode =
-  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; children: DynNode[] }
+  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; layout?: BlockLayout; rows?: DynGridLine[]; cols?: DynGridLine[]; children: DynNode[] }
   // `repeatCount` is set only for a <Repeat> (its literal Count): the from-scratch
   // instance resolver replays the children that many times to allocate per-instance.
   | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; repeatCount?: number; children: DynNode[] }
-  | { kind: "separator"; id: string; text: string; uiHint: string }
+  | { kind: "separator"; id: string; text: string; uiHint: string; cell?: DynCell }
   | { kind: "unsupported"; tag: string }
-  | { kind: "paramRef"; refId: string; indent?: number }
+  | { kind: "paramRef"; refId: string; indent?: number; cell?: DynCell }
   | { kind: "comObjRef"; refId: string }
+  // A <Button> runs an EventHandler declared in the application's <Script> (an ETS
+  // dynamic-scripting function, e.g. OpenKNX's "readMeter"). busforge has no ETS
+  // script host, so the handler name is carried purely so the UI can name the action
+  // it CANNOT run; nothing here ever executes it.
+  | { kind: "button"; id: string; text: string; handler: string; cell?: DynCell }
   | { kind: "choose"; paramRefId: string; whens: DynWhen[] }
   | { kind: "assign"; target: string; source?: string; value?: string }
   // A module instantiation point. `numArgs`/`textArgs` bind the module-def arguments
@@ -443,12 +464,24 @@ function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
       id: a.Id, number: Number(a.Number ?? 0), name: a.Name ?? "", text: a.Text ?? "",
       functionText: a.FunctionText ?? "", objectSize: a.ObjectSize ?? "", dpt: a.DatapointType ?? "",
       flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag), readOnInit: bool(a.ReadOnInitFlag) },
+      priority: priorityOf(a.Priority),
       textParamRefId: a.TextParameterRefId,
       baseNumber: a.BaseNumber,
     });
   }
   return out;
 }
+
+// Absent means Low: the schema's default, and what every ordinary telegram carries. Any OTHER
+// value is refused rather than quietly turned into Low: a priority is written straight into the
+// device's com-object table, and silently demoting an alarm object to the lowest priority class is
+// precisely the kind of wrong byte nothing downstream would ever catch.
+const priorityOf = (v: string | undefined): ComObjPriority => {
+  if (v === undefined || v === "") return "Low";
+  if (v === "Low" || v === "High" || v === "Alert") return v;
+  throw new ProductError("COM_OBJECT_PRIORITY_UNKNOWN",
+    `a communication object declares the priority "${v}", which is not one of the values the ETS schema defines (Low, High, Alert); refusing to guess what to write into the device's com-object table`);
+};
 
 function parseComObjectRefs(staticKids: ONode[]): Map<string, CfgComObjectRef> {
   const out = new Map<string, CfgComObjectRef>();
@@ -464,7 +497,9 @@ function parseComObjectRefs(staticKids: ONode[]): Map<string, CfgComObjectRef> {
     if (a.ReadOnInitFlag) flags.readOnInit = bool(a.ReadOnInitFlag);
     out.set(a.Id, {
       id: a.Id, refId: a.RefId, text: a.Text, functionText: a.FunctionText,
-      objectSize: a.ObjectSize, dpt: a.DatapointType, flags, textParamRefId: a.TextParameterRefId,
+      objectSize: a.ObjectSize, dpt: a.DatapointType, flags,
+      priority: a.Priority ? priorityOf(a.Priority) : undefined, // absent = inherit from the ComObject
+      textParamRefId: a.TextParameterRefId,
     });
   }
   return out;
@@ -491,6 +526,33 @@ function parseTranslations(langNodes: ONode[]): Translations {
   return out;
 }
 
+// ETS places a laid-out item with Cell="row,column", 1-based. An absent or unreadable
+// Cell (including a 0 index, which is not a cell) leaves the item unplaced, and the
+// renderer then shows it after the grid instead of dropping it.
+function parseCell(v: string | undefined): DynCell | undefined {
+  const m = v ? /^\s*(\d+)\s*,\s*(\d+)\s*$/.exec(v) : null;
+  if (!m) return undefined;
+  const row = Number(m[1]);
+  const col = Number(m[2]);
+  return row >= 1 && col >= 1 ? { row, col } : undefined;
+}
+
+// The <Rows>/<Columns> geometry of a Grid/Table ParameterBlock: pure geometry, holding
+// no items (every laid-out item names its own Cell instead). Returns null when a
+// container is NOT that pure geometry (a Row/Column with children of its own, or a
+// foreign child): the block then refuses to consume it, so it stays in the children and
+// is surfaced as an unsupported element rather than being silently thrown away.
+function parseGridLines(kids: ONode[], container: string, line: string): DynGridLine[] | undefined | null {
+  const c = firstByTag(kids, container);
+  if (!c) return undefined;
+  const elems = kidsOf(c).filter((k) => !tagOf(k).startsWith("#"));
+  if (elems.some((k) => tagOf(k) !== line || kidsOf(k).some((g) => !tagOf(g).startsWith("#")))) return null;
+  return elems.map((l) => {
+    const la = attrsOf(l);
+    return { id: la.Id ?? "", text: la.Text, width: la.Width };
+  });
+}
+
 function parseDyn(n: ONode): DynNode | null {
   const tag = tagOf(n);
   const a = attrsOf(n);
@@ -504,14 +566,40 @@ function parseDyn(n: ONode): DynNode | null {
     // large part of channel devices) silently disappears.
     case "Repeat":
       return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, repeatCount: a.Count !== undefined ? Number(a.Count) : undefined, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
-    case "ParameterBlock":
-      return { kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, paramRefId: a.ParamRefId, access: a.Access, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+    case "ParameterBlock": {
+      const kids = kidsOf(n);
+      // Layout="Grid"/"Table" turns the block into a cell grid. Any other value is a
+      // layout we do not know (ETS also has "List", which IS the plain list a
+      // layout-less block already is), so the block stays a list AND keeps any
+      // <Rows>/<Columns> in its children, where they surface as unsupported: a layout
+      // we cannot read must not silently swallow its own geometry.
+      const declared: BlockLayout | undefined = a.Layout === "Grid" || a.Layout === "Table" ? a.Layout : undefined;
+      const rows = declared ? parseGridLines(kids, "Rows", "Row") : null;
+      const cols = declared ? parseGridLines(kids, "Columns", "Column") : null;
+      // Consume the geometry only when ALL of it was understood (see parseGridLines).
+      const grid = declared !== undefined && rows !== null && cols !== null;
+      const children = kids
+        .filter((k) => !(grid && (tagOf(k) === "Rows" || tagOf(k) === "Columns")))
+        .map(parseDyn).filter(Boolean) as DynNode[];
+      return {
+        kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId,
+        paramRefId: a.ParamRefId, access: a.Access,
+        layout: grid ? declared : undefined,
+        rows: grid ? rows ?? undefined : undefined, // `grid` already excludes null
+        cols: grid ? cols ?? undefined : undefined,
+        children,
+      };
+    }
     case "ParameterSeparator":
-      return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "" };
+      return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "", cell: parseCell(a.Cell) };
     case "ParameterRefRef":
-      return { kind: "paramRef", refId: a.RefId, indent: a.IndentLevel !== undefined ? Number(a.IndentLevel) : undefined };
+      return { kind: "paramRef", refId: a.RefId, indent: a.IndentLevel !== undefined ? Number(a.IndentLevel) : undefined, cell: parseCell(a.Cell) };
     case "ComObjectRefRef":
       return { kind: "comObjRef", refId: a.RefId };
+    // A scripted action (EventHandler in the app's <Script>). Parsed so the UI can show
+    // the real, named element instead of an "unsupported" marker; it stays inert.
+    case "Button":
+      return { kind: "button", id: a.Id ?? "", text: a.Text ?? "", handler: a.EventHandler ?? "", cell: parseCell(a.Cell) };
     case "Assign":
       return { kind: "assign", target: a.TargetParamRefRef, source: a.SourceParamRefRef, value: a.Value };
     case "Module": {

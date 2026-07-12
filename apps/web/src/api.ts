@@ -39,12 +39,24 @@ export interface CfgComObjView {
   gaRaw?: number | null;
   changed?: boolean;
 }
+// Placement of an item in its block's ETS grid (1-based Cell="row,column").
+export interface CfgCell { row: number; col: number }
+// A declared grid row/column: `text` is the Table header caption, `width` the ETS
+// column width as a percentage of the block.
+export interface CfgGridLine { text?: string; width?: string }
+// A scripted ETS action (a <Button> whose EventHandler lives in the application's
+// <Script>). busforge has no ETS script host, so this is only ever rendered inert.
+export interface CfgButtonView { text: string; handler: string }
 export type CfgItem =
-  | { kind: "separator"; text: string; uiHint: string }
-  | { kind: "param"; param: CfgParamView }
+  | { kind: "separator"; text: string; uiHint: string; cell?: CfgCell }
+  | { kind: "param"; param: CfgParamView; cell?: CfgCell }
   | { kind: "comObject"; comObject: CfgComObjView }
+  | { kind: "button"; button: CfgButtonView; cell?: CfgCell }
   | { kind: "unsupported"; label: string };
-export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
+export interface CfgBlock {
+  id: string; name: string; items: CfgItem[]; level: number; parentId?: string;
+  layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
+}
 // Set when the device is configured via a manufacturer ETS DCA app (Windows-only
 // plugin); its proprietary config is not shown/editable here, standard params are.
 // `module` is present when busforge ships a native replacement for that DCA.
@@ -70,7 +82,7 @@ export type FlashResult =
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;

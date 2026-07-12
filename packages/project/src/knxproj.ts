@@ -103,13 +103,59 @@ export function readAppProgram(bytes: Buffer, appRef: string): string | null {
   return key ? new TextDecoder("utf-8").decode(outer.get(key)!) : null;
 }
 
+
+// A product database reaches us in one of two shapes, and both must work.
+//
+// A `.knxprod` is a ZIP of per-manufacturer XML files (Hardware.xml, Catalog.xml, one file per
+// application program). That is what ETS produces and what a KNX Association member ships.
+//
+// A **plain manufacturer XML** is one document carrying the same <ManufacturerData> content
+// inline. This is not an exotic case: OpenKNX is not a KNX Association member and therefore may
+// not publish a signed .knxprod at all, so their product databases ship exactly like this (the
+// OpenKNXproducer writes the XML; only the final signing step needs ETS, and it is a step we do
+// not need since we read the XML, not the signature). Reading it directly is what makes an
+// OpenKNX device usable without ETS anywhere in the chain.
+const isZip = (b: Buffer): boolean => b.length > 1 && b[0] === 0x50 && b[1] === 0x4b; // "PK"
+
+// Parse a plain manufacturer document WITHOUT building the application program's body into
+// objects. The program is the whole file (75 MB for the OpenKNX RaumController) while the parts
+// we need here (the Hardware section, the program's identity) are a few kilobytes; parsing it in
+// full costs seconds and gigabytes of transient heap inside one HTTP request. `stopNodes` keeps
+// the element and its attributes and leaves its content as raw text: 0.15 s instead of 1.5 s,
+// 0.6 GB instead of 2 GB, on the real file.
+function parsePlainDoc(xml: string): any {
+  return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, stopNodes: ["*.ApplicationProgram"] }).parse(xml);
+}
+const plainAppProgramIds = (xml: string): string[] =>
+  arr(parsePlainDoc(xml)?.KNX?.ManufacturerData?.Manufacturer)
+    .flatMap((m: any) => arr(m?.ApplicationPrograms?.ApplicationProgram))
+    .map((a: any) => String(a?.Id ?? ""))
+    .filter(Boolean);
+
 // Extract every distinct application program referenced by the given device app
 // refs, keyed by application-program id. Reads the outer zip once (unlike calling
 // readAppProgram per device), for populating the catalog at import. App programs
 // sit plaintext in the outer archive, so no password is needed.
 export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Map<string, string> {
-  const outer = readZip(bytes);
   const out = new Map<string, string>();
+  if (!isZip(bytes)) {
+    // One document, one application program: the whole file IS that program's XML. The ids come
+    // from a real parse, never from a regex over the text: a regex matches inside comments and
+    // CDATA (refusing a legitimate file with a false reason) and misses single-quoted or
+    // namespace-prefixed elements (silently dropping a product).
+    const xml = dec.decode(bytes);
+    const ids = plainAppProgramIds(xml);
+    if (ids.length > 1) {
+      throw new KnxprojError("CATALOG_MULTI_APP_XML",
+        `this product database holds ${ids.length} application programs in one XML document; Busforge can only place a single-program document, so it refuses rather than give every product the same application`);
+    }
+    for (const appRef of appRefs) {
+      const id = appProgramId(appRef);
+      if (ids.includes(id)) out.set(id, xml);
+    }
+    return out;
+  }
+  const outer = readZip(bytes);
   for (const appRef of appRefs) {
     const id = appProgramId(appRef);
     if (out.has(id)) continue;
@@ -126,12 +172,15 @@ export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Ma
 // a .knxprod shares the same Manufacturer/Hardware structure, so this extractor
 // generalizes to it for the official-catalog ingest (milestone 5).
 export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
-  const outer = readZip(bytes);
   const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const out: CatalogProduct[] = [];
-  for (const [key, buf] of outer) {
-    if (!key.endsWith("Hardware.xml")) continue;
-    const doc = parser.parse(dec.decode(buf));
+  // In a zip only Hardware.xml carries the products, and the (huge) application-program entries
+  // are never touched. A plain document carries everything inline, so it is parsed with the
+  // application program's body stopped out (parsePlainDoc), for the same reason.
+  const docs: any[] = isZip(bytes)
+    ? [...readZip(bytes)].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)))
+    : [parsePlainDoc(dec.decode(bytes))];
+  for (const doc of docs) {
     for (const manu of arr(doc?.KNX?.ManufacturerData?.Manufacturer)) {
       for (const hw of arr(manu?.Hardware?.Hardware)) {
         const hwVersion = String(hw.VersionNumber ?? "");

@@ -83,14 +83,16 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
     const caps = classify(cfg).capabilities();
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
+    // fullDownload false: commissioning an absolute-segment device from nothing has never been
+    // exercised, and a memory model that has not been proven must refuse rather than try.
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: false });
   });
 
   test("System B device: read-back and GA flash both supported", () => {
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
     const caps = classify(cfg).capabilities();
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true });
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true });
   });
 
   test("System 1 (MV-0012 / BCU1) device: recognised but unsupported, every aspect false", () => {
@@ -100,7 +102,7 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
     expect(cfg.mask).toBe("MV-0012");
     const profile = classify(cfg);
     expect(profile.constructor.name).toBe("UnsupportedProfile");
-    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false });
+    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false });
   });
 });
 

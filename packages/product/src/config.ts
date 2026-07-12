@@ -1,4 +1,4 @@
-import type { AppConfig, CfgType, ComObjFlags, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 
@@ -56,13 +56,29 @@ export interface CfgComObjView {
 // The minimal resolved facts the com-object-table (L3) build needs for one reached
 // com-object: its number, its datapoint size, and its RESOLVED flags. Captured for
 // every reached object including hidden ones (see DeviceConfigView.imageComObjects).
-export interface CfgComObjImage { number: number; objectSize: string; flags: ComObjFlags; refId: string; }
+export interface CfgComObjImage { number: number; objectSize: string; flags: ComObjFlags; priority: ComObjPriority; refId: string; }
+// Where a laid-out item sits in its block's grid (1-based, as ETS authors Cell="row,col").
+// Only set for items inside a Grid/Table ParameterBlock; a list block has none.
+export interface CfgCell { row: number; col: number }
+// One declared grid row/column. `text` is the header caption (Table only), `width` the
+// ETS percentage of the block width (Grid columns).
+export interface CfgGridLine { text?: string; width?: string }
+// A scripted ETS action. busforge has no ETS script host, so `handler` is the NAME of
+// the action we cannot run; the UI renders the button inert and says so. It is never
+// invoked, and it holds no device state.
+export interface CfgButtonView { text: string; handler: string }
 export type CfgItem =
-  | { kind: "separator"; text: string; uiHint: string }
-  | { kind: "param"; param: CfgParamView }
+  | { kind: "separator"; text: string; uiHint: string; cell?: CfgCell }
+  | { kind: "param"; param: CfgParamView; cell?: CfgCell }
   | { kind: "comObject"; comObject: CfgComObjView }
+  | { kind: "button"; button: CfgButtonView; cell?: CfgCell }
   | { kind: "unsupported"; label: string }; // an ETS dynamic element the engine does not handle yet
-export interface CfgBlock { id: string; name: string; items: CfgItem[]; level: number; parentId?: string; }
+export interface CfgBlock {
+  id: string; name: string; items: CfgItem[]; level: number; parentId?: string;
+  // ETS Layout="Grid"/"Table" (absent = plain list). `rows`/`cols` are the declared
+  // geometry; the items carry the Cell that places them in it.
+  layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
+}
 export interface DeviceConfigView {
   blocks: CfgBlock[];
   hasModules: boolean;
@@ -279,6 +295,7 @@ export function buildDeviceConfig(
       number: obj.number + (obj.baseNumber ? scope.argValue(obj.baseNumber) : 0),
       objectSize: ref?.objectSize ?? obj.objectSize,
       flags: { ...obj.flags, ...ref?.flags },
+      priority: ref?.priority ?? obj.priority, // a ref overrides only when it states one
       refId: scope.rewrite(defRefId),
     };
   };
@@ -347,9 +364,12 @@ export function buildDeviceConfig(
   const collect = (nodes: DynNode[], items: CfgItem[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint }); break;
-        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; items.push(it); } break; }
+        case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint, cell: n.cell }); break;
+        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
+        // A scripted action. Carried through as itself (label + handler name) so the UI
+        // can show an inert, honestly-labelled control; busforge never runs the script.
+        case "button": items.push({ kind: "button", button: { text: subst(tr(n.id, "Text", n.text), scope), handler: n.handler }, cell: n.cell }); break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) collect(w.children, items, scope); break; }
         case "container": collect(n.children, items, scope); break;
@@ -385,6 +405,15 @@ export function buildDeviceConfig(
   const headOrder = (n: Extract<DynNode, { kind: "block" }>): number =>
     (n.paramRefId ? app.refs.get(n.paramRefId)?.displayOrder : undefined) ?? 0;
 
+  // The block's declared grid geometry, with the Table header captions localized. Only
+  // emitted for a Grid/Table block; a plain list block carries none.
+  const gridOf = (n: Extract<DynNode, { kind: "block" }>, scope: Scope): Pick<CfgBlock, "layout" | "rows" | "cols"> => {
+    if (!n.layout) return {};
+    const lines = (ls: typeof n.rows): CfgGridLine[] | undefined =>
+      ls?.map((l) => ({ text: l.text !== undefined ? subst(tr(l.id, "Text", l.text), scope) : undefined, width: l.width }));
+    return { layout: n.layout, rows: lines(n.rows), cols: lines(n.cols) };
+  };
+
   const walk = (nodes: DynNode[], scope: Scope, into: Node[]) => {
     for (const n of nodes) {
       switch (n.kind) {
@@ -395,7 +424,7 @@ export function buildDeviceConfig(
           if (items.length) {
             let name = blockTitle(n, scope);
             if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
-            const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0 }, order: headOrder(n), seq: seq++, children: [] };
+            const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0, ...gridOf(n, scope) }, order: headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children);
           } else if (n.children.length === 0 && (n.paramRefId || n.text)) {
@@ -476,6 +505,11 @@ export function buildDeviceConfig(
           break;
         }
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope, imgEnv)) imgCollect(w.children, scope); break; }
+        // A Button owns no memory (it only names a script action), so it contributes
+        // nothing to the image. A Grid/Table block is a layout, not a memory scope: its
+        // <Rows>/<Columns> hold no parameters, and the placed items are the ordinary
+        // paramRef/comObjRef children walked here, exactly as in a list block.
+        case "button": break;
         case "container": case "block": imgCollect(n.children, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
         default: break;

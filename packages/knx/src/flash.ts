@@ -1,5 +1,5 @@
 import { KnxDevice, PID, OBJ } from "./device.ts";
-import type { LoadPlan } from "./loadrunner.ts";
+import type { LoadPlan, LoadStep } from "./loadrunner.ts";
 
 // The KNX load procedure (MV-07B0 / System B, property-mapped LSMs). Ported from
 // the proven reference; see docs/findings.md for the wire details and gotchas.
@@ -14,17 +14,21 @@ export const LSM = { LOAD: 1, LOAD_COMPLETED: 2, UNLOAD: 4 } as const;
 export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2, ERROR: 3 } as const;
 
 const ev = (e: number) => { const b = Buffer.alloc(10); b[0] = e; return b; };
-function allocPayload(size: number): Buffer {
+function allocPayload(size: number, fill: boolean): Buffer {
   const b = Buffer.alloc(10);
   b[0] = 0x03; b[1] = 0x0b;          // AdditionalLoadControls: allocate relative segment
   b.writeUInt32BE(size >>> 0, 2);    // size, big-endian
-  b[6] = 0; b[7] = 0;                // mode, fill
+  // The device zeroes the freshly allocated segment when this is set (thelsing/knx
+  // TableObject::additionalLoadControls: `bool doFill = data[6] == 0x1; uint8_t fillByte = data[7]`).
+  // A first-time download wants it, so no byte of a previous application survives in a region the
+  // new one does not write. A parameter-only download must NOT: it re-writes an existing segment.
+  b[6] = fill ? 1 : 0; b[7] = 0;
   return b;
 }
 
 export async function lsmEvent(dev: KnxDevice, obj: number, event: number) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, ev(event)); }
 export async function lsmState(dev: KnxDevice, obj: number) { return (await dev.propRead(obj, PID.LOAD_STATE_CONTROL))[0]; }
-export async function allocSegment(dev: KnxDevice, obj: number, size: number) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size)); }
+export async function allocSegment(dev: KnxDevice, obj: number, size: number, fill = false) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size, fill)); }
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian
 export function appId(manufacturer: number, appNumber: number, version: number): Buffer {
@@ -105,4 +109,139 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
     got.equals(expect) ||
     (got.length < expect.length && got.equals(expect.subarray(0, got.length)) && expect.subarray(got.length).every((b) => b === 0));
   return { ok, got };
+}
+
+// Split a freshly-filled segment into the runs that actually need writing.
+//
+// A full download allocates the parameter segment with fill, and the device zeroes it for us
+// (thelsing/knx TableObject::allocTable: `for i < size: _memory.writeMemory(addr + i, 1, &fillByte)`).
+// So the only bytes that need to travel over the bus are the ones that are NOT zero. On the OpenKNX
+// RaumController's default configuration that is 51 bytes out of 21601, i.e. 0.2%: 22 telegrams
+// instead of 1801.
+//
+// This is not a speed optimisation dressed up as a principle. Hammering a small MCU with eighteen
+// hundred memory writes is what killed the device three times before this was understood: it
+// commits its flash while we keep writing at it, and its watchdog resets it mid-commit, after which
+// it discards its whole configuration and comes back factory-fresh. Sending only what carries
+// information removes the problem at its root. The device's own CRC over the finished segment
+// (readSegmentCrc) still proves every one of the 21601 bytes, so nothing is taken on trust.
+//
+// Runs are merged across gaps shorter than one telegram: bridging a few zero bytes is cheaper than
+// paying for another round trip.
+export function sparseRuns(bytes: Buffer, gap = 12): { offset: number; bytes: Buffer }[] {
+  const runs: { offset: number; bytes: Buffer }[] = [];
+  let start = -1, lastNonZero = -1;
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] !== 0) { if (start < 0) start = i; lastNonZero = i; }
+    else if (start >= 0 && i - lastNonZero >= gap) { runs.push({ offset: start, bytes: bytes.subarray(start, lastNonZero + 1) }); start = -1; }
+  }
+  if (start >= 0) runs.push({ offset: start, bytes: bytes.subarray(start, lastNonZero + 1) });
+  return runs;
+}
+
+// The System B FULL download: the first-time commissioning of a device, as opposed to the
+// parameter-only ("par") download that rewrites an already-programmed one.
+//
+// The order below is NOT invented. It is the mask's own load procedure, taken from the KNX master
+// data (`knx_master.xml`, MaskVersion MV-07B0, Procedure ProcedureType="Load"
+// ProcedureSubType="ap1", i.e. a device with a single application program) with the application's
+// own LoadProcedure fragments merged into it. The two properties of it that are easy to get wrong,
+// and that the device will not warn you about:
+//
+//   - ALL FOUR load-state machines are open at once. L4 (the application/parameter segment) is
+//     opened FIRST and completed FIRST, but L3/L1/L2 are allocated while L4 is still LOADING.
+//     Closing L4 early does not fail: it just leaves the tables in a segment nobody allocated.
+//   - The application id stamp (PID_PROGRAM_ID) is written BEFORE the LoadCompleted events. It is
+//     what a later parameter-only download compares itself against.
+//
+// The segments' addresses are not known here: the device assigns them during the allocation, and
+// `writeSegment` resolves each one through PID_TABLE_REFERENCE at execution time.
+export function planSystemBFullDownload(tables: {
+  params: Buffer;   // LSM 4, the parameter image
+  comObj: Buffer;   // LSM 3, the com-object table (authored, not kept from the device)
+  addr: Buffer;     // LSM 1, the group-address table
+  assoc: Buffer;    // LSM 2, the association table
+  programId: Buffer; // PID 13: manufacturer + application number + version
+}): LoadPlan {
+  const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
+  return [
+    // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
+    // what that means: the device answers every memory write with what actually landed. Without
+    // it a write that the device drops is silent, and we would find out (if at all) a thousand
+    // telegrams later, with no idea which one it was.
+    { op: "verifyMode", on: true },
+    // Everything goes back to unloaded first: a device that was half-programmed by a previous
+    // attempt must not contribute leftovers to this one.
+    { op: "unload", lsm: P }, { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
+    // All four brackets are opened and allocated before anything is written, which is what the
+    // mask's procedure does. The parameter segment asks for fill: a first-time download owns the
+    // whole segment, so any byte the new application does not write must be zero rather than
+    // whatever the previous one left there.
+    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true },
+    { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
+    { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
+    { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
+    // The THREE SMALL TABLES GO FIRST, and the 21601-byte parameter image last. Hardware-found,
+    // and the reason is worth writing down because it cost a device: writing the parameter image
+    // first leaves the device's flash subsystem with a full erase-block buffer sitting exactly at
+    // the boundary the tables land behind, and the table writes that follow are then dropped or
+    // kill it outright (it discards its whole configuration on the next boot). Writing the small
+    // tables before the long haul avoids that entirely. The load-state brackets are all open
+    // either way, so the order of the writes inside them is ours to choose.
+    { op: "writeSegment", lsm: C, bytes: tables.comObj, echo: true, verify: false },
+    { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
+    { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
+    // Only the non-zero runs of the parameter image: the allocation above already zeroed the rest
+    // (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above), and the
+    // device's CRC over the finished segment proves the whole 21601 bytes at the end.
+    ...sparseRuns(tables.params).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    // Let it commit. Everything below talks to the device again, and a device mid-flash-commit
+    // answers nothing.
+    { op: "awaitReady" },
+    { op: "stampAppId", lsm: P, data: tables.programId },
+    { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },
+    { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },
+    // LoadCompleted makes the device write its whole memory image to flash (saveMemory), which is
+    // the longest pause of the entire download.
+    { op: "awaitReady" },
+    // The device believes any table it is handed (thelsing/knx validates nothing on LoadCompleted),
+    // so the only proof that the four brackets closed is to read their states back.
+    { op: "assertLoaded", lsm: P }, { op: "assertLoaded", lsm: C },
+    { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
+    { op: "verifyMode", on: false }, // leave the device as we found it
+    { op: "restart" },
+  ];
+}
+
+// The CRC a System B device computes over a loaded segment, and hands out through PID_MCB_TABLE
+// (property 27) once the segment is LOADED. This is what the device's own load procedure means by
+// `LdCtrlLoadImageProp ObjIdx=4 PropId=27`, and it is how a 21601-byte parameter image is verified
+// with ONE property read instead of eighteen hundred memory reads (which, at KNX speeds, is the
+// difference between a download that takes two minutes and one that takes ten).
+//
+// Transcribed from the firmware that produces it (thelsing/knx bits.cpp crc16Ccitt): CRC-16-CCITT,
+// polynomial 0x1021, initial value 0xFFFF, over the data followed by 16 zero bits. Written out
+// bit by bit exactly as the firmware does it rather than as a table-driven variant, because the
+// point is to match that implementation and not a textbook.
+export function crc16Ccitt(data: Buffer): number {
+  let result = 0xffff;
+  const bits = 8 * (data.length + 2); // the trailing two bytes are the appended zeros
+  for (let i = 0; i < bits; i++) {
+    result = (result << 1) >>> 0;
+    const byte = i >> 3;
+    const nextBit = byte < data.length ? (data[byte] >> (7 - (i & 7))) & 1 : 0;
+    result |= nextBit;
+    if (result & 0x10000) result ^= 0x1021;
+  }
+  return result & 0xffff;
+}
+
+// Read a loaded segment's size and CRC straight from the device (PID_MCB_TABLE, 8 bytes:
+// [size u32 BE][crc control][access][crc16 u16 BE]). The device only answers once the segment is
+// LOADED, so this belongs after the load-completed bracket. Returns null when the device declines,
+// which the caller must treat as "not verified" and fall back on, never as "verified".
+export async function readSegmentCrc(dev: KnxDevice, lsm: number): Promise<{ size: number; crc: number } | null> {
+  const mcb = await dev.propRead(lsm, PID.MCB_TABLE);
+  if (mcb.length < 8) return null;
+  return { size: mcb.readUInt32BE(0), crc: mcb.readUInt16BE(6) };
 }

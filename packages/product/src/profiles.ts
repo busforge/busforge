@@ -1,8 +1,10 @@
-import { KnxDevice, planSystemBGaFlash, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, readSegmentCrc, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
+import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
+import { buildDeviceConfig } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
@@ -187,7 +189,13 @@ export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: 
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links.
-export interface DeviceCapabilities { readParams: boolean; readLinks: boolean; flashParams: boolean; flashLinks: boolean; }
+export interface DeviceCapabilities {
+  readParams: boolean; readLinks: boolean; flashParams: boolean; flashLinks: boolean;
+  // Can this device be commissioned from nothing: application id, parameter image, com-object
+  // table and group tables all written in one bracket? A parameter-only download rewrites an
+  // existing segment and cannot bring a virgin device to life.
+  fullDownload: boolean;
+}
 
 export interface ReadStateCtx {
   liveParams: Map<string, string>;
@@ -219,6 +227,18 @@ export interface ParamFlashCtx {
   // caller that forgot it would silently disable the com-object staleness gate, and a safety
   // gate that can be switched off by omission is not a gate. See comobjtable.ts.
   baseParams: Map<string, string>;
+  moduleInstances?: ModuleInstance[];
+  dryRun: boolean;
+  onProgress?: ProgressFn;
+  persistBackups: PersistBackups;
+}
+// Commissioning a device from nothing needs everything at once: the parameters AND the links,
+// because the com-object table it writes has to agree with the association table it writes.
+export interface FullDownloadCtx {
+  deviceId: string;
+  appXml: string;
+  params: Map<string, string>;
+  links: ComObjectLink[];
   moduleInstances?: ModuleInstance[];
   dryRun: boolean;
   onProgress?: ProgressFn;
@@ -278,6 +298,13 @@ export abstract class DeviceProfile {
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
 
+  // Commission the device from nothing. Default: refuse. A memory model that has not been proven
+  // to survive a full download must not fall through into one, because a half-written download
+  // leaves a device that answers nothing and has to be recovered by hand.
+  async downloadFull(_dev: KnxDevice, _mask: string, _ctx: FullDownloadCtx): Promise<FlashResult> {
+    throw new UnsupportedOperation("full download", this.family, this.mask);
+  }
+
   protected requireCfg(op: string): AppConfig {
     if (!this.cfg) throw new ProductError("APP_PROGRAM_MISSING", `${op} needs the application program but it was not provided`);
     return this.cfg;
@@ -295,7 +322,114 @@ export class SystemBProfile extends DeviceProfile {
     // Parameters are decoded from the LSM4 segment; a relative device WITHOUT one has nowhere
     // to read them from, so don't claim its params verify. Group tables are always present.
     const hasParamSegment = this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
-    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true };
+    // A full download needs the parameter segment to fill AND an application to author the
+    // com-object table from; without either there is nothing to commission.
+    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload: hasParamSegment };
+  }
+
+  // Commission a System B device from nothing: write the application id, the parameter image, the
+  // com-object table and the two group tables in ONE bracket, in the order the mask's own load
+  // procedure prescribes (see planSystemBFullDownload).
+  //
+  // Unlike every other write in this codebase, this one AUTHORS the com-object table instead of
+  // keeping the device's: a virgin device has no table to keep. That is the whole point, and it is
+  // also the risk, because the firmware validates nothing it is given (see comobjbuild.ts). So the
+  // table is built from the same active-configuration projection the read-back and the staleness
+  // gate use, and the result is verified by reading it back off the device afterwards.
+  async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    const cfg = this.requireCfg("full download");
+    // The device's own declared pre-flight (hardware type / application id) still runs: a full
+    // download to the wrong hardware is the most expensive mistake available here.
+    const coverage = assertParCoverage(parseLoadProcedures(ctx.appXml), "relative");
+    await runDeclaredChecks(dev, coverage);
+
+    const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
+    const unmapped = unmappedParamRefs(model, ctx.params);
+    if (unmapped.length) {
+      throw new ProductError("CHANNEL_MODULES_UNSUPPORTED",
+        `${unmapped.length} stored value(s) cannot be placed in this device's parameter image (e.g. ${unmapped[0]}); refusing to commission a device with a configuration we cannot express`);
+    }
+
+    // A full download owns the whole segment, so unlike the surgical parameter flash there is no
+    // live image to merge into: every byte we do not derive is the allocation's zero fill.
+    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances });
+    if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
+
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    const comObj = buildComObjectTable(view.imageComObjects);
+    // A link whose com-object this configuration does not activate cannot be programmed: the
+    // association table would point a group address at an entry that reads 0x0000, i.e. at an
+    // object that does not communicate. Filtering such a link away and carrying on would leave the
+    // user with a group address the UI calls programmed and the device ignores. Refuse.
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    const { addr, assoc } = buildGroupTables(ctx.links);
+
+    const plan = planSystemBFullDownload({
+      params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
+    });
+    const imageBytes = target.size + comObj.length + addr.length + assoc.length;
+
+    // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
+    // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
+    // address 0) and there is genuinely nothing to save. A device that was already programmed, by
+    // ETS or by us, holds bytes we may not be able to reproduce, and destroying them without a copy
+    // is not something this codebase does anywhere else.
+    const stamp = Date.now();
+    const backups: { file: string; bytes: Buffer }[] = [];
+    ctx.onProgress?.("backup");
+    for (const [obj, what] of [[LSM, "params"], [OBJ.COMOBJ_TABLE, "comobj"], [OBJ.ASSOC_TABLE, "assoc"], [OBJ.ADDR_TABLE, "addr"]] as [number, string][]) {
+      const at = await dev.tableAddr(obj);
+      if (at === 0) continue; // never loaded: there is nothing there to lose
+      const size = obj === LSM ? target.size : await tableByteLength(dev, obj, at);
+      if (size > 0) backups.push({ file: `${ctx.deviceId}-full-${stamp}-${what}.bin`, bytes: await dev.memRead(at, size) });
+    }
+
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes,
+      // Everything is written: a full download owns every byte of every segment, so there is no
+      // meaningful diff against what was there (and on a virgin device there was nothing).
+      diffBytes: imageBytes,
+      backup: `${ctx.deviceId}-full-${stamp}`,
+      backups,
+      write: async () => {
+        await runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) });
+      },
+      // The firmware accepts any bytes it is handed (it validates nothing on LoadCompleted), so
+      // this read-back is the ONLY thing standing between a wrong table and a device that silently
+      // mis-communicates. The three tables are small and are compared byte for byte. The parameter
+      // image is 21601 bytes, i.e. 1800 memory reads, so it is checked against the CRC the device
+      // itself computes over the loaded segment (PID_MCB_TABLE) instead: the very thing the
+      // device's own load procedure declares `LdCtrlLoadImageProp ObjIdx=4 PropId=27` for.
+      //
+      // If the device declines to report a CRC, that is NOT a pass: fall back to reading the whole
+      // segment. Slow, but the alternative would be calling a download verified because we could
+      // not check it.
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const wantCrc = crc16Ccitt(target.bytes);
+        const { ok } = await verifySettled(
+          async () => {
+            const gt = await readGroupTables(dev);
+            const mcb = await readSegmentCrc(dev, LSM);
+            const img = mcb ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
+            return { gt, mcb, img };
+          },
+          ({ gt, mcb, img }) => {
+            const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
+            const paramsOk = mcb
+              ? mcb.size === target.size && mcb.crc === wantCrc
+              : img !== null && verifyRelativeOwned(img, target);
+            return tablesOk && paramsOk;
+          },
+        );
+        return ok;
+      },
+    });
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -441,7 +575,7 @@ export class System7Profile extends DeviceProfile {
     // Parameters (absolute segments) and links (System-7 tables) are both read back. Parameter
     // and GA flash are hardware-proven on TP (M-0081); the RF/IP variants share the codec
     // but have not been exercised on that medium (see the device-support.md medium caveat).
-    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true };
+    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: false };
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -587,7 +721,7 @@ export class System7Profile extends DeviceProfile {
 // (This is what fixes MV-0012: it has an AbsoluteSegment and used to be misread as System 7.)
 export class UnsupportedProfile extends DeviceProfile {
   constructor(readonly memoryModel: MemoryModel, readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
-  capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false }; }
+  capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false }; }
   async readState(): Promise<DeviceReadback> { throw new UnsupportedOperation("read-back", this.family, this.mask); }
   async flashParameters(): Promise<FlashResult> { throw new UnsupportedOperation("parameter flash", this.family, this.mask); }
   async flashGroupTables(): Promise<FlashResult> { throw new UnsupportedOperation("group-address flash", this.family, this.mask); }
@@ -616,3 +750,13 @@ export function classifyByMask(mask: string): DeviceProfile {
   return profileFor(mask, null);
 }
 
+
+// How many bytes a loaded group table occupies on the device, from its own count header. Used to
+// back up an already-programmed device's tables before a full download destroys them.
+async function tableByteLength(dev: KnxDevice, obj: number, at: number): Promise<number> {
+  const head = await dev.memRead(at, 2);
+  const count = (head[0] << 8) | head[1];
+  if (count > 4096) return 0; // implausible: the table is not in the expected form, do not read it
+  const entryBytes = obj === OBJ.ASSOC_TABLE ? 4 : 2;
+  return 2 + count * entryBytes;
+}

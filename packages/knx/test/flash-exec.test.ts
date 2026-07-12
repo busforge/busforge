@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import type { KnxDevice } from "../src/device.ts";
-import { planSystemBGaFlash, planMv0705GaFlash, appId, compareDeclaredProp, STATE } from "../src/flash.ts";
+import { KnxDevice } from "../src/device.ts";
+import { planSystemBGaFlash, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, sparseRuns, STATE } from "../src/flash.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
@@ -359,5 +359,138 @@ describe("compareDeclaredProp (LdCtrlCompareProp)", () => {
     // can never equal the expectation.
     const r = await compareDeclaredProp(devAnswering("aabbcc"), 0, 78, Buffer.from("aabb", "hex"));
     expect(r.ok).toBe(false);
+  });
+});
+
+describe("segment CRC (how a 21601-byte image is verified with one property read)", () => {
+  // Transcribed from the firmware that produces it (thelsing/knx bits.cpp crc16Ccitt). These
+  // vectors are computed by an INDEPENDENT reimplementation of that C code, so a transcription
+  // slip in either direction shows up here rather than as a download that reports success while
+  // the device holds different bytes.
+  const reference = (data: Buffer): number => {
+    // literal transcription of the C, kept separate from the shipped implementation on purpose
+    let r = 0xffff;
+    for (let i = 0; i < 8 * (data.length + 2); i++) {
+      r = (r << 1) >>> 0;
+      r |= (i >> 3) < data.length ? (data[i >> 3] >> (7 - (i % 8))) & 1 : 0;
+      if (r & 0x10000) r ^= 0x1021;
+    }
+    return r & 0xffff;
+  };
+
+  test("matches an independent transcription of the firmware, on real-shaped data", () => {
+    for (const data of [
+      Buffer.alloc(0),
+      Buffer.from([0x00]),
+      Buffer.from("0001012c0e00", "hex"),                        // the first bytes of the real image
+      Buffer.alloc(21601),                                        // the whole segment, all zeros
+      Buffer.from(Array.from({ length: 512 }, (_, i) => (i * 37) & 0xff)),
+    ]) {
+      expect(crc16Ccitt(data)).toBe(reference(data));
+    }
+  });
+
+  test("a single flipped byte changes the CRC (it has teeth)", () => {
+    const a = Buffer.alloc(21601); a[12345] = 0x01;
+    const b = Buffer.alloc(21601);
+    expect(crc16Ccitt(a)).not.toBe(crc16Ccitt(b));
+  });
+});
+
+describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true asks for)", () => {
+  // A device that silently drops a memory write is the failure mode that cost us a device: the
+  // download ran on for a thousand more telegrams and the loss surfaced far from where it
+  // happened, by which point the device had given up on its own configuration. In verify mode the
+  // device answers every write with what actually landed, so a drop fails immediately, at the
+  // chunk, with its address (thelsing/knx BauSystemB::memoryWriteIndication).
+  const deviceWith = (opts: { control?: number; dropsAt?: number } = {}) => {
+    const mem = new Map<number, number>();
+    const propWrites: { obj: number; pid: number; data: Buffer }[] = [];
+    let control = opts.control ?? 0;
+    const dev = Object.create(KnxDevice.prototype);
+    dev.propRead = async (obj: number, pid: number) => (obj === 0 && pid === 14 ? Buffer.from([control]) : Buffer.alloc(1));
+    dev.propWrite = async (obj: number, pid: number, data: Buffer) => {
+      propWrites.push({ obj, pid, data: Buffer.from(data) });
+      if (obj === 0 && pid === 14) control = data[0];
+      return Buffer.alloc(0);
+    };
+    // The real request machine is what memWrite drives; stub it at the frame level so the echo is
+    // built from the device's ACTUAL memory, exactly as the firmware answers it.
+    dev.request = async (build: (seq: number) => Buffer, expectResponse: boolean) => {
+      const tpdu = build(0);
+      const addr = (tpdu[2] << 8) | tpdu[3];
+      const payload = tpdu.subarray(4);
+      for (let i = 0; i < payload.length; i++) if (addr + i !== opts.dropsAt) mem.set(addr + i, payload[i]);
+      if (!expectResponse) return null;
+      const back = Buffer.alloc(payload.length);
+      for (let i = 0; i < payload.length; i++) back[i] = mem.get(addr + i) ?? 0xff;
+      return { control: false, seq: 0, apci: 0x240, data: Buffer.concat([Buffer.from([tpdu[2], tpdu[3]]), back]) };
+    };
+    dev.memRead = async (a: number, len: number) => {
+      const b = Buffer.alloc(len);
+      for (let i = 0; i < len; i++) b[i] = mem.get(a + i) ?? 0xff;
+      return b;
+    };
+    return { dev: dev as KnxDevice, mem, propWrites, control: () => control };
+  };
+
+  test("setVerifyMode keeps the other bits of PID_DEVICE_CONTROL (programming mode lives in that byte)", async () => {
+    const d = deviceWith({ control: 0x01 }); // the device is in programming mode
+    await d.dev.setVerifyMode(true);
+    expect(d.control()).toBe(0x05); // verify mode added, programming mode untouched
+    await d.dev.setVerifyMode(false);
+    expect(d.control()).toBe(0x01); // and removed again, still not touching programming mode
+  });
+
+  test("an echoed write that the device did not store fails AT that chunk, naming the address", async () => {
+    const d = deviceWith({ dropsAt: 0x1004 }); // the device silently ignores this one byte
+    const err = await d.dev.memWrite(0x1000, Buffer.alloc(24, 0xa5), { chunk: 4, echo: true, verify: false })
+      .then(() => null, (e) => e);
+    expect(err).toBeInstanceOf(KnxError);
+    expect((err as KnxError).code).toBe("FLASH_VERIFY_MISMATCH");
+    expect((err as Error).message).toContain("1004"); // the exact chunk, not "something went wrong"
+    // and it stopped there rather than writing on into the dark
+    expect(d.mem.has(0x1008)).toBe(false);
+  });
+
+  test("an echoed write the device stores is accepted with no second pass over the segment", async () => {
+    const d = deviceWith();
+    await d.dev.memWrite(0x1000, Buffer.alloc(24, 0xa5), { chunk: 4, echo: true, verify: false });
+    expect(await d.dev.memRead(0x1000, 24)).toEqual(Buffer.alloc(24, 0xa5));
+  });
+});
+
+describe("sparse writes (only the bytes that carry information)", () => {
+  // A full download allocates the parameter segment with fill, so the device zeroes it for us. The
+  // only bytes that need to cross the bus are the ones that are not zero. On the real OpenKNX
+  // RaumController that is 51 bytes out of 21601: 22 telegrams instead of 1801. Sending the other
+  // 21550 zeros is not merely wasteful, it is what killed the device: it commits its flash while we
+  // keep writing at it, and its watchdog resets it mid-commit.
+  test("finds the runs and skips the zeros", () => {
+    const b = Buffer.alloc(100);
+    b[3] = 0xaa; b[4] = 0xbb;      // a run at 3..4
+    b[60] = 0x01;                   // and one at 60
+    const runs = sparseRuns(b);
+    expect(runs.map((r) => [r.offset, r.bytes.toString("hex")])).toEqual([[3, "aabb"], [60, "01"]]);
+  });
+
+  test("bridges a gap shorter than one telegram rather than paying for another round trip", () => {
+    const b = Buffer.alloc(40);
+    b[0] = 1; b[5] = 1;   // 4 zero bytes between them: cheaper to send them than to send a second telegram
+    b[30] = 1;            // 24 zeros away: worth its own telegram
+    expect(sparseRuns(b, 12).map((r) => r.offset)).toEqual([0, 30]);
+    expect(sparseRuns(b, 12)[0].bytes.length).toBe(6); // the gap rode along
+  });
+
+  test("an all-zero segment needs no writes at all (the fill already did it)", () => {
+    expect(sparseRuns(Buffer.alloc(4096))).toEqual([]);
+  });
+
+  test("the runs reassemble into the original segment over a zeroed buffer", () => {
+    const original = Buffer.alloc(1000);
+    for (const i of [0, 1, 2, 500, 501, 999]) original[i] = (i % 251) + 1;
+    const rebuilt = Buffer.alloc(1000); // what the device holds after alloc(fill)
+    for (const r of sparseRuns(original)) r.bytes.copy(rebuilt, r.offset);
+    expect(rebuilt).toEqual(original); // nothing was lost by not sending the zeros
   });
 });

@@ -174,3 +174,101 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
 
   return { previous, assigned: ia, verified: true, progModeCleared, progModeError };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Addressing a device by its SERIAL NUMBER.
+//
+// The programming-mode dance above has two costs: somebody must physically press a button, and
+// every device in programming mode takes the address. Addressing by serial number has neither. It
+// is still a broadcast, but it names exactly one device, so no bystander can take the address by
+// accident and nobody has to be at the bench.
+//
+// It is also the only thing that works in the situation it was invented for: SEVERAL unconfigured
+// devices on one line. They all sit on the factory address 15.15.255, so a point-to-point read
+// gets whichever answers first, and nothing else can tell them apart. Their serial numbers can.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SERIAL_LEN = 6;
+
+function serialBytes(serial: string): Buffer {
+  const b = Buffer.from(serial.replace(/[^0-9a-f]/gi, ""), "hex");
+  if (b.length !== SERIAL_LEN) {
+    throw new KnxError("SERIAL_INVALID", `"${serial}" is not a 6-byte KNX serial number (e.g. 00FA00000032)`);
+  }
+  return b;
+}
+
+// Ask, by broadcast, which address the device with this serial number currently holds. Only that
+// device answers (the firmware compares the serial against its own PID_SERIAL_NUMBER), so an empty
+// result means it is not on this line, not that something went wrong.
+export async function readAddressBySerial(tun: KnxTransport, serial: string, probeMs = 3000): Promise<string | null> {
+  const want = serialBytes(serial);
+  let found: number | null = null;
+  const prev = tun.onCemi;
+  tun.onCemi = (src, _dst, tpdu, isGroup) => {
+    if (!isGroup) return;
+    const p = parseApdu(tpdu);
+    // The response repeats the serial number; the device's address is the frame's SOURCE.
+    if (p.apci === APCI.IA_SERIAL_RESPONSE && p.data.subarray(0, SERIAL_LEN).equals(want)) found = src;
+  };
+  try {
+    await tun.sendCemi(cemiLDataGroup(tun.assignedIa, BROADCAST, apduUnnumbered(APCI.IA_SERIAL_READ, want)));
+    await sleep(probeMs);
+  } finally {
+    tun.onCemi = prev;
+  }
+  return found === null ? null : numToIa(found);
+}
+
+// A_IndividualAddress_SerialNumber_Write: serial (6) + the new address (2) + 4 reserved zero bytes.
+export async function writeAddressBySerial(tun: KnxTransport, serial: string, ia: string): Promise<void> {
+  const n = iaToNum(ia);
+  const tail = Buffer.concat([serialBytes(serial), Buffer.from([(n >> 8) & 0xff, n & 0xff]), Buffer.alloc(4)]);
+  await tun.sendCemi(cemiLDataGroup(tun.assignedIa, BROADCAST, apduUnnumbered(APCI.IA_SERIAL_WRITE, tail)));
+}
+
+// Give the device with this serial number the address `ia`, and prove it.
+//
+// The safety rails are the same ones the programming-mode path needs, minus the ones it only needs
+// because it cannot tell devices apart:
+//   1. The device must actually be on this line (it answers a serial-number read).
+//   2. The target address must not already answer from a DIFFERENT device.
+//   3. Afterwards the device must report the new address FOR THAT SERIAL. Identity, not presence:
+//      "something answers at the target" would also be true if the write never landed and an
+//      unrelated device happened to sit there.
+export async function assignAddressBySerial(tun: KnxTransport, serial: string, ia: string, opts: AssignIaOptions = {}): Promise<AssignIaResult> {
+  const { probeMs = 3000, settleMs = 1000, onProgress } = opts;
+
+  onProgress?.("probe");
+  const previous = await readAddressBySerial(tun, serial, probeMs);
+  if (previous === null) {
+    throw new KnxError("SERIAL_NOT_FOUND",
+      `no device with the serial number ${serial} answers on this line; check the serial, and that the device is powered and connected`);
+  }
+
+  if (previous !== ia) {
+    onProgress?.("check-free");
+    if (await addressAnswers(tun, ia)) {
+      throw new KnxError("IA_ALREADY_IN_USE",
+        `another device already answers on ${ia}; assigning it would put two devices with the same address on the bus. Refusing.`);
+    }
+  }
+
+  onProgress?.("write");
+  await writeAddressBySerial(tun, serial, ia);
+  await sleep(settleMs);
+
+  onProgress?.("verify");
+  const now = await readAddressBySerial(tun, serial, probeMs);
+  if (now !== ia) {
+    throw new KnxError("IA_WRITE_UNVERIFIED",
+      `${ia} was written but the device with serial ${serial} reports ${now ?? "nothing"}; it may still hold ${previous}. Read the bus before continuing.`);
+  }
+  if (!(await addressAnswers(tun, ia))) {
+    throw new KnxError("IA_WRITE_UNVERIFIED",
+      `${ia} was written and the device reports it, but it does not answer management there. Read the bus before continuing.`);
+  }
+
+  // Serial-number addressing never touches programming mode, so there is none to switch off.
+  return { previous, assigned: ia, verified: true, progModeCleared: true, progModeError: null };
+}
