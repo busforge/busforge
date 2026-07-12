@@ -97,16 +97,21 @@ button was pressed), and the broadcast write reached only that one. It also mean
 reads at `15.15.255` were answering from *both* devices and could not be trusted, which is worth
 remembering when a bench bus has several virgin devices on it.
 
-## What is still missing for full commissioning
+## The full download: the rest of commissioning
 
-Address assignment alone does not commission a device. Two gaps remain, both general (not specific
-to any manufacturer):
+Address assignment alone does not commission a device. The rest, application id + parameter image +
+com-object table + group tables, is the **full download** (System B, `POST .../download`), which
+authors the com-object table (L3) that the surgical parameter flash keeps from the device. That is
+implemented and byte-verified on real hardware; the mechanics, and the several device quirks that
+had to be learned to make it survive, are documented in [openknx.md](openknx.md).
 
-- **Com-object table (L3) authoring.** Busforge keeps the device's com-object table and refuses any
-  change that would invalidate it (see [device-support.md](device-support.md)). A virgin device has
-  no L3 at all, so it cannot be built up from nothing yet.
-- **The full download.** Only the parameter (`par`) download is implemented; the application code
-  itself (LSM5) is not written.
+One caveat is carried honestly there and repeated here: the download is proven **at the KNX layer**
+(all load-state machines LOADED, all tables read back byte-identical, the device's own segment CRC
+matching, surviving a reboot), but a device's *application* actually starting after a Busforge-only
+download is **not yet demonstrated**. Until it is, treat first-time commissioning as "the stack is
+programmed correctly", not "the device is running".
 
-Until both land, a device still needs ETS **once**, for its first download. After that Busforge can
-read it, verify it, and program its parameters and group addresses.
+The application **code** (LSM5) is deliberately not part of this: OpenKNX firmware is flashed over
+USB as a `.uf2`, and the device's own load procedure only touches the parameter segment. For a
+manufacturer device that ships its application in the product database, LSM5 would be a separate
+effort.

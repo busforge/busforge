@@ -135,9 +135,16 @@ classification refuses it honestly. The full ~40-mask matrix and per-mask suppor
 | Module / channel placement | (offset modifier) | ✅ | ✅ per-instance offsets resolved (from the project, or by re-running the app's allocators) | ✅ hardware-verified on both memory models (Theben 493B, Steinel M-0083) |
 | Property / interface-object | System B / IP | 🔶 standard params only | ⛔ not a memory image | ⛔ property-write download not implemented |
 
+**First-time commissioning without ETS** works on System B: individual-address assignment (by
+programming mode or by serial number), and a full download that authors the com-object table (L3)
+alongside the parameter image and group tables. Byte-verified on real hardware against the OpenKNX
+AB-PRE; the device's *application* starting after a Busforge-only download is not yet demonstrated,
+so treat it as "the KNX stack is programmed correctly" for now. See
+[`docs/commissioning.md`](docs/commissioning.md) and [`docs/openknx.md`](docs/openknx.md).
+
 **Not covered yet (gaps beyond the four layouts):** true property-based loading,
-legacy System 1 / BCU1 (MV-001x), full first-time commissioning (com-object flag
-table LSM3 authoring + application code LSM5), KNX Secure, and non-TP media (RF/PL).
+legacy System 1 / BCU1 (MV-001x), MV-0705 L3 authoring / full download, application code (LSM5),
+KNX Secure, and non-TP media (RF/PL).
 None require per-device code; each is a generic, mask-version-keyed capability still to
 add. See [`docs/device-memory-model.md`](docs/device-memory-model.md).
 
@@ -288,7 +295,6 @@ The full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeist
 2. KNX Data Secure: full secure param-flash (write primitive done; needs a non-gateway
    secure device to verify) and FDSK provisioning ([design + gap](docs/knx-secure-design.md)).
 3. Config display completeness (DPT-9 float / text / binary value editors).
-4. First-time commissioning: individual-address assignment, com-object table (L3) authoring, and
-   the full (not parameters-only) download. Until L3 can be authored, any change that would alter
-   a device's com-object set or flags is refused rather than half-written
-   ([device-support.md](docs/device-support.md)).
+4. Prove the device's application *runs* after a Busforge-only full download (the KNX stack is
+   programmed and byte-verified; the application not yet starting is the one open item, see
+   [openknx.md](docs/openknx.md)). Then: MV-0705 L3 authoring, and DCA plugin configuration.

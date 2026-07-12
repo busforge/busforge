@@ -161,8 +161,8 @@ the device.
 | Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
 | **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps. The MV-0701 device (1.1.x, M-0048 A-140C) is built correctly by the generic absolute path (structure-detected, not mask-gated): its only owned diff is the internal download-recognition marker P-2228 ("Wert $AA, Downloaderkennung", Access="None", default 0xAA; the device reads 0), and its second segment (AS-4C00) is unused erased EEPROM (0xFF) that the surgical flash leaves untouched. The other 3 are single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
 | **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081, M-0008, M-0048, M-008E and M-0083 (1.1.56, module param): each a real param change applied + restored, byte-checked; surgical `par` download, see [load-procedures.md](load-procedures.md). M-008E self-stamps `AS-4B00[0:2]` on download (our build over-claims those 2 bytes). |
-| Com-object flags table (LSM3) authoring | **no** (flags-byte encoding unvalidated; kept from device) | |
-| Full merged "par" procedures (LSM4+5) | **no** (minimal LSM4-only subset used) | |
+| Com-object flags table (LSM3) authoring | **System B: yes** (full download authors it, byte-verified vs the OpenKNX AB-PRE); the surgical par flash still keeps L3 from the device by design. MV-0705: still kept from device. | See [comobjbuild.ts](../packages/product/src/comobjbuild.ts), [openknx.md](openknx.md) |
+| First-time full download (app id + params + L3 + group tables) | **System B: yes** (`downloadFull`), verified at the KNX layer on real hardware; device application-start not yet proven. MV-0705: not implemented. | [openknx.md](openknx.md) |
 | **KNX Data Secure** devices | **read + write** over the secure channel (tool key from the project; AES-128-CCM); full secure param-flash pending suitable hardware | 2 MDT IP interfaces; see [knx-secure-design.md](knx-secure-design.md) |
 
 The flash path's safety rails (mask check, segment backup, dry-run, post-flash
@@ -219,7 +219,7 @@ are mask-version-keyed, generic capabilities still to add):
 | --- | --- | --- |
 | **True property-based loading** | Some IP / System-B devices load parameters via interface-object property writes, not a memory image. Needs a generic `A_PropertyValue_Write` download path. This was the original "property-based" premise; MV-0705 turned out *not* to be it, but real property-loaders exist (IP interfaces/routers, cEMI servers). | not implemented |
 | **Legacy System 1 / BCU1** | MV-001x devices, hardcoded `DefaultProcedure`, different memory map. One MV-0012 device is in the corpus. | config shown; flash procedure not implemented |
-| **Full first-time commissioning** | A complete download also writes the com-object flag table (LSM3) and application code (LSM5). Busforge writes LSM4 (params) + LSM1/2 (group tables) and keeps LSM3 from the device. | out of scope by design; LSM3 authoring + LSM5 not done |
+| **Full first-time commissioning** | Application id + parameter image (LSM4) + com-object table (LSM3) + group tables (LSM1/2). | **System B: done** (`downloadFull`), L3 authored, byte-verified on hardware; app-start not yet proven. MV-0705: not done. LSM5 (application code) not written and, for OpenKNX, not needed (firmware is a USB `.uf2`). See [openknx.md](openknx.md). |
 | **KNX Secure** | Data Secure + IP Secure devices read as descriptor MV-FFFF, no plain access. | not supported |
 | **Non-TP media (RF, PL)** | Different addressing and services than the TP-over-IP path used today. | out of scope |
 
@@ -230,7 +230,9 @@ per-device programming recipe.
 
 ## Com-object table (L3) format, reverse-engineered (MV-0705)
 
-Toward authoring the com-object table (the documented gap: today L3 is kept from the device).
+Toward authoring the com-object table on MV-0705. (System B L3 authoring is done and byte-verified,
+see [comobjbuild.ts](../packages/product/src/comobjbuild.ts); on MV-0705 L3 is still kept from the
+device, and this section is the reverse-engineering toward changing that.)
 Read-only investigation across **all five MV-0705 families on the house bus** (M-0008,
 M-0048, M-0081, M-008E, M-0083, 24 devices) established the model:
 

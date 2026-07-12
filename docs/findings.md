@@ -158,9 +158,16 @@ management works at all on a busy live bus:
    source to the assigned tunnel address before sending.
 3. **`A_Memory_Read` address is big-endian.** Sending it little-endian makes the
    device read the wrong location (it echoed `A=0010` for a request to `0x1000`).
-4. **Ack-only writes do not need verify mode.** Toggling the device verify-mode
-   property (object 0, PID 14) around a plain `A_Memory_Write` is fragile on a busy
-   bus and unnecessary when you verify yourself with a read-back.
+4. **Verify mode: unnecessary for a small surgical write, essential for a big one.**
+   For the surgical par flash (a handful of chunks) it is cleaner to write ack-only
+   and read the owned bytes back yourself. But a full download writes a 21601-byte
+   segment, where a full read-back is ~1800 extra telegrams; there, verify mode
+   (object 0, PID 14, bit 2) earns its keep: the device echoes every write with
+   what actually landed, so a dropped write fails AT the chunk instead of surfacing
+   a thousand telegrams later, and the whole segment is then confirmed with one
+   `PID_MCB_TABLE` CRC read rather than reading it all back. The application's own
+   load procedure declares `LdCtrlWriteRelMem Verify="true"`, i.e. it asks for this.
+   See [openknx.md](openknx.md).
 5. **Authorize.** Devices with an access level set need `A_Authorize_Request` (key
    `0xFFFFFFFF` for default/free access) before the load procedure. Devices with no
    key configured accept unauthenticated management.
