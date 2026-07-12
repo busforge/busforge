@@ -71,23 +71,31 @@ curl -s -XPOST $P/devices/<device-id>/assign-ia
 `progModeError` says why not. If it is `false`, the address is still assigned and verified, but the
 device will answer the next assignment too, so switch it off by hand.
 
-## Status
+## Status: HARDWARE-VERIFIED (2026-07-12)
 
-**Implemented and covered by offline tests against a simulated bus (including the dangerous cases:
-two devices in programming mode, an address already in use, a device that ignores the write). NOT
-YET VERIFIED ON REAL HARDWARE.** Until it has been run against a real device on a bench, treat it
-as untested: the honest bar in [verification.md](verification.md) applies.
+Verified on a real bus against a **virgin OpenKNX AB-SmartHouse presence multisensor** (never
+programmed, factory address 15.15.255), over a Weinzierl/ABB `147B:5120` USB interface, on an
+isolated bench bus:
 
-To verify it on a device:
+| Step | Result |
+| --- | --- |
+| Programming-mode probe, button not pressed | `[]` |
+| Programming-mode probe, button pressed | exactly one device, `15.15.255` |
+| Assign `1.1.200` | `verified: true`, `progModeCleared: true` |
+| Assign `1.1.x` (a second, consecutive assignment) | `verified: true`, `progModeCleared: true` |
+| Assign with no device in programming mode | refused `PROG_MODE_NO_DEVICE`, nothing written |
 
-1. Put the device on a bench bus (never a production actuator: a half-assigned device is a device
-   you then have to find again).
-2. `GET /api/projects/:id/prog-mode` with **no** button pressed. Expect `[]`.
-3. Press the programming button. Probe again. Expect exactly that one device, at its current
-   address.
-4. `POST /api/projects/:id/devices/:deviceId/assign-ia`. Expect `verified: true`.
-5. Probe once more. Expect `[]` (programming mode was switched off).
-6. Read the device back (`POST .../read-back`) at its new address. It must answer.
+**Cross-checked independently of Busforge's own success message**, which is the part that matters:
+after the assignment the device is *silent* on its old address and answers on the new one with the
+KNX serial number `00FA00000032` (manufacturer `0x00FA` = OpenKNX), i.e. it is provably the device
+we programmed and not something else that happened to be there.
+
+The bench bus turned out to hold **a second unconfigured device, also at 15.15.255** (manufacturer
+`0x0085`). That is a duplicate address straight from the factory, and it is the exact hazard named
+above. The safety rails held: the programming-mode probe still found exactly one device (only one
+button was pressed), and the broadcast write reached only that one. It also means point-to-point
+reads at `15.15.255` were answering from *both* devices and could not be trusted, which is worth
+remembering when a bench bus has several virgin devices on it.
 
 ## What is still missing for full commissioning
 
