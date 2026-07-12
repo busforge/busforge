@@ -3,7 +3,7 @@ import { getProjectConnection } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot } from "../db/snapshots.ts";
-import { getDeviceParams, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
@@ -58,7 +58,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return readDeviceState({
           ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
-          liveParams: getDeviceParams(db, id, deviceId), moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
+          liveParams: getDeviceParams(db, id, deviceId), baseParams: getDeviceParamBase(db, id, deviceId),
+          moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
         });
       },
     );
@@ -117,6 +118,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
+    // The links carry the LIVE configuration's com-object numbers, so the profile checks them
+    // against the com-object table the device was last programmed with (same gate as the
+    // parameter flash). Read at the same pre-enqueue point, for the same TOCTOU reason.
+    const gaParams = getDeviceParams(db, id, deviceId);
+    const gaBase = getDeviceParamBase(db, id, deviceId);
+    const gaModules = getDeviceModules(db, id, deviceId);
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
     const result = await state.queue.enqueue(
@@ -125,6 +132,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         if (bus.activeProjectId) await bus.disconnect();
         return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
+          params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
           connection: conn, secure: secureCredsFor(state, id, deviceId), dataDir: state.dataDir,
           dryRun: dryGa, onProgress: progress,
         });
@@ -154,6 +162,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // path resolves flashedRefIds pre-enqueue for exactly this reason).
     const flashParams = getDeviceParams(db, id, deviceId);
     const flashModules = getDeviceModules(db, id, deviceId);
+    // The configuration the device was last programmed with, hence the one its com-object
+    // table was compiled for: the profile refuses the flash if ours implies a different table
+    // (see @busforge/product comobjtable.ts). Read from the same pre-enqueue snapshot point.
+    const flashBase = getDeviceParamBase(db, id, deviceId);
     const keepDrift = unwrittenParamRefs(state, id, deviceId, flashParams, flashModules);
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
@@ -165,7 +177,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return flashDeviceParameters({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
-          params: flashParams, moduleInstances: flashModules, dataDir: state.dataDir,
+          params: flashParams, baseParams: flashBase, moduleInstances: flashModules, dataDir: state.dataDir,
           dryRun: dryParams, onProgress: progress,
         });
       },

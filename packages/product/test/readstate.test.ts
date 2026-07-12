@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { KnxDevice } from "@busforge/knx";
 import {
-  parseAppConfig, classify, toAppModel,
+  parseAppConfig, classify, toAppModel, buildDeviceConfig,
   buildAbsoluteSegmentTargets, decodeAbsoluteImage,
-  buildParameterImage, decodeParameterImage,
+  buildParameterImage, buildRelativeSegmentTarget, decodeParameterImage,
 } from "@busforge/product";
 
 // Direct coverage of DeviceProfile.readState, the seam where a device read becomes the
@@ -162,5 +162,140 @@ describe("System B (MV-07B0) readState: parameter drift projection", () => {
     const changed = [...dVals].filter(([ref, v]) => pVals.get(ref) !== v);
     expect(changed.length).toBeGreaterThan(0);
     for (const [ref, v] of changed) expect(rb.paramBase.get(ref)).toBe(v);
+  });
+});
+
+describe("read-back does not launder an unobservable parameter into the programmed baseline", () => {
+  // The Theben 493B's channel-active parameter (P-57) has NO memory offset: it lives only in
+  // the project, and the device cannot be asked about it. If an unflashed edit to it were
+  // adopted into the "programmed" baseline just because the device cannot contradict it, the
+  // UI would report the change as programmed and the com-object staleness gate (which trusts
+  // the baseline) would be defeated. The read must leave such a ref's baseline alone.
+  const cfg = app("M-0048_A-493B-21-B471.xml.gz");
+  const profile = classify(cfg);
+  const CHANNEL_ACTIVE = "M-0048_A-493B-21-B471_P-57_R-57";
+  const PARAM_BASE = 0x4000;
+
+  test("ground truth: the parameter is not in the memory image", () => {
+    expect(cfg.params.get(cfg.refs.get(CHANNEL_ACTIVE)!.paramId)!.offset).toBeUndefined();
+  });
+
+  test("a baseline entry the device demonstrably does NOT hold is dropped, not kept", async () => {
+    // The mirror case: the baseline claims a value, the user reverted it (so it is absent from
+    // the live params), and the device is read and proves it holds the application default. The
+    // baseline entry must go, or the UI shows a permanent phantom "changed" chip and the
+    // com-object gate compares against a configuration the device does not have. The baseline is
+    // sparse, so "absent" IS the statement "the device holds the default".
+    const cfg2 = app("M-0162_A-0004-11-F245.xml.gz"); // no modules, no unions: a clean baseline case
+    const prof2 = classify(cfg2);
+    const ref = "M-0162_A-0004-11-F245_P-30_R-30";
+    const onDevice = buildRelativeSegmentTarget(cfg2, new Map(), APP_PROGRAM)!; // the DEFAULT image
+    const BASE = 0x4000;
+    const G = BASE + onDevice.size + 0x1000;
+    const dev = new MockReadDevice({ [APP_PROGRAM]: BASE, 1: G + 0x10, 2: G + 0x20, 3: G + 0x30 });
+    seedBytes(dev, BASE, onDevice.bytes);
+    for (const obj of [1, 2, 3]) { dev.mem.set(G + 0x10 * obj, 0); dev.mem.set(G + 0x10 * obj + 1, 0); }
+
+    const rb = await prof2.readState(asDev(dev), cfg2.mask, {
+      liveParams: new Map(),                 // user reverted the edit
+      baseParams: new Map([[ref, "1"]]),     // baseline still claims it was programmed
+      moduleInstances: [], relevantRefs: new Set([ref]),
+    });
+    expect(rb.paramsRead).toBe(true);
+    expect(rb.paramBase.has(ref)).toBe(false); // the device proved the default: the claim is gone
+  });
+
+  test("an unflashed edit to it stays drift after a read-back", async () => {
+    const live = new Map([[CHANNEL_ACTIVE, "1"]]); // user enabled a channel, never flashed
+    const base = new Map<string, string>();        // device was programmed with the default
+    const onDevice = buildRelativeSegmentTarget(cfg, base, APP_PROGRAM, { moduleInstances: [] })!;
+    const GT = PARAM_BASE + onDevice.size + 0x1000;
+    const dev = new MockReadDevice({ [APP_PROGRAM]: PARAM_BASE, 1: GT + 0x10, 2: GT + 0x20, 3: GT + 0x30 });
+    seedBytes(dev, PARAM_BASE, onDevice.bytes);
+    for (const obj of [1, 2, 3]) { dev.mem.set(GT + 0x10 * (obj === 1 ? 1 : obj === 2 ? 2 : 3), 0); }
+
+    const rb = await profile.readState(asDev(dev), cfg.mask, { liveParams: live, baseParams: base, moduleInstances: [] });
+    expect(rb.paramsRead).toBe(true);
+    // NOT adopted: the baseline still says "default", so the UI keeps showing the change as
+    // unprogrammed and the flash gate still sees a com-object table change.
+    expect(rb.paramBase.get(CHANNEL_ACTIVE)).toBeUndefined();
+  });
+});
+
+describe("System B readState covers TOP-LEVEL UNION parameters", () => {
+  // The DALI gateway places 178 top-level union parameters,
+  // 16 of which the config view exposes for editing and the surgical flash target OWNS (it
+  // writes those bytes). Read-back must therefore see them: a model that drops union params
+  // decodes nothing at those offsets, so the device could hold anything and read-back would
+  // still report "no drift" on bytes we actively flash. That is the exact fake-green this
+  // suite exists to prevent, so the union byte is drifted here on a REAL application.
+  const cfg = app("M-0048_A-9071-20-F258-O00EF.xml.gz");
+  const liveParams = new Map<string, string>();
+  const profile = classify(cfg);
+  const model = toAppModel(cfg, { includeUnions: true, instances: [] });
+  const target = buildRelativeSegmentTarget(cfg, liveParams, APP_PROGRAM)!;
+  const view = buildDeviceConfig(cfg, liveParams, undefined, []);
+  const uiRefs = new Set<string>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") uiRefs.add(it.param.refId);
+
+  const PARAM_BASE = 0x4000;
+  const GT = PARAM_BASE + target.size + 0x1000;
+  const tableAddrs: Record<number, number> = { [APP_PROGRAM]: PARAM_BASE, 1: GT + 0x10, 2: GT + 0x20, 3: GT + 0x30 };
+
+  // A byte that ONLY a union parameter covers: the union-free model decodes no ref from it,
+  // so drifting it is invisible unless read-back models unions. It is owned + verifiable, i.e.
+  // a byte the flash writes and checks.
+  const unionOnlyByte = (() => {
+    const bytesOf = (m: ReturnType<typeof toAppModel>) => {
+      const cover = new Set<number>();
+      for (const r of m.refs.values()) {
+        const p = m.params.get(r.paramId);
+        const t = p && m.types.get(p.typeId);
+        if (!p || p.offset === undefined || !t || !Number.isFinite(t.sizeInBit) || t.sizeInBit === 0) continue;
+        for (let i = 0; i < Math.ceil(t.sizeInBit / 8); i++) cover.add(p.offset + i);
+      }
+      return cover;
+    };
+    const plain = bytesOf(toAppModel(cfg, { instances: [] })); // the model read-back used to use
+    for (let i = 0; i < target.size; i++) if (target.owned[i] && target.verify[i] && !plain.has(i)) {
+      const flipped = Buffer.from(target.bytes); flipped[i] ^= 0xff;
+      const d = decodeParameterImage(model, APP_PROGRAM, flipped);
+      const p = decodeParameterImage(model, APP_PROGRAM, target.bytes);
+      const moved = [...d].filter(([ref, v]) => p.get(ref) !== v).map(([ref]) => ref);
+      if (moved.some((ref) => uiRefs.has(ref))) return i;
+    }
+    return -1;
+  })();
+
+  const seed = () => {
+    const dev = new MockReadDevice(tableAddrs);
+    seedBytes(dev, PARAM_BASE, target.bytes);
+    for (const obj of [1, 2, 3]) { dev.mem.set(tableAddrs[obj], 0); dev.mem.set(tableAddrs[obj] + 1, 0); }
+    dev.mem.set(PARAM_BASE + unionOnlyByte, target.bytes[unionOnlyByte] ^ 0xff);
+    return dev;
+  };
+
+  test("fixture ground truth: a real System B device flashes bytes only union params explain", () => {
+    expect(cfg.mask).toBe("MV-07B0");
+    expect(unionOnlyByte).toBeGreaterThanOrEqual(0);
+  });
+
+  test("drift in a union-only byte is reported (not silently invisible)", async () => {
+    const drifted = seed();
+    const rb = await profile.readState(asDev(drifted), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: uiRefs });
+    // Decode the expectation independently of the profile, from the seeded bytes.
+    const dVals = decodeParameterImage(model, APP_PROGRAM, await drifted.memRead(PARAM_BASE, target.size));
+    const pVals = decodeParameterImage(model, APP_PROGRAM, target.bytes);
+    const changed = [...dVals].filter(([ref, v]) => pVals.get(ref) !== v && uiRefs.has(ref));
+    expect(changed.length).toBeGreaterThan(0);
+    for (const [ref, v] of changed) expect(rb.paramBase.get(ref)).toBe(v);
+  });
+
+  test("a device holding the flashed image reports ZERO drift", async () => {
+    const clean = new MockReadDevice(tableAddrs);
+    seedBytes(clean, PARAM_BASE, target.bytes);
+    for (const obj of [1, 2, 3]) { clean.mem.set(tableAddrs[obj], 0); clean.mem.set(tableAddrs[obj] + 1, 0); }
+    const rb = await profile.readState(asDev(clean), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: uiRefs });
+    expect(rb.paramBase).toEqual(liveParams);
   });
 });

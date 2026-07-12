@@ -101,18 +101,33 @@ back before trusting it. (This is the same convention parameter flash already us
 
 ## Known gaps to close next
 
-- **Com-object table (L3) authoring is NOT supported.** Group-address flashing rebuilds only the
-  address table (L1) and association table (L2) from your links; the com-object table (L3) — *which*
-  com-objects exist and their flags (communication/read/write/transmit/update), priority and size —
-  is read from the device and written back **unchanged**. Consequences:
+- **Com-object table (L3) authoring is NOT supported, and a flash that would need it is now
+  REFUSED.** Group-address flashing rebuilds only the address table (L1) and association table (L2)
+  from your links; the com-object table (L3), i.e. *which* com-objects exist and their flags
+  (communication/read/write/transmit/update), priority and size, is read from the device and
+  written back **unchanged**. Consequences:
   - Initial from-scratch commissioning of a device still needs ETS once (we cannot author L3).
   - A parameter change that, in ETS, would change a com-object's flags or the *set* of active
-    com-objects (e.g. enabling a channel that adds/removes objects) is **not** reflected on the
-    device: it keeps its existing L3. The links (L1/L2) are updated, the object flags are not.
-  - **Honesty risk:** if this is not detected, such a flash reports success while the device's
-    com-object flags silently diverge from the project. The fix is to detect when the active config
-    implies an L3 different from the device's and surface/refuse it (see the review that follows),
-    or to implement L3 authoring. Until then this is a documented unsupported gap.
+    com-objects (e.g. enabling a channel that adds/removes objects) cannot be programmed. **Both**
+    the parameter flash and the group-address flash **refuse** it with `COM_OBJECT_TABLE_STALE`
+    and name the objects that would have gone stale. The GA flash is gated for a second reason:
+    its association table numbers com-objects from the live configuration, so an association onto
+    an object the device's table does not configure would be a link to nothing, and the verify
+    (which only re-reads the tables we wrote) would still report success. That silent divergence
+    was the most expensive failure this tool could have; it is now closed by refusal on both
+    write paths. See [`comobjtable.ts`](../packages/product/src/comobjtable.ts).
+  - The gate compares the com-object table implied by the **programmed baseline**
+    (`device_param_base`, i.e. the configuration the device was last programmed with, hence the
+    one its L3 was compiled for) against the one implied by the configuration being flashed. It
+    deliberately does NOT compare against the device's own parameter image: the parameters that
+    decide a channel's existence frequently have no memory offset at all (the Theben 493B's
+    channel-active parameter is one), so they are unobservable on the bus and a device-image
+    detector would be blind to exactly the change that matters.
+  - The read-back keeps the baseline honest from the other side: it re-baselines only refs the
+    device's image actually encodes, so an unflashed edit to an unobservable parameter cannot
+    launder itself into the "programmed" baseline.
+  - Lifting the refusal means implementing L3 authoring (the format and build model are
+    reverse-engineered for MV-0705, see [device-memory-model.md](device-memory-model.md)).
 - **System 1 / System 2 (BCU1/BCU2)** appear in real projects (e.g. an `MV-0012` device in the
   house project). They are recognised and refused; implementing them means the classic
   fixed-EEPROM address/association/com-object/parameter model, which is a separate effort.

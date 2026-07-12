@@ -132,7 +132,7 @@ classification refuses it honestly. The full ~40-mask matrix and per-mask suppor
 |---|---|---|---|---|
 | Relative segment (LSM4, allocator) | MV-07B0 | ✅ | ✅ | ✅ verified on the bus (1 device) |
 | Absolute segment (fixed EEPROM) | MV-0705, MV-0701 | ✅ | ✅ owned-byte match (corpus 28/32) | ✅ verified on the bus (M-0081, MV-0705); MV-0701 offline-matched, not yet bus-verified. Driven by the device's declared load procedure |
-| Module / channel placement | (offset modifier) | ✅ | ⛔ per-instance offsets unresolved | ⛔ flash refused to protect the config |
+| Module / channel placement | (offset modifier) | ✅ | ✅ per-instance offsets resolved (from the project, or by re-running the app's allocators) | ✅ hardware-verified on both memory models (Theben 493B, Steinel M-0083) |
 | Property / interface-object | System B / IP | 🔶 standard params only | ⛔ not a memory image | ⛔ property-write download not implemented |
 
 **Not covered yet (gaps beyond the four layouts):** true property-based loading,
@@ -288,4 +288,7 @@ The full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeist
 2. KNX Data Secure: full secure param-flash (write primitive done; needs a non-gateway
    secure device to verify) and FDSK provisioning ([design + gap](docs/knx-secure-design.md)).
 3. Config display completeness (DPT-9 float / text / binary value editors).
-4. Channel/module device programming (per-instance parameter offsets).
+4. First-time commissioning: individual-address assignment, com-object table (L3) authoring, and
+   the full (not parameters-only) download. Until L3 can be authored, any change that would alter
+   a device's com-object set or flags is refused rather than half-written
+   ([device-support.md](docs/device-support.md)).

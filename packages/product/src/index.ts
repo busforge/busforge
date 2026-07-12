@@ -5,6 +5,7 @@ export * from "./appconfig.ts";
 export * from "./masks.ts";
 export * from "./config.ts";
 export * from "./grouptables.ts";
+export * from "./comobjtable.ts";
 export * from "./deviceimage.ts";
 export * from "./deviceflash.ts";
 export * from "./loadproc.ts";

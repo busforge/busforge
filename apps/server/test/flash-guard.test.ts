@@ -15,7 +15,7 @@ const REAL = join(import.meta.dir, "..", "..", "..", "packages", "product", "tes
 const fixture = (n: string) => gunzipSync(readFileSync(join(REAL, n))).toString("utf8");
 
 const ctxFor = (appXml: string) => ({
-  deviceId: "d", appXml, params: new Map<string, string>(), dryRun: false,
+  deviceId: "d", appXml, params: new Map<string, string>(), baseParams: new Map<string, string>(), dryRun: false,
   persistBackups: () => "backup", // guard tests abort before any backup is taken
 });
 

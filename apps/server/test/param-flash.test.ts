@@ -72,7 +72,9 @@ const ctxFor = (dryRun: boolean) => {
   const events: string[] = [];
   return {
     ctx: {
-      deviceId: "d", appXml: xml, params, moduleInstances: [], dryRun,
+      // baseParams == params: the device was programmed with this very configuration, so the
+      // com-object staleness gate is a no-op here and these tests exercise flash mechanics.
+      deviceId: "d", appXml: xml, params, baseParams: params, moduleInstances: [], dryRun,
       persistBackups: (files: { file: string; bytes: Buffer }[]) => { backups.push(...files); events.push("backup-persisted"); return "backup"; },
     },
     backups, events,

@@ -1,9 +1,9 @@
 import { KnxDevice, planSystemBGaFlash, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
-import { buildDeviceConfig } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
-import { buildParameterImage, decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
+import { assertComObjectTableStable } from "./comobjtable.ts";
+import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash } from "./deviceflash.ts";
@@ -79,6 +79,32 @@ export async function verifySettled<T>(read: () => Promise<T>, ok: (v: T) => boo
   let value = await read();
   if (!ok(value)) { await sleep(settleMs); value = await read(); }
   return { value, ok: ok(value) };
+}
+
+// Fold a segment's decoded device values into the programmed baseline.
+//
+// Only refs the memory image ENCODES appear in `deviceVals`, and only those may be
+// re-baselined: a parameter with no memory offset (a channel-count that lives solely in the
+// project, say) is unobservable on the bus, so the read must leave its baseline untouched
+// rather than adopt the live value. Adopting it would mark an unflashed edit as "programmed"
+// merely because the device cannot contradict it.
+//
+// For an observable ref: the device's value wins where it differs from what the project would
+// write; where it agrees, the baseline is the project's own live value (and stays SPARSE, an
+// absent entry meaning "holds the application default", which is exactly what it holds).
+function foldDeviceValues(
+  paramBase: Map<string, string>,
+  deviceVals: Map<string, string>,
+  projectVals: Map<string, string>,
+  liveParams: Map<string, string>,
+  relevantRefs?: Set<string>,
+): void {
+  for (const [refId, devVal] of deviceVals) {
+    if (relevantRefs && !relevantRefs.has(refId)) continue;
+    if (projectVals.get(refId) !== devVal) { paramBase.set(refId, devVal); continue; }
+    const live = liveParams.get(refId);
+    if (live === undefined) paramBase.delete(refId); else paramBase.set(refId, live);
+  }
 }
 
 const byteDiff = (a: Buffer, b: Buffer): number => {
@@ -165,6 +191,13 @@ export interface DeviceCapabilities { readParams: boolean; readLinks: boolean; f
 
 export interface ReadStateCtx {
   liveParams: Map<string, string>;
+  // The programmed baseline as it stands BEFORE this read. Refs the device's memory image
+  // does not encode (parameters with no memory offset, e.g. a channel-count parameter that
+  // only ever lived in the project) cannot be observed on the bus, so the read must leave
+  // their baseline alone. Seeding the baseline from the LIVE values instead would adopt an
+  // unflashed edit as "programmed" purely because the device cannot contradict it, which is
+  // the fake-green this whole layer exists to prevent. Omitted => same as live (import time).
+  baseParams?: Map<string, string>;
   moduleInstances?: ModuleInstance[];
   // Drift is only recorded for refs in this set (the config view's keys); see readState.
   relevantRefs?: Set<string>;
@@ -181,6 +214,11 @@ export interface ParamFlashCtx {
   deviceId: string; // used in backup file names
   appXml: string;
   params: Map<string, string>;
+  // The programmed baseline: the parameter set the device was last programmed with, hence the
+  // one its (kept-from-device) com-object table was compiled for. REQUIRED, not optional: a
+  // caller that forgot it would silently disable the com-object staleness gate, and a safety
+  // gate that can be switched off by omission is not a gate. See comobjtable.ts.
+  baseParams: Map<string, string>;
   moduleInstances?: ModuleInstance[];
   dryRun: boolean;
   onProgress?: ProgressFn;
@@ -190,6 +228,14 @@ export interface GaFlashCtx {
   deviceId: string; // used in backup file names
   ia: string;
   links: ComObjectLink[];
+  // The com-object staleness gate applies here too, and for the same reason: `links` carries the
+  // com-object NUMBERS of the live configuration, while the device's com-object table is still
+  // the one it was last programmed with. Writing an association onto an object number that table
+  // does not configure wires the group address to nothing, and the verify (which only re-reads
+  // the tables we wrote) would still report success. Both maps are REQUIRED, like ParamFlashCtx.
+  params: Map<string, string>;
+  baseParams: Map<string, string>;
+  moduleInstances?: ModuleInstance[];
   dryRun: boolean;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
@@ -203,18 +249,14 @@ export class UnsupportedOperation extends ProductError {
   }
 }
 
-// Resolve a device's module instances and build a module-aware image model plus the values
-// to write (System B). Unchanged from the original flash module; used by the System B param
-// read and flash. A non-module device gets the unchanged flat model.
-function moduleAwareImage(cfg: AppConfig, params: Map<string, string>, provided: ModuleInstance[], lang?: string): { model: AppModel; writeValues: Map<string, string> } {
-  if (!cfg.hasModules) return { model: toAppModel(cfg), writeValues: params };
-  const instances = provided.length ? provided : resolveModuleInstances(cfg, params);
-  const model = toAppModel(cfg, { instances });
-  const view = buildDeviceConfig(cfg, params, lang, instances);
-  const writeValues = new Map<string, string>();
-  for (const [k, v] of params) if (!k.includes("_MI-")) writeValues.set(k, v);
-  for (const [k, v] of view.imageValues) if (k.includes("_MI-")) writeValues.set(k, v);
-  return { model, writeValues };
+// The System B image model: the device's module instances materialised, and top-level union
+// members kept. It must be the SAME model buildRelativeSegmentTarget builds from, because it
+// is what read-back decodes with and what the flash guard tests stored values against; a model
+// that is narrower than the builder decodes nothing at the offsets the builder writes (a union
+// byte would be flashed and then read back as "no drift" whatever the device holds).
+function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided: ModuleInstance[]): { model: AppModel; instances: ModuleInstance[] } {
+  const instances = cfg.hasModules ? (provided.length ? provided : resolveModuleInstances(cfg, params)) : [];
+  return { model: toAppModel(cfg, { includeUnions: true, instances }), instances };
 }
 
 // Group-table readers (readGroupTables / readGroupTablesMv0705) live in @busforge/knx
@@ -258,23 +300,27 @@ export class SystemBProfile extends DeviceProfile {
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
     const cfg = this.requireCfg("read-back");
-    const { model, writeValues } = moduleAwareImage(cfg, ctx.liveParams, ctx.moduleInstances ?? []);
+    const { model, instances } = moduleAwareModel(cfg, ctx.liveParams, ctx.moduleInstances ?? []);
     const support = this.capabilities();
-    const paramBase = new Map(ctx.liveParams);
+    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     let links: ComObjectLink[] = [];
     let paramsRead = false, linksRead = false;
 
-    // Parameters (LSM 4): read the whole segment, decode it, compare against what the project
-    // would flash, both normalized via the same codec.
-    const seg = model.segments.find((s) => s.lsm === LSM);
-    if (support.readParams && seg) {
-      const img = await dev.memRead(await dev.tableAddr(LSM), seg.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
-      const deviceVals = decodeParameterImage(model, LSM, img);
-      const projectVals = decodeParameterImage(model, LSM, buildParameterImage(model, LSM, writeValues));
-      for (const [refId, devVal] of deviceVals) {
-        if (ctx.relevantRefs && !ctx.relevantRefs.has(refId)) continue;
-        if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal);
-      }
+    // Parameters (LSM 4): read the whole segment, decode it, compare against the image the
+    // FLASH would write, both normalized via the same codec. The project side is the surgical
+    // target (not the legacy full-image build), so read-back compares against exactly the bytes
+    // we would put on the device, and union branches resolve to the active one instead of the
+    // last writer of an overlapping region. Same shape as the System 7 path below.
+    const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances }) : null;
+    if (target) {
+      const img = await dev.memRead(await dev.tableAddr(LSM), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
+      foldDeviceValues(
+        paramBase,
+        decodeParameterImage(model, LSM, img),
+        decodeParameterImage(model, LSM, target.bytes),
+        ctx.liveParams,
+        ctx.relevantRefs,
+      );
       paramsRead = true;
     }
     // Group-address links: read address + association tables (skip the com-object table) and reverse.
@@ -297,7 +343,7 @@ export class SystemBProfile extends DeviceProfile {
     // Build + safety refusals. These run AFTER the session's connect/mask-check (vs before, in
     // the original), which is harmless: no device byte is written until below, and verifying we
     // are on the right device first is if anything safer.
-    const { model } = moduleAwareImage(cfg, ctx.params, ctx.moduleInstances ?? []);
+    const { model } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     // SAFETY: a stored value the image model cannot place would be silently dropped and its
     // region reset to default. Refuse rather than wipe a configured channel.
     const unmapped = unmappedParamRefs(model, ctx.params);
@@ -305,6 +351,9 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("CHANNEL_MODULES_UNSUPPORTED",
         `parameter programming cannot place ${unmapped.length} stored value(s) for this device (e.g. ${unmapped[0]}); they would be dropped and that region reset to defaults. Refusing to flash to protect the device configuration.`);
     }
+    // The device keeps the com-object table it was last programmed with. If these parameters
+    // imply a different one, flashing would leave that table stale while reporting success.
+    assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances });
@@ -339,6 +388,11 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
+    // `links` numbers its com-objects from the LIVE configuration, but the device's com-object
+    // table is the one it was last programmed with. Associating a group address with an object
+    // that table does not configure wires it to nothing, and the verify (which only re-reads the
+    // tables we wrote) would still report success. Refuse for the same reason the param flash does.
+    assertComObjectTableStable(this.requireCfg("group address flash"), ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     const { addr, assoc } = buildGroupTables(ctx.links);
     // The dry-run preview compares only address + association; the com-object table is read
     // only to write it back unchanged on a real flash, so skip it when previewing.
@@ -386,7 +440,7 @@ export class System7Profile extends DeviceProfile {
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
     const cfg = this.requireCfg("read-back");
-    const paramBase = new Map(ctx.liveParams);
+    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     const instances = ctx.moduleInstances?.length ? ctx.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, ctx.liveParams) : []);
     const absModel = toAppModel(cfg, { includeUnions: true, instances });
     const absoluteTargets = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { moduleInstances: ctx.moduleInstances });
@@ -396,12 +450,13 @@ export class System7Profile extends DeviceProfile {
     let doneBytes = 0;
     for (const t of absoluteTargets) {
       const deviceImg = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("params", doneBytes + d, totalBytes), ctx.signal);
-      const deviceVals = decodeAbsoluteImage(absModel, t.id, deviceImg);
-      const projectVals = decodeAbsoluteImage(absModel, t.id, t.bytes);
-      for (const [refId, devVal] of deviceVals) {
-        if (ctx.relevantRefs && !ctx.relevantRefs.has(refId)) continue;
-        if (projectVals.get(refId) !== devVal) paramBase.set(refId, devVal);
-      }
+      foldDeviceValues(
+        paramBase,
+        decodeAbsoluteImage(absModel, t.id, deviceImg),
+        decodeAbsoluteImage(absModel, t.id, t.bytes),
+        ctx.liveParams,
+        ctx.relevantRefs,
+      );
       doneBytes += t.size;
     }
 
@@ -419,6 +474,10 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("LOAD_PROCEDURE_UNSUPPORTED", `device declares no usable load procedure (style ${proc.style}); cannot flash safely`);
     }
     const coverage = assertParCoverage(proc, "absolute");
+    // Same com-object-table staleness gate as System B: the absolute path keeps the device's
+    // com-object table too, so a parameter that changes the active object set or its flags
+    // would silently invalidate it. See comobjtable.ts.
+    assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     const moduleInstances = ctx.moduleInstances;
     const targets = buildAbsoluteSegmentTargets(cfg, ctx.params, { moduleInstances }).filter((t) => t.size > 0);
     const totalBytes = targets.reduce((n, t) => n + t.size, 0);
@@ -466,6 +525,9 @@ export class System7Profile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
+    // Same com-object staleness gate as System B: an association onto an object the device's
+    // (kept-from-device) com-object table does not configure is a link to nothing.
+    assertComObjectTableStable(this.requireCfg("group address flash"), ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
     // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
     // and byte-matched, and the revert restored the device exactly.
