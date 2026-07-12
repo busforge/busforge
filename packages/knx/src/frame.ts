@@ -21,7 +21,22 @@ export const APCI = {
   MEMORY_READ: 0x200, MEMORY_RESPONSE: 0x240, MEMORY_WRITE: 0x280,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
   RESTART: 0x380,
+  // Individual-address management. These are BROADCAST services (unnumbered, destination
+  // 0x0000): they address a device by the fact that its programming mode is on, not by its
+  // address, which is what makes them the only way to reach a device that has none yet.
+  // The Response carries no payload; the responding device's address is the frame's SOURCE.
+  INDIVIDUAL_ADDRESS_WRITE: 0x0c0, INDIVIDUAL_ADDRESS_READ: 0x100, INDIVIDUAL_ADDRESS_RESPONSE: 0x140,
 } as const;
+
+// The KNX broadcast address: destination 0x0000 with the group/broadcast address type, which
+// cemiLDataGroup already sets. Every device on the line receives it.
+export const BROADCAST = 0x0000;
+
+// An unnumbered (T_Data_Broadcast / T_Data_Group) APDU: no sequence number, unlike the
+// connection-oriented `apdu()` above. Broadcast management services use this form.
+export function apduUnnumbered(apci: number, tail: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([Buffer.from([(apci >> 8) & 0x03, apci & 0xff]), tail]);
+}
 
 export function knxFrame(service: number, body: Buffer): Buffer {
   const h = Buffer.from([0x06, 0x10, (service >> 8) & 0xff, service & 0xff, 0, 0]);

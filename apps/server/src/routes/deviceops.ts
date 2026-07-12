@@ -5,7 +5,7 @@ import { isConnectionReady } from "../transport.ts";
 import { createSnapshot } from "../db/snapshots.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { json, err } from "../httputil.ts";
@@ -31,6 +31,50 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
   const { db, bus } = state;
   const id = seg[2];
+
+  // /api/projects/:id/prog-mode  -> which devices are in programming mode right now.
+  // A broadcast probe, so it needs a bus connection but no device: this is what tells the
+  // user whether they pressed the programming button, and whether they pressed only ONE.
+  //
+  // Through the queue like every other bus operation: ONE physical interface backs them all, so
+  // opening a second transport while a flash is mid-write would fight the flash for the interface
+  // (and inject a broadcast into it). It is a read, so it queues as one.
+  if (seg.length === 4 && seg[3] === "prog-mode" && req.method === "GET") {
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const devices = await state.queue.enqueue(
+      { projectId: id, deviceId: "-", deviceName: "programming mode", ia: "-", kind: "read" },
+      async () => {
+        if (bus.activeProjectId) await bus.disconnect(); // free the bus for the probe
+        return readDevicesInProgMode(conn);
+      },
+    );
+    return json({ devices });
+  }
+
+  // /api/projects/:id/devices/:deviceId/assign-ia  -> write the device's individual address
+  // (the one the project holds for it) into the physical device in programming mode.
+  //
+  // Deliberately NOT guarded by the usual mask gate: the whole point is to reach a device that
+  // may not have a usable address yet, so it is addressed by broadcast and identifies itself by
+  // being the one in programming mode. The safety rails are different and live in the knx layer
+  // (exactly one device in programming mode; the target address must not already answer; the
+  // result is proven on the new address). See @busforge/knx individualaddress.ts.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "assign-ia" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const result = await state.queue.enqueue(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia" },
+      async (progress) => {
+        if (bus.activeProjectId) await bus.disconnect();
+        return assignDeviceAddress(conn, dev.ia, progress);
+      },
+    );
+    return json(result);
+  }
 
   // /api/projects/:id/devices/:deviceId/read-back  -> read the device's current
   // state off the bus and store it as the baseline, so drift shows as a change.

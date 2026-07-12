@@ -70,7 +70,7 @@ export type FlashResult =
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
-export type TaskKind = "read" | "flash-params" | "flash-ga";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;

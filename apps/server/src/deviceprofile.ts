@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, iaToNum } from "@busforge/knx";
+import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, type AssignIaResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type ReadStateCtx,
@@ -123,4 +123,36 @@ export function secureIdentify(
     const sn = await dev.propRead(0, 11); // device object (0), serial-number property (PID 11)
     return { mask, serial: sn.toString("hex") };
   }, { toolKey, serial });
+}
+
+// Give a device its physical address. Unlike every other operation here this one CANNOT use
+// withDeviceSession: the device is reached by broadcast, precisely because it may not have a
+// usable address yet, so there is no address to open a session to and no mask gate to pass.
+// It therefore drives the raw transport. All the safety lives in assignIndividualAddress
+// (@busforge/knx): exactly one device in programming mode, the target address must be free,
+// and the result is proven by talking to the device on its new address. NOT YET VERIFIED ON
+// REAL HARDWARE.
+export async function assignDeviceAddress(
+  connection: Connection, ia: string, onProgress?: ProgressFn,
+): Promise<AssignIaResult> {
+  const tun = makeTransport(connection);
+  onProgress?.("connect");
+  await tun.connect();
+  try {
+    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase) });
+  } finally {
+    await tun.disconnect();
+  }
+}
+
+// Who is currently in programming mode? Read-only broadcast probe; drives the UI that tells
+// the user whether they pressed the right button (and, crucially, only one of them).
+export async function readDevicesInProgMode(connection: Connection): Promise<string[]> {
+  const tun = makeTransport(connection);
+  await tun.connect();
+  try {
+    return await readProgModeDevices(tun);
+  } finally {
+    await tun.disconnect();
+  }
 }
