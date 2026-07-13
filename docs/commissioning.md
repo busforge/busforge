@@ -1,8 +1,13 @@
 # Commissioning: giving a device its address
 
 Taking a virgin KNX device into service means three things: give it a physical (individual)
-address, load its application, and write its com-object table. This page covers the first, which
-Busforge now does. The other two are still open (see "What is still missing").
+address, load its application, and write its com-object table. **Busforge does all three**, and has
+done them on real hardware, end to end, on an OpenKNX AB-PRE that afterwards booted its own
+application and sent its heartbeat on the bus (see [openknx.md](openknx.md)).
+
+This page covers the address. The full download (application id, parameter image, com-object table,
+group tables) and the one thing that makes it STICK — the closing `A_Restart`, which is the only
+trigger this stack has for writing its flash metadata — are in [openknx.md](openknx.md).
 
 ## Why the address is a special case
 
@@ -105,11 +110,18 @@ authors the com-object table (L3) that the surgical parameter flash keeps from t
 implemented and byte-verified on real hardware; the mechanics, and the several device quirks that
 had to be learned to make it survive, are documented in [openknx.md](openknx.md).
 
-One caveat is carried honestly there and repeated here: the download is proven **at the KNX layer**
-(all load-state machines LOADED, all tables read back byte-identical, the device's own segment CRC
-matching, surviving a reboot), but a device's *application* actually starting after a Busforge-only
-download is **not yet demonstrated**. Until it is, treat first-time commissioning as "the stack is
-programmed correctly", not "the device is running".
+**The device's application starts.** It was demonstrated on 2026-07-12: an AB-PRE, commissioned by
+Busforge alone, booted its application, read its sensors and sent its heartbeat on the group address
+it had been given. What had been missing was the closing **`A_Restart`**, the only trigger this stack
+has for writing the flash metadata that survives a power cycle; it was being sent into a connection
+that had already timed out, and it was fired blind, so nothing noticed. Both are fixed, and both are
+pinned by tests. The story is in [openknx.md](openknx.md), because the failure mode it produced —
+every check green, the device programmed to nothing — is the most instructive thing in this repo.
+
+One caveat is carried honestly there and repeated here: a device that is **running its application**
+stops answering point-to-point management on this hardware, so it can be commissioned but not yet
+re-programmed over the bus. The cause is very likely the device's own main loop (the L2 ack has a
+~1.7 ms deadline and is written from that loop), not the downloader.
 
 The application **code** (LSM5) is deliberately not part of this: OpenKNX firmware is flashed over
 USB as a `.uf2`, and the device's own load procedure only touches the parameter segment. For a

@@ -106,7 +106,9 @@ export class KnxDevice {
     await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
   }
-  async disconnect() { try { await this.tun.sendCemi(cemiLData(this.me, this.dst, tpDisconnect())); } catch {} }
+  // Teardown. A T_Disconnect the device never sees is the same as one it did: the connection is
+  // over either way, and there is nothing a caller could do about the failure.
+  async disconnect() { try { await this.tun.sendCemi(cemiLData(this.me, this.dst, tpDisconnect())); } catch { /* the link may already be gone */ } }
 
   // Data Secure Sync: agree the live tool-access sequence before any secured request.
   private async runSync(sec: SecureSession): Promise<void> {
@@ -272,10 +274,47 @@ export class KnxDevice {
       if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `memWrite verify mismatch @0x${addr.toString(16)}`);
     }
   }
+  // A_Restart, acknowledged — never fired blind.
+  //
+  // This is the step that makes a download STICK, and it is the least obvious one in the whole
+  // sequence. LoadCompleted does not persist anything on this stack: it flushes the flash buffer
+  // and no more. The flash METADATA — the four load states, the table addresses, the individual
+  // address, everything the device validates on its next boot — is written from exactly one place
+  // reachable over the bus: `BauSystemB::restartRequestIndication()`, i.e. on receiving A_Restart.
+  //
+  // It used to be sent with `catch {}` and the note "no reliable KNX ack expected". It was not
+  // arriving (a connection-oriented link dies after 6s of silence, and it was being sent after an
+  // 8s pause), and nothing noticed, because nothing was looking. The device carried on with a
+  // perfect configuration in RAM, answered every verification we had, and lost all of it at the
+  // next power-down.
+  //
+  // The acknowledgement cannot be the proof: the device reboots so promptly that it does not get one
+  // out (hardware-checked — requiring the ack failed every download that had in fact worked). So the
+  // proof is the other way round: after the restart, the device must have STOPPED answering. It went
+  // away with its connection. A device that ignored the restart is still there, still holding the
+  // link the plan re-opened one step earlier, and still answering — and that is the failure being
+  // caught here, the one that hid for an entire evening: everything downstream (the load states, the
+  // three tables, the device's own CRC over the parameter segment) would then be read out of the RAM
+  // of a device that never wrote a byte to flash, and every single check would pass.
+  //
+  // Note what is NOT done: probing the link before the restart. A configured OpenKNX device does not
+  // reliably answer DeviceDescriptor_Read while its application is running (observed on hardware,
+  // cause not yet established), so a pre-probe turns every successful download into a failure. The
+  // link is fresh by construction instead — `disconnect` + `connect` immediately precede this in the
+  // plan, and a test pins them there.
   async restart(): Promise<void> {
-    // device reboots; no reliable KNX ack expected, fire once
-    try { await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART))); } catch {}
+    // NOT swallowed. The proof below reads the device's SILENCE as "it rebooted", so a frame the
+    // interface never even accepted must not reach it: that silence would then mean nothing at all,
+    // and we would report a device as saved that was never told to save.
+    await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART)));
     this.seq = (this.seq + 1) & 0x0f;
+    try {
+      await this.deviceDescriptor(); // must NOT answer: it is rebooting
+    } catch {
+      return;                        // gone. It restarted, and it wrote its flash on the way out.
+    }
+    throw new KnxError("RESTART_IGNORED",
+      "the device kept answering on the same connection after A_Restart: it did not reboot, so it never wrote its configuration to flash and would come back factory-fresh at the next power-down");
   }
 
   // Factory-reset the device over the bus (A_Restart with RestartType = MasterReset and an erase

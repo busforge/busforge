@@ -222,6 +222,19 @@ export function planSystemBFullDownload(tables: {
     //     again. Which is why there is no waiting around between the unloads and here: a pause
     //     longer than five seconds anywhere in the bracket silently costs the whole download.
     { op: "settle", ms: 8000 },
+    // And now re-open the link before the restart, because the pause above just killed it.
+    //
+    // A connection-oriented KNX link dies after SIX seconds of silence. The settle is EIGHT. So the
+    // A_Restart that follows was being sent into a connection the device had already torn down: it
+    // never arrived, the device never rebooted, and `Memory::writeMemory()` — the ONLY thing on the
+    // bus path that writes the flash metadata (the four load states, the table addresses, the
+    // individual address) — never ran.
+    //
+    // Nothing caught it. The device kept running with a perfect configuration in RAM and answered
+    // every check afterwards: all four load states LOADED, all three tables byte-identical, its own
+    // CRC over the parameter segment matching ours. Every one of those reads was RAM. The device
+    // lost the lot the next time it was powered down, and came back factory-fresh.
+    { op: "disconnect" }, { op: "connect" },
     { op: "restart" },
   ];
 }

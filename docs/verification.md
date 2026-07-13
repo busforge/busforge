@@ -29,13 +29,35 @@ result, so "compare against what was flashed" always means compare against a
 Correctness and regression-safety come from three separate sources. They cover
 different things and must not be confused.
 
-### 1. Hardware byte-match (ground truth)
+### 1. Hardware byte-match (ground truth, and what it does NOT prove)
 
 Build the image from project data, then read the **actual device memory** over the
 bus and compare byte-for-byte (`packages/product/src/paramtest.ts`). This is the
 only check that proves our bytes equal what the real hardware (and therefore ETS)
 expects. It is the **strongest** evidence and covers the **fewest** devices,
 because it needs the physical device on the bus.
+
+**It proves the bytes are RIGHT. It does not prove they are SAVED.** That distinction cost a full
+session and a device that came back factory-fresh, so it belongs here rather than in a postmortem
+nobody reads twice:
+
+> A System B device (thelsing/knx) does not persist its configuration when it is told the load is
+> complete. `LdCtrlLoadCompleted` only flushes a buffer. The flash metadata — the four load states,
+> the table addresses, the individual address, everything it validates on the next boot — is written
+> from exactly one place reachable over the bus: on receiving **`A_Restart`**.
+>
+> Before that restart, every check available reads **RAM**. All four load states read LOADED, all
+> three tables read back byte-identical, and the device's own CRC over the parameter segment matches
+> ours — on a device that has not written one byte to flash and will come back factory-fresh at the
+> next power cut. Every one of those checks is *honest*; they are simply answering a different
+> question than the one being asked.
+
+So a byte-match is ground truth for **the image**, not for **the download**. Persistence is proven
+by the restart itself, and `KnxDevice.restart()` therefore does not assume the reboot happened: it
+requires the device to have STOPPED answering on the connection it just acknowledged on
+(`packages/knx/test/device-machine.test.ts`, "the reboot is proven, never assumed"). A device that
+keeps answering did not reboot and did not save, and that is a `RESTART_IGNORED` failure. The full
+story is in [openknx.md](openknx.md).
 
 ### 2. Spec conformance (the codec math)
 

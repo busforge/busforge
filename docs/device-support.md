@@ -107,8 +107,13 @@ back before trusting it. (This is the same convention parameter flash already us
     read out of the firmware that consumes it (thelsing/knx) and cross-checked against Kaenx; it is
     byte-verified on real hardware against the OpenKNX AB-PRE (the device reads L3 back
     byte-identical to what Busforge built). See [`comobjbuild.ts`](../packages/product/src/comobjbuild.ts)
-    and [openknx.md](openknx.md). Proven at the KNX layer end to end; whether the device's
-    application then *runs* after a Busforge-only download is not yet demonstrated (see openknx.md).
+    and [openknx.md](openknx.md). **The device then boots its application and sends its heartbeat on
+    the bus**, so this is proven end to end and not only at the KNX layer. What makes it stick is the
+    closing `A_Restart`: it is the only bus-side trigger for the device writing its flash metadata,
+    and without it every check passes against RAM while the flash holds nothing (see
+    [verification.md](verification.md)). Still open: a device that is RUNNING its application stops
+    answering point-to-point management on this hardware, so it can be commissioned but not yet
+    re-programmed over the bus (the cause is the device's own main loop, not Busforge).
   - The **surgical parameter flash** (re-configuring an already-programmed device) still KEEPS the
     device's L3 unchanged: it re-points parameters and group addresses, not the object set. A
     parameter change that, in ETS, would change a com-object's flags or the *set* of active

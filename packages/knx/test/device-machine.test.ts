@@ -117,7 +117,7 @@ describe("KnxDevice request machine (frame level)", () => {
       }
     };
     // wrote 12 34 but the device "stored" ee ee -> the verify read-back must reject
-    await expect(dev.memWrite(0x1000, Buffer.from([0x12, 0x34]), { verify: true })).rejects.toThrow(/verify mismatch/);
+    expect(dev.memWrite(0x1000, Buffer.from([0x12, 0x34]), { verify: true })).rejects.toThrow(/verify mismatch/);
   });
 
   test("deviceDescriptor: descriptor bytes 07 b0 resolve to MV-07B0", async () => {
@@ -146,7 +146,9 @@ describe("KnxDevice request machine (frame level)", () => {
     const tun = new FakeTransport();
     // The KnxDevice's own session (src = our tunnel IA, dst = the device).
     const ourSession = new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV });
-    const dev = new KnxDevice(tun, "1.2.11", ourSession);
+    // Constructing it IS the point: KnxDevice installs itself as tun.onCemi, and that is what
+    // tun.reply() below drives. The instance is never touched directly.
+    new KnxDevice(tun, "1.2.11", ourSession);
     // The paired far side (the device) that produces the secured response.
     const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
     const wrapped = farSide.wrapManagement(Buffer.from("0340abcd", "hex"), 5); // T-seq 5
@@ -164,4 +166,60 @@ describe("KnxDevice request machine (frame level)", () => {
     const acksAfterReplay = tun.sent.filter((f) => f.toString("hex") === ackForSeq5).length;
     expect(acksAfterReplay).toBe(acksAfterFirst + 1);
   });
+});
+
+// restart() is the step that makes a download STICK, and the only one whose success is inferred
+// from SILENCE. LdCtrlLoadCompleted persists nothing on this stack: the flash metadata (the four
+// load states, the table addresses, the individual address) is written from one place reachable
+// over the bus, `BauSystemB::restartRequestIndication()`, i.e. on receiving A_Restart. It used to
+// be fired with `catch {}` into a connection that the preceding 8 s settle had already let time out
+// (a connection-oriented link dies after 6 s of silence). It never arrived, nothing noticed, and
+// every check that followed passed against the device's RAM while its flash held nothing. Then the
+// bench powered the device down and it came back factory-fresh.
+//
+// So all three of these are load-bearing, and each one is a way that failure comes back.
+describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
+  const restarted = () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    // A rebooting device answers nothing at all: it is gone, and so is the connection.
+    tun.handler = () => { /* silence */ };
+    return { tun, dev };
+  };
+
+  test("the device goes quiet after A_Restart: that IS the proof, and it resolves", async () => {
+    const { tun, dev } = restarted();
+    await dev.restart();
+    // A_Restart went out as a numbered request (APCI 0x380), and nothing was swallowed.
+    const restart = tun.sent.filter((f) => !f[0].toString(2).startsWith("11") && parseApdu(f).apci === APCI.RESTART);
+    expect(restart.length).toBeGreaterThan(0);
+  }, 20000);
+
+  test("a device that KEEPS ANSWERING did not reboot, and that is a failure, not a success", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    // The device ACKs and answers the descriptor read: it is still there, still holding the
+    // connection, and it has therefore written NOTHING to flash. Reporting this download as done
+    // is the exact bug: the caller would then verify against RAM and see everything it expects.
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === APCI.RESTART) { tun.reply([0xc2 | (p.seq << 2)]); return; }
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) {
+        tun.reply([0xc2 | (p.seq << 2)]);
+        tun.reply([0x40 | (p.seq << 2) | 0x03, 0x40, 0x07, 0xb0]); // still alive, MV-07B0
+      }
+    };
+    expect(dev.restart()).rejects.toThrow(/RESTART_IGNORED|did not reboot/);
+  }, 20000);
+
+  test("a send the interface refuses PROPAGATES: silence we never caused proves nothing", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    // If the frame never reached the bus, the quiet that follows is OUR failure, not the device's
+    // reboot. Swallowing it (the old `catch {}`) is what let a download that wrote nothing be read
+    // as a download that saved everything.
+    tun.sendCemi = () => Promise.reject(new Error("interface refused the frame"));
+    expect(dev.restart()).rejects.toThrow("interface refused the frame");
+  }, 20000);
 });

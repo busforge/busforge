@@ -105,14 +105,14 @@ describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoa
   test("a non-LOADED state after load-completed aborts before restart", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.LOADING, STATE.ERROR]); // Load ok, completion refused (e.g. app-id mismatch)
-    await expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADED/);
+    expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false); // no restart into a broken load
   });
 
   test("a refused Load aborts BEFORE any alloc or write (the new safety property of the assert)", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.UNLOADED]); // device ignored the Load event
-    await expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADING/);
+    expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADING/);
     expect(dev.calls.some((c) => c[0] === "memWrite")).toBe(false);
     expect(dev.calls.filter((c) => c[0] === "propWrite" && c[2] === 5).length).toBe(2); // unload + load only, no alloc
   });
@@ -183,7 +183,7 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
   test("one LSM reading non-LOADED at the batch check rejects and skips restart", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(2, [STATE.ERROR]); // association-table LSM refuses at the batch assertLoaded
-    await expect(runLoadPlan(asDev(dev), planSystemBGaFlash(tables))).rejects.toThrow(/not LOADED/);
+    expect(runLoadPlan(asDev(dev), planSystemBGaFlash(tables))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
   });
 });
@@ -224,7 +224,7 @@ describe("the System 7 GA bracket, engine-driven (planMv0705GaFlash + runLoadPla
   test("rejects when LOAD is not answered with LOADING", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(1, [STATE.UNLOADED]); // device ignored the Load event
-    await expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADING/);
+    expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADING/);
     // aborted before touching device memory
     expect(dev.calls.some((c) => c[0] === "memWrite")).toBe(false);
   });
@@ -232,7 +232,7 @@ describe("the System 7 GA bracket, engine-driven (planMv0705GaFlash + runLoadPla
   test("rejects when LOAD_COMPLETED is not answered with LOADED", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(1, [STATE.LOADING, STATE.LOADING]); // Load ok, but completion never lands
-    await expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADED/);
+    expect(runLoadPlan(asDev(dev), planMv0705GaFlash(tables))).rejects.toThrow(/not LOADED/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
   });
 });
@@ -284,7 +284,7 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
   test("loadCompleted step rejects when the state is not LOADED", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.LOADING]); // completion refused, machine stuck in LOADING
-    await expect(runLoadPlan(asDev(dev), [{ op: "loadCompleted", lsm: 4 }])).rejects.toThrow(/not LOADED after LOAD_COMPLETED \(got LOADING\)/);
+    expect(runLoadPlan(asDev(dev), [{ op: "loadCompleted", lsm: 4 }])).rejects.toThrow(/not LOADED after LOAD_COMPLETED \(got LOADING\)/);
   });
 
   // A memory write can throw mid-bracket: a lost T_ACK, or (the common case) a read-back
@@ -302,7 +302,7 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
   test("a write that throws mid-bracket aborts BEFORE loadCompleted and restart; LSM stays LOADING (recoverable)", async () => {
     const dev = new RecDev();
     dev.writeFailAt = 2; // second writeMem throws (e.g. its read-back verify failed)
-    await expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow(/verify mismatch/);
+    expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow(/verify mismatch/);
     // The load opened (LOADING) but was never completed, and no restart happened: the device
     // is addressable and can be re-flashed, not bricked in a half-open, restarted state.
     expect(dev.state.get(4)).toBe(STATE.LOADING);
@@ -315,7 +315,7 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
   test("re-running the plan after a mid-write failure completes (the device was left recoverable)", async () => {
     const dev = new RecDev();
     dev.writeFailAt = 1;
-    await expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow();
+    expect(runLoadPlan(asDev(dev), bracket(4))).rejects.toThrow();
     // Recovery: the same plan, now with a healthy device, runs to completion and restarts.
     dev.writeFailAt = null;
     dev.calls = [];
@@ -512,12 +512,27 @@ describe("the download must not restart the device before it has saved", () => {
     addr: Buffer.from([0, 0]), assoc: Buffer.from([0, 0]), programId: Buffer.alloc(5),
   });
 
-  test("it settles before the restart, and the settle is the LAST thing before it", () => {
+  test("it settles before the restart, and nothing touches the device's memory in between", () => {
     const restart = plan.findIndex((s) => s.op === "restart");
     expect(restart).toBeGreaterThan(0);
-    const before = plan[restart - 1];
-    expect(before.op).toBe("settle");
-    expect((before as { ms: number }).ms).toBeGreaterThanOrEqual(6000); // the device's threshold is 5 s
+    const settle = plan.findIndex((s) => s.op === "settle");
+    expect(settle).toBeGreaterThan(0);
+    expect(settle).toBeLessThan(restart);
+    expect((plan[settle] as { ms: number }).ms).toBeGreaterThanOrEqual(6000); // the device's threshold is 5 s
+
+    // Between the settle and the restart, only the LINK may be touched. Re-opening the connection
+    // is not optional: a connection-oriented KNX link dies after 6s of silence and the settle is 8,
+    // so without it the A_Restart is sent into a torn-down connection and never arrives — and the
+    // restart is the only thing that makes the device write its flash metadata. But nothing in here
+    // may touch the device's MEMORY, because a memory write refreshes the deferred-save timer
+    // (`if (_saveTimeout != 0) _saveTimeout = millis()`) and pushes the save back out past the
+    // restart, which is the very thing the settle exists to prevent.
+    const between = plan.slice(settle + 1, restart).map((s) => s.op);
+    expect(between).toEqual(["disconnect", "connect"]);
+  });
+
+  test("the restart is the last step: nothing follows a device that is rebooting", () => {
+    expect(plan[plan.length - 1].op).toBe("restart");
   });
 
   test("nothing waits around between the unloads and the load-completed bracket", () => {
