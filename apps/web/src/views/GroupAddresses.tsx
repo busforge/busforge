@@ -89,7 +89,7 @@ export function GroupAddressesView() {
   const navigate = useNavigate({ from: "/projects/$projectId/groups" });
   const search = useSearch({ from: "/projects/$projectId/groups" });
   const q = search.q ?? "";
-  const setQ = (val: string) => navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true });
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
   const filter = q.trim().toLowerCase();
 
   const [editor, setEditor] = useState<Editor>(null);

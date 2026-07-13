@@ -35,7 +35,15 @@ export class KnxIpTunnel implements KnxTransport {
   async connect(): Promise<void> {
     this.sock = this.createSocket();
     await new Promise<void>((r) => this.sock.bind(0, () => r()));
-    this.sock.on("message", (m) => this.onMessage(m));
+    // The socket callback wants void, so handing it the async handler dropped the promise: a
+    // rejection inside (a failed TUNNEL_ACK send) escaped as an unhandled rejection with no clue
+    // where it came from. Failing to answer ONE datagram is recoverable — the gateway retransmits —
+    // so the tunnel stays up, but it is reported rather than swallowed.
+    this.sock.on("message", (m) => {
+      void this.onMessage(m).catch((e: unknown) => {
+        console.error(`KNX/IP: dropped a datagram: ${e instanceof Error ? e.message : "unknown error"}`);
+      });
+    });
 
     // Advertise a NAT-mode HPAI (0.0.0.0:0) so the gateway replies to the
     // observed packet source instead of an address we name. Required behind NAT
@@ -91,7 +99,7 @@ export class KnxIpTunnel implements KnxTransport {
   }
 
   async disconnect() {
-    try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); } catch {}
+    try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); } catch { /* teardown: the gateway may be gone; the channel is closed either way */ }
     this.sock?.close();
   }
 }

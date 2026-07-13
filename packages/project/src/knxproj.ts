@@ -1,7 +1,7 @@
 import { pbkdf2Sync } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import { readZip } from "./zip.ts";
-import { parseProject, arr, manufacturerOf } from "./parse.ts";
+import { parseProject, manufacturerOf, kids, node, text, type XmlNode } from "./parse.ts";
 import { KnxprojError } from "./errors.ts";
 import type { Project, CatalogProduct } from "./model.ts";
 
@@ -123,13 +123,13 @@ const isZip = (b: Buffer): boolean => b.length > 1 && b[0] === 0x50 && b[1] === 
 // full costs seconds and gigabytes of transient heap inside one HTTP request. `stopNodes` keeps
 // the element and its attributes and leaves its content as raw text: 0.15 s instead of 1.5 s,
 // 0.6 GB instead of 2 GB, on the real file.
-function parsePlainDoc(xml: string): any {
-  return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, stopNodes: ["*.ApplicationProgram"] }).parse(xml);
+function parsePlainDoc(xml: string): XmlNode {
+  return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, stopNodes: ["*.ApplicationProgram"] }).parse(xml) as XmlNode;
 }
 const plainAppProgramIds = (xml: string): string[] =>
-  arr(parsePlainDoc(xml)?.KNX?.ManufacturerData?.Manufacturer)
-    .flatMap((m: any) => arr(m?.ApplicationPrograms?.ApplicationProgram))
-    .map((a: any) => String(a?.Id ?? ""))
+  kids(node(node(parsePlainDoc(xml).KNX)?.ManufacturerData)?.Manufacturer)
+    .flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram))
+    .map((a) => text(a.Id))
     .filter(Boolean);
 
 // Extract every distinct application program referenced by the given device app
@@ -177,30 +177,30 @@ export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
   // In a zip only Hardware.xml carries the products, and the (huge) application-program entries
   // are never touched. A plain document carries everything inline, so it is parsed with the
   // application program's body stopped out (parsePlainDoc), for the same reason.
-  const docs: any[] = isZip(bytes)
-    ? [...readZip(bytes)].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)))
+  const docs: XmlNode[] = isZip(bytes)
+    ? [...readZip(bytes)].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)) as XmlNode)
     : [parsePlainDoc(dec.decode(bytes))];
   for (const doc of docs) {
-    for (const manu of arr(doc?.KNX?.ManufacturerData?.Manufacturer)) {
-      for (const hw of arr(manu?.Hardware?.Hardware)) {
-        const hwVersion = String(hw.VersionNumber ?? "");
-        const products = arr(hw?.Products?.Product);
-        const programs = arr(hw?.Hardware2Programs?.Hardware2Program);
+    for (const manu of kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer)) {
+      for (const hw of kids(node(manu.Hardware)?.Hardware)) {
+        const hwVersion = text(hw.VersionNumber);
+        const products = kids(node(hw.Products)?.Product);
+        const programs = kids(node(hw.Hardware2Programs)?.Hardware2Program);
         // A hardware groups its product variants and the application programs it
         // runs; a device picks one of each. Pair them so any valid device combo
         // is offered (typically one product to one program).
         for (const p of products) {
-          const productRef = String(p.Id ?? "");
+          const productRef = text(p.Id);
           if (!productRef) continue;
           for (const h2p of programs) {
-            const appRef = String(h2p.Id ?? "");
+            const appRef = text(h2p.Id);
             if (!appRef) continue;
             out.push({
               appRef, productRef,
               appProgramId: appProgramId(appRef),
               manufacturer: manufacturerOf(productRef),
-              name: String(p.Text ?? ""),
-              orderNumber: String(p.OrderNumber ?? ""),
+              name: text(p.Text),
+              orderNumber: text(p.OrderNumber),
               hwVersion,
             });
           }

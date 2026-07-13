@@ -1052,7 +1052,7 @@ describe("readGroupTables entry-count bound", () => {
   }) as unknown as KnxDevice;
 
   test("refuses an implausible count with a coded error instead of reading the table", async () => {
-    await expect(readGroupTables(stub(2833))).rejects.toMatchObject({ code: "GROUP_TABLE_UNREADABLE" });
+    expect(readGroupTables(stub(2833))).rejects.toMatchObject({ code: "GROUP_TABLE_UNREADABLE" });
   });
 
   test("accepts a plausible count", async () => {

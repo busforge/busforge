@@ -18,7 +18,7 @@ const realRead = real.readDeviceState; // pin: mock.module replaces exports in p
 
 let readImpl: typeof realRead = realRead; // default real; restored in afterAll so a leaked mock is behavior-neutral
 
-mock.module("../src/deviceprofile.ts", () => ({
+await mock.module("../src/deviceprofile.ts", () => ({
   ...real,
   readDeviceState: (opts: Parameters<typeof realRead>[0]) => readImpl(opts),
 }));

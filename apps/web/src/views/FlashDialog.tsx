@@ -44,7 +44,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     const init: Record<string, Part> = {};
     for (const tg of targets) init[tg] = { ...freshPart(), checking: true };
     setParts(init);
-    (async () => {
+    // Deliberately not awaited: this runs the previews in the background while the dialog paints.
+    // Nothing is lost by that, because every target's own failure is caught and shown ON the target
+    // (setPart error) — the loop cannot reject.
+    void (async () => {
       for (const tg of targets) {
         try { const r = await runDry(tg, projectId, device.id); setPart(tg, { dry: r, checking: false }); }
         catch (e) { setPart(tg, { error: e, checking: false }); }
@@ -131,8 +134,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>
           )}
+          {/* onClick returns void, so flash()'s promise is discarded explicitly. Nothing is lost by
+              that: flash() catches each target's failure and shows it ON that target, and never rejects. */}
           {canFlash && (
-            <Button onClick={flash} disabled={anyFlashing} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
+            <Button onClick={() => { void flash(); }} disabled={anyFlashing} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
               {anyFlashing ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />} {t("flash.flash")}
             </Button>
           )}

@@ -81,7 +81,7 @@ for (const d of devices) {
     const err = (e as Error).message;
     console.log(`${d.ia} ERROR ${err}`);
     manifest.push({ ia: d.ia, app: appId, error: err });
-  } finally { try { await dev.disconnect(); } catch {} }
+  } finally { try { await dev.disconnect(); } catch { /* teardown: the device link may already be gone */ } }
 }
 await tun.disconnect();
 writeFileSync(join(outDir, "manifest.json"), JSON.stringify({ note: "real device parameter memory; ground truth for image-build byte-verification", interface: ip, devices: manifest }, null, 2));

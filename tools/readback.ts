@@ -108,7 +108,7 @@ for (const d of proj.devices) {
     if (mode !== "tables") params.push({ ia: d.ia, app, error: err });
     if (mode !== "params") tables.push({ ia: d.ia, app, error: err });
     console.log(`${d.ia} ERROR ${err}`);
-  } finally { try { await dev.disconnect(); } catch {} }
+  } finally { try { await dev.disconnect(); } catch { /* teardown: the device link may already be gone */ } }
 }
 await tun.disconnect();
 

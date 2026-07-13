@@ -148,9 +148,9 @@ export function DevicesView() {
   const search = useSearch({ from: "/projects/$projectId/devices" });
   const q = search.q ?? "";
   const onlyChanged = search.changed ?? false;
-  const setQ = (val: string) => navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true });
-  const toggleChanged = () => navigate({ search: (p) => ({ ...p, changed: p.changed ? undefined : true }), replace: true });
-  const setBuilding = (id: string) => navigate({ search: (p) => ({ ...p, b: id || undefined }), replace: true });
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  const toggleChanged = () => { void navigate({ search: (p) => ({ ...p, changed: p.changed ? undefined : true }), replace: true }); };
+  const setBuilding = (id: string) => { void navigate({ search: (p) => ({ ...p, b: id || undefined }), replace: true }); };
 
   const all = project?.devices ?? [];
   const locations = project?.locations ?? [];
@@ -676,11 +676,11 @@ function AddDeviceDialog({
   const add = useMutation({
     mutationFn: (p: CatalogProduct) => api.addDevice(projectId, p.appRef, p.productRef),
     onSuccess: (res, p) => {
-      qc.invalidateQueries({ queryKey: qk.project(projectId) });
+      void qc.invalidateQueries({ queryKey: qk.project(projectId) });
       toast.success(t("catalog.added", { name: p.name }));
       onOpenChange(false);
       setQ("");
-      navigate({ to: "/projects/$projectId/devices/$deviceId", params: { projectId, deviceId: res.id } });
+      void navigate({ to: "/projects/$projectId/devices/$deviceId", params: { projectId, deviceId: res.id } });
     },
     onError: (e) => toast.error(t("catalog.failed"), { description: errMsg(t, e) }),
   });
@@ -689,7 +689,7 @@ function AddDeviceDialog({
   const importProd = useMutation({
     mutationFn: (file: File) => api.importCatalog(file),
     onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: qk.catalog });
+      void qc.invalidateQueries({ queryKey: qk.catalog });
       toast.success(t("catalog.imported", { count: res.products }));
     },
     onError: (e) => toast.error(t("catalog.importFailed"), { description: errMsg(t, e) }),

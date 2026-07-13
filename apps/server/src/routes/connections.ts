@@ -25,7 +25,7 @@ function parseConnInput(raw: unknown): ConnectionInput | string {
 }
 
 // /api/connections  -> reusable library of saved bus connections (IP / USB)
-export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
+export async function handle(req: Request, _url: URL, seg: string[], state: AppState): Promise<Response | null> {
   if (seg[1] !== "connections") return null;
   const { db } = state;
 

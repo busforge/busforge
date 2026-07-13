@@ -59,6 +59,6 @@ describe("memRead handles device read boundaries without misaligning", () => {
       this.onCemi?.(this.device, this.assignedIa, resp, false);
     } })(0);
     const dev = new KnxDevice(tun, "1.1.11");
-    await expect(dev.memRead(0x2008, 4, 12)).rejects.toThrow(/refused byte/);
+    expect(dev.memRead(0x2008, 4, 12)).rejects.toThrow(/refused byte/);
   });
 });

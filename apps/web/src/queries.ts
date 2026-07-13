@@ -81,8 +81,8 @@ export const useSnapshots = (id: string) =>
 export function useSnapshotActions(projectId: string) {
   const qc = useQueryClient();
   const refreshList = () => {
-    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
-    qc.invalidateQueries({ queryKey: qk.projects }); // dashboard restore-point count
+    void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+    void qc.invalidateQueries({ queryKey: qk.projects }); // dashboard restore-point count
   };
   const create = useMutation({
     mutationFn: (label: string) => api.createSnapshot(projectId, label),
@@ -91,8 +91,8 @@ export function useSnapshotActions(projectId: string) {
   const restore = useMutation({
     mutationFn: (sid: string) => api.restoreSnapshot(projectId, sid),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: qk.project(projectId) });
-      qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
+      void qc.invalidateQueries({ queryKey: qk.project(projectId) });
+      void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
       refreshList(); // restore inserts an auto undo-point
     },
   });
@@ -117,10 +117,10 @@ export function useGroupEdit(projectId: string) {
   const qc = useQueryClient();
   const after = (project: Awaited<ReturnType<typeof api.getProject>>) => {
     qc.setQueryData(qk.project(projectId), project);
-    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
-    qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
-    qc.invalidateQueries({ queryKey: qk.projects });
-    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+    void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
+    void qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
+    void qc.invalidateQueries({ queryKey: qk.projects });
+    void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
   };
   return {
     createRange: useMutation({ mutationFn: (v: { parentId: number | null; name: string; number: number }) => api.createGroupRange(projectId, v.parentId, v.name, v.number), onSuccess: after }),
@@ -140,8 +140,8 @@ export function useSpaceEdit(projectId: string) {
   const qc = useQueryClient();
   const after = (project: Awaited<ReturnType<typeof api.getProject>>) => {
     qc.setQueryData(qk.project(projectId), project);
-    qc.invalidateQueries({ queryKey: qk.projects });
-    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
+    void qc.invalidateQueries({ queryKey: qk.projects });
+    void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
   };
   return {
     createSpace: useMutation({ mutationFn: (v: { parentId: number | null; type: string; name: string }) => api.createSpace(projectId, v.parentId, v.type, v.name), onSuccess: after }),
@@ -169,16 +169,16 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
   const lang = i18n.language;
   // Invalidate by the lang-agnostic prefix so cached views in any language refresh.
   const after = () => {
-    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
-    qc.invalidateQueries({ queryKey: qk.project(projectId) });
+    void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
+    void qc.invalidateQueries({ queryKey: qk.project(projectId) });
   };
   const onSuccess = (view: Awaited<ReturnType<typeof api.deviceConfig>>) => {
     // Apply the returned (current-language) view instantly, and mark the other
     // cached languages stale so a later language switch refetches the edit
     // (without a redundant refetch of the view we just set).
     qc.setQueryData(qk.deviceConfig(projectId, deviceId, lang), view);
-    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId], refetchType: "none" });
-    qc.invalidateQueries({ queryKey: qk.project(projectId) });
+    void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId], refetchType: "none" });
+    void qc.invalidateQueries({ queryKey: qk.project(projectId) });
   };
   const setParam = useMutation({
     mutationFn: (v: { refId: string; value: string }) => api.setDeviceParam(projectId, deviceId, v.refId, v.value, lang),

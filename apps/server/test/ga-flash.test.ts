@@ -97,7 +97,7 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const dev = new MockDevice();
     const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
     dev.seedTables(small.addr, small.assoc);
-    await expect(new System7Profile("system-7", "MV-0705", withCapacity(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
+    expect(new System7Profile("system-7", "MV-0705", withCapacity(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
       deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // 4 GAs > capacity 3
     })).rejects.toThrow(/GA_TABLE_TOO_LARGE|reserves only/);
     expect((await dev.memRead(0x1000, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
@@ -107,7 +107,7 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     const dev = new MockDevice();
     const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
     dev.seedTables(small.addr, small.assoc);
-    await expect(new System7Profile("system-7", "MV-0705", withCapacity(undefined, undefined)).flashGroupTables(asDev(dev), "MV-0705", {
+    expect(new System7Profile("system-7", "MV-0705", withCapacity(undefined, undefined)).flashGroupTables(asDev(dev), "MV-0705", {
       deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
     })).rejects.toThrow(/reserves only/);
   });

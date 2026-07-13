@@ -457,7 +457,11 @@ export function buildDeviceConfig(
         }
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) walk(w.children, scope, into); break; }
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into); break; }
-        default: break;
+        // Leaves: this pass builds the BLOCK TREE, and these are the block CONTENTS, gathered by
+        // collect() from inside each block above. Listed rather than defaulted, so that a node kind
+        // added later shows up as a compile error here instead of vanishing from the UI.
+        case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
+          break;
       }
     }
   };
@@ -512,7 +516,11 @@ export function buildDeviceConfig(
         case "button": break;
         case "container": case "block": imgCollect(n.children, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
-        default: break;
+        // Neither owns a byte of the parameter image: a separator is a caption, and an unsupported
+        // node is one the config layer already refuses to render. Listed rather than defaulted, so
+        // a node kind added later cannot silently drop out of the image the device is programmed
+        // with — the one place where a missing value is a wrong device, not a missing label.
+        case "separator": case "unsupported": break;
       }
     }
   };

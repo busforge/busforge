@@ -93,12 +93,12 @@ export function ProjectsScreen() {
   const [importOpen, setImportOpen] = useState(false);
   const [blankOpen, setBlankOpen] = useState(false);
 
-  const open = (id: string) => navigate({ to: "/projects/$projectId/devices", params: { projectId: id } });
+  const open = (id: string) => { void navigate({ to: "/projects/$projectId/devices", params: { projectId: id } }); };
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteProject(id),
     onSuccess: (_r, id) => {
-      qc.invalidateQueries({ queryKey: qk.projects });
+      void qc.invalidateQueries({ queryKey: qk.projects });
       toast.message(t("projects.deleted", { name: projects.find((p) => p.id === id)?.name ?? "project" }));
     },
     onError: (e) => toast.error(t("projects.deleteFailed"), { description: errMsg(t, e) }),
@@ -159,13 +159,13 @@ export function ProjectsScreen() {
       <ImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onImported={(id) => { qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
+        onImported={(id) => { void qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
       />
 
       <BlankProjectDialog
         open={blankOpen}
         onOpenChange={setBlankOpen}
-        onCreated={(id) => { qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
+        onCreated={(id) => { void qc.invalidateQueries({ queryKey: qk.projects }); open(id); }}
       />
 
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
@@ -244,7 +244,7 @@ function RenameDialog({ project, onClose }: { project: ProjectSummary; onClose: 
 
   const renameMut = useMutation({
     mutationFn: () => api.renameProject(project.id, name.trim()),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.projects }); onClose(); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.projects }); onClose(); },
     onError: (e) => toast.error(t("projects.renameFailed"), { description: errMsg(t, e) }),
   });
   const submit = () => { if (name.trim() && !renameMut.isPending) renameMut.mutate(); };

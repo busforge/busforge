@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
+import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -181,19 +182,15 @@ export interface AppConfig {
   paramFauxIndent: Map<string, string>;
 }
 
-// --- order-preserving node helpers (fast-xml-parser preserveOrder shape) ---
-type ONode = Record<string, any>;
-const tagOf = (n: ONode): string => Object.keys(n).find((k) => k !== ":@")!;
-const attrsOf = (n: ONode): Record<string, string> => n[":@"] ?? {};
-const kidsOf = (n: ONode): ONode[] => (Array.isArray(n[tagOf(n)]) ? n[tagOf(n)] : []);
-const childrenByTag = (nodes: ONode[], tag: string): ONode[] => nodes.filter((n) => tagOf(n) === tag);
-const firstByTag = (nodes: ONode[], tag: string): ONode | undefined => nodes.find((n) => tagOf(n) === tag);
 // The order-preserving parser splits attributes (under ":@") from child elements,
 // unlike the merged parser. ETS authors most fields as attributes but large payloads
 // (a segment's base64 Data, long texts) as child-element text. Read either form
 // uniformly, so a field authored as an element instead of an attribute still resolves
 // (this is what the legacy merged parser did implicitly).
-const concatText = (n: ONode): string => kidsOf(n).map((k) => k["#text"]).filter((t) => t !== undefined).join("");
+// Only text nodes contribute. An element child has no "#text" and is not text; joining it would
+// have produced "[object Object]" inside the very string a segment's base64 Data is read from.
+const concatText = (n: ONode): string =>
+  kidsOf(n).map((k) => k["#text"]).filter((t): t is string | number => typeof t === "string" || typeof t === "number").join("");
 function attrOrText(n: ONode, name: string): string | undefined {
   const a = attrsOf(n)[name];
   if (a !== undefined) return a;

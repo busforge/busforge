@@ -33,7 +33,10 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
   const exposesKeys = (project?.secureDeviceCount ?? 0) > 0 && !password.trim();
 
   function reset() { setPassword(""); setError(null); }
-  const setOpen = (o: boolean) => { if (!o) reset(); controlled ? onOpenChange?.(o) : setOpenState(o); };
+  const setOpen = (o: boolean) => {
+    if (!o) reset();
+    if (controlled) onOpenChange?.(o); else setOpenState(o);
+  };
 
   const exportMut = useMutation({
     mutationFn: () => api.exportProject(projectId, password.trim() || undefined),

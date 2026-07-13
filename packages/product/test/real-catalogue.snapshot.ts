@@ -68,7 +68,13 @@ export function snapshot(xml: string): AppSnapshot {
   const lsms: AppSnapshot["lsms"] = {};
   for (const lsm of [...new Set(model.segments.map((s) => s.lsm))].sort((a, b) => a - b)) {
     const img = buildParameterImage(model, lsm, new Map());
-    const decodeHash = sha(JSON.stringify([...decodeParameterImage(model, lsm, img)].sort()));
+    // The comparator reproduces bare .sort() EXACTLY (it stringifies each entry to "refId,value"
+    // and compares those). It is spelled out rather than left implicit because this hash is a
+    // stability snapshot: change the order and the hash changes, which would read as "the codec
+    // moved" when nothing but the sort did.
+    const entries = [...decodeParameterImage(model, lsm, img)];
+    entries.sort((a, b) => { const sa = `${a[0]},${a[1]}`, sb = `${b[0]},${b[1]}`; return sa < sb ? -1 : sa > sb ? 1 : 0; });
+    const decodeHash = sha(JSON.stringify(entries));
     lsms[String(lsm)] = { build: sha(img.toString("hex")), decodeHash };
   }
 

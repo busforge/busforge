@@ -46,7 +46,10 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
     // TypeIPAddress is a 4-byte host address; the image codec encodes the dotted-quad
     // string as 4 big-endian bytes (see image.ts encode).
     case "IPAddress": return "IPAddress";
-    default: return "Other"; // Color / Other / Time(handled above)
+    // Not represented in the parameter image. Spelled out rather than left to a `default`: a base
+    // type added later must fail here loudly, not quietly become "Other" and be dropped from the
+    // bytes the device is programmed with.
+    case "Color": case "Other": case "Time": return "Other"; // Time is handled above (TypeTime)
   }
 }
 

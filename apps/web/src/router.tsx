@@ -27,6 +27,9 @@ const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: "proje
 const projectIndexRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "/",
+  // TanStack Router signals a redirect by THROWING the object `redirect()` returns; it is control
+  // flow, not an error, and the router catches it by identity. There is no error-shaped alternative.
+  // eslint-disable-next-line typescript/only-throw-error
   beforeLoad: ({ params }) => { throw redirect({ to: "/projects/$projectId/devices", params }); },
 });
 

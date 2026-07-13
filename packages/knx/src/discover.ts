@@ -31,7 +31,12 @@ function parseSearchResponse(body: Buffer): GatewayInfo | null {
   if (dib[1] !== 0x01) return null; // description type: device info
   const ia = numToIa(dib.readUInt16BE(4));
   const mac = Array.from(dib.subarray(18, 24)).map((b) => b.toString(16).padStart(2, "0")).join(":");
-  const name = dib.subarray(24, 54).toString("latin1").replace(/\0.*$/, "").trim();
+  // The friendly name is a fixed 30-byte field, NUL-padded: everything from the first NUL onwards
+  // is padding, not name. Cut at it rather than matching it in a regex: a control character in a
+  // pattern is invisible in the source, and this says the same thing out loud.
+  const nameField = dib.subarray(24, 54).toString("latin1");
+  const pad = nameField.indexOf("\u0000");
+  const name = (pad === -1 ? nameField : nameField.slice(0, pad)).trim();
   return { name, ip, port, ia, mac };
 }
 

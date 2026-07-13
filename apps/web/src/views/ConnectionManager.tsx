@@ -113,7 +113,7 @@ export function ConnectionManager() {
 
   const del = useMutation({
     mutationFn: (cid: string) => api.deleteConnection(cid),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.connections }); toast.message(t("conn.deleted")); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.connections }); toast.message(t("conn.deleted")); },
     onError: (e) => toast.error(t("conn.deleteFailed"), { description: errMsg(t, e) }),
   });
 
@@ -213,7 +213,7 @@ function ConnectionEditor({ conn, onDone }: { conn: Connection | null; onDone: (
       };
       return conn ? api.updateConnection(conn.id, input) : api.createConnection(input);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: qk.connections }); toast.success(t("conn.created")); onDone(); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: qk.connections }); toast.success(t("conn.created")); onDone(); },
     onError: (e) => toast.error(t("conn.saveFailed"), { description: errMsg(t, e) }),
   });
 

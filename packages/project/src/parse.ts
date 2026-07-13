@@ -4,6 +4,38 @@ import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeN
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The parsed .knxproj document.
+//
+// fast-xml-parser returns a schema-less object tree: element names and attribute names land as
+// keys on the SAME object, a repeated child is an array and a lone one is not. The shape is ETS's,
+// not ours, and it is not worth mirroring in types that would then lie about what a given export
+// actually contains. So the document is named for what it is — untyped — and every value taken out
+// of it is narrowed at the point of use, by `kids` (elements) and `attr` (attribute text).
+//
+// This is the difference that matters: with `any`, `d.Adress` (a typo) type-checked and silently
+// produced NaN. Here it is `unknown`, and it cannot be used without saying what it is expected to be.
+// ─────────────────────────────────────────────────────────────────────────────
+export type XmlNode = { readonly [key: string]: unknown };
+
+export const isNode = (v: unknown): v is XmlNode => typeof v === "object" && v !== null && !Array.isArray(v);
+
+// Child elements, normalised over fast-xml-parser's one-vs-many shape. A value that is not an
+// element (an attribute's text, an absent child) yields none.
+export const kids = (v: unknown): XmlNode[] => (Array.isArray(v) ? v.filter(isNode) : isNode(v) ? [v] : []);
+
+// A singular container element (<ParameterInstanceRefs>), so its children can be reached. Not an
+// element -> undefined, and the optional chain that follows yields nothing.
+export const node = (v: unknown): XmlNode | undefined => (isNode(v) ? v : undefined);
+
+// An attribute as text. A numeric-looking attribute is typed as a number by the parser, so numbers
+// and booleans are accepted; an element where an attribute was expected is not text, and is absent.
+export const attr = (v: unknown): string | undefined =>
+  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : undefined;
+
+// An attribute as text, or "" — the old `String(x ?? "")`, minus the `[object Object]`.
+export const text = (v: unknown): string => attr(v) ?? "";
+
 // "DPST-1-1" -> "1.001"; "DPT-1" -> "1.*"; pass through anything else.
 function dptDisplay(s: string | undefined): string {
   if (!s) return "";
@@ -22,7 +54,7 @@ export const manufacturerOf = (ref: string): number => {
 
 export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const doc = p.parse(xml0);
+  const doc = p.parse(xml0) as XmlNode;
 
   const installation = firstByKey(doc, "Installation");
   // Parse project.xml's <ProjectInformation> once; both the name and the group-address
@@ -51,11 +83,15 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
 // (ETS's default and the historical behaviour) when it is absent. "Free" style renders
 // three-level here, its default display. Getting this right is what makes a TwoLevel
 // project's addresses format as "m/s" instead of a phantom-middle "m/0/s".
-function parseGroupAddressLevels(projectInfo: any, installation: any): Levels {
+function parseGroupAddressLevels(projectInfo: XmlNode | undefined, installation: XmlNode | undefined): Levels {
   const toLevels = (s: unknown): Levels | undefined => {
-    const v = String(s ?? "");
-    if (v === "TwoLevel") return 2;
-    if (v === "ThreeLevel" || v === "Free") return 3;
+    // Only a string is a style name. This is not a bug fix: the old String() coercion produced
+    // "[object Object]", which matched no branch and fell through to the same undefined. It is the
+    // guard being made explicit, so the next reader does not have to work out that the coercion was
+    // harmless — and so the three-level default below stays a default, not a coincidence.
+    if (typeof s !== "string") return undefined;
+    if (s === "TwoLevel") return 2;
+    if (s === "ThreeLevel" || s === "Free") return 3;
     return undefined;
   };
   return toLevels(projectInfo?.GroupAddressStyle) ?? toLevels(installation?.GroupAddressStyle) ?? 3;
@@ -66,25 +102,36 @@ function parseGroupAddressLevels(projectInfo: any, installation: any): Levels {
 // (present only once ETS secure-commissioned it); the 6-byte device serial used for the
 // Sync request is the DeviceInstance's own SerialNumber attribute. SequenceNumber here is
 // the group/data counter, kept for completeness; tool-access programming syncs its own.
-function parseDeviceSecurity(doc: any, deviceId: string): DeviceSecurity | undefined {
+function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | undefined {
   const dev = findDeviceInstance(doc, deviceId);
   const sec = dev?.Security;
   // A non-secure device has no <Security> child; a stray Security="Off" attribute
   // parses to a string, not an object, so the ToolKey lookup safely yields nothing.
-  if (!sec || typeof sec !== "object" || !sec.ToolKey) return undefined;
+  if (!isNode(sec) || sec.ToolKey === undefined) return undefined;
   return {
     deviceId,
-    toolKey: String(sec.ToolKey),
-    serialNumber: String(dev.SerialNumber ?? ""),
-    sequenceNumber: String(sec.SequenceNumber ?? ""),
+    toolKey: text(sec.ToolKey),
+    serialNumber: text(dev?.SerialNumber),
+    sequenceNumber: text(sec.SequenceNumber),
   };
 }
 
 // Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so
 // com-object links ("Links=GA-189 GA-190") can be resolved.
-function buildGaIdMap(node: any, out: Map<string, number>) {
-  if (node == null || typeof node !== "object") return;
-  for (const g of arr<any>(node.GroupAddress)) out.set(String(g.Id).split("_").pop()!, Number(g.Address));
+//
+// The walk MUST descend into arrays. fast-xml-parser makes a repeated element an array (two
+// <Line>s, two <GroupRange>s, two <Area>s), so an array sits on the path to most of this document,
+// and a walker that stops at one finds nothing below it — every device would import with no
+// parameters and no links, and report zero of both, which is indistinguishable from a device that
+// genuinely has none.
+function buildGaIdMap(node: unknown, out: Map<string, number>) {
+  if (Array.isArray(node)) { for (const e of node) buildGaIdMap(e, out); return; }
+  if (!isNode(node)) return;
+  for (const g of kids(node.GroupAddress)) {
+    const id = attr(g.Id);
+    if (id === undefined) continue; // no id: nothing a link could ever name
+    out.set(id.split("_").pop()!, Number(attr(g.Address)));
+  }
   for (const k of Object.keys(node)) buildGaIdMap(node[k], out);
 }
 
@@ -92,7 +139,7 @@ function buildGaIdMap(node: any, out: Map<string, number>) {
 // Also counts link tokens that did NOT resolve to a group address in the tree: those
 // are real assignments we silently lose, so the caller can surface the count instead
 // of pretending every link imported.
-function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number } {
+function parseDeviceLinks(doc: XmlNode, deviceId: string, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number } {
   const dev = findDeviceInstance(doc, deviceId);
   // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
@@ -101,36 +148,37 @@ function parseDeviceLinks(doc: any, deviceId: string, gaIdToRaw: Map<string, num
   // no-op that preserves document order.
   const byRef = new Map<string, number[]>();
   let unresolved = 0;
-  for (const c of arr<any>(dev?.ComObjectInstanceRefs?.ComObjectInstanceRef)) {
-    if (!c.Links) continue;
-    const tokens = String(c.Links).split(/\s+/).filter(Boolean);
+  for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
+    const links = attr(c.Links);
+    if (!links) continue;
+    const tokens = links.split(/\s+/).filter(Boolean);
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
     unresolved += tokens.length - gaRaws.length;
     if (!gaRaws.length) continue;
-    const existing = byRef.get(String(c.RefId));
+    const existing = byRef.get(text(c.RefId));
     if (existing) existing.push(...gaRaws);
-    else byRef.set(String(c.RefId), gaRaws);
+    else byRef.set(text(c.RefId), gaRaws);
   }
   return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved };
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).
-function parseDeviceParams(doc: any, deviceId: string): { refId: string; value: string }[] {
+function parseDeviceParams(doc: XmlNode, deviceId: string): { refId: string; value: string }[] {
   const dev = findDeviceInstance(doc, deviceId);
   const out: { refId: string; value: string }[] = [];
-  for (const r of arr<any>(dev?.ParameterInstanceRefs?.ParameterInstanceRef)) {
-    if (r.Value !== undefined) out.push({ refId: String(r.RefId), value: String(r.Value) });
+  for (const r of kids(node(dev?.ParameterInstanceRefs)?.ParameterInstanceRef)) {
+    if (r.Value !== undefined) out.push({ refId: text(r.RefId), value: text(r.Value) });
   }
   return out;
 }
 
 // Collect a device's module instances with their resolved argument values.
-function parseDeviceModules(doc: any, deviceId: string) {
+function parseDeviceModules(doc: XmlNode, deviceId: string) {
   const dev = findDeviceInstance(doc, deviceId);
-  return arr<any>(dev?.ModuleInstances?.ModuleInstance).map((mi) => ({
-    id: String(mi.Id),
-    refId: String(mi.RefId),
-    args: arr<any>(mi.Arguments?.Argument).filter((a) => a.Value !== undefined).map((a) => ({ refId: String(a.RefId), value: String(a.Value) })),
+  return kids(node(dev?.ModuleInstances)?.ModuleInstance).map((mi) => ({
+    id: text(mi.Id),
+    refId: text(mi.RefId),
+    args: kids(node(mi.Arguments)?.Argument).filter((a) => a.Value !== undefined).map((a) => ({ refId: text(a.RefId), value: text(a.Value) })),
   }));
 }
 
@@ -140,37 +188,38 @@ function parseDeviceModules(doc: any, deviceId: string) {
 // need this. Throws on an unknown id rather than returning a misleading empty map.
 export function deviceParamValues(xml0: string, deviceId: string): { appRef: string; values: Map<string, string> } {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const dev = findDeviceInstance(p.parse(xml0), deviceId);
+  const dev = findDeviceInstance(p.parse(xml0) as XmlNode, deviceId);
   if (!dev) throw new Error(`device ${deviceId} not found`);
   const values = new Map<string, string>();
-  for (const r of arr<any>(dev.ParameterInstanceRefs?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(String(r.RefId), String(r.Value));
-  return { appRef: String(dev.Hardware2ProgramRefId ?? ""), values };
+  for (const r of kids(node(dev.ParameterInstanceRefs)?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(text(r.RefId), text(r.Value));
+  return { appRef: text(dev.Hardware2ProgramRefId), values };
 }
 
-function findDeviceInstance(node: any, id: string): any {
-  if (node == null || typeof node !== "object") return undefined;
-  for (const d of arr<any>(node.DeviceInstance)) if (d.Id === id) return d;
-  for (const k of Object.keys(node)) { const r = findDeviceInstance(node[k], id); if (r) return r; }
+// Descends into arrays: see buildGaIdMap. A project with two lines puts an array between the
+// installation and every device in it, and a walker that stops there finds no device at all.
+function findDeviceInstance(n: unknown, id: string): XmlNode | undefined {
+  if (Array.isArray(n)) { for (const e of n) { const r = findDeviceInstance(e, id); if (r) return r; } return undefined; }
+  if (!isNode(n)) return undefined;
+  for (const d of kids(n.DeviceInstance)) if (d.Id === id) return d;
+  for (const k of Object.keys(n)) { const r = findDeviceInstance(n[k], id); if (r) return r; }
   return undefined;
 }
 
-function parseName(projectInfo: any, installation: any, fallbackName: string): string {
-  if (projectInfo?.Name) return String(projectInfo.Name);
-  if (installation?.Name) return String(installation.Name);
-  return fallbackName;
+function parseName(projectInfo: XmlNode | undefined, installation: XmlNode | undefined, fallbackName: string): string {
+  return attr(projectInfo?.Name) || attr(installation?.Name) || fallbackName;
 }
 
-function parseTopology(topo: any, productNames: Map<string, string>): { topology: Topology; malformedDevices: number } {
+function parseTopology(topo: unknown, productNames: Map<string, string>): { topology: Topology; malformedDevices: number } {
   const areas: TopologyArea[] = [];
   let malformedDevices = 0;
-  for (const area of arr<any>(topo?.Area)) {
-    const lines = arr<any>(area.Line).map((line) => {
+  for (const area of kids(node(topo)?.Area)) {
+    const lines = kids(area.Line).map((line) => {
       // Devices may sit directly under Line or under a Segment (ETS6).
-      const devNodes = [...arr<any>(line.DeviceInstance), ...arr<any>(line.Segment).flatMap((s: any) => arr<any>(s.DeviceInstance))];
+      const devNodes = [...kids(line.DeviceInstance), ...kids(line.Segment).flatMap((s) => kids(s.DeviceInstance))];
       const devices: Device[] = [];
       for (const d of devNodes) {
-        const id = String(d.Id ?? "");
-        const ia = `${Number(area.Address)}.${Number(line.Address)}.${Number(d.Address)}`;
+        const id = text(d.Id);
+        const ia = `${Number(attr(area.Address))}.${Number(attr(line.Address))}.${Number(attr(d.Address))}`;
         // A DeviceInstance without an Id cannot be correlated to its params/links/security
         // (findDeviceInstance keys on Id): keeping it would import a phantom that silently
         // drops all of them. A non-numeric address yields a "NaN.NaN.x" IA the device can
@@ -183,16 +232,16 @@ function parseTopology(topo: any, productNames: Map<string, string>): { topology
           ia,
           // ETS falls back to the catalogue product name when a device has no
           // user-given instance name.
-          name: String(d.Name || productNames.get(String(d.ProductRefId ?? "")) || ""),
-          productRef: String(d.ProductRefId ?? ""),
-          appRef: String(d.Hardware2ProgramRefId ?? ""),
-          manufacturer: manufacturerOf(String(d.ProductRefId ?? "")),
-          comment: [d.Comment, d.Description].map((x) => String(x ?? "").trim()).filter(Boolean).join(" "),
+          name: attr(d.Name) || productNames.get(text(d.ProductRefId)) || "",
+          productRef: text(d.ProductRefId),
+          appRef: text(d.Hardware2ProgramRefId),
+          manufacturer: manufacturerOf(text(d.ProductRefId)),
+          comment: [d.Comment, d.Description].map((x) => text(x).trim()).filter(Boolean).join(" "),
         });
       }
-      return { address: Number(line.Address), name: String(line.Name ?? ""), devices };
+      return { address: Number(attr(line.Address)), name: text(line.Name), devices };
     });
-    areas.push({ address: Number(area.Address), name: String(area.Name ?? ""), lines });
+    areas.push({ address: Number(attr(area.Address)), name: text(area.Name), lines });
   }
   return { topology: { areas }, malformedDevices };
 }
@@ -201,41 +250,43 @@ function parseTopology(topo: any, productNames: Map<string, string>): { topology
 // each carrying its Type (Building/Floor/Room/...), Name and the device instances
 // placed directly in it. Nesting is arbitrary depth. Absent in older/structureless
 // exports, in which case this returns an empty array.
-function parseLocations(node: any): SpaceNode[] {
-  const toSpace = (s: any): SpaceNode => ({
+function parseLocations(loc: unknown): SpaceNode[] {
+  const toSpace = (s: XmlNode): SpaceNode => ({
     id: "", // not addressable until stored (the DB assigns the row id); source id is extId
-    extId: String(s.Id ?? ""),
-    type: String(s.Type ?? ""),
-    name: String(s.Name ?? ""),
-    deviceIds: arr<any>(s.DeviceInstanceRef).map((r) => String(r.RefId ?? "")).filter(Boolean),
-    children: arr<any>(s.Space).map(toSpace),
+    extId: text(s.Id),
+    type: text(s.Type),
+    name: text(s.Name),
+    deviceIds: kids(s.DeviceInstanceRef).map((r) => text(r.RefId)).filter(Boolean),
+    children: kids(s.Space).map(toSpace),
   });
-  return arr<any>(node?.Space).map(toSpace);
+  return kids(node(loc)?.Space).map(toSpace);
 }
 
-function parseGroupAddresses(node: any, levels: Levels): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {
+function parseGroupAddresses(gas: unknown, levels: Levels): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {
   const flat: GroupAddress[] = [];
-  const toGa = (g: any): GroupAddress => {
-    const raw = Number(g.Address);
-    const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: String(g.Name ?? ""), dpt: dptDisplay(g.DatapointType) };
+  const toGa = (g: XmlNode): GroupAddress => {
+    const raw = Number(attr(g.Address));
+    const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: text(g.Name), dpt: dptDisplay(attr(g.DatapointType)) };
     flat.push(ga);
     return ga;
   };
-  const toRange = (r: any): GroupRangeNode => ({
+  const toRange = (r: XmlNode): GroupRangeNode => ({
     id: "", // not addressable until stored (the DB assigns the row id); the XML id is discarded
-    name: String(r.Name ?? ""),
-    rangeStart: Number(r.RangeStart ?? 0),
-    rangeEnd: Number(r.RangeEnd ?? 0),
-    children: arr<any>(r.GroupRange).map(toRange),
-    addresses: arr<any>(r.GroupAddress).map(toGa),
+    name: text(r.Name),
+    rangeStart: Number(attr(r.RangeStart) ?? 0),
+    rangeEnd: Number(attr(r.RangeEnd) ?? 0),
+    children: kids(r.GroupRange).map(toRange),
+    addresses: kids(r.GroupAddress).map(toGa),
   });
-  const groupRanges = arr<any>(node?.GroupRanges?.GroupRange).map(toRange);
+  const groupRanges = kids(node(node(gas)?.GroupRanges)?.GroupRange).map(toRange);
   return { groupRanges, groupAddresses: flat };
 }
 
-function firstByKey(node: any, key: string): any {
-  if (node == null || typeof node !== "object") return undefined;
-  if (node[key]) return Array.isArray(node[key]) ? node[key][0] : node[key];
-  for (const k of Object.keys(node)) { const r = firstByKey(node[k], key); if (r) return r; }
+// Descends into arrays: see buildGaIdMap.
+function firstByKey(n: unknown, key: string): XmlNode | undefined {
+  if (Array.isArray(n)) { for (const e of n) { const r = firstByKey(e, key); if (r) return r; } return undefined; }
+  if (!isNode(n)) return undefined;
+  if (n[key] !== undefined) { const hit = kids(n[key])[0]; if (hit) return hit; }
+  for (const k of Object.keys(n)) { const r = firstByKey(n[k], key); if (r) return r; }
   return undefined;
 }

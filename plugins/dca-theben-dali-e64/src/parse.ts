@@ -23,44 +23,54 @@ function decode(input: Uint8Array | string): string {
   return new TextDecoder("utf-8").decode(b);
 }
 
-const arr = (v: unknown): any[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
+// The backup-store document. fast-xml-parser gives back a schema-less tree (element and attribute
+// names share the same key space), so it is named as untyped and every value read out of it is
+// narrowed here rather than trusted.
+type XNode = Record<string, unknown>;
+const isNode = (v: unknown): v is XNode => typeof v === "object" && v !== null && !Array.isArray(v);
+const arr = (v: unknown): XNode[] => (Array.isArray(v) ? v.filter(isNode) : isNode(v) ? [v] : []);
+const obj = (v: unknown): XNode | undefined => (isNode(v) ? v : undefined);
 const int = (v: unknown, dflt = 0): number => { const n = Number(v); return Number.isFinite(n) ? n : dflt; };
+// An attribute as text. An element where an attribute was expected is not text: "" beats
+// "[object Object]", which is what String() would have produced.
+const str = (v: unknown): string =>
+  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 
 // Parse a Theben e64 backup-store into the typed model. Tolerant of missing
 // sections (a fresh device may have empty <scenes> etc.).
 export function parseDaliStore(input: Uint8Array | string): DaliDevice {
   const xml = decode(input);
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
-  const root = p.parse(xml);
-  const dev = root.device;
+  const root = p.parse(xml) as XNode;
+  const dev = obj(root.device);
   if (!dev) throw new Error("backup-store: no <device> root (unrecognised format)");
 
-  const groups = arr(dev.groups?.Group).map((g: any) => ({
-    index: int(g.index), description: String(g.description ?? ""),
+  const groups = arr(obj(dev.groups)?.Group).map((g) => ({
+    index: int(g.index), description: str(g.description),
   }));
 
-  const devEcgs = arr(dev.devecgs?.DevECG).map((d: any) => ({
+  const devEcgs = arr(obj(dev.devecgs)?.DevECG).map((d) => ({
     index: int(d.index),
     type: int(d.type) as LampType,
     subtype: int(d.subtype),
     groupIndex: int(d["groupindex"]),
     shortAddress: int(d["short-address"]),
-    longAddress: String(d["long-address"] ?? "FFFFFF"),
+    longAddress: str(d["long-address"]) || "FFFFFF",
     minValue: int(d["min-value"]),
   }));
 
-  const ecgs = arr(dev.ecgs?.ECG).map((e: any) => ({
+  const ecgs = arr(obj(dev.ecgs)?.ECG).map((e) => ({
     index: int(e.index),
     groupIndex: int(e["groupindex"]),
     shortAddress: int(e["short-address"]),
     flags: int(e.flags) as CommissioningFlag,
     type: int(e.type) as LampType,
-    description: String(e.description ?? ""),
+    description: str(e.description),
   }));
 
-  const scenes: DaliScene[] = arr(dev.scenes?.Scene).map((s: any) => {
-    const items: DaliSceneItem[] = arr(s.SceneItem).map((it: any) => ({
-      itemKind: String(it.itemtype ?? "").endsWith("Group") ? "Group" : "ECG",
+  const scenes: DaliScene[] = arr(obj(dev.scenes)?.Scene).map((s) => {
+    const items: DaliSceneItem[] = arr(s.SceneItem).map((it) => ({
+      itemKind: str(it.itemtype).endsWith("Group") ? "Group" : "ECG",
       itemIndex: int(it.itemindex),
       valuePercent: int(it.value),
     }));
@@ -68,11 +78,11 @@ export function parseDaliStore(input: Uint8Array | string): DaliDevice {
   });
 
   return {
-    individualAddress: String(dev.IndividualAddress ?? ""),
-    project: String(dev.Project ?? ""),
-    type: String(dev.type ?? ""),
-    version: String(dev.version ?? ""),
-    canRestore: String(dev.CanRestore ?? "").toLowerCase() === "true",
+    individualAddress: str(dev.IndividualAddress),
+    project: str(dev.Project),
+    type: str(dev.type),
+    version: str(dev.version),
+    canRestore: str(dev.CanRestore).toLowerCase() === "true",
     groups, devEcgs, ecgs, scenes,
   };
 }

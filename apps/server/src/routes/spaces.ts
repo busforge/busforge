@@ -8,7 +8,7 @@ import type { AppState } from "../app.ts";
 // flashed; all return the refreshed project. Consistent with group-address
 // editing: the structure rides in every snapshot payload + the .busforge export
 // (so a restore reverts it), and the destructive delete captures an undo point.
-export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
+export async function handle(req: Request, _url: URL, seg: string[], state: AppState): Promise<Response | null> {
   const { db } = state;
   const id = seg[2];
 

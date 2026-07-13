@@ -38,7 +38,7 @@ async function flash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }): P
     const tun = new KnxIpTunnel(ip); await tun.connect();
     const dev = new KnxDevice(tun, ia);
     try { await dev.connect(); await dev.deviceDescriptor(); await runLoadPlan(dev, planSystemBGaFlash(tables)); await dev.disconnect(); await tun.disconnect(); return true; }
-    catch (e) { log(`   flash attempt ${i}: ${(e as Error).message}`); try { await tun.disconnect(); } catch {} await sleep(1500); }
+    catch (e) { log(`   flash attempt ${i}: ${(e as Error).message}`); try { await tun.disconnect(); } catch { /* teardown between retries: a failed disconnect must not mask the flash error above */ } await sleep(1500); }
   }
   return false;
 }

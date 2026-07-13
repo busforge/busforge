@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag } from "./onode.ts";
 
 // Parse a KNX ApplicationProgram's <LoadProcedures> into a generic, executable step
 // model. The load procedure is the device's own declared programming recipe: which
@@ -49,13 +50,6 @@ export const KNOWN_LD_VERBS = new Set([
   "LdCtrlWriteProp", "LdCtrlLoadImageProp", "LdCtrlCompareProp",
 ]);
 
-// --- order-preserving node helpers (fast-xml-parser preserveOrder shape) ---
-type ONode = Record<string, any>;
-const tagOf = (n: ONode): string => Object.keys(n).find((k) => k !== ":@")!;
-const attrsOf = (n: ONode): Record<string, string> => n[":@"] ?? {};
-const kidsOf = (n: ONode): ONode[] => (Array.isArray(n[tagOf(n)]) ? n[tagOf(n)] : []);
-const childrenByTag = (nodes: ONode[], tag: string): ONode[] => nodes.filter((n) => tagOf(n) === tag);
-const firstByTag = (nodes: ONode[], tag: string): ONode | undefined => nodes.find((n) => tagOf(n) === tag);
 function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
   for (const n of nodes) {
     if (tagOf(n) === tag) return n;

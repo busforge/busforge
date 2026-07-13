@@ -94,7 +94,7 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
   const selectedId = project?.connectionId ?? null;
   const selected = saved.find((c) => c.id === selectedId) ?? null;
 
-  const refreshStatus = () => qc.invalidateQueries({ queryKey: qk.busStatus(projectId) });
+  const refreshStatus = () => { void qc.invalidateQueries({ queryKey: qk.busStatus(projectId) }); };
 
   const selectMut = useMutation({
     mutationFn: (cid: string) => api.setProjectConnection(projectId, cid),

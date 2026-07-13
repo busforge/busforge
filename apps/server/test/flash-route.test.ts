@@ -26,7 +26,7 @@ const realGaFlash = real.flashDeviceGroupAddresses;
 let paramFlashImpl: typeof realParamFlash = realParamFlash;
 let gaFlashImpl: typeof realGaFlash = realGaFlash;
 
-mock.module("../src/deviceprofile.ts", () => ({
+await mock.module("../src/deviceprofile.ts", () => ({
   ...real, // classify, readDeviceState, secureIdentify, profiles, ... stay real
   flashDeviceParameters: (opts: Parameters<typeof realParamFlash>[0]) => paramFlashImpl(opts),
   flashDeviceGroupAddresses: (opts: Parameters<typeof realGaFlash>[0]) => gaFlashImpl(opts),

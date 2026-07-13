@@ -98,7 +98,7 @@ export function DeviceConfig() {
   const navigate = useNavigate({ from: "/projects/$projectId/devices/$deviceId" });
   const qRaw = search.q ?? "";
   const q = qRaw.toLowerCase();
-  const setQ = (val: string) => navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true });
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
@@ -156,9 +156,9 @@ export function DeviceConfig() {
       onError: (e) => toast.error(t("device.readError"), { description: errMsg(t, e) }),
     });
   const afterFlash = () => {
-    qc.invalidateQueries({ queryKey: qk.project(projectId) });
-    qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
-    qc.invalidateQueries({ queryKey: qk.snapshots(projectId) }); // a real flash captures an auto restore point
+    void qc.invalidateQueries({ queryKey: qk.project(projectId) });
+    void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
+    void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) }); // a real flash captures an auto restore point
   };
 
   // Section index. Only top-level group headers are tracked/scroll targets (one

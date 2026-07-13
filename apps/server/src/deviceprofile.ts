@@ -64,8 +64,8 @@ async function withDeviceSession<T>(
     await dev.disconnect(); await tun.disconnect();
     return result;
   } catch (e) {
-    try { await dev.disconnect(); } catch {}
-    try { await tun.disconnect(); } catch {}
+    try { await dev.disconnect(); } catch { /* teardown: the device link may already be gone */ }
+    try { await tun.disconnect(); } catch { /* teardown: the transport may already be gone */ }
     throw e;
   }
 }

@@ -98,7 +98,11 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           walk(def.dynamic, childRewrite);
           break;
         }
-        default:
+        // Leaves. This walk exists to reproduce ETS's ALLOCATOR bookkeeping, and none of these
+        // carry children or consume an allocator, so there is nothing here to do. They are listed
+        // rather than left to a `default`, so that a node kind added later cannot be skipped
+        // silently by a walk that decides where a module's memory lands.
+        case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
           break;
       }
     }

@@ -35,7 +35,7 @@ describe("reconnectAfterRestart", () => {
 
   test("throws the device error after exhausting the budget (no false success)", async () => {
     const { dev, calls } = mockDev(99); // never answers
-    await expect(reconnectAfterRestart(dev, { initialMs: 0, delayMs: 0, tries: 3 }))
+    expect(reconnectAfterRestart(dev, { initialMs: 0, delayMs: 0, tries: 3 }))
       .rejects.toThrow(/device not answering/);
     expect(calls.connect).toBe(3); // tried exactly `tries` times
   });

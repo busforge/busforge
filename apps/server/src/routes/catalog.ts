@@ -4,7 +4,7 @@ import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // /api/catalog/...  -> browsable device catalog for placing into projects
-export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
+export async function handle(req: Request, _url: URL, seg: string[], state: AppState): Promise<Response | null> {
   if (seg[1] !== "catalog") return null;
   const { db } = state;
 

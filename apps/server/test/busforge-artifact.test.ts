@@ -34,18 +34,18 @@ describe("busforge artifact codec", () => {
 
   test("encrypted artifact without a password is rejected with a coded error", async () => {
     const buf = await packBusforge(sample, "pw");
-    await expect(unpackBusforge(buf)).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_PASSWORD_REQUIRED" }));
+    expect(unpackBusforge(buf)).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_PASSWORD_REQUIRED" }));
   });
 
   test("wrong password is rejected (GCM auth tag fails)", async () => {
     const buf = await packBusforge(sample, "correct");
-    await expect(unpackBusforge(buf, "wrong")).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_WRONG_PASSWORD" }));
+    expect(unpackBusforge(buf, "wrong")).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_WRONG_PASSWORD" }));
   });
 
   test("a tampered ciphertext is rejected (authenticated encryption)", async () => {
     const buf = await packBusforge(sample, "pw");
     buf[buf.length - 1] ^= 0xff; // flip a byte of the ciphertext
-    await expect(unpackBusforge(buf, "pw")).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_WRONG_PASSWORD" }));
+    expect(unpackBusforge(buf, "pw")).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_WRONG_PASSWORD" }));
   });
 
   test("legacy plaintext .busforge.json is still accepted", async () => {
@@ -54,6 +54,6 @@ describe("busforge artifact codec", () => {
   });
 
   test("garbage input is rejected", async () => {
-    await expect(unpackBusforge(Buffer.from("not a busforge file"))).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    expect(unpackBusforge(Buffer.from("not a busforge file"))).rejects.toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
   });
 });
