@@ -10,7 +10,7 @@ import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGrou
 import { parseLoadProcedures, assessParCoverage, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash } from "./deviceflash.ts";
 import { maskInfo, type MemoryModel, type SystemFamily } from "./masks.ts";
-import { parseAppConfig, type AppConfig, type ModuleInstance } from "./appconfig.ts";
+import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
 
@@ -382,11 +382,23 @@ export class SystemBProfile extends DeviceProfile {
     const stamp = Date.now();
     const backups: { file: string; bytes: Buffer }[] = [];
     ctx.onProgress?.("backup");
+    // Sizes first, bytes second. Reading the parameter segment back is ~1800 twelve-byte round
+    // trips over TP, i.e. minutes; without a done/total the phase reports 0/0 for all of it and is
+    // indistinguishable from a hang. It was mistaken for one. Sum the work before doing it so the
+    // progress is against a real total.
+    const segs: { obj: number; what: string; at: number; size: number }[] = [];
     for (const [obj, what] of [[LSM, "params"], [OBJ.COMOBJ_TABLE, "comobj"], [OBJ.ASSOC_TABLE, "assoc"], [OBJ.ADDR_TABLE, "addr"]] as [number, string][]) {
       const at = await dev.tableAddr(obj);
       if (at === 0) continue; // never loaded: there is nothing there to lose
       const size = obj === LSM ? target.size : await tableByteLength(dev, obj, at);
-      if (size > 0) backups.push({ file: `${ctx.deviceId}-full-${stamp}-${what}.bin`, bytes: await dev.memRead(at, size) });
+      if (size > 0) segs.push({ obj, what, at, size });
+    }
+    const backupTotal = segs.reduce((n, s) => n + s.size, 0);
+    let backupDone = 0;
+    for (const s of segs) {
+      const bytes = await dev.memRead(s.at, s.size, undefined, (d) => ctx.onProgress?.("backup", backupDone + d, backupTotal));
+      backupDone += s.size;
+      backups.push({ file: `${ctx.deviceId}-full-${stamp}-${s.what}.bin`, bytes });
     }
 
     return runFlashOp(dev, mask, ctx, {
@@ -732,7 +744,12 @@ function profileFor(mask: string, cfg: AppConfig | null): DeviceProfile {
   switch (info.memoryModel) {
     case "relative": return new SystemBProfile(info.family, mask, cfg);
     case "absolute": return new System7Profile(info.family, mask, cfg);
-    default: return new UnsupportedProfile(info.memoryModel, info.family, mask, cfg);
+    // Memory models nobody has implemented. They resolve to a profile whose every operation
+    // throws, which is the whole point (see UnsupportedProfile). Enumerated rather than caught by
+    // a `default`, so that a model added to masks.ts cannot land here by accident and be declared
+    // unsupported when someone has in fact implemented it.
+    case "bcu1": case "bcu2": case "system300": case "none":
+      return new UnsupportedProfile(info.memoryModel, info.family, mask, cfg);
   }
 }
 

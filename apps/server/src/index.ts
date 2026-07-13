@@ -1,8 +1,30 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
+import { inspect } from "node:util";
 import { createState, handleApi } from "./app.ts";
 import { pruneTelegrams } from "./db/telegrams.ts";
 import type { ServerWebSocket } from "bun";
+
+// A process that drives real hardware must never disappear without saying why. A download that
+// dies mid-bracket does not leave a half-configured device, it leaves a RESET one: the load
+// states and the individual address live in flash metadata that is only written by the A_Restart
+// at the end of the plan, so an interrupted download loses everything the device had. That
+// happened here, and it was invisible: the process was simply gone, with nothing in the log.
+//
+// So every way this process can end now leaves a line behind. The handlers do not exit: an
+// uncaught error inside one request must not take the bus operation of another with it.
+const say = (why: string, e?: unknown) => {
+  // inspect(), not String(): a thrown value that is not an Error stringifies to "[object Object]",
+  // which is exactly the nothing this handler exists to replace.
+  const err = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : e === undefined ? "" : inspect(e, { depth: 3 });
+  console.error(`[${new Date().toISOString()}] ${why}${err ? `: ${err}` : ""}`);
+};
+process.on("uncaughtException", (e) => say("UNCAUGHT EXCEPTION (server stays up)", e));
+process.on("unhandledRejection", (e) => say("UNHANDLED REJECTION (server stays up)", e));
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, () => { say(`received ${sig}, exiting`); process.exit(0); });
+}
+process.on("exit", (code) => say(`process exit (code ${code})`));
 
 const state = createState();
 const PORT = Number(process.env.PORT ?? 3000);

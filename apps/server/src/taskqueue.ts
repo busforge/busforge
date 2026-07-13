@@ -24,10 +24,27 @@ export interface Task {
   // Stable code for client localization when the failure is a coded error; null
   // for cancellations and uncoded (unexpected) failures.
   errorCode: string | null;
+  // What the operation actually reported. Without this a finished task says "done" and nothing
+  // else, so a download that wrote every byte and then FAILED ITS READ-BACK looked exactly like
+  // one that worked. The result is the only place that distinction exists; it belongs here.
+  outcome: TaskOutcome | null;
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
 }
+
+// The bits of a bus-operation result the task list carries. `kind` is the operation's own verdict
+// ("flashed" | "dryRun" | "unchanged" | ...), `verified` is whether the device was read back and
+// agreed. Both are optional: a read returns neither.
+export interface TaskOutcome { kind?: string; verified?: boolean }
+
+const outcomeOf = (r: unknown): TaskOutcome | null => {
+  if (!r || typeof r !== "object") return null;
+  const o = r as { kind?: unknown; verified?: unknown };
+  const kind = typeof o.kind === "string" ? o.kind : undefined;
+  const verified = typeof o.verified === "boolean" ? o.verified : undefined;
+  return kind === undefined && verified === undefined ? null : { kind, verified };
+};
 
 // Report progress from inside a job: a phase label plus optional done/total counters
 // (unit-agnostic; memory reads report bytes).
@@ -45,8 +62,10 @@ export interface TaskMeta {
   kind: TaskKind;
 }
 
-// How long a finished task lingers in the list so the UI can show its result.
-const RETENTION_MS = 20_000;
+// How long a finished task lingers in the list so the UI can show its result. A full download is
+// several minutes of bus traffic; at the old 20s a caller that looked away for one poll interval
+// found the task simply gone, with no way to learn how it ended. Outlive the operation itself.
+const RETENTION_MS = 10 * 60_000;
 
 export class TaskQueue {
   private tasks: Task[] = [];
@@ -60,7 +79,7 @@ export class TaskQueue {
   enqueue<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal) => Promise<T>): Promise<T> {
     const task: Task = {
       id: randomUUID(), ...meta, state: "queued", phase: null, done: 0, total: 0,
-      error: null, errorCode: null, queuedAt: this.now(), startedAt: null, finishedAt: null,
+      error: null, errorCode: null, outcome: null, queuedAt: this.now(), startedAt: null, finishedAt: null,
     };
     const controller = new AbortController();
     this.controllers.set(task.id, controller);
@@ -79,7 +98,18 @@ export class TaskQueue {
       const progress: ProgressFn = (phase, done = 0, total = 0) => { task.phase = phase; task.done = done; task.total = total; };
       try {
         const r = await run(progress, controller.signal);
-        task.state = "done";
+        task.outcome = outcomeOf(r);
+        // A write the device did not confirm is not a success. The routes already refuse to adopt
+        // the programmed baseline in that case, but the TASK said "done" regardless, so a caller
+        // polling the task list — which is the only thing the UI and a script can see — was told
+        // green for a download the device never took. It is an error, and it is named as one.
+        if (task.outcome?.verified === false) {
+          task.state = "error";
+          task.error = "the device did not verify what was written to it";
+          task.errorCode = "FLASH_UNVERIFIED";
+        } else {
+          task.state = "done";
+        }
         return r;
       } catch (e) {
         if (controller.signal.aborted) { task.state = "cancelled"; task.error = null; }
@@ -88,6 +118,12 @@ export class TaskQueue {
       } finally {
         task.finishedAt = this.now();
         this.controllers.delete(task.id);
+        // The one line that says what a bus operation did. Without it the server logged nothing at
+        // all about the hardware it drives, and a download that failed left no trace anywhere.
+        const ms = (task.finishedAt ?? 0) - (task.startedAt ?? 0);
+        const extra = task.outcome ? ` ${task.outcome.kind ?? "?"}${task.outcome.verified === undefined ? "" : ` verified=${task.outcome.verified}`}` : "";
+        const why = task.error ? ` — ${task.errorCode ?? "error"}: ${task.error}` : "";
+        console.log(`[bus] ${task.kind} ${task.ia} (${task.deviceName}) -> ${task.state}${extra} in ${ms}ms${why}`);
       }
     });
     // The queue must keep draining even if this job fails, so chain off a swallowed copy.

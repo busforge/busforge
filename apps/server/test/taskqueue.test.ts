@@ -28,7 +28,7 @@ describe("TaskQueue", () => {
     const q = new TaskQueue(() => 0);
     const j1 = q.enqueue(meta("d1"), async () => { throw new Error("boom"); });
     const j2 = q.enqueue(meta("d2"), async () => 42);
-    await expect(j1).rejects.toThrow("boom");
+    expect(j1).rejects.toThrow("boom");
     expect(await j2).toBe(42);
     const tasks = q.list("p1");
     expect(tasks.find((t) => t.deviceId === "d1")?.state).toBe("error");
@@ -40,7 +40,7 @@ describe("TaskQueue", () => {
   test("captures a coded error's code so the UI can localize it", async () => {
     const q = new TaskQueue(() => 0);
     const j = q.enqueue(meta("d1"), async () => { throw new ApiError("MASK_MISMATCH", "device mask 1 != expected 2"); });
-    await expect(j).rejects.toThrow("device mask 1 != expected 2");
+    expect(j).rejects.toThrow("device mask 1 != expected 2");
     const task = q.list("p1").find((t) => t.deviceId === "d1");
     expect(task?.state).toBe("error");
     expect(task?.error).toBe("device mask 1 != expected 2"); // raw message kept as fallback
@@ -63,8 +63,26 @@ describe("TaskQueue", () => {
     const q = new TaskQueue(() => clock);
     await q.enqueue(meta("old"), async () => undefined);
     expect(q.list("p1").length).toBe(1);
-    clock += 30_000; // advance past the 20s retention
+    // A finished task must outlive the operation that produced it: a full download is minutes of
+    // bus traffic, and at the old 20s window its result was gone before anyone could read it.
+    clock += 5 * 60_000;
+    expect(q.list("p1").length).toBe(1);
+    clock += 6 * 60_000; // now past the 10min retention
     expect(q.list("p1").length).toBe(0);
+  });
+
+  test("a write the device did not verify is not reported as done", async () => {
+    const q = new TaskQueue(() => 0);
+    await q.enqueue({ ...meta("d1"), kind: "download" }, async () => ({ kind: "flashed", verified: false }));
+    expect(q.list("p1")[0]).toMatchObject({
+      state: "error", errorCode: "FLASH_UNVERIFIED", outcome: { kind: "flashed", verified: false },
+    });
+  });
+
+  test("carries a verified write's own verdict", async () => {
+    const q = new TaskQueue(() => 0);
+    await q.enqueue({ ...meta("d1"), kind: "download" }, async () => ({ kind: "flashed", verified: true }));
+    expect(q.list("p1")[0]).toMatchObject({ state: "done", outcome: { kind: "flashed", verified: true } });
   });
 
   test("scopes listed tasks to the project", async () => {
@@ -86,7 +104,7 @@ describe("TaskQueue", () => {
     expect(q.list("p1").find((t) => t.deviceId === "d2")!.state).toBe("cancelled");
     gate.resolve();
     await j1;
-    await expect(j2).rejects.toThrow(); // never ran
+    expect(j2).rejects.toThrow(); // never ran
   });
 
   test("cancels a running read via its abort signal", async () => {
@@ -97,7 +115,7 @@ describe("TaskQueue", () => {
     const task = q.list("p1")[0];
     expect(task.state).toBe("running");
     expect(q.cancel(task.id)).toBe("running");
-    await expect(job).rejects.toThrow();
+    expect(job).rejects.toThrow();
     expect(q.list("p1")[0].state).toBe("cancelled");
   });
 
