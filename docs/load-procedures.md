@@ -71,11 +71,19 @@ and reports success.
 
 | Disposition | Steps (par) | Why |
 | --- | --- | --- |
-| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`/`RelSegment` (mode 0), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
+| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`/`RelSegment` (mode 0, **any fill value**), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (e.g. hardware type, PID 78) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED` (the check ETS runs, previously skipped silently) |
 | **caller** | `Connect`, `Disconnect` | a second T_Connect would desync the sequence counter; the session owns the lifecycle |
 | **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation; hw-evidenced M-0081 1.1.x). relative: `WriteProp`/`LoadImageProp` **to PID 27 only** (MCB stamp; hw-evidenced M-0162 1.1.x + Theben 493B 1.1.x) | deliberately not executed, with hardware evidence |
 | **blocked → refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices (M-0008), `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp` | unmodeled; refusing beats a silent partial recipe |
+
+The `RelSegment` **fill byte** (the value the device pre-fills the freshly allocated segment with,
+before the sparse image write) is honored, not hardcoded. Most System B devices declare `Fill=0`
+(zero the segment); some declare `Fill=255` (`0xFF`, the erased-flash state, e.g. the GVS AMMA). The
+full download reads it (`relParamFillByte`) and threads it into both the allocation and `sparseRuns`
+(which skips runs equal to the fill), so the un-written regions read back as the fill and the
+device's own segment CRC still proves the whole image. Only a non-default allocation **mode** stays
+unmodeled.
 
 ## Coverage across the project's app programs
 

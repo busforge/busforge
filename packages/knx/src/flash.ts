@@ -14,21 +14,25 @@ export const LSM = { LOAD: 1, LOAD_COMPLETED: 2, UNLOAD: 4 } as const;
 export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2, ERROR: 3 } as const;
 
 const ev = (e: number) => { const b = Buffer.alloc(10); b[0] = e; return b; };
-function allocPayload(size: number, fill: boolean): Buffer {
+function allocPayload(size: number, fill: boolean, fillByte = 0): Buffer {
   const b = Buffer.alloc(10);
   b[0] = 0x03; b[1] = 0x0b;          // AdditionalLoadControls: allocate relative segment
   b.writeUInt32BE(size >>> 0, 2);    // size, big-endian
-  // The device zeroes the freshly allocated segment when this is set (thelsing/knx
+  // The device pre-fills the freshly allocated segment with `fillByte` when doFill is set (thelsing/knx
   // TableObject::additionalLoadControls: `bool doFill = data[6] == 0x1; uint8_t fillByte = data[7]`).
   // A first-time download wants it, so no byte of a previous application survives in a region the
   // new one does not write. A parameter-only download must NOT: it re-writes an existing segment.
-  b[6] = fill ? 1 : 0; b[7] = 0;
+  // The fill VALUE is the mask/application's choice, declared in the load procedure's LdCtrlRelSegment
+  // (Fill attribute): most System B devices zero the segment (Fill=0), but some fill it with 0xFF (the
+  // erased-flash state, Fill=255). It must match what the built image leaves in the bytes it does not
+  // own, or the un-written regions read back wrong.
+  b[6] = fill ? 1 : 0; b[7] = fillByte & 0xff;
   return b;
 }
 
 export async function lsmEvent(dev: KnxDevice, obj: number, event: number) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, ev(event)); }
 export async function lsmState(dev: KnxDevice, obj: number) { return (await dev.propRead(obj, PID.LOAD_STATE_CONTROL))[0]; }
-export async function allocSegment(dev: KnxDevice, obj: number, size: number, fill = false) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size, fill)); }
+export async function allocSegment(dev: KnxDevice, obj: number, size: number, fill = false, fillByte = 0) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size, fill, fillByte)); }
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian
 export function appId(manufacturer: number, appNumber: number, version: number): Buffer {
@@ -113,11 +117,13 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
 
 // Split a freshly-filled segment into the runs that actually need writing.
 //
-// A full download allocates the parameter segment with fill, and the device zeroes it for us
-// (thelsing/knx TableObject::allocTable: `for i < size: _memory.writeMemory(addr + i, 1, &fillByte)`).
-// So the only bytes that need to travel over the bus are the ones that are NOT zero. On the OpenKNX
-// RaumController's default configuration that is 51 bytes out of 21601, i.e. 0.2%: 22 telegrams
-// instead of 1801.
+// A full download allocates the parameter segment with fill, and the device pre-fills every byte
+// with `fillByte` for us (thelsing/knx TableObject::allocTable: `for i < size: _memory.writeMemory(
+// addr + i, 1, &fillByte)`). So the only bytes that need to travel over the bus are the ones that
+// DIFFER from the fill. On the OpenKNX RaumController's default configuration (fill 0x00) that is 51
+// bytes out of 21601, i.e. 0.2%: 22 telegrams instead of 1801. A device that fills with 0xFF instead
+// (GVS AMMA) is treated the same way against 0xFF: the manufacturer's default image already carries
+// 0xFF in the bytes it leaves untouched, so the run count stays just as small.
 //
 // This is not a speed optimisation dressed up as a principle. Hammering a small MCU with eighteen
 // hundred memory writes is what killed the device three times before this was understood: it
@@ -126,16 +132,16 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
 // information removes the problem at its root. The device's own CRC over the finished segment
 // (readSegmentCrc) still proves every one of the 21601 bytes, so nothing is taken on trust.
 //
-// Runs are merged across gaps shorter than one telegram: bridging a few zero bytes is cheaper than
+// Runs are merged across gaps shorter than one telegram: bridging a few fill bytes is cheaper than
 // paying for another round trip.
-export function sparseRuns(bytes: Buffer, gap = 12): { offset: number; bytes: Buffer }[] {
+export function sparseRuns(bytes: Buffer, gap = 12, fillByte = 0): { offset: number; bytes: Buffer }[] {
   const runs: { offset: number; bytes: Buffer }[] = [];
-  let start = -1, lastNonZero = -1;
+  let start = -1, lastKept = -1;
   for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] !== 0) { if (start < 0) start = i; lastNonZero = i; }
-    else if (start >= 0 && i - lastNonZero >= gap) { runs.push({ offset: start, bytes: bytes.subarray(start, lastNonZero + 1) }); start = -1; }
+    if (bytes[i] !== fillByte) { if (start < 0) start = i; lastKept = i; }
+    else if (start >= 0 && i - lastKept >= gap) { runs.push({ offset: start, bytes: bytes.subarray(start, lastKept + 1) }); start = -1; }
   }
-  if (start >= 0) runs.push({ offset: start, bytes: bytes.subarray(start, lastNonZero + 1) });
+  if (start >= 0) runs.push({ offset: start, bytes: bytes.subarray(start, lastKept + 1) });
   return runs;
 }
 
@@ -162,7 +168,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}): LoadPlan {
+}, fillByte = 0): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
     // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
@@ -175,9 +181,9 @@ export function planSystemBFullDownload(tables: {
     { op: "unload", lsm: P }, { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
     // All four brackets are opened and allocated before anything is written, which is what the
     // mask's procedure does. The parameter segment asks for fill: a first-time download owns the
-    // whole segment, so any byte the new application does not write must be zero rather than
-    // whatever the previous one left there.
-    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true },
+    // whole segment, so any byte the new application does not write must be the mask's declared fill
+    // (`fillByte`) rather than whatever the previous one left there.
+    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true, fillByte },
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
@@ -191,10 +197,10 @@ export function planSystemBFullDownload(tables: {
     { op: "writeSegment", lsm: C, bytes: tables.comObj, echo: true, verify: false },
     { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
     { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
-    // Only the non-zero runs of the parameter image: the allocation above already zeroed the rest
-    // (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above), and the
-    // device's CRC over the finished segment proves the whole 21601 bytes at the end.
-    ...sparseRuns(tables.params).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    // Only the runs that differ from the fill: the allocation above already set every other byte to
+    // `fillByte` (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above),
+    // and the device's CRC over the finished segment proves the whole 21601 bytes at the end.
+    ...sparseRuns(tables.params, 12, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },

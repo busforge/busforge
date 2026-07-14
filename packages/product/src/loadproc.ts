@@ -105,6 +105,17 @@ export function flattenSteps(lp: LoadProcedures, op: LoadOp): LdStep[] {
     .filter((s) => stepApplies(s, op));
 }
 
+// The byte the device is asked to pre-fill the parameter segment (LSM 4) with, from the full
+// download's LdCtrlRelSegment step. Most System B devices declare 0 (zero the segment); some declare
+// 255 (0xFF, the erased-flash state). The full download must allocate with this value AND treat it as
+// the "already there" byte when sparsing the image, or the un-written regions read back wrong. 0 when
+// the procedure declares no relative parameter allocation (the safe default, and the historical one).
+export function relParamFillByte(lp: LoadProcedures): number {
+  const rel = flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlRelSegment");
+  const seg = rel.find((s) => s.attrs.LsmIdx === "4") ?? rel.find((s) => s.attrs.LsmIdx === undefined);
+  return seg ? Number(seg.attrs.Fill ?? 0) & 0xff : 0;
+}
+
 // ---- typed attribute accessors (the fields the executor reads) ----
 export const lsmIdx = (s: LdStep): number | undefined => (s.attrs.LsmIdx !== undefined ? Number(s.attrs.LsmIdx) : undefined);
 export const stepAddress = (s: LdStep): number | undefined => (s.attrs.Address !== undefined ? Number(s.attrs.Address) : undefined);
@@ -191,9 +202,12 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
         if (step.attrs.LsmIdx !== undefined && step.attrs.LsmIdx !== REL_PARAM_LSM) {
           return { kind: "blocked", detail: `${step.verb} targets LSM ${step.attrs.LsmIdx}; the System B par download only allocates the parameter segment (LSM 4)` };
         }
-        // allocSegment sends mode 0 / fill 0, which is exactly the declared par allocation.
-        if ((step.attrs.Mode ?? "0") !== "0" || (step.attrs.Fill ?? "0") !== "0") {
-          return { kind: "blocked", detail: `${step.verb} with Mode=${step.attrs.Mode}/Fill=${step.attrs.Fill} (par allocation variant not modeled)` };
+        // The fill VALUE (0 = zero the segment, 255 = 0xFF/erased-flash, ...) is honored: the full
+        // download reads it here (relParamFillByte) and both the allocation and the sparse image
+        // write use it, so the un-written regions read back as the fill and the device's own segment
+        // CRC still proves the whole image. Only a non-default allocation MODE stays unmodeled.
+        if ((step.attrs.Mode ?? "0") !== "0") {
+          return { kind: "blocked", detail: `${step.verb} with Mode=${step.attrs.Mode} (non-default allocation mode not modeled)` };
         }
         return { kind: "executed" };
       }

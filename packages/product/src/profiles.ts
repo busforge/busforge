@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash } from "./deviceflash.ts";
 import { maskInfo, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -340,8 +340,12 @@ export class SystemBProfile extends DeviceProfile {
     const cfg = this.requireCfg("full download");
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
-    const coverage = assertParCoverage(parseLoadProcedures(ctx.appXml), "relative");
+    const proc = parseLoadProcedures(ctx.appXml);
+    const coverage = assertParCoverage(proc, "relative");
     await runDeclaredChecks(dev, coverage);
+    // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
+    // AMMA). Threaded into the plan so the allocation and the sparse image write agree with it.
+    const fillByte = relParamFillByte(proc);
 
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
@@ -371,7 +375,7 @@ export class SystemBProfile extends DeviceProfile {
 
     const plan = planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    });
+    }, fillByte);
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is

@@ -27,7 +27,7 @@ export type LoadStep =
   | { op: "load"; lsm: number; assert?: boolean }
   | { op: "loadCompleted"; lsm: number; assert?: boolean }
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
-  | { op: "alloc"; lsm: number; size: number; fill?: boolean } // relative-segment allocate; `fill` zeroes it first (a full download does, a par download does not)
+  | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0) — a full download does, a par download does not
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
@@ -87,7 +87,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         }
         break;
       }
-      case "alloc": await allocSegment(dev, step.lsm, step.size, step.fill ?? false); break;
+      case "alloc": await allocSegment(dev, step.lsm, step.size, step.fill ?? false, step.fillByte ?? 0); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
       case "verifyMode": await dev.setVerifyMode(step.on); break;

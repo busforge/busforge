@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
-import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
+import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
 
@@ -82,6 +82,29 @@ test("MergedProcedure operation selection (par vs full) picks different fragment
 
 const step = (verb: string, attrs: Record<string, string> = {}): LdStep => ({ verb, attrs });
 
+// A minimal MergedProcedure whose full-download RelSegment for LSM 4 declares a given fill.
+const procXml = (fillAttr: string) =>
+  `<KNX><ManufacturerData><Manufacturer><ApplicationPrograms>` +
+  `<ApplicationProgram LoadProcedureStyle="MergedProcedure"><Static><LoadProcedures>` +
+  `<LoadProcedure MergeId="2"><LdCtrlRelSegment LsmIdx="4" Mode="0"${fillAttr} AppliesTo="full"/></LoadProcedure>` +
+  `</LoadProcedures></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("relParamFillByte reads the LSM-4 fill the full download must honor", () => {
+  expect(relParamFillByte(parseLoadProcedures(procXml(` Fill="255"`)))).toBe(0xff);
+  expect(relParamFillByte(parseLoadProcedures(procXml(` Fill="0"`)))).toBe(0);
+  // No Fill attribute, and no relative allocation at all, both fall back to 0 (the historical value).
+  expect(relParamFillByte(parseLoadProcedures(procXml("")))).toBe(0);
+  expect(relParamFillByte(parseLoadProcedures("<KNX></KNX>"))).toBe(0);
+});
+
+test("the segment fill value is accepted (0 and 255), not blocked: the full download honors it", () => {
+  // Fill=0 (zero the segment) always worked. Fill=255 (0xFF, erased-flash) is what the GVS AMMA
+  // declares, and used to block the whole download; it is now executed, with the byte threaded into
+  // the allocation and the sparse image write (relParamFillByte + planSystemBFullDownload).
+  expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4", Mode: "0", Fill: "0" }), "relative").kind).toBe("executed");
+  expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4", Mode: "0", Fill: "255" }), "relative").kind).toBe("executed");
+});
+
 test("par policy: unknown verbs and unmodeled steps block, never silently vanish", () => {
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "absolute").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "relative").kind).toBe("blocked");
@@ -92,7 +115,8 @@ test("par policy: unknown verbs and unmodeled steps block, never silently vanish
   // wrong-model steps block
   expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4" }), "absolute").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlAbsSegment", { Address: "16896" }), "relative").kind).toBe("blocked");
-  // a par allocation variant we do not send blocks (allocSegment is mode 0 / fill 0)
+  // a non-default allocation MODE is still unmodeled and blocks (the fill VALUE, by contrast, is
+  // now honored end to end — see the separate test below)
   expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4", Mode: "1" }), "relative").kind).toBe("blocked");
   // CompareProp without inline data or with element addressing cannot be executed
   expect(assessParStep(step("LdCtrlCompareProp", { ObjIdx: "0", PropId: "78" }), "absolute").kind).toBe("blocked");

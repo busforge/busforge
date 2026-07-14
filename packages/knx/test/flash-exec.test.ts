@@ -493,6 +493,57 @@ describe("sparse writes (only the bytes that carry information)", () => {
     for (const r of sparseRuns(original)) r.bytes.copy(rebuilt, r.offset);
     expect(rebuilt).toEqual(original); // nothing was lost by not sending the zeros
   });
+
+  // A device that fills with 0xFF (GVS AMMA, Fill=255) must be sparsed against 0xFF, not 0x00: an
+  // 0x00 byte in the image is then MEANINGFUL and must be sent, while an 0xFF byte is the fill.
+  test("against a 0xFF fill, the 0xFF bytes are the fill and everything else is written", () => {
+    const b = Buffer.alloc(100, 0xff); // the device pre-filled this with 0xFF
+    b[3] = 0x00; b[4] = 0x00;          // meaningful zeros: must NOT be skipped
+    b[60] = 0x01;
+    const runs = sparseRuns(b, 12, 0xff);
+    expect(runs.map((r) => [r.offset, r.bytes.toString("hex")])).toEqual([[3, "0000"], [60, "01"]]);
+  });
+
+  test("an all-0xFF segment against a 0xFF fill needs no writes at all", () => {
+    expect(sparseRuns(Buffer.alloc(4096, 0xff), 12, 0xff)).toEqual([]);
+  });
+
+  test("the runs reassemble over a 0xFF-filled buffer, losing nothing", () => {
+    const original = Buffer.alloc(1000, 0xff);
+    for (const i of [0, 1, 2, 500, 501, 999]) original[i] = i % 256; // includes 0x00s that must survive
+    const rebuilt = Buffer.alloc(1000, 0xff); // what the device holds after alloc(fill=0xFF)
+    for (const r of sparseRuns(original, 12, 0xff)) r.bytes.copy(rebuilt, r.offset);
+    expect(rebuilt).toEqual(original);
+  });
+});
+
+describe("planSystemBFullDownload: the parameter fill byte is threaded end to end", () => {
+  const tables = () => ({
+    params: (() => { const p = Buffer.alloc(64, 0xff); p[10] = 0x42; return p; })(),
+    comObj: Buffer.from([1, 2]), addr: Buffer.from([3, 4]), assoc: Buffer.from([5, 6]),
+    programId: appId(0x0085, 0x0072, 0x30),
+  });
+
+  test("default (0x00 fill): the parameter alloc asks doFill=1/fillByte=0, unchanged from before", () => {
+    const plan = planSystemBFullDownload(tables());
+    const palloc = plan.find((s) => s.op === "alloc" && s.lsm === 4) as { fill?: boolean; fillByte?: number };
+    expect(palloc.fill).toBe(true);
+    expect(palloc.fillByte ?? 0).toBe(0);
+    // Against a 0x00 fill, the 0xFF image bytes are all non-fill and get written.
+    const writes = plan.filter((s) => s.op === "writeSegment" && s.lsm === 4);
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  test("0xFF fill: the alloc carries fillByte=0xFF and only the non-0xFF byte is written", () => {
+    const plan = planSystemBFullDownload(tables(), 0xff);
+    const palloc = plan.find((s) => s.op === "alloc" && s.lsm === 4) as { fillByte?: number };
+    expect(palloc.fillByte).toBe(0xff);
+    // The image is 0xFF except one byte at offset 10: exactly one run, exactly that byte.
+    const writes = plan.filter((s) => s.op === "writeSegment" && s.lsm === 4) as { offset?: number; bytes: Buffer }[];
+    expect(writes.length).toBe(1);
+    expect(writes[0].offset).toBe(10);
+    expect(writes[0].bytes.toString("hex")).toBe("42");
+  });
 });
 
 describe("the download must not restart the device before it has saved", () => {
