@@ -21,31 +21,10 @@ unchanged. Nothing about the local-USB path changes because the bridge exists.
 ## Architecture
 
 Everything above the transport speaks plain cEMI L_Data and never knows the
-medium:
+medium. One seam, `KnxTransport`, sits under `KnxDevice`, the flash load
+procedures, and the bus monitor; three ways reach the bus through it:
 
-```
-KnxDevice (T_Connect, numbered requests, memory/property read+write)
-flash load procedures (LSM brackets, surgical owned-byte writes)
-Bus (group-telegram monitor)
-        |
-        v  cEMI L_Data in/out
-+-----------------------------+
-|        KnxTransport         |   interface: connect / sendCemi / onCemi / disconnect / assignedIa
-+--------------+--------------+
-               |
-       +-------+--------+
-       |                |
-  KnxIpTunnel      KnxUsbTransport
-  (KNXnet/IP        (KNX USB Transfer
-   tunnelling,       Protocol over HID,
-   UDP 3671)         node-hid)
-       |                |
-       |                +---- also serves as the bus side of KnxIpServer
-       |                      (the bridge; see below)
-       |
-       +---- reaches EITHER a real KNX-IP gateway OR a busforge-bridge:
-             both are KNXnet/IP servers and are indistinguishable to the client
-```
+![busforge's three ways to reach the KNX bus: local USB, a KNX-IP interface, and remote USB via the bridge](connections-transports.svg)
 
 `KnxTransport` (`packages/knx/src/transport.ts`) is the seam. `KnxIpTunnel`
 already provided this surface; `KnxUsbTransport` is the second implementation.
@@ -270,11 +249,18 @@ The UI is split by responsibility:
   It now fails with `BUS_SEND_FAILED`. This was found by running the bridge against the
   bench bus, and it immediately changed the diagnosis of a bug we had been blaming on a
   device.
-- **The bridge: hardware-verified (2026-07-14).** `busforge-bridge` on the bench laptop
-  (Fedora, `198.51.100.231`) driving the `147B:5120`: discovered from a Mac by multicast
-  SEARCH, tunnel opened (channel 1, IA 1.1.100), and point-to-point management driven
-  through it end to end. What is **not** yet proven through the bridge is a full download
-  — the bench bus was not carrying frames at the time (see `BUS_SEND_FAILED` above).
+- **The bridge: hardware-verified end to end (2026-07-14).** `busforge-bridge` on the bench
+  laptop (Fedora, `198.51.100.231`) driving the `147B:5120`, with the busforge server running
+  on a **Mac** and reaching it over the LAN. Proven: multicast discovery, tunnel open, address
+  assignment (prog-mode and by serial number), and a **full first-time commissioning of a real
+  commercial device** — a virgin GVS K-BUS AMMA-04/06.S taken to `verified: true`, byte-matched
+  and persistent across a power cycle, entirely through the bridge. So the remote-USB path
+  (server on one machine, USB interface on another) is proven for the hardest operation there is,
+  not just for reads. Concurrent tunnels (the monitor + a download at once) were exercised with a
+  two-address pool. One bug surfaced and was fixed here: the USB transport now **serializes** its
+  sends, because the server ACKs a tunnel frame before the bus send completes and a client retry
+  could otherwise collide with an in-flight send (it produced ~1787 spurious con-timeouts on one
+  download; now zero).
 - **KNXnet/IP discovery**: proven against the bridge; finding a third-party gateway is
   still unverified (no IP interface was online).
 - **IP transport (client)** is unchanged and remains hardware-proven as before, with one
