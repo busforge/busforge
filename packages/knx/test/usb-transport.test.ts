@@ -135,6 +135,11 @@ async function connected() {
   return { dev, t };
 }
 
+// sendCemi now queues (sends are serialised so their single L_Data.con cannot be clobbered by an
+// overlapping send), so the actual transfer runs one microtask later. Flush it before injecting the
+// con the transfer is waiting for. A macrotask tick drains every pending microtask deterministically.
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
 describe("KnxUsbTransport", () => {
   test("sendCemi frames the cEMI into one 64-byte HID report", async () => {
     const { dev, t } = await connected();
@@ -143,6 +148,7 @@ describe("KnxUsbTransport", () => {
     //   11 00 bc 60 00 00 12 11 00 80   (10 bytes)
     const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
+    await flush();
     // resolve the pending L_Data.con wait (con handling proven separately)
     dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)])));
     await p;
@@ -357,6 +363,7 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
 
     const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
+    await flush();
     dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)])));
     await p; // and it still works
   });
@@ -366,6 +373,7 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
     const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
 
     const p = t.sendCemi(cemi);
+    await flush();
     // The interface tried and failed: same frame, message code 0x2e, confirm bit SET in ctrl1.
     // A real one sends this when the line is dead or nothing acknowledged the telegram.
     const ctrl1 = cemi[2]! | 0x01;
@@ -384,7 +392,27 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
     const { dev, t } = await connected();
     const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
+    await flush();
     dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)]))); // ctrl1 0xbc: confirm bit clear
     await p;
+  });
+
+  // Sends are serialised through a single-slot con wait, so a FAILED send must not wedge the queue:
+  // the next send has to run and confirm normally. (If the chain caught nothing, one negative con
+  // would freeze the whole transport.)
+  test("a failed send does not block the next one", async () => {
+    const { dev, t } = await connected();
+    const a = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const pa = t.sendCemi(a);
+    await flush();
+    // negative con: send A rejects
+    dev.inject(tunnelReport(Buffer.from([0x2e, a[1]!, a[2]! | 0x01, ...a.subarray(3)])));
+    await pa.catch(() => {});
+
+    const b = cemiLData(0, iaToNum("1.2.33"), Buffer.from([0x80]));
+    const pb = t.sendCemi(b);
+    await flush();
+    dev.inject(tunnelReport(Buffer.from([0x2e, ...b.subarray(1)]))); // positive con
+    await pb; // resolves: the queue survived A's failure
   });
 });

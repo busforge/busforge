@@ -209,7 +209,21 @@ export class KnxUsbTransport implements KnxTransport {
     return this.devMgmt(Buffer.concat([Buffer.from([MPROP_WRITE_REQ, (iot >> 8) & 0xff, iot & 0xff, instance, pid, 0x10, 0x01]), data]), MPROP_WRITE_CON);
   }
 
-  async sendCemi(cemi: Buffer): Promise<void> {
+  // Serialises sends. The interface tracks exactly ONE outstanding L_Data.con (there is a single
+  // conSettle below), so two overlapping sends clobber each other's confirmation and BOTH then time
+  // out. That never shows on request/response management traffic, which waits for the device between
+  // frames; but a KNXnet/IP server built on this transport ACKs a client's tunnel frame BEFORE the
+  // bus send completes, so a client retry can arrive mid-send, and a full download's retries then
+  // cascade into a storm of unconfirmed sends (observed: ~1800 con timeouts on one download).
+  private sendChain: Promise<unknown> = Promise.resolve();
+
+  sendCemi(cemi: Buffer): Promise<void> {
+    const run = this.sendChain.then(() => this.doSendCemi(cemi));
+    this.sendChain = run.catch(() => {}); // a failed send must not poison the queue for the next one
+    return run;
+  }
+
+  private async doSendCemi(cemi: Buffer): Promise<void> {
     // Wait for the interface's L_Data.con: its LOCAL confirmation about the frame we handed it,
     // independent of whether any device answers.
     //
@@ -222,15 +236,25 @@ export class KnxUsbTransport implements KnxTransport {
     // like a live bus full of silent devices: every read reports "device not answering", and the
     // diagnosis points at the device instead of at the cable. So the confirm bit is read, and a
     // frame that did not reach the bus is a failure with a name.
+    let timer: ReturnType<typeof setTimeout>;
     const con = new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => { this.conSettle = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
+      timer = setTimeout(() => { this.conSettle = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
       this.conSettle = (reachedBus) => {
-        clearTimeout(t); this.conSettle = null;
+        clearTimeout(timer); this.conSettle = null;
         if (reachedBus) { resolve(); return; }
         reject(new KnxError("BUS_SEND_FAILED", "the KNX interface reports that the telegram did not reach the bus (negative L_Data.con); the line is dead, disconnected, or no device acknowledged the frame"));
       };
     });
-    this.transfer(PROTO_KNX_TUNNEL, EMI_CEMI, cemi);
+    try {
+      this.transfer(PROTO_KNX_TUNNEL, EMI_CEMI, cemi);
+    } catch (e) {
+      // The write failed synchronously (interface closed, or an over-long payload). Tear down the
+      // con wait we just armed: otherwise its 1.5 s timeout fires later with nobody listening and
+      // clears `conSettle` out from under the NEXT send — the exact spurious con-timeout the
+      // serialisation above exists to prevent.
+      clearTimeout(timer!); this.conSettle = null;
+      throw e;
+    }
     await con;
   }
 
