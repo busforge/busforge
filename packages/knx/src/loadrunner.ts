@@ -17,7 +17,7 @@ import { loadedTableAddr } from "./grouptable-read.ts";
 export type LoadStep =
   | { op: "connect" }
   | { op: "disconnect" }
-  | { op: "restart" }
+  | { op: "restart"; requireReboot?: boolean } // requireReboot defaults true; false for firmware that persists at LoadCompleted (see KnxDevice.restart)
   | { op: "unload"; lsm: number }
   // load/loadCompleted assert the resulting LSM state by default (LOADING / LOADED). A
   // download that historically did NOT assert inline and checked completion only in a
@@ -74,7 +74,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
     switch (step.op) {
       case "connect": await dev.connect(); break;
       case "disconnect": await dev.disconnect(); break;
-      case "restart": await dev.restart(); break;
+      case "restart": await dev.restart(step.requireReboot ?? true); break;
       case "unload": {
         await lsmEvent(dev, step.lsm, LSM.UNLOAD);
         break;

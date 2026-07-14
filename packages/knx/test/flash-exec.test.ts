@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, sparseRuns, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, sparseRuns, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
 import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
@@ -395,6 +395,22 @@ describe("segment CRC (how a 21601-byte image is verified with one property read
     const b = Buffer.alloc(21601);
     expect(crc16Ccitt(a)).not.toBe(crc16Ccitt(b));
   });
+
+  // crc16CcittFalse is the non-augmented CCITT convention (no trailing 16 zero bits) that non-
+  // thelsing System B firmware (GVS K-BUS) uses for its MCB CRC.
+  test("crc16CcittFalse matches the canonical CRC-16/CCITT-FALSE check value", () => {
+    // The catalogue check: CRC-16/CCITT-FALSE("123456789") = 0x29B1.
+    expect(crc16CcittFalse(Buffer.from("123456789", "ascii"))).toBe(0x29b1);
+  });
+
+  test("the two CCITT conventions produce different values on real data (why the device 'mismatched')", () => {
+    // Same poly (0x1021) and init (0xFFFF), but the augmented (crc16Ccitt) and non-augmented
+    // (crc16CcittFalse) conventions genuinely differ, which is the whole reason the GVS's reported
+    // MCB CRC did not equal crc16Ccitt over a byte-identical segment. The verify path accepts either.
+    for (const data of [Buffer.from("0001012c0e00", "hex"), Buffer.from(Array.from({ length: 300 }, (_, i) => (i * 37) & 0xff))]) {
+      expect(crc16CcittFalse(data)).not.toBe(crc16Ccitt(data));
+    }
+  });
 });
 
 describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true asks for)", () => {
@@ -543,6 +559,13 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
     expect(writes.length).toBe(1);
     expect(writes[0].offset).toBe(10);
     expect(writes[0].bytes.toString("hex")).toBe("42");
+  });
+
+  test("requireReboot defaults true and threads into the closing restart step", () => {
+    const dflt = planSystemBFullDownload(tables()).find((s) => s.op === "restart") as { requireReboot?: boolean };
+    expect(dflt.requireReboot).toBe(true); // safe default: the restart must prove a reboot
+    const relaxed = planSystemBFullDownload(tables(), 0, false).find((s) => s.op === "restart") as { requireReboot?: boolean };
+    expect(relaxed.requireReboot).toBe(false); // LoadCompleted-persist firmware: a live device is fine
   });
 });
 

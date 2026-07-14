@@ -302,17 +302,25 @@ export class KnxDevice {
   // cause not yet established), so a pre-probe turns every successful download into a failure. The
   // link is fresh by construction instead — `disconnect` + `connect` immediately precede this in the
   // plan, and a test pins them there.
-  async restart(): Promise<void> {
+  // `requireReboot` (default true) demands the device prove it rebooted, by going silent. That is
+  // right for firmware that persists its configuration ON the restart (thelsing/knx, OpenKNX): if it
+  // does not reboot, nothing was written to flash and the device comes back factory-fresh. Some
+  // firmware instead persists at LoadCompleted, before the restart, and does not go silent on
+  // A_Restart at all (hardware-verified on the GVS AMMA: the configuration survived a power cycle
+  // even though the device kept answering here). For those, a restart that does not reboot is not a
+  // failure, so the caller passes requireReboot=false. The A_Restart is still sent either way.
+  async restart(requireReboot = true): Promise<void> {
     // NOT swallowed. The proof below reads the device's SILENCE as "it rebooted", so a frame the
     // interface never even accepted must not reach it: that silence would then mean nothing at all,
     // and we would report a device as saved that was never told to save.
     await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART)));
     this.seq = (this.seq + 1) & 0x0f;
     try {
-      await this.deviceDescriptor(); // must NOT answer: it is rebooting
+      await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch {
       return;                        // gone. It restarted, and it wrote its flash on the way out.
     }
+    if (!requireReboot) return;      // this firmware persisted at LoadCompleted; a live device is fine
     throw new KnxError("RESTART_IGNORED",
       "the device kept answering on the same connection after A_Restart: it did not reboot, so it never wrote its configuration to flash and would come back factory-fresh at the next power-down");
   }

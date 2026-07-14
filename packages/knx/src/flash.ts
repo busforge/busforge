@@ -168,7 +168,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0): LoadPlan {
+}, fillByte = 0, requireReboot = true): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
     // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
@@ -241,7 +241,7 @@ export function planSystemBFullDownload(tables: {
     // CRC over the parameter segment matching ours. Every one of those reads was RAM. The device
     // lost the lot the next time it was powered down, and came back factory-fresh.
     { op: "disconnect" }, { op: "connect" },
-    { op: "restart" },
+    { op: "restart", requireReboot },
   ];
 }
 
@@ -266,6 +266,22 @@ export function crc16Ccitt(data: Buffer): number {
     if (result & 0x10000) result ^= 0x1021;
   }
   return result & 0xffff;
+}
+
+// CRC-16/CCITT-FALSE: polynomial 0x1021, initial 0xFFFF, no reflection, and — unlike crc16Ccitt
+// above — NO trailing 16-zero-bit augmentation. The two differ only by that augmentation, and both
+// are legitimate "CRC-CCITT" conventions: the thelsing/knx firmware (OpenKNX) augments, other System
+// B firmware does not. Hardware-confirmed on a GVS K-BUS AMMA-04/06.S, whose PID_MCB_TABLE reports
+// exactly crc16CcittFalse(segment) (0xBF5D) over a segment that is byte-identical to ours, where
+// crc16Ccitt would read 0xD6EA. So the CRC "mismatch" was a convention difference, not wrong bytes;
+// the verify path accepts either value before it falls back to a full read-back.
+export function crc16CcittFalse(data: Buffer): number {
+  let crc = 0xffff;
+  for (const b of data) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc & 0xffff;
 }
 
 // Read a loaded segment's size and CRC straight from the device (PID_MCB_TABLE, 8 bytes:

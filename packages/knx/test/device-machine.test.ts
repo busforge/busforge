@@ -213,6 +213,26 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     expect(dev.restart()).rejects.toThrow(/RESTART_IGNORED|did not reboot/);
   }, 20000);
 
+  test("with requireReboot=false, a device that keeps answering is fine (it persisted at LoadCompleted)", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    // Same device as above: it keeps answering after A_Restart. For firmware that persists at
+    // LoadCompleted (the GVS AMMA, hardware-verified across a power cycle), that is not a failure —
+    // the configuration is already saved and the device simply does not reboot on A_Restart.
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === APCI.RESTART) { tun.reply([0xc2 | (p.seq << 2)]); return; }
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) {
+        tun.reply([0xc2 | (p.seq << 2)]);
+        tun.reply([0x40 | (p.seq << 2) | 0x03, 0x40, 0x07, 0xb0]);
+      }
+    };
+    await dev.restart(false); // resolves, does not throw
+    // The A_Restart still went out — best-effort, not skipped.
+    expect(tun.sent.filter((f) => !f[0].toString(2).startsWith("11") && parseApdu(f).apci === APCI.RESTART).length).toBeGreaterThan(0);
+  }, 20000);
+
   test("a send the interface refuses PROPAGATES: silence we never caused proves nothing", async () => {
     const tun = new FakeTransport();
     const dev = new KnxDevice(tun, "1.2.11");

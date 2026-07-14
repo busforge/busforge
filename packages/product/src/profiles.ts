@@ -1,4 +1,4 @@
-import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, readSegmentCrc, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -113,6 +113,22 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
 };
+
+// Firmware families hardware-verified to persist their configuration at LoadCompleted rather than on
+// the closing A_Restart, so a restart that does not reboot is not a failure (KnxDevice.restart's
+// requireReboot=false path). Each entry is a manufacturer id PROVEN on real hardware by a power
+// cycle: the parameter segment read back byte-identical after power-down. Everything NOT listed keeps
+// the safe default — persistence happens on the restart (thelsing/knx, OpenKNX) — so an unproven
+// device still refuses on a restart it could not confirm.
+//   0x0085 GVS (K-BUS): AMMA-04/06.S full download survived a power cycle byte-identical, 2026-07-14.
+const PERSIST_ON_LOAD_COMPLETED = new Set<number>([0x0085]);
+const appManufacturer = (app: AppConfig): number => Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
+
+// Does this application's firmware persist at LoadCompleted (so the closing A_Restart need not prove
+// a reboot)? Exported for the test that guards the default-strict gate: everything not in the
+// hardware-verified allowlist must return false, or an OpenKNX device that failed to restart would
+// be reported as programmed while it comes back factory-fresh.
+export const persistsOnLoadCompleted = (app: AppConfig): boolean => PERSIST_ON_LOAD_COMPLETED.has(appManufacturer(app));
 
 // Guard a par download against its own declared load procedure: every par-applicable
 // step must have an explicit disposition (executed / caller / documented skip). A step
@@ -373,9 +389,13 @@ export class SystemBProfile extends DeviceProfile {
     }
     const { addr, assoc } = buildGroupTables(ctx.links);
 
+    // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
+    // device that does not reboot lost the download; other firmware persists at LoadCompleted and
+    // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
+    const requireReboot = !persistsOnLoadCompleted(cfg);
     const plan = planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte);
+    }, fillByte, requireReboot);
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
@@ -427,19 +447,25 @@ export class SystemBProfile extends DeviceProfile {
       // not check it.
       verify: async () => {
         ctx.onProgress?.("verify");
-        const wantCrc = crc16Ccitt(target.bytes);
+        // The device reports its segment CRC via PID_MCB_TABLE, but which CRC-16 convention it uses
+        // is firmware-specific: thelsing/knx (OpenKNX) augments the CCITT CRC with 16 zero bits,
+        // other System B firmware (GVS K-BUS) does not. Both are legitimate; accept EITHER. Only when
+        // the reported CRC matches neither convention (or the device reports none) do we read the
+        // whole segment back and compare byte for byte — the ultimate truth, but slow, so it is the
+        // fallback and not the default. A CRC that matches nothing is NOT itself a failure verdict.
+        const wantAug = crc16Ccitt(target.bytes);        // thelsing / OpenKNX (augmented)
+        const wantPlain = crc16CcittFalse(target.bytes); // GVS and other CCITT-FALSE firmware
         const { ok } = await verifySettled(
           async () => {
             const gt = await readGroupTables(dev);
             const mcb = await readSegmentCrc(dev, LSM);
-            const img = mcb ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
-            return { gt, mcb, img };
+            const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
+            const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
+            return { gt, crcOk, img };
           },
-          ({ gt, mcb, img }) => {
+          ({ gt, crcOk, img }) => {
             const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = mcb
-              ? mcb.size === target.size && mcb.crc === wantCrc
-              : img !== null && verifyRelativeOwned(img, target);
+            const paramsOk = crcOk || (img !== null && verifyRelativeOwned(img, target));
             return tablesOk && paramsOk;
           },
         );
