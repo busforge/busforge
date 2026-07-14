@@ -21,6 +21,12 @@ export class KnxIpTunnel implements KnxTransport {
   assignedIa = 0;
   private txSeq = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
+  // Set the moment teardown begins. A datagram that lands between DISCONNECT_REQ and the socket
+  // actually closing must not be answered: the ACK would be written into a socket that is gone, and
+  // the channel it would ACK on no longer exists. Without it, every ordinary disconnect logged a
+  // failure ("null is not an object (evaluating 'kStateSymbol')", node's dgram internals on a closed
+  // handle) that was not one.
+  private closed = false;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
 
   // createSocket is a test seam; the default is the real UDP socket as before.
@@ -39,8 +45,10 @@ export class KnxIpTunnel implements KnxTransport {
     // rejection inside (a failed TUNNEL_ACK send) escaped as an unhandled rejection with no clue
     // where it came from. Failing to answer ONE datagram is recoverable — the gateway retransmits —
     // so the tunnel stays up, but it is reported rather than swallowed.
+    this.closed = false;
     this.sock.on("message", (m) => {
       void this.onMessage(m).catch((e: unknown) => {
+        if (this.closed) return; // a datagram lost to teardown is not a failure, it is the teardown
         console.error(`KNX/IP: dropped a datagram: ${e instanceof Error ? e.message : "unknown error"}`);
       });
     });
@@ -73,6 +81,7 @@ export class KnxIpTunnel implements KnxTransport {
   }
 
   private async onMessage(m: Buffer) {
+    if (this.closed) return; // teardown: there is no channel left to answer on
     const svc = m.readUInt16BE(2);
     const body = m.subarray(6);
     if (this.connectResWaiter?.match(m)) { this.connectResWaiter.resolve(m); return; }
@@ -99,6 +108,10 @@ export class KnxIpTunnel implements KnxTransport {
   }
 
   async disconnect() {
+    // Stop answering FIRST. The DISCONNECT_REQ below still goes out, but anything that arrives from
+    // here on belongs to a channel that is ending, and ACKing it would mean writing into a socket
+    // this method is about to close.
+    this.closed = true;
     try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); } catch { /* teardown: the gateway may be gone; the channel is closed either way */ }
     this.sock?.close();
   }
