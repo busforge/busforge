@@ -1,5 +1,6 @@
 import type { KnxTransport } from "./transport.ts";
 import { parseCemiLData } from "./transport.ts";
+import { CEMI, CEMI_CON_ERROR } from "./frame.ts";
 import { KnxError } from "./errors.ts";
 
 // KNX USB transport (KNX spec 9/3 "KNX USB Transfer Protocol"). A KNX-USB
@@ -26,9 +27,6 @@ const FEAT_RESPONSE = 0x02;
 const FEAT_SET = 0x03;
 // feature identifiers
 const FEAT_ACTIVE_EMI = 0x05;
-// cEMI message codes
-const LDATA_IND = 0x29; // a telegram received FROM the bus
-const LDATA_CON = 0x2e; // the interface confirming it put OUR frame on the bus
 // cEMI LOCAL device management (addresses the interface itself, never the bus)
 const MPROP_WRITE_REQ = 0xf6;
 const MPROP_WRITE_CON = 0xf5;
@@ -43,6 +41,15 @@ const MPROP_READ_CON = 0xfb;
 const IOT_CEMI_SERVER = 8;
 const PID_COMM_MODE = 52;
 const COMM_MODE_DATA_LINK_LAYER = 0x00;
+
+// The interface's own identity, kept in its Device Object and readable over the same local
+// device management. Its individual address is what a KNXnet/IP server built on top of this
+// transport must hand out to a tunnelling client and advertise in discovery — 0.0.0 is not an
+// address anything can answer to, so a bridge cannot be built on a guess.
+const IOT_DEVICE = 0;
+const PID_SERIAL_NUMBER = 11;
+const PID_SUBNET_ADDR = 57; // area + line, the high byte of the individual address
+const PID_DEVICE_ADDR = 58; // the low byte
 
 // Weinzierl is the OEM behind most KNX-USB sticks (ABB, Gira, Jung, MDT, ...);
 // the product string is the reliable discriminator across rebrands.
@@ -95,16 +102,23 @@ export async function listUsbInterfaces(): Promise<UsbInterfaceInfo[]> {
 }
 
 export class KnxUsbTransport implements KnxTransport {
-  // The interface substitutes its own individual address when we send a cEMI
-  // with source 0.0.0, so 0 is the correct source for management traffic.
-  readonly assignedIa = 0;
+  // The interface's own individual address, read from its Device Object at connect. Sending is
+  // not what needs it: a cEMI with source 0.0.0 gets the interface's address substituted, which
+  // is why point-to-point management over this transport worked all along while this field was
+  // hardcoded to 0. What needs it is anything that has to NAME the interface on the bus — the
+  // KNXnet/IP server hands this address to its tunnelling clients. It stays 0 if the interface
+  // does not answer, and the server refuses to start on a 0 rather than advertise one.
+  assignedIa = 0;
+  // 6 bytes, KNX serial of the interface. Advertised in the server's device-information DIB.
+  serialNumber: Buffer = Buffer.alloc(6);
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onRawCemi: ((cemi: Buffer) => void) | null = null;
 
   private dev: HidDevice | null = null;
   private rx = Buffer.alloc(0);
   private rxExpected = 0;
   private featResolve: ((body: Buffer) => void) | null = null;
-  private conResolve: (() => void) | null = null;
+  private conSettle: ((reachedBus: boolean) => void) | null = null;
   private propResolve: ((cemi: Buffer) => void) | null = null;
 
   // Identify the device by HID path (preferred, disambiguates multiple sticks)
@@ -129,6 +143,23 @@ export class KnxUsbTransport implements KnxTransport {
       await this.getFeature(FEAT_ACTIVE_EMI);
     } catch { /* interface may not implement the feature service */ }
     await this.enterDataLinkLayer();
+    await this.readIdentity();
+  }
+
+  // Learn who the interface is on the bus. Deliberately non-fatal: every path that existed before
+  // this read sends from 0.0.0 and works, so an interface that does not publish its Device Object
+  // must keep working exactly as it did. The one caller that cannot proceed without a real address
+  // is the KNXnet/IP server, and it refuses there, where the address is actually required.
+  private async readIdentity(): Promise<void> {
+    try {
+      const subnet = (await this.propRead(IOT_DEVICE, 1, PID_SUBNET_ADDR))[0] ?? 0;
+      const device = (await this.propRead(IOT_DEVICE, 1, PID_DEVICE_ADDR))[0] ?? 0;
+      this.assignedIa = (subnet << 8) | device;
+    } catch { /* keep 0: sending still works, the interface substitutes its own address */ }
+    try {
+      const serial = await this.propRead(IOT_DEVICE, 1, PID_SERIAL_NUMBER);
+      if (serial.length >= 6) this.serialNumber = Buffer.from(serial.subarray(0, 6));
+    } catch { /* the serial is cosmetic: it only decorates the discovery response */ }
   }
 
   // Put the cEMI server into Data Link Layer mode, i.e. "put the frames I hand you on the bus".
@@ -179,14 +210,25 @@ export class KnxUsbTransport implements KnxTransport {
   }
 
   async sendCemi(cemi: Buffer): Promise<void> {
-    // Wait for the interface's L_Data.con: its LOCAL confirmation that it put the frame on
-    // the bus, independent of whether any device answers. A working interface always sends
-    // it, so no .con within the window means the frame did NOT reach the bus. Reject (not
-    // resolve) so that failure surfaces here with a clear code, instead of masquerading as a
-    // successful send and reappearing one layer up as a misleading "device not answering".
+    // Wait for the interface's L_Data.con: its LOCAL confirmation about the frame we handed it,
+    // independent of whether any device answers.
+    //
+    // There are three outcomes, and only one of them is success:
+    //   - no .con at all      -> the interface swallowed the frame
+    //   - .con with error set -> the interface TRIED and the frame did not reach the bus: no line
+    //                            power, a shorted or disconnected bus, or nobody acknowledged it
+    //   - .con, error clear   -> the frame is on the bus
+    // Treating a negative .con as success (which this transport did) makes a dead bus look exactly
+    // like a live bus full of silent devices: every read reports "device not answering", and the
+    // diagnosis points at the device instead of at the cable. So the confirm bit is read, and a
+    // frame that did not reach the bus is a failure with a name.
     const con = new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => { this.conResolve = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
-      this.conResolve = () => { clearTimeout(t); this.conResolve = null; resolve(); };
+      const t = setTimeout(() => { this.conSettle = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
+      this.conSettle = (reachedBus) => {
+        clearTimeout(t); this.conSettle = null;
+        if (reachedBus) { resolve(); return; }
+        reject(new KnxError("BUS_SEND_FAILED", "the KNX interface reports that the telegram did not reach the bus (negative L_Data.con); the line is dead, disconnected, or no device acknowledged the frame"));
+      };
     });
     this.transfer(PROTO_KNX_TUNNEL, EMI_CEMI, cemi);
     await con;
@@ -263,12 +305,20 @@ export class KnxUsbTransport implements KnxTransport {
     }
     if (protocolId === PROTO_KNX_TUNNEL) {
       const cemi = body;
-      if (cemi[0] === LDATA_CON) { this.conResolve?.(); this.conResolve = null; return; }
+      // The confirm flag is the low bit of the first control field, which sits after the
+      // variable-length additional-info block. Set means the frame did NOT reach the bus.
+      if (cemi[0] === CEMI.LDATA_CON) {
+        const ctrl1 = cemi[2 + cemi[1]];
+        this.conSettle?.((ctrl1 & CEMI_CON_ERROR) === 0);
+        this.conSettle = null;
+        return;
+      }
       // Local device-management confirmations are about the INTERFACE, not the bus. They must
       // not fall through to the L_Data parser, which would read their property header as a
       // source/destination address and deliver a phantom telegram to the upper layer.
       if (cemi[0] === MPROP_READ_CON || cemi[0] === MPROP_WRITE_CON) { this.propResolve?.(cemi); return; }
-      if (cemi[0] !== LDATA_IND) return; // anything else is not a bus telegram; drop it, don't misparse it
+      if (cemi[0] !== CEMI.LDATA_IND) return; // anything else is not a bus telegram; drop it, don't misparse it
+      this.onRawCemi?.(cemi);
       const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
       this.onCemi?.(src, dst, tpdu, isGroup);
     }

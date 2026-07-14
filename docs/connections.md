@@ -1,10 +1,22 @@
-# Bus connections (IP and USB)
+# Bus connections (IP, USB, and the bridge)
 
 Busforge reaches the KNX bus through a transport abstraction, so the same
 commissioning logic (read-back, parameter flash, group-table flash, the bus
 monitor) runs unchanged whether the bus is reached over KNXnet/IP or a KNX USB
 interface. A connection manager lets you save reusable connections and assign one
 to each project.
+
+There are **three** ways to the bus, and all three are supported:
+
+| Way | Connection type | What it is |
+|---|---|---|
+| **KNX-IP interface** | `ip` | A real KNXnet/IP gateway on the LAN. |
+| **Local USB** | `usb` | A KNX-USB stick plugged into the machine Busforge runs on. |
+| **Remote USB (bridge)** | `ip` | A KNX-USB stick plugged into a *different* machine, put on the LAN by [`busforge-bridge`](#the-bridge-remote-usb). |
+
+The third is not a fourth transport: the bridge **is** a KNXnet/IP server, so from
+the client's side it is an ordinary gateway and the `ip` transport reaches it
+unchanged. Nothing about the local-USB path changes because the bridge exists.
 
 ## Architecture
 
@@ -27,6 +39,12 @@ Bus (group-telegram monitor)
   (KNXnet/IP        (KNX USB Transfer
    tunnelling,       Protocol over HID,
    UDP 3671)         node-hid)
+       |                |
+       |                +---- also serves as the bus side of KnxIpServer
+       |                      (the bridge; see below)
+       |
+       +---- reaches EITHER a real KNX-IP gateway OR a busforge-bridge:
+             both are KNXnet/IP servers and are indistinguishable to the client
 ```
 
 `KnxTransport` (`packages/knx/src/transport.ts`) is the seam. `KnxIpTunnel`
@@ -68,6 +86,89 @@ passed into the container.
   returns `[]` when nothing answers.
 - **USB**: `listUsbInterfaces()` enumerates HID devices and keeps KNX-USB ones
   (product name match, or a known vendor id with the vendor-defined usage page).
+
+## The bridge: remote USB
+
+`KnxIpServer` (`packages/knx/src/ipserver.ts`) is the mirror image of `KnxIpTunnel`:
+it speaks the *server* side of KNXnet/IP on top of any `KnxTransport`. The
+`busforge-bridge` process (`apps/bridge`) binds a KNX-USB interface behind it, so a
+stick plugged into one machine becomes an ordinary KNXnet/IP gateway on the LAN.
+
+```bash
+bun run apps/bridge/src/index.ts                      # the only attached interface, port 3671
+bun run apps/bridge/src/index.ts --usb 147b:5120 \
+    --name "Bench" --addresses 1.1.250,1.1.251        # explicit stick, two tunnel addresses
+```
+
+It exists for two reasons, and only one of them is convenience:
+
+- **A USB interface can be opened by exactly one process on one machine.** That
+  pinned every piece of bus work to the machine the stick is in, and it made the
+  bus monitor and a download **mutually exclusive** — the loser failed in a way
+  that looked like a bus fault. A KNXnet/IP server *multiplexes*: several tunnels
+  share one physical interface, and that failure class disappears.
+- ETS and any other KNXnet/IP client can use the same interface.
+
+### Tunnel addresses (the one thing to get right)
+
+Every tunnel needs its **own** individual address: a device's answers are addressed
+to the IA that asked, so two tunnels sharing one address would both receive them and
+both connection-oriented state machines would be corrupted.
+
+The default pool is therefore exactly one address — the interface's own, read from
+its Device Object (`PID_SUBNET_ADDR` 57 + `PID_DEVICE_ADDR` 58) at connect. **One
+address means one tunnel**, and a second client is refused with `E_NO_MORE_CONNECTIONS`
+rather than quietly corrupted. To get the multiplexing, hand the bridge more addresses
+with `--addresses` — they must be **free on that line**, which nothing in the protocol
+can verify for us, so it is an explicit operator decision and never inferred.
+
+### What it deliberately refuses
+
+| Request | Answer | Why |
+|---|---|---|
+| Device-management connection | `E_CONNECTION_TYPE` | Not implemented. A client that believed it was would wait forever. |
+| Bus-monitor layer | `E_TUNNELLING_LAYER` | Not implemented. |
+| A second tunnel with one address | `E_NO_MORE_CONNECTIONS` | See above. |
+| A cEMI that is not `L_Data.req` | tunnel-ACKed, content refused and logged | The ACK is about the datagram; forwarding unknown content to a real bus is not. |
+| Starting with an unknown interface address | `BRIDGE_NO_ADDRESS` | A tunnel on 0.0.0 is an address no device can answer to. |
+
+### Protocol details it implements
+
+SEARCH, DESCRIPTION, CONNECT, CONNECTIONSTATE, DISCONNECT, TUNNELLING_REQUEST/ACK.
+Sequence numbers run in **both** directions: a client's retransmission (same sequence
+number, because its ACK was lost) is acknowledged again but **not put on the bus twice**
+— a duplicated memory write is exactly the damage this project exists to avoid. A frame
+out of sequence is dropped and not acknowledged. Towards the client, a frame is retried
+once after 1 s and the channel is then dropped. A channel that sends no
+CONNECTIONSTATE_REQUEST for 120 s is reaped, and the client is told rather than left to
+time out on its own.
+
+A client's `L_Data.req` is answered with an `L_Data.con` **whether or not the bus took
+it** — with the error bit set when it did not. Withholding the confirmation would leave
+the client on a timeout it cannot interpret; sending a clean one would be a lie. What
+one client sends is forwarded to the other tunnels as an `L_Data.ind`, exactly as they
+would have seen it had a device sent it.
+
+A malformed or truncated datagram is dropped with one log line, never thrown: the socket
+is reachable by every host on the LAN, and a parser that overran a short buffer would take
+the process down one crafted packet at a time.
+
+### Threat model (it is a bench tool, not a hardened appliance)
+
+The bridge binds UDP `3671` on all interfaces and answers unauthenticated discovery, which
+is what KNXnet/IP is: there is no auth in the protocol, and ETS expects exactly this. Two
+consequences are worth stating rather than hiding:
+
+- **Discovery reflection.** `SEARCH_REQUEST`/`DESCRIPTION_REQUEST` are answered to the HPAI
+  in the request, so a LAN host can aim a ~74-byte response at a third party (about 5x
+  amplification). This is spec-conformant behaviour, not a bug, and it is bounded by the LAN.
+- **Anyone on the LAN can drive the bus through it.** A tunnel is not authenticated. On a
+  shared or hostile network this is a real exposure; the bridge is meant for a trusted bench
+  or lab LAN, and the KNX bus behind it is the bench bus, not the house.
+
+Neither is mitigated in code (a subnet restriction would break legitimate cross-subnet ETS
+use, which is a normal KNXnet/IP deployment). If the bridge is ever pointed at the house bus
+on an untrusted network, put it behind a firewall rule, not behind a hope.
 
 ## Connection manager
 
@@ -155,6 +256,27 @@ The UI is split by responsibility:
   (calimero `KNXNetworkLinkUsb.linkLayerMode()`). `connect()` now establishes the mode
   and **verifies** it, and refuses the interface (`USB_LINK_LAYER_UNAVAILABLE`) if it
   cannot, rather than handing back a transport that silently swallows everything.
-- **KNXnet/IP discovery**: returns cleanly with no gateway present; finding a real
-  gateway is unverified (no IP interface was online).
-- **IP transport** is unchanged and remains hardware-proven as before.
+- **The interface's own address: hardware-verified (2026-07-14).** The bench
+  Weinzierl/ABB `147B:5120` answers `1.1.100` on `PID_SUBNET_ADDR`/`PID_DEVICE_ADDR`.
+  `assignedIa` used to be hardcoded to `0`, which is **fine for sending** (a cEMI with
+  source 0.0.0 gets the interface's address substituted, which is why point-to-point
+  management worked all along) but is not an address a KNXnet/IP server can hand to a
+  tunnelling client.
+- **A negative `L_Data.con` is a failure: hardware-verified (2026-07-14).** The confirm
+  flag in the first control field says whether the frame reached the bus. This transport
+  used to treat **any** `L_Data.con` as success, so a frame that never left the interface
+  was indistinguishable from a frame no device answered — every read then reported
+  "device not answering" and the diagnosis landed on the device instead of on the cable.
+  It now fails with `BUS_SEND_FAILED`. This was found by running the bridge against the
+  bench bus, and it immediately changed the diagnosis of a bug we had been blaming on a
+  device.
+- **The bridge: hardware-verified (2026-07-14).** `busforge-bridge` on the bench laptop
+  (Fedora, `198.51.100.231`) driving the `147B:5120`: discovered from a Mac by multicast
+  SEARCH, tunnel opened (channel 1, IA 1.1.100), and point-to-point management driven
+  through it end to end. What is **not** yet proven through the bridge is a full download
+  — the bench bus was not carrying frames at the time (see `BUS_SEND_FAILED` above).
+- **KNXnet/IP discovery**: proven against the bridge; finding a third-party gateway is
+  still unverified (no IP interface was online).
+- **IP transport (client)** is unchanged and remains hardware-proven as before, with one
+  fix: it now delivers only `L_Data.ind` to the upper layer. A gateway also tunnels back
+  `L_Data.con` for our own frames, and those were being reported as incoming telegrams.

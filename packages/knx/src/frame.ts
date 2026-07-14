@@ -10,10 +10,25 @@ export const numToIa = (n: number) => `${(n >> 12) & 0xf}.${(n >> 8) & 0xf}.${n 
 // --- KNXnet/IP service ids ---
 export const SVC = {
   SEARCH_REQ: 0x0201, SEARCH_RES: 0x0202,
+  DESCRIPTION_REQ: 0x0203, DESCRIPTION_RES: 0x0204,
   CONNECT_REQ: 0x0205, CONNECT_RES: 0x0206,
+  CONNECTIONSTATE_REQ: 0x0207, CONNECTIONSTATE_RES: 0x0208,
   DISCONNECT_REQ: 0x0209, DISCONNECT_RES: 0x020a,
   TUNNEL_REQ: 0x0420, TUNNEL_ACK: 0x0421,
 } as const;
+
+// --- cEMI message codes ---
+// The code decides what a frame MEANS, and the three are easy to confuse because they carry
+// identical L_Data bytes behind it: .req is "put this on the bus", .con is the interface
+// confirming it did, .ind is a telegram that came FROM the bus. Anything that forwards or
+// displays telegrams has to branch on this, or it will report our own outgoing frames back to
+// us as if a device had sent them.
+export const CEMI = { LDATA_REQ: 0x11, LDATA_CON: 0x2e, LDATA_IND: 0x29 } as const;
+
+// The confirm flag lives in the low bit of the first control field of an L_Data.con: 0 means the
+// frame reached the bus, 1 means it did not. It is the only channel a KNXnet/IP server has to
+// tell a tunnelling client that its telegram was lost.
+export const CEMI_CON_ERROR = 0x01;
 
 // --- APCI (10-bit) ---
 export const APCI = {
@@ -52,6 +67,34 @@ export function hpai(ip: string, port: number): Buffer {
   const b = Buffer.alloc(8); b[0] = 8; b[1] = 1;
   ip.split(".").forEach((o, i) => (b[2 + i] = Number(o)));
   b.writeUInt16BE(port, 6); return b;
+}
+export interface Endpoint { address: string; port: number; }
+// Read an HPAI out of a frame body. A client that sits behind NAT (or simply does not know its
+// own routable address, which is what our own tunnel does) advertises 0.0.0.0:0 and means "answer
+// wherever this packet came from" — so the datagram's real origin is the fallback, not an error.
+export function parseHpai(b: Buffer, off: number, from: Endpoint): Endpoint {
+  const address = `${b[off + 2]}.${b[off + 3]}.${b[off + 4]}.${b[off + 5]}`;
+  const port = b.readUInt16BE(off + 6);
+  return address === "0.0.0.0" || port === 0 ? from : { address, port };
+}
+
+// Re-stamp a cEMI frame with a different message code, leaving every other byte alone. Used by
+// the KNXnet/IP server to turn a client's L_Data.req into the .con it owes that client and into
+// the .ind the other tunnels see. Re-encoding the frame from its decoded fields instead would
+// quietly normalise priority, hop count and the repeat flag into whatever the encoder emits.
+export function withMessageCode(cemi: Buffer, code: number): Buffer {
+  const out = Buffer.from(cemi);
+  out[0] = code;
+  return out;
+}
+
+// Source address of a cEMI L_Data frame. The additional-info field is variable-length, so the
+// address does not sit at a fixed offset.
+export const cemiSource = (cemi: Buffer): number => cemi.readUInt16BE(2 + cemi[1] + 2);
+export function withSource(cemi: Buffer, src: number): Buffer {
+  const out = Buffer.from(cemi);
+  out.writeUInt16BE(src, 2 + out[1] + 2);
+  return out;
 }
 // L_Data.req cEMI carrying a raw TPDU (point-to-point, individual dest)
 export function cemiLData(src: number, dst: number, tpdu: Buffer): Buffer {

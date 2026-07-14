@@ -1,8 +1,8 @@
 import dgram from "node:dgram";
-import os from "node:os";
 import { KNXPORT, SVC, knxFrame, hpai, numToIa } from "./frame.ts";
+import { localIPv4 } from "./localnet.ts";
 
-const SEARCH_MULTICAST = "224.0.23.12";
+export const SEARCH_MULTICAST = "224.0.23.12";
 
 export interface GatewayInfo {
   name: string;
@@ -10,17 +10,6 @@ export interface GatewayInfo {
   port: number;
   ia: string;
   mac: string;
-}
-
-// First non-internal IPv4 address; the SEARCH_RESPONSE is unicast back to the
-// HPAI we advertise, so it must be a routable local address, not 0.0.0.0.
-function localIPv4(): string {
-  for (const addrs of Object.values(os.networkInterfaces())) {
-    for (const a of addrs ?? []) {
-      if (a.family === "IPv4" && !a.internal) return a.address;
-    }
-  }
-  return "0.0.0.0";
 }
 
 function parseSearchResponse(body: Buffer): GatewayInfo | null {

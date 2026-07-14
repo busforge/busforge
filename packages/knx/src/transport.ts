@@ -8,6 +8,11 @@ export interface KnxTransport {
   // address when we send 0.0.0, so 0 is a valid value there.
   readonly assignedIa: number;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null;
+  // The same telegram, undecoded, exactly as it came off the bus. A forwarder (the KNXnet/IP
+  // server) must pass the original bytes on: rebuilding the frame from the decoded fields above
+  // would throw away priority, hop count and the repeat flag, and hand its clients a telegram
+  // that is subtly not the one that was sent.
+  onRawCemi?: ((cemi: Buffer) => void) | null;
   connect(): Promise<void>;
   sendCemi(cemi: Buffer): Promise<void>;
   disconnect(): Promise<void>;

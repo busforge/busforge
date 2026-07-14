@@ -113,7 +113,12 @@ back before trusting it. (This is the same convention parameter flash already us
     and without it every check passes against RAM while the flash holds nothing (see
     [verification.md](verification.md)). Still open: a device that is RUNNING its application stops
     answering point-to-point management on this hardware, so it can be commissioned but not yet
-    re-programmed over the bus (the cause is the device's own main loop, not Busforge).
+    re-programmed over the bus. **The cause is not yet established.** It was earlier attributed to the
+    device's own main loop (the OpenKNX-wiki L2-ACK-deadline story), but that attribution is now in
+    doubt: when it was last tested the bench USB interface was reporting a negative `L_Data.con` for
+    every frame, i.e. nothing Busforge sent was reaching the bus at all. That has to be cleared (a
+    bench bus carrying frames, positive `L_Data.con`) before the device is blamed. See the open item
+    in [next-steps.md](next-steps.md).
   - The **surgical parameter flash** (re-configuring an already-programmed device) still KEEPS the
     device's L3 unchanged: it re-points parameters and group addresses, not the object set. A
     parameter change that, in ETS, would change a com-object's flags or the *set* of active

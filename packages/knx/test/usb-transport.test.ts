@@ -23,6 +23,12 @@ class FakeHidDevice {
   // connect() has to establish Data Link Layer mode (0x00). See usb.ts enterDataLinkLayer.
   commMode = 0xff;
   acceptsCommMode = true;
+  // The interface's own identity in its Device Object: 1.1.100, the address the real bench stick
+  // turned out to hold. publishesIdentity=false mimics an interface that does not expose it.
+  publishesIdentity = true;
+  subnet = 0x11;
+  deviceAddr = 0x64;
+  serial = Buffer.from([0x00, 0xc5, 0x01, 0x02, 0x03, 0x04]);
   private dataCb: ((d: Buffer) => void) | null = null;
   on(ev: "data" | "error", cb: (arg: never) => void): void {
     if (ev === "data") this.dataCb = cb as unknown as (d: Buffer) => void;
@@ -43,12 +49,22 @@ class FakeHidDevice {
   // then the value (read) or nothing (write). A refusal is signalled by a ZERO element count.
   private propAnswer(d: number[]): Buffer {
     const [code, iotHi, iotLo, oi, pid] = [d[11], d[12], d[13], d[14], d[15]];
+    const refused = Buffer.from([0xfb, iotHi, iotLo, oi, pid, 0x00, 0x01, 0x07]); // zero element count
     if (code === 0xf6) { // write
       if (!this.acceptsCommMode) return tunnelReport(Buffer.from([0xf5, iotHi, iotLo, oi, pid, 0x00, 0x01, 0x08])); // refused
       this.commMode = d[18];
       return tunnelReport(Buffer.from([0xf5, iotHi, iotLo, oi, pid, 0x10, 0x01]));
     }
-    return tunnelReport(Buffer.from([0xfb, iotHi, iotLo, oi, pid, 0x10, 0x01, this.commMode]));
+    const read = (value: number[]) => tunnelReport(Buffer.from([0xfb, iotHi, iotLo, oi, pid, 0x10, 0x01, ...value]));
+    // Device Object (IOT 0): the interface's own identity. cEMI Server Object (IOT 8): its mode.
+    if (iotLo === 0x00) {
+      if (!this.publishesIdentity) return tunnelReport(refused);
+      if (pid === 57) return read([this.subnet]);
+      if (pid === 58) return read([this.deviceAddr]);
+      if (pid === 11) return read([...this.serial]);
+      return tunnelReport(refused);
+    }
+    return read([this.commMode]);
   }
   close(): void {}
   inject(report: Buffer): void {
@@ -319,5 +335,56 @@ describe("Data Link Layer mode (what makes the interface actually transmit)", ()
     dev.inject(tunnelReport(Buffer.from([0xfb, 0x00, 0x08, 0x01, 0x34, 0x10, 0x01, 0x00]))); // M_PropRead.con
     await new Promise((r) => setTimeout(r, 20));
     expect(seen).toEqual([]);
+  });
+});
+
+describe("KnxUsbTransport: what the interface says about our frames", () => {
+  test("connect() learns the interface's own address and serial from its Device Object", async () => {
+    const { t } = await connected();
+    // The real bench stick answers 1.1.100 here. Before this read the field was hardcoded to 0,
+    // which is fine for SENDING (the interface substitutes its address) but is not an address a
+    // KNXnet/IP server can hand to a tunnelling client.
+    expect(t.assignedIa).toBe(iaToNum("1.1.100"));
+    expect([...t.serialNumber]).toEqual([0x00, 0xc5, 0x01, 0x02, 0x03, 0x04]);
+  });
+
+  test("an interface that does not publish its address leaves it at 0 and still sends", async () => {
+    const dev = new FakeHidDevice();
+    dev.publishesIdentity = false;
+    const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+    await t.connect(); // must NOT throw: every path that predates the identity read sends from 0.0.0
+    expect(t.assignedIa).toBe(0);
+
+    const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
+    const p = t.sendCemi(cemi);
+    dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)])));
+    await p; // and it still works
+  });
+
+  test("a NEGATIVE L_Data.con is a failure, not a send that quietly went nowhere", async () => {
+    const { dev, t } = await connected();
+    const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+
+    const p = t.sendCemi(cemi);
+    // The interface tried and failed: same frame, message code 0x2e, confirm bit SET in ctrl1.
+    // A real one sends this when the line is dead or nothing acknowledged the telegram.
+    const ctrl1 = cemi[2]! | 0x01;
+    dev.inject(tunnelReport(Buffer.from([0x2e, cemi[1]!, ctrl1, ...cemi.subarray(3)])));
+
+    // Treating this as success (which the transport used to do) turns a dead bus into a bus full
+    // of silent devices: every read then reports "device not answering" and the diagnosis lands on
+    // the device instead of on the cable. Hardware-observed on the bench.
+    let refusal: unknown;
+    try { await p; } catch (e) { refusal = e; }
+    expect(refusal).toBeInstanceOf(KnxError);
+    expect((refusal as KnxError).code).toBe("BUS_SEND_FAILED");
+  });
+
+  test("a POSITIVE L_Data.con still resolves", async () => {
+    const { dev, t } = await connected();
+    const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const p = t.sendCemi(cemi);
+    dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)]))); // ctrl1 0xbc: confirm bit clear
+    await p;
   });
 });

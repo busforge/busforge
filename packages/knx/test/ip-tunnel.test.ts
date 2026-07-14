@@ -123,6 +123,29 @@ describe("KnxIpTunnel", () => {
     expect(calls[0]!.tpdu.equals(Buffer.from([0x00, 0x81]))).toBe(true);
   });
 
+  test("a tunnelled L_Data.con is ACKed but NOT surfaced: it is our own frame, not a device's", async () => {
+    // A gateway tunnels back an L_Data.con to confirm that a frame WE sent reached the bus. It is
+    // byte-identical to an incoming L_Data.ind apart from the message code (0x2e vs 0x29). Passing
+    // it up as an incoming telegram reports our own outgoing frames to the upper layer as if a
+    // device had sent them (KnxDevice would then treat its own T_Connect echo as a device reply).
+    const { sock, tunnel } = await connected();
+    let calls = 0;
+    tunnel.onCemi = () => calls++;
+
+    // Same frame as the delivery test, but message code 0x2e (L_Data.con).
+    const con = Buffer.from([
+      0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
+      0x04, CHANNEL, 0x07, 0x00,
+      0x2e, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+    ]);
+    sock.inject(con);
+    await tick();
+
+    expect(calls).toBe(0);            // not delivered upward
+    expect(sock.sent.length).toBe(1); // but still ACKed, so the gateway stops retransmitting
+    expect(sock.sent[0]!.readUInt16BE(2)).toBe(0x0421); // TUNNEL_ACK
+  });
+
   test("duplicate TUNNELING_REQUEST (same seq) is ACKed AND delivered again (current behavior)", async () => {
     // connection.ts does NOT track the server sequence counter: onMessage()
     // ACKs whatever seq arrives and always forwards the cEMI. A gateway

@@ -1,5 +1,5 @@
 import dgram from "node:dgram";
-import { SVC, knxFrame, hpai, KNXPORT } from "./frame.ts";
+import { SVC, knxFrame, hpai, KNXPORT, CEMI } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
 import { KnxError } from "./errors.ts";
 
@@ -28,6 +28,7 @@ export class KnxIpTunnel implements KnxTransport {
   // handle) that was not one.
   private closed = false;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onRawCemi: ((cemi: Buffer) => void) | null = null;
 
   // createSocket is a test seam; the default is the real UDP socket as before.
   constructor(
@@ -90,7 +91,15 @@ export class KnxIpTunnel implements KnxTransport {
     } else if (svc === SVC.TUNNEL_REQ) {
       const serverSeq = body[2];
       await this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, this.channel, serverSeq, 0x00])));
-      const { src, dst, tpdu, isGroup } = parseCemiLData(body.subarray(4));
+      const cemi = body.subarray(4);
+      // Only L_Data.ind is a telegram from the bus. A gateway also tunnels L_Data.con back — its
+      // confirmation that a frame WE sent reached the bus — and the two are byte-identical apart
+      // from this code. Passing a .con on as an incoming telegram reports our own outgoing frames
+      // to the upper layer as if a device had sent them. (The USB transport has always filtered
+      // this correctly; the IP client did not.)
+      if (cemi[0] !== CEMI.LDATA_IND) return;
+      this.onRawCemi?.(Buffer.from(cemi));
+      const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
       this.onCemi?.(src, dst, tpdu, isGroup);
     }
   }
