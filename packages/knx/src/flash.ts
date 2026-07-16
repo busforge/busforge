@@ -43,7 +43,7 @@ export function appId(manufacturer: number, appNumber: number, version: number):
 // replace the hand-rolled flashGroupTables/flashGroupTablesMv0705 executors that used to
 // run here: every device write now goes through one verified engine. They stay in knx
 // (not the @busforge/product planner layer) because they are FIXED, application-independent
-// LSM brackets and the knx live-flash harness (flashtest.ts) builds them without depending
+// LSM brackets and the knx live-flash harness (tools/flashtest.ts) builds them without depending
 // on product. Application-driven parameter planners (planAbsoluteParFlash) live in product.
 
 // System B ("relative") group-address download: rewrite the com-object (3), association (2)

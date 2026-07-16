@@ -69,8 +69,9 @@ describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoa
   // steps reproduce the RETIRED hardcoded executor's hardware-proven call order
   // (M-0162 byte-match) exactly, with ONE deliberate, documented delta: the
   // engine asserts LOADING after Load (an extra propRead), as it always did for the
-  // absolute path. Standard LSM behavior, but flagged in docs/load-procedures.md as
-  // not yet hardware-smoked on a System B device.
+  // absolute path. Standard LSM behavior, now hardware-smoked on a System B device: a
+  // module-instance param change was flashed + restored, byte-checked, on the Theben
+  // HMG through this engine bracket (see docs/load-procedures.md).
   const relativePlan = (lsm: number, image: Buffer, id: Buffer): LoadPlan => [
     { op: "unload", lsm },
     { op: "load", lsm },
@@ -636,5 +637,13 @@ describe("master reset over the bus", () => {
     expect(apci & 0x3f).toBe(RESTART_MASTER); // ...with the master-reset type in the low bits
     expect(tpdu[2]).toBe(ERASE.FACTORY_RESET); // erase code
     expect(tpdu[3]).toBe(0);                   // channel
+  });
+
+  test("a send failure propagates: a reset whose frame never left the interface is not a success", async () => {
+    // The frame never left the interface, so the device still holds its full configuration. Returning
+    // clean here would tell the caller a factory reset happened when nothing was wiped.
+    const tun = { assignedIa: 0, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async () => { throw new Error("interface down"); } };
+    const dev = new KnxDevice(tun as any, "1.2.32");
+    expect(dev.masterReset(ERASE.FACTORY_RESET)).rejects.toThrow("interface down");
   });
 })

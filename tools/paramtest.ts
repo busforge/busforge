@@ -1,15 +1,28 @@
-import fs from "node:fs";
-import { parseApplication, buildParameterImage } from "./index.ts";
-import { deviceParamValues } from "../../project/src/index.ts";
-import { KnxIpTunnel, KnxDevice } from "../../knx/src/index.ts";
-
+#!/usr/bin/env bun
 // Read-only validation: build the parameter image from the project + product data
 // and compare it byte-for-byte against the image actually loaded on the device.
-const ip = process.argv[2] ?? "203.0.113.41";
-const ia = process.argv[3] ?? "1.2.20";
-const appXml = process.argv[4] ?? "/tmp/fkx/mw/M-0162/M-0162_A-0004-11-F245.xml";
-const proj0 = process.argv[5] ?? "/tmp/fkx/dec/0.xml";
-const devId = process.argv[6] ?? "P-07C7-0_DI-53";
+// Read-only on the bus (a single memRead), no writes.
+//
+//   bun run tools/paramtest.ts <interface-ip> <device-ia> <app.xml> <decrypted-0.xml> <device-id>
+//
+//   bun run tools/paramtest.ts 198.51.100.10 1.2.20 ./M-0162_A-0004-11-F245.xml ./0.xml P-07C7-0_DI-53
+//
+// There are no default paths or default target: every argument is required so a
+// bare invocation opens no tunnel and reads nothing.
+import fs from "node:fs";
+import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
+import { deviceParamValues } from "../packages/project/src/index.ts";
+import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
+
+const ip = process.argv[2];
+const ia = process.argv[3];
+const appXml = process.argv[4];
+const proj0 = process.argv[5];
+const devId = process.argv[6];
+if (!ip || !ia || !appXml || !proj0 || !devId) {
+  console.error("usage: bun run tools/paramtest.ts <interface-ip> <device-ia> <app.xml> <decrypted-0.xml> <device-id>");
+  process.exit(2);
+}
 const LSM = 4;
 
 const model = parseApplication(fs.readFileSync(appXml, "utf8"));

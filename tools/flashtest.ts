@@ -1,12 +1,28 @@
+#!/usr/bin/env bun
+// LIVE flash harness: change one group address on a real device (last GA low byte
+// 0x07 -> 0x08), flash it, prove on the bus that the device answers on the new GA,
+// then revert. This WRITES to a real KNX device.
+//
+//   bun run tools/flashtest.ts <interface-ip> <device-ia>
+//
+//   bun run tools/flashtest.ts 198.51.100.10 1.2.20
+//
+// WARNING: this is a WRITE path. It reprograms the group-address table of the
+// device you name and only reverts if every step succeeds. Never run it against a
+// device in a live installation you are not prepared to reprogram. There is no
+// default target: both arguments are required so a bare invocation does nothing.
 import fs from "node:fs";
-import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum, runLoadPlan } from "./index.ts";
-import { planSystemBGaFlash } from "./flash.ts";
-import { readGroupTables } from "./grouptable-read.ts";
+import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum, runLoadPlan } from "../packages/knx/src/index.ts";
+import { planSystemBGaFlash } from "../packages/knx/src/flash.ts";
+import { readGroupTables } from "../packages/knx/src/grouptable-read.ts";
 
-// LIVE flash test on the Bun stack: change one group address (2/1/7 -> 2/1/8),
-// flash, prove on the bus the device answers on the new GA, then revert.
-const ip = process.argv[2] ?? "203.0.113.41";
-const ia = process.argv[3] ?? "1.2.20";
+const ip = process.argv[2];
+const ia = process.argv[3];
+if (!ip || !ia) {
+  console.error("usage: bun run tools/flashtest.ts <interface-ip> <device-ia>");
+  console.error("  WRITE path: reprograms the named device's group-address table, then reverts.");
+  process.exit(2);
+}
 const deviceNum = iaToNum(ia);
 const BK = "/tmp/busforge-backup";
 fs.mkdirSync(BK, { recursive: true });

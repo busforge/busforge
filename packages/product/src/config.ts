@@ -79,10 +79,35 @@ export interface CfgBlock {
   // geometry; the items carry the Cell that places them in it.
   layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
 }
+// The read-back facts the server attaches to a config response (never set by
+// buildDeviceConfig). Defined once here so the server's ReadbackSummary and the web client
+// bind to the SAME shape: a field renamed here breaks both sides at compile time instead of
+// silently leaving the client reading undefined.
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number }
+
+// The SERIALIZABLE device-configuration wire view: the HTTP contract itself, imported directly
+// by the web client (apps/web api.ts) so there is one authoritative definition instead of a
+// hand-mirror that drifts. It deliberately carries NO Maps, because JSON.stringify renders a Map as
+// `{}`, so the image-build Maps would ship as empty fields. They live only on the internal build
+// product (DeviceConfigBuild) and are projected away before the view is serialized (see
+// apps/server buildDeviceView).
 export interface DeviceConfigView {
   blocks: CfgBlock[];
   hasModules: boolean;
   dca?: DcaInfo;
+  // Which aspects of this device can be verified against the hardware via read-back.
+  // Attached by the server (not buildDeviceConfig). When params/links is false, the
+  // shown change state was never confirmed against the device. See readbackSupport.
+  readbackSupport?: { params: boolean; links: boolean };
+  // Present only on a read-back response: what the read actually covered. Attached by the
+  // server (the read-back route), never by buildDeviceConfig.
+  readback?: DeviceReadbackInfo;
+}
+
+// What buildDeviceConfig returns: the wire view PLUS the internal image-build products. The two
+// Maps are consumed only server-side (the com-object-table build and the surgical image target:
+// comobjbuild.ts, deviceimage.ts, comobjtable.ts, profiles.ts) and must never be serialized.
+export interface DeviceConfigBuild extends DeviceConfigView {
   // Resolved effective value of every parameter reached in the active dynamic tree,
   // keyed by (rewritten) ParameterRef id. Unlike `blocks` this INCLUDES Access="None"
   // internal parameters, which ETS writes to the memory image even though they are
@@ -94,10 +119,6 @@ export interface DeviceConfigView {
   // module com-objects. Carries the RESOLVED flags (ComObjectRef overrides applied), which
   // the com-object-table build needs. See buildDeviceConfig and CfgComObjImage.
   imageComObjects: Map<number, CfgComObjImage>;
-  // Which aspects of this device can be verified against the hardware via read-back.
-  // Attached by the server (not buildDeviceConfig). When params/links is false, the
-  // shown change state was never confirmed against the device. See readbackSupport.
-  readbackSupport?: { params: boolean; links: boolean };
 }
 
 interface Scope {
@@ -152,7 +173,7 @@ export function buildDeviceConfig(
   overrides: Map<string, string>,
   lang?: string,
   moduleInstances: ModuleInstance[] = [],
-): DeviceConfigView {
+): DeviceConfigBuild {
   const language = resolveLanguage(app, lang);
   // A from-scratch device (placed from the catalogue, no imported 0.xml) has no pinned
   // module instances. Re-run the allocators to synthesise the same set ETS would compile,

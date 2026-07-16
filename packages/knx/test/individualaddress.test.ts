@@ -21,6 +21,7 @@ class SimDevice {
 class SimBus implements KnxTransport {
   readonly assignedIa = iaToNum("0.0.1");
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
   broadcastWrites: string[] = [];
   progModeWrites = 0;
 

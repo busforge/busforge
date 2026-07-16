@@ -39,6 +39,7 @@ class FakeBus implements KnxTransport {
   assignedIa = IFACE_IA;
   onCemi: KnxTransport["onCemi"] = null;
   onRawCemi: ((cemi: Buffer) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
   written: Buffer[] = [];
   refuse: string | null = null;
 

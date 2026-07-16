@@ -1,4 +1,4 @@
-import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -414,8 +414,25 @@ export class SystemBProfile extends DeviceProfile {
     for (const [obj, what] of [[LSM, "params"], [OBJ.COMOBJ_TABLE, "comobj"], [OBJ.ASSOC_TABLE, "assoc"], [OBJ.ADDR_TABLE, "addr"]] as [number, string][]) {
       const at = await dev.tableAddr(obj);
       if (at === 0) continue; // never loaded: there is nothing there to lose
-      const size = obj === LSM ? target.size : await tableByteLength(dev, obj, at);
-      if (size > 0) segs.push({ obj, what, at, size });
+      // Size the backup from the DEVICE's own loaded segment, never from the image we are about to
+      // write. A device programmed (by ETS or by us) with a LARGER parameter segment than our new
+      // image has a tail the unload is about to destroy; sizing this backup by `target.size` would
+      // silently omit exactly those bytes and produce a "backup" that cannot restore what it
+      // replaced. The parameter segment reports its loaded size in its MCB (PID_MCB_TABLE); the
+      // group tables report theirs in their count header. If either cannot be determined, refuse the
+      // whole download rather than back up a guessed length.
+      let size: number;
+      if (obj === LSM) {
+        const mcb = await readSegmentCrc(dev, LSM);
+        if (mcb === null || mcb.size === 0) {
+          throw new ProductError("SEGMENT_SIZE_UNKNOWN",
+            `the device will not report the size of its loaded parameter segment (PID_MCB_TABLE); refusing the full download rather than back up a guessed length and let the unload destroy the remainder`);
+        }
+        size = mcb.size;
+      } else {
+        size = await tableByteLength(dev, obj, at);
+      }
+      segs.push({ obj, what, at, size });
     }
     const backupTotal = segs.reduce((n, s) => n + s.size, 0);
     let backupDone = 0;
@@ -798,12 +815,23 @@ export function classifyByMask(mask: string): DeviceProfile {
 }
 
 
+// The reader (grouptable-read.ts) refuses a group table whose count header exceeds this; the
+// backup path matches it so the two twins agree on what "not in the expected format" means.
+const MAX_BACKUP_TABLE_ENTRIES = 2048;
+
 // How many bytes a loaded group table occupies on the device, from its own count header. Used to
-// back up an already-programmed device's tables before a full download destroys them.
+// back up an already-programmed device's tables before a full download destroys them. An
+// implausible count means the loaded table is not in the expected System B form, so its true
+// length is unknown: backing up a guessed span and then unloading the real table would destroy
+// bytes the "backup" never captured. Refuse the whole download instead (the same coded error the
+// reader raises on the same condition), rather than silently skipping the table and unloading it.
 async function tableByteLength(dev: KnxDevice, obj: number, at: number): Promise<number> {
   const head = await dev.memRead(at, 2);
   const count = (head[0] << 8) | head[1];
-  if (count > 4096) return 0; // implausible: the table is not in the expected form, do not read it
+  if (count > MAX_BACKUP_TABLE_ENTRIES) {
+    throw new GroupTableUnreadable(
+      `loaded group object ${obj} table reports ${count} entries (implausible); refusing the full download rather than unloading a table this backup cannot capture`);
+  }
   const entryBytes = obj === OBJ.ASSOC_TABLE ? 4 : 2;
   return 2 + count * entryBytes;
 }

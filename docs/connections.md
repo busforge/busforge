@@ -34,6 +34,32 @@ both transports surface identical `(src, dst, tpdu, isGroup)` callbacks.
 The server picks the concrete transport from a project's selected connection with
 `makeTransport(connection)` (`apps/server/src/transport.ts`).
 
+## Connection liveness: the tunnel client keeps its own status honest
+
+A KNXnet/IP tunnel can die under a client that never notices: the gateway reboots, the
+network drops, or a spec-strict gateway (busforge's own bridge among them) reaps a channel
+it has not heard from for 120 s. A read-only bus monitor is the worst case, because on a
+quiet bus there is nothing to tunnel and therefore no failing send to reveal the dead
+channel. The telegram log simply, silently, stops, while the status stays a green
+`connected`.
+
+`KnxIpTunnel` therefore does what the spec (3/8/2 §5.4) asks of a client:
+
+- It sends a **CONNECTIONSTATE_REQUEST every 60 s** on its own channel and waits up to 10 s
+  for the CONNECTIONSTATE_RESPONSE, retrying up to three times. Three unanswered requests
+  mean the tunnel is dead.
+- It **answers an inbound DISCONNECT_REQUEST** with a DISCONNECT_RESPONSE (so the gateway
+  stops retransmitting) instead of throwing it away, as it used to.
+
+Either event (a heartbeat gone unanswered or a DISCONNECT_REQUEST from the gateway) is
+surfaced through an `onClosed(reason)` callback on `KnxTransport`. `Bus` wires it so the
+moment the transport reports closure, `/bus/status` flips from `connected` to `disconnected`
+with the reason, instead of reporting the stale value it was handed at connect time. The USB
+transport reports closure the same way from its HID error event; a transport that genuinely
+cannot detect closure leaves `onClosed` null rather than fake it. This is what makes the
+bridge's promise (below: "the client is told rather than left to time out on its own") mean
+something on the receiving end.
+
 ## KNX USB transport
 
 A KNX USB interface is a vendor-defined HID device exchanging fixed 64-byte
@@ -263,6 +289,13 @@ The UI is split by responsibility:
   download; now zero).
 - **KNXnet/IP discovery**: proven against the bridge; finding a third-party gateway is
   still unverified (no IP interface was online).
-- **IP transport (client)** is unchanged and remains hardware-proven as before, with one
-  fix: it now delivers only `L_Data.ind` to the upper layer. A gateway also tunnels back
-  `L_Data.con` for our own frames, and those were being reported as incoming telegrams.
+- **IP transport (client)** remains hardware-proven as before for connect, tunnelling and
+  delivery, with one earlier fix (it now delivers only `L_Data.ind` to the upper layer; a
+  gateway also tunnels back `L_Data.con` for our own frames, which were being reported as
+  incoming telegrams).
+- **Connection-state heartbeat + closure signalling: code-level only, not yet hardware-verified.**
+  The 60 s CONNECTIONSTATE_REQUEST loop, the inbound-DISCONNECT_REQUEST handler, and the
+  `onClosed` path that flips `/bus/status` to `disconnected` are covered by offline tests
+  against a scripted socket (`packages/knx/test/ip-tunnel.test.ts`). They have **not** yet
+  been proven against a real gateway that reaps a quiet channel, or against the bridge's own
+  120 s reap. That is the next hardware check for this path.

@@ -113,8 +113,12 @@ export class KnxUsbTransport implements KnxTransport {
   serialNumber: Buffer = Buffer.alloc(6);
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onRawCemi: ((cemi: Buffer) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
 
   private dev: HidDevice | null = null;
+  // Set the moment our own teardown begins, so the HID 'error' close() emits does not read back as
+  // an unexpected closure.
+  private closed = false;
   private rx = Buffer.alloc(0);
   private rxExpected = 0;
   private featResolve: ((body: Buffer) => void) | null = null;
@@ -135,7 +139,10 @@ export class KnxUsbTransport implements KnxTransport {
       ? new hid.HID(this.target.path)
       : new hid.HID(this.target.vendorId!, this.target.productId!);
     this.dev.on("data", (d) => this.onData(d));
-    this.dev.on("error", () => {});
+    // node-hid emits 'error' when a read fails, in practice the stick was unplugged or the handle
+    // was pulled out from under us. That is a genuine loss of the bus, so it is surfaced (unless it
+    // is the error our own close() provokes), not swallowed.
+    this.dev.on("error", (e) => { if (!this.closed) this.onClosed?.(`the USB interface reported an error: ${e instanceof Error ? e.message : String(e)}`); });
     // Select cEMI as the active EMI type before any tunnelling. Best-effort:
     // some interfaces report 0 ("not set") yet accept cEMI regardless.
     try {
@@ -259,6 +266,7 @@ export class KnxUsbTransport implements KnxTransport {
   }
 
   async disconnect(): Promise<void> {
+    this.closed = true;
     try { this.dev?.close(); } catch { /* already gone */ }
     this.dev = null;
   }

@@ -30,7 +30,7 @@ A device is flashable only when both are handled.
 
 ## What the engine does
 
-A generic step executor (`packages/knx/loadrunner.ts`, `runLoadPlan`) drives a typed
+A generic step executor (`packages/knx/src/loadrunner.ts`, `runLoadPlan`) drives a typed
 `LoadPlan` (connect / unload / load / alloc / writeMem / writeSegment / writeProp /
 stampAppId / loadCompleted / assertLoaded / restart / disconnect) for BOTH memory models
 and BOTH download kinds (parameters and group tables). It asserts the LSM state after
@@ -45,7 +45,7 @@ inline state read). The System B group-table download uses it plus a final batch
 asserted completion only in a batch, not inline). Its writes still read-back verify like
 every other bracket; every other bracket also keeps the asserting default.
 
-The planner (`packages/product/deviceflash.ts`, `planAbsoluteParFlash`) turns a parsed
+The planner (`packages/product/src/deviceflash.ts`, `planAbsoluteParFlash`) turns a parsed
 procedure plus the built segment images plus a **live device read** into that plan. It
 delegates byte selection to `planAbsoluteSegmentFlash` (one owned-byte authority, no
 duplicate run logic) and is **target-driven and surgical**: only owned bytes that
@@ -126,21 +126,31 @@ flashing blind.
 
 ## Deferred (named, not silent)
 
-- **Full download mode.** A faithful full procedure rewrites every segment incl. app
-  code / RAM / task segments, whose bytes Busforge does not build (only the parameter
-  image). Full mode is therefore limited to what we can construct; first-time
-  commissioning of a virgin device is out of scope.
-- **Relative path through the engine: DONE.** `planRelativeParFlash` emits the
-  hardware-proven System B bracket as a `LoadPlan` and `runLoadPlan` executes it (the
-  hardcoded `flashParameters` executor is deleted); the planned step stream is locked
+- **Full download / first-time commissioning: DONE for System B.** `downloadFull`
+  (`packages/product/src/profiles.ts`, wired at `apps/server/src/routes/deviceops.ts`)
+  builds and writes the application id, parameter image, com-object table (LSM3) and
+  group tables in one bracket, and it is hardware-proven: a virgin GVS AMMA (M-0085)
+  came up byte-identical and survived a power cycle, and the OpenKNX AB-PRE (MV-07B0)
+  was commissioned from factory state, verified byte-for-byte at the KNX layer, and
+  booted its application on the bus. The app-code / LSM5 segments are still not built
+  (only the parameter image is); for OpenKNX that is not needed, because the firmware
+  ships as a separate USB `.uf2`. **MV-0705 full download is not implemented** (its L3
+  is still kept from the device); a surgical `par` flash is the only write path for
+  those families.
+- **Relative path through the engine: DONE, and hardware-smoked.** `planRelativeParFlash`
+  emits the hardware-proven System B bracket as a `LoadPlan` and `runLoadPlan` executes it
+  (the hardcoded `flashParameters` executor is deleted); the planned step stream is locked
   call-for-call against the retired executor's order in `flash-exec.test.ts` /
-  `loadplan.test.ts`. ONE deliberate delta: the engine asserts LOADING after Load
-  (as the absolute path always did). Standard LSM behavior, abort happens BEFORE any
-  write, but **not yet hardware-smoked on a System B device**: run an identity flash
-  on the PSU next time the bus is available.
+  `loadplan.test.ts`. The ONE deliberate delta, the engine asserting LOADING after Load
+  (as the absolute path always did), is now exercised on hardware: a module-instance
+  parameter change was flashed and restored, byte-checked, on the Theben HMG 1.1.x
+  (a System B / relative device) through this exact engine bracket.
 - **Property-object verbs**: `CompareProp` is executed (pre-flight check).
   `LoadImageProp`/`WriteProp` to PID 27 (MCB) are a documented, hardware-evidenced skip
   on relative devices and **block** the flash on absolute devices (M-0008) until a
   device that needs them can be hardware-tested. Any other target PID blocks everywhere.
-- **DefaultProcedure (legacy)** and **module per-instance offsets** remain gaps, tracked
-  in [device-memory-model.md](device-memory-model.md).
+- **DefaultProcedure (legacy)** remains a gap (the one Gira M-0083 A-0138 device is
+  refused, not crashed), tracked in [device-memory-model.md](device-memory-model.md).
+  **True property-based loading** (parameters loaded via interface-object property writes
+  rather than a memory image) is also not implemented; MV-0705 turned out not to be it,
+  but real property-loaders (IP interfaces/routers, cEMI servers) exist.

@@ -165,6 +165,7 @@ const en = {
     LOAD_PROC_CHECK_FAILED: "The device failed a check its load procedure requires before programming (unexpected hardware type or application). Flash aborted.",
     FLASH_SEGMENT_UNPLACEABLE: "Some changed parameters live in a memory segment the device's load procedure does not declare. Refusing to flash so nothing is silently dropped.",
     GROUP_TABLE_UNREADABLE: "This device's group tables could not be read in the expected format, so Busforge refuses rather than decoding garbage. The table pointer may be unset, or the device may be in an unexpected state; try re-reading, or check that it is the expected application.",
+    SEGMENT_SIZE_UNKNOWN: "The device would not report the size of its currently loaded parameter segment, so a full download cannot back it up completely before overwriting it. Busforge refuses rather than destroy bytes it never copied.",
     GA_FLASH_UNSUPPORTED: "This device's memory model is recognised, but programming its group addresses is not implemented yet, so Busforge refuses rather than corrupting its tables. (System B and MV-0705 absolute-segment devices are supported; this is a different family.)",
     GA_TABLE_TOO_LARGE: "This device has no room left for more group addresses: its reserved address/association tables are full. Remove some links or assign fewer group addresses to this device.",
     DUPLICATE_DEVICE_INSTANCE: "This project has two devices with the same instance id, which would silently merge their configuration. The import was refused; the source file is likely malformed.",

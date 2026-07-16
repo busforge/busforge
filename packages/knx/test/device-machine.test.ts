@@ -14,6 +14,7 @@ const DEV = 0x120b; // 1.2.11 = (1<<12)|(2<<8)|11
 class FakeTransport implements KnxTransport {
   assignedIa = 0x1101; // 1.1.1 (tunnel-assigned source)
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
   sent: Buffer[] = []; // outgoing TPDUs (9-byte cemiLData head stripped)
   handler: ((tpdu: Buffer) => void) | null = null; // per-test device script
   async connect() {}

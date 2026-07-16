@@ -1,6 +1,17 @@
-// API client + types mirroring the Bun server contract. Types are duplicated
-// here (not imported from @busforge/project) to keep the browser bundle free of
-// the node-crypto loader code.
+// API client + types for the Bun server contract. The device-configuration wire types
+// (CfgBlock, DeviceConfigView, FlashResult, ...) are the ONE authoritative definition in
+// @busforge/product, imported here type-only and re-exported for the rest of the web app. A
+// type-only import is erased at build (esbuild drops it entirely), so nothing runtime (no
+// node-crypto, no XML parser) crosses into the browser bundle; only the compiler sees it, which
+// is exactly what keeps this contract from drifting away from the server's.
+import type {
+  CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
+  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult,
+} from "@busforge/product";
+export type {
+  CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
+  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult,
+};
 
 export interface DeviceChanges { params: number; links: number; }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
@@ -28,44 +39,6 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
-export interface CfgParamView {
-  refId: string; name: string; control: "enum" | "number" | "text" | "color" | "time" | "ip" | "display" | "unsupported";
-  value: string; options?: { value: number; text: string }[]; min?: number; max?: number; suffix?: string; step?: number; slider?: boolean; unit?: string; float?: boolean; readOnly?: boolean;
-  changed?: boolean; defaultValue?: string; typeLabel?: string; indent?: number;
-}
-export interface CfgComObjView {
-  refId: string; number: number; name: string; functionText: string;
-  objectSize: string; dpt: string; flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
-  gaRaw?: number | null;
-  changed?: boolean;
-}
-// Placement of an item in its block's ETS grid (1-based Cell="row,column").
-export interface CfgCell { row: number; col: number }
-// A declared grid row/column: `text` is the Table header caption, `width` the ETS
-// column width as a percentage of the block.
-export interface CfgGridLine { text?: string; width?: string }
-// A scripted ETS action (a <Button> whose EventHandler lives in the application's
-// <Script>). busforge has no ETS script host, so this is only ever rendered inert.
-export interface CfgButtonView { text: string; handler: string }
-export type CfgItem =
-  | { kind: "separator"; text: string; uiHint: string; cell?: CfgCell }
-  | { kind: "param"; param: CfgParamView; cell?: CfgCell }
-  | { kind: "comObject"; comObject: CfgComObjView }
-  | { kind: "button"; button: CfgButtonView; cell?: CfgCell }
-  | { kind: "unsupported"; label: string };
-export interface CfgBlock {
-  id: string; name: string; items: CfgItem[]; level: number; parentId?: string;
-  layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
-}
-// Set when the device is configured via a manufacturer ETS DCA app (Windows-only
-// plugin); its proprietary config is not shown/editable here, standard params are.
-// `module` is present when busforge ships a native replacement for that DCA.
-export interface DcaModuleInfo { id: string; displayName: string; category: string; compatible: boolean; deviceVersion: number; supportedVersions: number[] }
-export interface DcaInfo { hint: string; module?: DcaModuleInfo }
-// `readback` is present only on a read-back response: what the read actually covered.
-// `linkGaps` counts device associations that could not be mapped to a com-object and
-// are therefore missing from the baseline (drift there is invisible).
-export interface DeviceConfigView { blocks: CfgBlock[]; hasModules: boolean; dca?: DcaInfo; readbackSupport?: { params: boolean; links: boolean }; readback?: { paramsRead: boolean; linksRead: boolean; linkGaps: number }; }
 // One device's communication object on a group address, for the GA details overlay.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
@@ -75,12 +48,6 @@ export interface GaComObj {
 // Which devices use a group address, split into senders (transmit) and receivers
 // (write), plus the address's readable range path.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
-// Discriminated union mirroring the server: a "flashed" result always states whether
-// the post-flash verify matched (no optional tri-state).
-export type FlashResult =
-  | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
-  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
-  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
 
 export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";

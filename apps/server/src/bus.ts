@@ -34,6 +34,17 @@ export class Bus {
     tunnel.onCemi = (src, dst, tpdu, isGroup) => {
       if (isGroup) this.emit(decodeGroupTpdu(src, dst, tpdu, this.now()));
     };
+    // The transport lost the bus underneath us (a heartbeat the gateway stopped answering, an
+    // inbound DISCONNECT_REQUEST, a USB error). Reflect that instead of leaving the stale
+    // "connected" from connect time: on a quiet monitor tunnel the alternative is a green light
+    // over a telegram log that silently stopped recording. activeProjectId is kept so /bus/status
+    // can still tell the owning project why its connection dropped.
+    tunnel.onClosed = (reason) => {
+      if (this.tunnel !== tunnel) return; // a newer connection already replaced this one
+      this.tunnel = null;
+      this.status = "disconnected";
+      this.error = reason;
+    };
     try {
       await tunnel.connect();
       this.tunnel = tunnel;

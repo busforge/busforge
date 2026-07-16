@@ -9,6 +9,7 @@ import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts
 class FakeBoundaryTransport implements KnxTransport {
   assignedIa = 0x0001;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
   readonly device = 0x110b; // 1.1.11
   constructor(private boundary: number, public refusals = 0) {}
   async connect() {}

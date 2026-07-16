@@ -333,10 +333,13 @@ export class KnxDevice {
   //
   // Erase codes (thelsing/knx knx_types.h EraseCode, and the KNX standard): see ERASE above.
   async masterReset(eraseCode: number = ERASE.FACTORY_RESET, channel = 0): Promise<void> {
-    try {
-      await this.tun.sendCemi(cemiLData(this.me, this.dst,
-        apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel]))));
-    } catch { /* the device reboots; no reliable ack is expected */ }
+    // NOT swallowed, for the same reason as restart() above: the send must succeed even though the
+    // ack may not. A sendCemi failure means the frame never left the interface, so the device still
+    // holds its full configuration, and reporting that as a completed factory reset is exactly the
+    // silent-failure the restart() comment describes. Only the device's post-send silence (it
+    // reboots and does not ack) is tolerated, and that is not what sendCemi rejects on.
+    await this.tun.sendCemi(cemiLData(this.me, this.dst,
+      apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel]))));
     this.seq = (this.seq + 1) & 0x0f;
   }
 }

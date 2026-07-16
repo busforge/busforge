@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxIpTunnel, type TunnelSocket } from "../src/connection.ts";
-import { cemiLData, iaToNum } from "../src/frame.ts";
+import { cemiLData, iaToNum, SVC, knxFrame, hpai } from "../src/frame.ts";
 
 // Offline tests for KnxIpTunnel against a scripted fake UDP socket. Every
 // expected datagram is hand-derived from frame.ts/connection.ts:
@@ -217,6 +217,69 @@ describe("KnxIpTunnel", () => {
       CHANNEL, 0x00,
       0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
+    expect(sock.closed).toBe(true);
+  });
+
+  test("a heartbeat sends a CONNECTIONSTATE_REQUEST and a positive answer keeps the tunnel up", async () => {
+    const { sock, tunnel } = await connected();
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => { closed.push(r); };
+
+    const hb = tunnel["heartbeat"](); // drive one round directly; the 60 s interval never fires in a test
+    await tick();
+
+    // CONNECTIONSTATE_REQUEST, 16 bytes:
+    //   06 10 02 07 00 10          header: svc CONNECTIONSTATE_REQ, total len 16
+    //   15 00                      channel id 0x15, reserved
+    //   08 01 00 00 00 00 00 00    NAT-mode control HPAI (0.0.0.0:0)
+    expect(sock.sent.length).toBe(1);
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x02, 0x07, 0x00, 0x10,
+      CHANNEL, 0x00,
+      0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+
+    // A positive CONNECTIONSTATE_RESPONSE (channel echoed, status 0) ends the round cleanly.
+    sock.inject(knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([CHANNEL, 0x00])));
+    await hb;
+    expect(closed).toEqual([]); // the channel proved alive, so nothing was torn down
+  });
+
+  test("a heartbeat the gateway never answers brings the tunnel down and fires onClosed", async () => {
+    const { sock, tunnel } = await connected();
+    tunnel["stateTimeoutMs"] = 5; // don't wait 10 s x 3 for the real per-attempt timeout
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => { closed.push(r); };
+
+    await tunnel["heartbeat"]();
+
+    // Three CONNECTIONSTATE_REQUESTs went out (the spec's retries) before the tunnel gave up.
+    const hbs = sock.sent.filter((f) => f.readUInt16BE(2) === SVC.CONNECTIONSTATE_REQ);
+    expect(hbs.length).toBe(3);
+    // And the silence is surfaced as a closure, with the socket torn down. Without the reap-on-silence
+    // path this stays empty and the caller keeps believing it is connected.
+    expect(closed.length).toBe(1);
+    expect(closed[0]!).toContain("connection-state");
+    expect(sock.closed).toBe(true);
+  });
+
+  test("an inbound DISCONNECT_REQUEST is answered and surfaces as a closure", async () => {
+    const { sock, tunnel } = await connected();
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => { closed.push(r); };
+
+    // DISCONNECT_REQUEST from the gateway: [channel, reserved] + its control HPAI.
+    sock.inject(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([CHANNEL, 0x00]), hpai("198.51.100.2", 3671)])));
+    await tick();
+
+    // We answer DISCONNECT_RESPONSE [channel, status 0] so the gateway stops retransmitting...
+    const res = sock.sent.filter((f) => f.readUInt16BE(2) === SVC.DISCONNECT_RES);
+    expect(res.length).toBe(1);
+    expect([...res[0]!.subarray(6)]).toEqual([CHANNEL, 0x00]);
+    // ...and the closure is surfaced rather than swallowed. Without the handler the frame is
+    // ignored, onClosed never fires, and the status stays a stale "connected".
+    expect(closed.length).toBe(1);
+    expect(closed[0]!).toContain("DISCONNECT_REQUEST");
     expect(sock.closed).toBe(true);
   });
 });

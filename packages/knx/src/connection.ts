@@ -3,6 +3,16 @@ import { SVC, knxFrame, hpai, KNXPORT, CEMI } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
 import { KnxError } from "./errors.ts";
 
+// 3/8/2 §5.4: a tunnelling client sends a CONNECTIONSTATE_REQUEST every 60 s and expects a
+// CONNECTIONSTATE_RESPONSE within 10 s, repeating up to three times before it must consider the
+// connection dead. Without this, a read-only monitor on a quiet bus (nothing to tunnel for
+// minutes) is reaped by a spec-strict gateway (busforge's own bridge drops a channel it has not
+// heard from for 120 s), and from then on every "connected" is a lie while the telegram log
+// silently records nothing.
+const HEARTBEAT_INTERVAL_MS = 60_000;
+const CONNECTIONSTATE_TIMEOUT_MS = 10_000;
+const CONNECTIONSTATE_TRIES = 3;
+
 // Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
 export interface TunnelSocket {
   bind(port: number, cb: () => void): void;
@@ -29,6 +39,13 @@ export class KnxIpTunnel implements KnxTransport {
   private closed = false;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onRawCemi: ((cemi: Buffer) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
+  // The periodic connection-state heartbeat, running only while the tunnel is up.
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Resolves the in-flight heartbeat's wait for its CONNECTIONSTATE_RESPONSE (true = channel alive).
+  private stateWaiter: ((ok: boolean) => void) | null = null;
+  // Per-attempt timeout for a CONNECTIONSTATE_RESPONSE; an instance field so a test can shorten it.
+  private stateTimeoutMs = CONNECTIONSTATE_TIMEOUT_MS;
 
   // createSocket is a test seam; the default is the real UDP socket as before.
   constructor(
@@ -68,6 +85,45 @@ export class KnxIpTunnel implements KnxTransport {
     if (b[1] !== 0) throw new KnxError("TUNNEL_CONNECT_REJECTED", `connect status 0x${b[1].toString(16)}`);
     this.channel = b[0];
     this.assignedIa = b.readUInt16BE(2 + 8 + 2); // channel/status + HPAI(8) + CRD type/len(2)
+
+    // Prove the channel is still alive every 60 s. Unreffed so it never keeps the process alive on
+    // its own (the HTTP server does that in production; tests must be free to exit).
+    this.heartbeatTimer = setInterval(() => { void this.heartbeat(); }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  // One heartbeat round: a CONNECTIONSTATE_REQUEST and its answer, retried per the spec, and if the
+  // gateway answers none of them the tunnel is brought down honestly rather than left looking alive.
+  private async heartbeat(): Promise<void> {
+    for (let i = 0; i < CONNECTIONSTATE_TRIES; i++) {
+      if (this.closed) return;
+      const answered = new Promise<boolean>((resolve) => {
+        this.stateWaiter = resolve;
+        setTimeout(() => { if (this.stateWaiter === resolve) { this.stateWaiter = null; resolve(false); } }, this.stateTimeoutMs);
+      });
+      // A NAT-mode control HPAI, exactly as the CONNECT_REQ sent: answer wherever this packet came from.
+      try { await this.send(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); }
+      catch { /* socket gone: the missing answer below is treated as the failure it is */ }
+      if (await answered) return; // a positive CONNECTIONSTATE_RESPONSE: the channel is alive
+    }
+    this.reap("the gateway did not answer three connection-state requests; the tunnel is considered dead");
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
+    if (this.stateWaiter) { const w = this.stateWaiter; this.stateWaiter = null; w(false); }
+  }
+
+  // The tunnel was up and has gone down without us asking (a DISCONNECT_REQUEST from the gateway, or
+  // a heartbeat it stopped answering). Close the socket and tell the layer above: a status of
+  // "connected" must not outlive the channel it describes. Distinct from disconnect(), which is the
+  // caller's own teardown and does not notify.
+  private reap(reason: string) {
+    if (this.closed) return;
+    this.closed = true;
+    this.stopHeartbeat();
+    this.sock?.close();
+    this.onClosed?.(reason);
   }
 
   private connectResWaiter: { match: (m: Buffer) => boolean; resolve: (m: Buffer) => void } | null = null;
@@ -86,7 +142,16 @@ export class KnxIpTunnel implements KnxTransport {
     const svc = m.readUInt16BE(2);
     const body = m.subarray(6);
     if (this.connectResWaiter?.match(m)) { this.connectResWaiter.resolve(m); return; }
-    if (svc === SVC.TUNNEL_ACK) {
+    if (svc === SVC.CONNECTIONSTATE_RES) {
+      // The answer to our heartbeat: body = [channel, status]. Status 0 means the channel is alive.
+      if (this.stateWaiter && body[0] === this.channel) { const w = this.stateWaiter; this.stateWaiter = null; w(body[1] === 0); }
+    } else if (svc === SVC.DISCONNECT_REQ) {
+      // The gateway is closing the channel (its own 120 s timeout, a reboot, an operator action).
+      // Answer so it stops retransmitting, then surface the closure rather than keep a dead channel
+      // looking alive. The answer is best-effort: the channel is closing whether or not it lands.
+      try { await this.send(knxFrame(SVC.DISCONNECT_RES, Buffer.from([this.channel, 0x00]))); } catch { /* the gateway may already be gone */ }
+      this.reap("the gateway sent a DISCONNECT_REQUEST; the tunnel is closed");
+    } else if (svc === SVC.TUNNEL_ACK) {
       if (this.ackWaiter && body[2] === this.ackWaiter.seq) { this.ackWaiter.resolve(); this.ackWaiter = null; }
     } else if (svc === SVC.TUNNEL_REQ) {
       const serverSeq = body[2];
@@ -121,6 +186,7 @@ export class KnxIpTunnel implements KnxTransport {
     // here on belongs to a channel that is ending, and ACKing it would mean writing into a socket
     // this method is about to close.
     this.closed = true;
+    this.stopHeartbeat();
     try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); } catch { /* teardown: the gateway may be gone; the channel is closed either way */ }
     this.sock?.close();
   }

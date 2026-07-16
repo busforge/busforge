@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -81,11 +81,13 @@ export function resolveParamForEdit(state: AppState, projectId: string, deviceId
   return undefined;
 }
 
-// Build a device's configuration view and overlay each com-object's stored GA link.
-// `extra` is merged into the response; typed so the server-side shape cannot silently
-// drift from the client's DeviceConfigView contract (api.ts).
-export interface ReadbackSummary { readback: { paramsRead: boolean; linksRead: boolean; linkGaps: number } }
-export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary) {
+// Build a device's configuration view and overlay each com-object's stored GA link. The result is
+// the serializable wire view (DeviceConfigView, imported from @busforge/product), the SAME type
+// the web client reads, so a field renamed on either side is a compile error rather than a client
+// silently reading undefined. `extra` (a read-back summary) is merged in on the read-back route;
+// ReadbackSummary.readback and DeviceConfigView.readback share DeviceReadbackInfo for that reason.
+export interface ReadbackSummary { readback: DeviceReadbackInfo }
+export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary): DeviceConfigView {
   const { db } = state;
   if (!getDeviceForFlash(db, projectId, deviceId)) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
@@ -122,7 +124,11 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
       it.comObject.changed = changed.links.has(key);
     }
   }
-  return extra ? { ...view, ...extra } : view;
+  // Project the internal build to the serializable wire view: imageValues / imageComObjects are
+  // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
+  // wire. Only the fields the client's DeviceConfigView declares are returned.
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport };
+  return extra ? { ...wire, ...extra } : wire;
 }
 
 // Parameter refs a flash can never write, among the device's STORED overrides (the rows

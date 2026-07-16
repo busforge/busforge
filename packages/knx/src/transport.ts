@@ -13,6 +13,14 @@ export interface KnxTransport {
   // would throw away priority, hop count and the repeat flag, and hand its clients a telegram
   // that is subtly not the one that was sent.
   onRawCemi?: ((cemi: Buffer) => void) | null;
+  // Fired when a connection that WAS up goes down without the caller asking for it: a KNXnet/IP
+  // heartbeat the gateway stopped answering, an inbound DISCONNECT_REQUEST, or a USB HID error.
+  // `disconnect()` is the caller's own teardown and deliberately does NOT fire this. The layer
+  // above (Bus) needs it so a status of "connected" cannot outlive the connection it describes:
+  // on a quiet monitor tunnel the alternative is a green light over a telegram log that silently
+  // stopped recording. A transport that genuinely cannot detect closure leaves this null rather
+  // than pretend it can.
+  onClosed: ((reason: string) => void) | null;
   connect(): Promise<void>;
   sendCemi(cemi: Buffer): Promise<void>;
   disconnect(): Promise<void>;
