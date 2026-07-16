@@ -293,9 +293,14 @@ The UI is split by responsibility:
   delivery, with one earlier fix (it now delivers only `L_Data.ind` to the upper layer; a
   gateway also tunnels back `L_Data.con` for our own frames, which were being reported as
   incoming telegrams).
-- **Connection-state heartbeat + closure signalling: code-level only, not yet hardware-verified.**
+- **Connection-state heartbeat + closure signalling: verified against busforge's own server, not yet against a third-party gateway.**
   The 60 s CONNECTIONSTATE_REQUEST loop, the inbound-DISCONNECT_REQUEST handler, and the
-  `onClosed` path that flips `/bus/status` to `disconnected` are covered by offline tests
-  against a scripted socket (`packages/knx/test/ip-tunnel.test.ts`). They have **not** yet
-  been proven against a real gateway that reaps a quiet channel, or against the bridge's own
-  120 s reap. That is the next hardware check for this path.
+  `onClosed` path that flips `/bus/status` to `disconnected` are covered two ways. Offline unit
+  tests drive the client against a scripted socket (`packages/knx/test/ip-tunnel.test.ts`), and a
+  cross-implementation test (`packages/knx/test/ip-liveness.test.ts`) runs the real `KnxIpTunnel`
+  against the real `KnxIpServer` over an in-memory socket pair, driving the server's 120 s reap by
+  advancing its clock. That proves three things against the bridge itself: the heartbeat keeps a
+  quiet channel alive, the bridge's DISCONNECT_REQUEST reaches the client and flips its status, and
+  a gateway that answers no heartbeat is brought down by the client. What remains unproven is a real
+  third-party gateway on hardware (its actual timing and any non-spec reap behaviour); that is the
+  next hardware check for this path.

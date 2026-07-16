@@ -94,7 +94,7 @@ through).
 | App program (devices) | Style | Model | Status |
 | --- | --- | --- | --- |
 | M-0081 (11) Auro detector | Product | absolute | **flashed + verified on hardware** |
-| M-0008 (9) | Product | absolute (+ LoadImageProp, LSM5) | **refused (par)**: declares MCB/load-image stamps we cannot compute; `LOAD_STEP_UNSUPPORTED` until hardware-testable |
+| M-0008 (9) | Product | absolute (+ LoadImageProp, LSM5) | **par refused by the current engine**: the procedure declares three `LdCtrlLoadImageProp` MCB/load-image stamps we cannot compute, so `assertParCoverage` throws `LOAD_STEP_UNSUPPORTED` rather than run a partial recipe (M-0008 has no full-download path; par is its only writable operation). The build still **read-back byte-matches** the device, and a param change + restore **was byte-checked on 1.1.x** (see next-steps.md) before this coverage gate (`5fe16d9`) existed; the engine now declines to reproduce that pre-gate flash rather than guess the stamps. |
 | M-008E (2) Steinel | Product | absolute (data-less) | engine-supported; data-less caveat |
 | M-0048 A-107E, A-140C (2) | Product | absolute | engine-supported |
 | M-0083 A-00B4, A-00B6 (2) | Product | absolute (+ CompareProp) | engine-supported; CompareProp executed as pre-flight |
