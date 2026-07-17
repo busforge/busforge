@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Loader2, Plus, RefreshCw, Trash2, Usb, Network, Pencil } from "lucide-react";
-import type { Connection, ConnectionInput, ConnectionType, Gateway, UsbDevice } from "../api.ts";
+import type { Connection, ConnectionInput, ConnectionType, IpTransport, Gateway, UsbDevice } from "../api.ts";
 import { api } from "../api.ts";
 import { qk, useConnections } from "../queries.ts";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,28 @@ export function TypeToggle({ value, onChange, disabled }: { value: ConnectionTyp
     <div className="flex gap-2">
       {opt("ip", Network, t("iface.typeIp"))}
       {opt("usb", Usb, t("iface.typeUsb"))}
+    </div>
+  );
+}
+
+// Segmented Auto/TCP/UDP selector for an IP connection's KNXnet/IP transport.
+function TransportToggle({ value, onChange }: { value: IpTransport; onChange: (t: IpTransport) => void }) {
+  const { t } = useTranslation();
+  const opts: IpTransport[] = ["auto", "tcp", "udp"];
+  return (
+    <div className="flex gap-2" data-testid="conn-transport">
+      {opts.map((o) => (
+        <button
+          key={o}
+          type="button" onClick={() => onChange(o)}
+          className={cn(
+            "flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
+            value === o ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {t(`conn.transport_${o}`)}
+        </button>
+      ))}
     </div>
   );
 }
@@ -200,6 +222,7 @@ function ConnectionEditor({ conn, onDone }: { conn: Connection | null; onDone: (
   const [type, setType] = useState<ConnectionType>(conn?.type ?? "ip");
   const [host, setHost] = useState(conn?.host ?? "");
   const [port, setPort] = useState(String(conn?.port ?? 3671));
+  const [ipTransport, setIpTransport] = useState<IpTransport>(conn?.ipTransport ?? "auto");
   const [usb, setUsb] = useState<UsbValue>({ usbVendorId: conn?.usbVendorId ?? null, usbProductId: conn?.usbProductId ?? null, usbSerial: conn?.usbSerial ?? null });
 
   const save = useMutation({
@@ -207,6 +230,7 @@ function ConnectionEditor({ conn, onDone }: { conn: Connection | null; onDone: (
       const input: ConnectionInput = {
         name: name.trim(), type,
         host: type === "ip" ? host.trim() : "", port: Number(port) || 3671,
+        ipTransport,
         usbVendorId: type === "usb" ? usb.usbVendorId : null,
         usbProductId: type === "usb" ? usb.usbProductId : null,
         usbSerial: type === "usb" ? usb.usbSerial : null,
@@ -242,6 +266,11 @@ function ConnectionEditor({ conn, onDone }: { conn: Connection | null; onDone: (
             </div>
           </div>
           <GatewayScan onPick={(g) => { setHost(g.ip); setPort(String(g.port)); if (!name.trim()) setName(g.name || g.ia); }} />
+          <div className="space-y-1.5">
+            <Label className="text-[11px] text-muted-foreground">{t("conn.transport")}</Label>
+            <TransportToggle value={ipTransport} onChange={setIpTransport} />
+            <p className="text-[11px] text-muted-foreground">{t("conn.transportHint")}</p>
+          </div>
         </div>
       ) : (
         <UsbPicker value={usb} onChange={setUsb} />

@@ -1,12 +1,27 @@
 import { extractAppPrograms, extractCatalogProducts } from "@busforge/project";
+import { comObjectUniverse } from "@busforge/product";
 import { putAppProgram, putCatalogProduct, listCatalogProducts, backfillCatalogFromDevices } from "../db/catalog.ts";
+import { loadCatalogApp } from "../deviceservice.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // /api/catalog/...  -> browsable device catalog for placing into projects
-export async function handle(req: Request, _url: URL, seg: string[], state: AppState): Promise<Response | null> {
+export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
   if (seg[1] !== "catalog") return null;
   const { db } = state;
+
+  // /api/catalog/apps/:appProgramId/comobjects  -> the application's COMPLETE
+  // com-object universe (every ComObjectRef, ref overrides resolved), NOT gated by
+  // parameter visibility: the link-mapping step of "replace device" must offer
+  // objects that only become visible once channel parameters are set (GA-preserve
+  // semantics). Cost note: this parses the stored application XML, which can be
+  // huge (the OpenKNX RaumController is ~75 MB); loadCatalogApp caches the parse
+  // per process, so only the first request for a program pays it.
+  if (seg.length === 5 && seg[2] === "apps" && seg[4] === "comobjects" && req.method === "GET") {
+    const app = loadCatalogApp(state, decodeURIComponent(seg[3]));
+    if (!app) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
+    return json(comObjectUniverse(app, url.searchParams.get("lang") ?? undefined));
+  }
 
   if (seg.length === 3 && seg[2] === "products" && req.method === "GET") {
     // Surface products from projects imported before the catalog table existed.

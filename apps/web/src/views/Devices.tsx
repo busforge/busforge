@@ -685,12 +685,13 @@ function AddDeviceDialog({
     onError: (e) => toast.error(t("catalog.failed"), { description: errMsg(t, e) }),
   });
 
-  // Ingest an official .knxprod product database into the catalog, then refresh it.
+  // Ingest a product database into the catalog (an official .knxprod zip or a raw
+  // OpenKNX application XML), then refresh it.
   const importProd = useMutation({
     mutationFn: (file: File) => api.importCatalog(file),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: qk.catalog });
-      toast.success(t("catalog.imported", { count: res.products }));
+      toast.success(t("catalog.imported", { count: res.products }), { description: t("catalog.importedApps", { count: res.programs }) });
     },
     onError: (e) => toast.error(t("catalog.importFailed"), { description: errMsg(t, e) }),
   });
@@ -751,7 +752,7 @@ function AddDeviceDialog({
         )}
 
         <input
-          ref={prodRef} type="file" accept=".knxprod" className="hidden"
+          ref={prodRef} type="file" accept=".knxprod,.xml" className="hidden"
           onChange={(e) => { pickProd(e.target.files?.[0] ?? null); e.target.value = ""; }}
         />
       </DialogContent>

@@ -302,6 +302,13 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE projects ADD COLUMN ga_levels INTEGER NOT NULL DEFAULT 3;
   `,
+  // A saved IP connection's KNXnet/IP transport: 'auto' (prefer TCP, fall back to UDP), 'tcp' or
+  // 'udp'. TCP tunnelling is what reaches a bridge through an `ssh -L` forward or a multi-homed
+  // host where UDP source selection fails, so 'auto' prefers it. Existing rows default to 'auto'.
+  // Meaningful only for type = 'ip'; stored uniformly and ignored for USB.
+  `
+  ALTER TABLE connections ADD COLUMN ip_transport TEXT NOT NULL DEFAULT 'auto';
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

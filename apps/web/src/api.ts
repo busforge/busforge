@@ -21,8 +21,10 @@ export interface GroupRangeNode { id: string; name: string; rangeStart: number; 
 // the ids of the devices placed directly in it. Empty when the project has none.
 export interface SpaceNode { id: string; type: string; name: string; deviceIds: string[]; children: SpaceNode[]; }
 export type ConnectionType = "ip" | "usb";
+// KNXnet/IP transport for an IP connection: 'auto' prefers TCP and falls back to UDP.
+export type IpTransport = "auto" | "tcp" | "udp";
 // A saved, reusable bus connection (the connection-manager library).
-export interface Connection { id: string; name: string; type: ConnectionType; host: string; port: number; usbVendorId: number | null; usbProductId: number | null; usbSerial: string | null; createdAt: number; }
+export interface Connection { id: string; name: string; type: ConnectionType; host: string; port: number; ipTransport: IpTransport; usbVendorId: number | null; usbProductId: number | null; usbSerial: string | null; createdAt: number; }
 export type ConnectionInput = Omit<Connection, "id" | "createdAt">;
 export interface UsbDevice { vendorId: number; productId: number; product: string; serial?: string; path?: string; }
 export interface Gateway { name: string; ip: string; port: number; ia: string; mac: string; }
@@ -39,6 +41,23 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
+// One com-object of an application program's COMPLETE declaration (not gated by
+// parameter visibility), for the replace-product link mapping. Mirrors the
+// server's ComObjUniverseEntry (@busforge/product comObjectUniverse).
+export interface AppComObject {
+  refId: string; number: number; name: string; functionText: string;
+  dpt: string; objectSize: string;
+  flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
+}
+// One row of the replace-product link migration: `from` is a com-object ref the
+// device currently links, `to` a com-object of the NEW application (null = drop
+// the link). The mapping must cover every current link; the server refuses a
+// partial one rather than losing links silently.
+export interface ReplaceMappingEntry { from: string; to: string | null; }
+// Result of writing a device's individual address on the bus (mirrors
+// @busforge/knx AssignIaResult). `verified` means THE programmed device answers
+// on the new address; anything less is a failure the UI must show as one.
+export interface AssignIaResult { previous: string; assigned: string; verified: boolean; progModeCleared: boolean; progModeError: string | null; }
 // One device's communication object on a group address, for the GA details overlay.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
@@ -58,7 +77,7 @@ export interface Task {
 }
 
 export type SnapshotKind = "manual" | "auto";
-export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-restore" | "before-ga-edit" | "before-space-edit";
+export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-download" | "before-restore" | "before-ga-edit" | "before-space-edit";
 export interface SnapshotMeta {
   id: string; label: string; kind: SnapshotKind; reason: SnapshotReason; createdAt: number; schemaVersion: number;
 }
@@ -215,6 +234,27 @@ export const api = {
   setDeviceParam: (id: string, deviceId: string, paramRefId: string, value: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/params`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId, value, lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+
+  // Which devices are in programming mode right now (a broadcast probe over the bus).
+  progMode: (id: string): Promise<string[]> =>
+    fetch(`/api/projects/${id}/prog-mode`).then((r) => jsonOrThrow<{ devices: string[] }>(r)).then((r) => r.devices),
+  // Write the device's project address into the physical device in programming mode.
+  assignIa: (id: string, deviceId: string): Promise<AssignIaResult> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/assign-ia`, { method: "POST" }).then((r) => jsonOrThrow<AssignIaResult>(r)),
+  // Commission the device from nothing: application id + parameter image +
+  // com-object table + group tables in one bracket (dry=true only previews).
+  downloadDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/download${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
+  // The COMPLETE com-object universe of a catalog application program.
+  appComObjects: (appProgramId: string, lang?: string): Promise<AppComObject[]> =>
+    fetch(`/api/catalog/apps/${encodeURIComponent(appProgramId)}/comobjects${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<AppComObject[]>(r)),
+  // Swap the device's product for a catalog product (the physical device was
+  // replaced), migrating its GA links through an explicit, total mapping. A
+  // project-model edit only: nothing is written to the bus.
+  replaceDevice: (id: string, deviceId: string, appRef: string, productRef: string, mapping: ReplaceMappingEntry[], lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/replace`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, mapping, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   flashDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>

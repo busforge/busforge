@@ -58,15 +58,18 @@ describe("schema/migrations", () => {
     // raw CREATE UNIQUE INDEX over them would throw and brick startup; the migration must
     // first collapse the duplicate group to one row.
     const old = new Database(path, { create: true });
+    // A minimal connections table is present so the trailing ip_transport ALTER (last migration)
+    // applies; production has it from the transport-aware migration long before this point.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
+      CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
-      PRAGMA user_version = ${SCHEMA_VERSION - 2};`);
+      PRAGMA user_version = ${SCHEMA_VERSION - 3};`);
     old.close();
-    // Runs the pending tail: the instance-id dedup+unique-index migration (second-to-last)
-    // and the ga_levels column add (last). The ALTER adds ga_levels to this minimal projects
-    // table harmlessly; the dedup is what this test asserts.
+    // Runs the pending tail: the instance-id dedup+unique-index migration (third-to-last), the
+    // ga_levels column add, and the ip_transport column add. The ALTERs adjust the minimal
+    // projects/connections tables harmlessly; the dedup is what this test asserts.
     const db = openDb(path);
     const dupRows = db.query("SELECT ia FROM devices WHERE project_id='p' AND instance_id='DI-1'").all() as { ia: string }[];
     expect(dupRows).toEqual([{ ia: "1.1.1" }]); // lowest-rowid survivor kept, the other dropped
@@ -375,7 +378,7 @@ describe("projects", () => {
   test("project references a saved connection", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3672, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3672, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     expect(setProjectConnection(db, "p1", "c1")).toBe(true);
     expect(getProject(db, "p1")!.connectionId).toBe("c1");
     expect(getProjectConnection(db, "p1")).toMatchObject({ id: "c1", host: "1.2.3.4", port: 3672 });
@@ -427,7 +430,7 @@ describe("project export", () => {
   test("carries the active-connection reference; import restores it only if the connection exists", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    createConnection(db, "conn-1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    createConnection(db, "conn-1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     setProjectConnection(db, "p1", "conn-1");
     const ex = exportProject(db, "p1", 5000, MK)!;
     expect(ex.project.connectionId).toBe("conn-1");
@@ -674,7 +677,7 @@ describe("snapshots", () => {
   test("captures and restores the connection reference (shared project properties)", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
+    createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     setProjectConnection(db, "p1", "c1");
     const snap = createSnapshot(db, "p1", { kind: "manual", label: "with conn", reason: "manual" }, 1000)!;
     expect(serializeConfig(db, "p1").project.connectionId).toBe("c1");
@@ -832,8 +835,8 @@ describe("telegrams", () => {
 });
 
 describe("connections", () => {
-  const ipInput: ConnectionInput = { name: "Gateway", type: "ip", host: "198.51.100.10", port: 3671, usbVendorId: null, usbProductId: null, usbSerial: null };
-  const usbInput: ConnectionInput = { name: "USB Stick", type: "usb", host: "", port: 3671, usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "ABC123" };
+  const ipInput: ConnectionInput = { name: "Gateway", type: "ip", host: "198.51.100.10", port: 3671, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null };
+  const usbInput: ConnectionInput = { name: "USB Stick", type: "usb", host: "", port: 3671, ipTransport: "auto", usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "ABC123" };
 
   test("create -> list -> get round-trips both transports", () => {
     const db = fresh();
@@ -859,5 +862,32 @@ describe("connections", () => {
     expect(deleteConnection(db, "c1")).toBe(true);
     expect(getConnection(db, "c1")).toBeNull();
     expect(deleteConnection(db, "c1")).toBe(false);
+  });
+
+  test("round-trips ipTransport and updates it", () => {
+    const db = fresh();
+    const tcp = createConnection(db, "c1", { ...ipInput, ipTransport: "tcp" }, 1000);
+    expect(tcp.ipTransport).toBe("tcp");
+    expect(getConnection(db, "c1")!.ipTransport).toBe("tcp");
+    const updated = updateConnection(db, "c1", { ...ipInput, ipTransport: "udp" });
+    expect(updated!.ipTransport).toBe("udp");
+    // The model's own default (carried by ipInput) is 'auto'.
+    expect(createConnection(db, "c2", ipInput, 2000).ipTransport).toBe("auto");
+  });
+
+  test("migration backfills ip_transport to 'auto' for an existing connection row", () => {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-conn-mig-"));
+    const path = join(dir, "old.db");
+    // A connections table one version BEFORE the ip_transport column, holding a saved IP
+    // connection. Opening it must add the column and backfill the legacy row to 'auto'.
+    const old = new Database(path, { create: true });
+    old.exec(`CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+      INSERT INTO connections (id,name,type,host,port,created_at) VALUES ('c1','GW','ip','1.2.3.4',3671,1000);
+      PRAGMA user_version = ${SCHEMA_VERSION - 1};`);
+    old.close();
+    const db = openDb(path);
+    expect(getConnection(db, "c1")!.ipTransport).toBe("auto");
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

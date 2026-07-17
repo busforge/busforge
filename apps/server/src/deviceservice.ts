@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -67,6 +67,22 @@ export function loadApp(state: AppState, projectId: string, deviceId: string): A
     if (!xml) return null;
     app = parseAppConfig(xml);
     state.appCache.set(cacheKey, app);
+  }
+  return app;
+}
+
+// Load and cache a catalog application program by its program id, with no device or
+// project involved (the catalog is global). The XML of a large application runs to
+// tens of MB (the OpenKNX RaumController is ~75 MB) and parseAppConfig walks all of
+// it, so the parse happens at most once per process per program; every later call is
+// a cache hit.
+export function loadCatalogApp(state: AppState, programId: string): AppConfig | null {
+  let app = state.appCache.get(programId);
+  if (!app) {
+    const xml = getAppProgram(state.db, programId);
+    if (!xml) return null;
+    app = parseAppConfig(xml);
+    state.appCache.set(programId, app);
   }
   return app;
 }
@@ -306,6 +322,60 @@ export function resolveDeviceLinks(state: AppState, projectId: string, deviceId:
   // from being stuck as false drift.
   const flashedRefIds = [...numByRef.keys()].map((full) => stripRef(app.id, full));
   return { mask: app.mask, links, flashedRefIds };
+}
+
+// One row of a "replace device" com-object mapping: `from` is a com-object ref of the
+// OLD application that currently holds GA links, `to` the ComObjectRef of the NEW
+// application that inherits them (null = deliberately drop the link). Both sides
+// accept the full or the stored (stripped) ref form, symmetric with PUT links.
+export interface ReplaceMappingEntry { from: string; to: string | null }
+
+// Validate a replace mapping against the device's current links and the new
+// application, and resolve it into the new device_links rows (stored ref key -> GA
+// raws, slots preserved). The mapping must be TOTAL over the current links: the UI
+// always sends every row, so a missing row is a client bug, and silently keeping or
+// dropping an unmentioned link is exactly how group addresses would get lost quietly.
+// Every failure is a coded refusal; nothing is skipped or merged.
+export function mapLinksForReplace(
+  oldAppId: string,
+  newApp: AppConfig,
+  currentLinks: Map<string, number[]>,
+  mapping: ReplaceMappingEntry[],
+): Map<string, number[]> {
+  // The full ComObjectRef universe of the new app, NOT the visibility-gated view:
+  // a migrated link may target an object that only becomes visible once the new
+  // device's channel parameters are set (GA-preserve semantics). Computed even for
+  // an all-null mapping, so replacing with a module-def product refuses consistently
+  // instead of depending on what the mapping happens to contain.
+  const universe = new Set(comObjectUniverse(newApp).map((e) => e.refId));
+
+  const out = new Map<string, number[]>();
+  const seen = new Set<string>();
+  const targets = new Set<string>();
+  for (const m of mapping) {
+    const fromKey = stripRef(oldAppId, m.from);
+    if (seen.has(fromKey)) throw new ApiError("REPLACE_MAPPING_DUPLICATE", `the mapping lists ${m.from} twice`);
+    seen.add(fromKey);
+    const gaRaws = currentLinks.get(fromKey);
+    if (!gaRaws) throw new ApiError("REPLACE_LINK_UNKNOWN", `${m.from} is not a linked com-object of this device`);
+    if (m.to === null) continue; // deliberately dropped
+    const toKey = stripRef(newApp.id, m.to);
+    if (!universe.has(fullRef(newApp.id, toKey))) {
+      throw new ApiError("REPLACE_COMOBJ_NOT_IN_APP", `${m.to} is not a communication object of the new application`);
+    }
+    // Two old refs on one target would collide on (com_obj_ref_id, slot): every
+    // link's slots start at 0, so any two non-empty GA sets overlap. Refuse rather
+    // than merge two link sets nobody asked to merge.
+    if (targets.has(toKey)) throw new ApiError("REPLACE_MAPPING_COLLISION", `two links map to the same target com-object ${m.to}`);
+    targets.add(toKey);
+    out.set(toKey, gaRaws);
+  }
+  for (const key of currentLinks.keys()) {
+    if (!seen.has(key)) {
+      throw new ApiError("REPLACE_MAPPING_INCOMPLETE", `the mapping does not cover the linked com-object ${key}; every current link needs an explicit target (or null to drop it)`);
+    }
+  }
+  return out;
 }
 
 // The parameter refs that make up a device's actual configuration (the config

@@ -168,6 +168,13 @@ export function resolveLanguage(app: AppConfig, requested?: string): string {
   );
 }
 
+// Some manufacturer texts carry escaped numeric entities (e.g. "&#xA;" for a
+// layout newline); decode them so labels read cleanly.
+const codePoint = (m: string, n: number): string => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m);
+const decode = (s: string): string =>
+  s.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => codePoint(m, parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)));
+
 export function buildDeviceConfig(
   app: AppConfig,
   overrides: Map<string, string>,
@@ -214,12 +221,6 @@ export function buildDeviceConfig(
     const ref = app.refs.get(defRefId);
     if (ref && isMerker(ref.paramId)) e.set(scope.rewrite(defRefId), ref.value ?? app.params.get(ref.paramId)?.value ?? "");
   };
-  // Some manufacturer texts carry escaped numeric entities (e.g. "&#xA;" for a
-  // layout newline); decode them so labels read cleanly.
-  const codePoint = (m: string, n: number): string => (n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m);
-  const decode = (s: string): string =>
-    s.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => codePoint(m, parseInt(h, 16)))
-      .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)));
   const tr = (elemId: string | undefined, attr: string, base: string): string => {
     const t = !elemId || language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base;
     return decode(t);
@@ -561,4 +562,78 @@ export function buildDeviceConfig(
   emit(roots, 0);
 
   return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects };
+}
+
+// One com-object of an application program's full declaration, resolved the way the
+// config view resolves it (ComObjectRef overrides applied over the base ComObject).
+export interface ComObjUniverseEntry {
+  refId: string; number: number; name: string; functionText: string;
+  dpt: string; objectSize: string; flags: ComObjFlags;
+}
+
+// The COMPLETE com-object universe of an application program: one entry per
+// ComObjectRef, deliberately NOT gated by parameter visibility. A stored GA link may
+// legitimately target an object that only becomes visible once channel parameters are
+// set (the GA-preserve semantics), so a link-mapping UI must see every object the app
+// declares, not just the ones the default configuration shows.
+//
+// Resolution mirrors buildComObj/resolveComObjImage above (same precedence, same
+// translation lookup); `lang` resolves like the config view's (default = the
+// catalogue's own language). A {{0}} text placeholder resolves to its
+// TextParameterRef's DEFAULT value: with no device there are no overrides.
+//
+// Module-def applications are REFUSED, not listed incompletely: their real
+// com-objects exist only per module instance (synthetic per-instance ref ids,
+// BaseNumber-shifted numbers), so a flat listing would offer template refs no placed
+// device ever carries and silently omit the instances a device actually has.
+export function comObjectUniverse(app: AppConfig, lang?: string): ComObjUniverseEntry[] {
+  // A ModuleDef ALONE does not make the com-objects per-instance: an app may carry an unused
+  // ModuleDef stub yet expand every channel to flat, top-level com-objects at generation time
+  // (OpenKNX's RaumController does exactly this, see docs/openknx.md). What actually forces
+  // per-instance objects is a com-object whose number is BaseNumber-relative, resolvable only
+  // inside a module instance. So refuse only when such an object really exists, not merely
+  // because `hasModules` is set; otherwise a whole family of enumerable apps is refused wrongly.
+  const perInstance = [...app.comObjectRefs.values()].some((ref) => app.comObjects.get(ref.refId)?.baseNumber);
+  if (perInstance) {
+    throw new ProductError("COMOBJ_UNIVERSE_MODULES_UNSUPPORTED",
+      "this application program builds its com-objects from channel modules; enumerating their per-instance objects is not supported yet, refusing to return an incomplete list");
+  }
+  const language = resolveLanguage(app, lang);
+  const tr = (elemId: string, attr: string, base: string): string =>
+    decode(language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base);
+  // {{0}} in a com-object text is fed by its TextParameterRefId; without a device the
+  // parameter holds its default (ref value over param value), exactly what resolve()
+  // in buildDeviceConfig yields for an override-free device.
+  const textParamDefault = (refId: string | undefined): string => {
+    const ref = refId ? app.refs.get(refId) : undefined;
+    return (ref ? ref.value ?? app.params.get(ref.paramId)?.value : undefined) ?? "";
+  };
+  const out: ComObjUniverseEntry[] = [];
+  for (const [fullId, ref] of app.comObjectRefs) {
+    const obj = app.comObjects.get(ref.refId);
+    // A dangling ComObjectRef cannot appear on any device (buildComObj skips it the
+    // same way), so it is not part of the universe.
+    if (!obj) continue;
+    // A BaseNumber can only be satisfied inside a module instance; at top level it is
+    // a malformed catalogue. Same refusal the config view's TOP scope raises.
+    if (obj.baseNumber) {
+      throw new ProductError("COMOBJ_ARG_UNRESOLVED",
+        `com-object ${obj.id} numbering references module argument ${obj.baseNumber} outside any module instance`);
+    }
+    // Substitute {{0}} only when a TextParameterRefId feeds it, exactly like
+    // buildComObj: without one, the literal placeholder stays visible rather than
+    // being silently stripped.
+    const tpRef = ref.textParamRefId ?? obj.textParamRefId;
+    const fill = (s: string) => (tpRef ? s.replace(/\{\{0\}\}/g, () => textParamDefault(tpRef)) : s);
+    out.push({
+      refId: fullId,
+      number: obj.number,
+      name: fill(tr(fullId, "Text", ref.text ?? obj.text) || obj.name),
+      functionText: fill(tr(fullId, "FunctionText", ref.functionText ?? obj.functionText)),
+      dpt: ref.dpt ?? obj.dpt,
+      objectSize: ref.objectSize ?? obj.objectSize,
+      flags: { ...obj.flags, ...ref.flags },
+    });
+  }
+  return out;
 }

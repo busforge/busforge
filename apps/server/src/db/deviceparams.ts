@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ModuleInstance } from "@busforge/product";
+import type { CatalogProduct } from "@busforge/project";
+import { ApiError } from "../errors.ts";
 
 // A device's stored parameter values (ParameterRef id -> value), seeded from the
 // project at import and updated by the configuration UI.
@@ -87,6 +89,37 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
     db.prepare("DELETE FROM device_links WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?").run(projectId, deviceId, comObjRefId);
     const ins = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
     gaRaws.forEach((raw, slot) => ins.run(projectId, deviceId, comObjRefId, slot, raw));
+  })();
+}
+
+// Swap a device's product for a catalog product (the physical device was replaced).
+// The row keeps its identity (instance_id, ia, name, comment — and thereby its
+// space_devices room assignment, which keys on instance_id); only the product
+// columns move. Everything the OLD application owned is dropped: its parameter
+// values and module instances are meaningless under the new program, and the new
+// hardware was never programmed, so keeping any param/link baseline (or the old
+// tool key) would fake a programmed state that does not exist. The caller passes
+// the already-validated new link rows (stored ref key -> GA raws); they become the
+// device's only config, all of it unprogrammed drift until the first flash.
+export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
+  db.transaction(() => {
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ? WHERE project_id = ? AND instance_id = ?")
+      .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
+    // The route checked existence before parsing the body; if the device vanished in
+    // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
+    // (device_links has no FK on the device row). Throwing rolls the transaction back.
+    if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links"]) {
+      db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
+    }
+    // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.
+    // Match the prefix in JS (mirroring getDeviceBaggage): an instance id routinely
+    // contains "_", which SQL LIKE would treat as a wildcard and over-delete.
+    const bag = db.query("SELECT name FROM device_baggage WHERE project_id = ?").all(projectId) as { name: string }[];
+    const delBag = db.prepare("DELETE FROM device_baggage WHERE project_id = ? AND name = ?");
+    for (const { name } of bag) if (name.startsWith(`${deviceId}_`)) delBag.run(projectId, name);
+    const ins = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
+    for (const [refId, gaRaws] of links) gaRaws.forEach((raw, slot) => ins.run(projectId, deviceId, refId, slot, raw));
   })();
 }
 

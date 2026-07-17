@@ -4,8 +4,9 @@ import { buildDeviceConfig } from "@busforge/product";
 import { addDevice, setDeviceAddress, projectExists } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
-import { buildDeviceView, loadApp, resolveParamForEdit } from "../deviceservice.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
+import { appProgramId } from "@busforge/project";
+import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -94,6 +95,37 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     for (const b of linkView.blocks) for (const it of b.items) if (it.kind === "comObject") knownComObjs.add(it.comObject.refId);
     if (!knownComObjs.has(fullRef(app.id, key))) return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
     setDeviceLink(db, id, deviceId, key, body.gaRaws.map(Number));
+    return json(buildDeviceView(state, id, deviceId, body.lang));
+  }
+
+  // /api/projects/:id/devices/:deviceId/replace  -> swap the device's product for a
+  // catalog product because the physical device was replaced. The row keeps its
+  // identity (IA, name, comment, room); its GA links migrate through an explicit,
+  // TOTAL com-object mapping the UI collects; the old application's parameters and
+  // programmed baselines are dropped (the new hardware was never programmed, so a
+  // carried-over baseline would fake a programmed state).
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "replace" && req.method === "POST") {
+    if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+    const deviceId = decodeURIComponent(seg[4]);
+    const current = getDeviceForFlash(db, id, deviceId);
+    if (!current) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; mapping?: unknown; lang?: string };
+    const mappingShapeOk = Array.isArray(body.mapping) &&
+      (body.mapping as { from?: unknown; to?: unknown }[]).every((m) => !!m && typeof m === "object" && typeof m.from === "string" && (m.to === null || typeof m.to === "string"));
+    if (!body.appRef || !body.productRef || !mappingShapeOk) {
+      return err("REPLACE_FIELDS_REQUIRED", "appRef, productRef and a mapping of { from, to | null } entries are required");
+    }
+    const product = getCatalogProduct(db, body.appRef, body.productRef);
+    if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
+    const newApp = loadCatalogApp(state, product.appProgramId);
+    if (!newApp) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
+    const newLinks = mapLinksForReplace(
+      appProgramId(current.appRef), // the stored link keys are stripped against the OLD program id
+      newApp,
+      getDeviceLinks(db, id, deviceId),
+      body.mapping as ReplaceMappingEntry[],
+    );
+    replaceDeviceProduct(db, id, deviceId, product, newLinks);
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 

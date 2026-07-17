@@ -224,6 +224,20 @@ describe("API (project resources)", () => {
     expect((await usbBad.json() as any).error.code).toBe("CONNECTION_FIELDS_INVALID");
   });
 
+  test("connection carries ipTransport: defaults to auto, accepts tcp, rejects an unknown value", async () => {
+    const state = freshState();
+    // omitted -> the default 'auto' (an old client that never sends the field keeps working)
+    const dflt = await (await handleApi(jreq("/api/connections", "POST", { type: "ip", host: "198.51.100.10" }), state))!.json() as any;
+    expect(dflt.ipTransport).toBe("auto");
+    // an explicit value round-trips
+    const tcp = await (await handleApi(jreq("/api/connections", "POST", { type: "ip", host: "198.51.100.11", ipTransport: "tcp" }), state))!.json() as any;
+    expect(tcp.ipTransport).toBe("tcp");
+    // an unknown value is rejected, not coerced
+    const bad = (await handleApi(jreq("/api/connections", "POST", { type: "ip", host: "198.51.100.12", ipTransport: "quic" }), state))!;
+    expect(bad.status).toBe(400);
+    expect((await bad.json() as any).error.code).toBe("CONNECTION_FIELDS_INVALID");
+  });
+
   test("project points at a saved connection, rejects unknown id, clears with null", async () => {
     const state = freshState();
     const imp = await (await importDemo(state))!.json() as any;

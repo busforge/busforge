@@ -34,6 +34,32 @@ both transports surface identical `(src, dst, tpdu, isGroup)` callbacks.
 The server picks the concrete transport from a project's selected connection with
 `makeTransport(connection)` (`apps/server/src/transport.ts`).
 
+## IP transport: Auto (prefer TCP), TCP, or UDP
+
+KNXnet/IP tunnelling runs over UDP (the classic transport) or TCP (KNXnet/IP Core
+v2). A saved IP connection carries an `ipTransport` field selecting which:
+
+| Value | Behaviour |
+|---|---|
+| `auto` (default) | Try TCP first; fall back to UDP **only** when the TCP connect is refused or unreachable. |
+| `tcp` | Force TCP tunnelling. |
+| `udp` | Force classic UDP tunnelling (the previous default). |
+
+TCP is preferred because it is what makes a bridge reachable through an `ssh -L`
+forward or on a multi-homed host, where UDP source-address selection sends the
+datagrams out of the wrong interface and the gateway never answers. UDP stays the
+fallback for gateways that only speak UDP.
+
+`auto` is an `AutoIpTunnel` wrapper (`apps/server/src/transport.ts`) that decides at
+`connect()` time: it opens `KnxIpTunnel.tcp(...)` and, only on a `KnxError` with code
+`TUNNEL_CONNECT_FAILED`, retries with the UDP `KnxIpTunnel`. Any other error (a
+rejected channel, a protocol failure, a timeout after the socket was up) propagates
+unchanged, so a real bus fault is never masked as "the gateway must only speak UDP".
+Callers assign `onCemi`/`onClosed`/`onRawCemi` before `connect()`; the wrapper holds
+them and copies them onto whichever inner tunnel it opens, then delegates
+`assignedIa`/`sendCemi`/`disconnect` to it. The field is meaningful only for `ip`
+connections and is ignored for USB.
+
 ## Connection liveness: the tunnel client keeps its own status honest
 
 A KNXnet/IP tunnel can die under a client that never notices: the gateway reboots, the

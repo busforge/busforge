@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, Puzzle, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -18,6 +18,8 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
+import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
+import { CommissionDialog } from "./CommissionDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -112,6 +114,8 @@ export function DeviceConfig() {
   // it to a single target, and only appears when both targets apply to this device.
   const [flashTargets, setFlashTargets] = useState<FlashTarget[] | null>(null);
   const [revertOpen, setRevertOpen] = useState(false);
+  const [replaceOpen, setReplaceOpen] = useState(false);
+  const [commissionOpen, setCommissionOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -499,6 +503,21 @@ export function DeviceConfig() {
               )}
             </div>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="size-9" aria-label={t("device.moreActions")} data-testid="device-menu">
+                <MoreVertical className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
+                <Repeat2 className="size-4" /> {t("replace.menu")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setCommissionOpen(true)} data-testid="commission-device">
+                <RadioTower className="size-4" /> {t("commission.menu")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -506,6 +525,22 @@ export function DeviceConfig() {
         <FlashDialog
           open onOpenChange={(o) => { if (!o) setFlashTargets(null); }}
           projectId={projectId} device={device} targets={flashTargets} onFlashed={afterFlash}
+        />
+      )}
+
+      {device && view && (
+        <ReplaceDeviceDialog
+          open={replaceOpen} onOpenChange={setReplaceOpen}
+          projectId={projectId} device={device} view={view} gaOptions={gaOptions}
+        />
+      )}
+
+      {/* A successful download baselines the config and captures an auto restore
+          point, exactly like a flash: reuse the same invalidations. */}
+      {device && (
+        <CommissionDialog
+          open={commissionOpen} onOpenChange={setCommissionOpen}
+          projectId={projectId} device={device} onCommissioned={afterFlash}
         />
       )}
 

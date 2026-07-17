@@ -11,17 +11,21 @@ function parseConnInput(raw: unknown): ConnectionInput | string {
   const name = typeof b.name === "string" ? b.name.trim() : "";
   // type defaults to 'ip', inferring 'usb' when a usb identity is supplied.
   const type = b.type === "usb" ? "usb" : b.type === "ip" ? "ip" : (b.usbVendorId != null ? "usb" : "ip");
+  // The IP transport defaults to 'auto' so an old client that omits it keeps working. Only the
+  // three known values are accepted; anything else is rejected rather than coerced to a default.
+  const ipTransport = b.ipTransport === undefined ? "auto" : b.ipTransport;
+  if (ipTransport !== "auto" && ipTransport !== "tcp" && ipTransport !== "udp") return "ipTransport must be one of auto, tcp, udp";
   if (type === "ip") {
     const host = (typeof b.host === "string" ? b.host : "").trim();
     if (!host) return "host (IP address) required for an IP connection";
     const port = Number(b.port) || 3671;
-    return { name: name || host, type, host, port, usbVendorId: null, usbProductId: null, usbSerial: null };
+    return { name: name || host, type, host, port, ipTransport, usbVendorId: null, usbProductId: null, usbSerial: null };
   }
   const usbVendorId = Number(b.usbVendorId);
   const usbProductId = Number(b.usbProductId);
   if (!Number.isInteger(usbVendorId) || !Number.isInteger(usbProductId)) return "usbVendorId and usbProductId required for a USB connection";
   const usbSerial = typeof b.usbSerial === "string" ? b.usbSerial : null;
-  return { name: name || "KNX-USB", type, host: "", port: 3671, usbVendorId, usbProductId, usbSerial };
+  return { name: name || "KNX-USB", type, host: "", port: 3671, ipTransport, usbVendorId, usbProductId, usbSerial };
 }
 
 // /api/connections  -> reusable library of saved bus connections (IP / USB)

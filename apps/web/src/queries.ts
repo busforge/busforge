@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, type Task } from "./api.ts";
+import { api, type ReplaceMappingEntry, type Task } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -18,6 +18,7 @@ export const qk = {
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
+  appComObjects: (appProgramId: string, lang: string) => ["appComObjects", appProgramId, lang] as const,
   connections: ["connections"] as const,
   version: ["version"] as const,
 };
@@ -44,6 +45,20 @@ export const useProjects = () => useQuery({
 // (refetched on demand when the picker opens via staleTime expiry).
 export const useCatalog = (enabled = true) =>
   useQuery({ queryKey: qk.catalog, queryFn: api.catalog, enabled, staleTime: 60_000 });
+
+// The complete com-object universe of a catalog application program, for the
+// replace-product link mapping. Fetched only once a target product is picked
+// (enabled); language-keyed like the device config so the object names match
+// the UI. The server refuses module-def apps with a coded error the dialog shows.
+export const useAppComObjects = (appProgramId: string, enabled: boolean) => {
+  const { i18n } = useTranslation();
+  const lang = i18n.language;
+  return useQuery({
+    queryKey: qk.appComObjects(appProgramId, lang),
+    queryFn: () => api.appComObjects(appProgramId, lang),
+    enabled, staleTime: 60_000, retry: false, // a coded refusal will not succeed on retry
+  });
+};
 
 export const useProject = (id: string) =>
   useQuery({ queryKey: qk.project(id), queryFn: () => api.getProject(id) });
@@ -179,6 +194,9 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     qc.setQueryData(qk.deviceConfig(projectId, deviceId, lang), view);
     void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId], refetchType: "none" });
     void qc.invalidateQueries({ queryKey: qk.project(projectId) });
+    // Link edits (setLink, revert*, replaceProduct) change which devices a GA
+    // reaches, so the GA details overlay must not serve its stale sender/receiver list.
+    void qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
   };
   const setParam = useMutation({
     mutationFn: (v: { refId: string; value: string }) => api.setDeviceParam(projectId, deviceId, v.refId, v.value, lang),
@@ -206,5 +224,12 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     mutationFn: () => api.readBackDevice(projectId, deviceId, lang),
     onSuccess,
   });
-  return { setParam, setLink, revert, revertParam, revertLink, readBack, after };
+  // Swap the device's product for a catalog product, migrating its GA links
+  // through the given mapping. Returns the fresh config view of the NEW app.
+  const replaceProduct = useMutation({
+    mutationFn: (v: { appRef: string; productRef: string; mapping: ReplaceMappingEntry[] }) =>
+      api.replaceDevice(projectId, deviceId, v.appRef, v.productRef, v.mapping, lang),
+    onSuccess,
+  });
+  return { setParam, setLink, revert, revertParam, revertLink, readBack, replaceProduct, after };
 }

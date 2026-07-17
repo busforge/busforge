@@ -42,7 +42,7 @@ beforeAll(() => { makeTransportImpl = () => { const t = new FakeTransport(); cre
 afterAll(() => { makeTransportImpl = realMakeTransport; created.length = 0; });
 
 const conn: Connection = {
-  id: "c1", name: "gw", type: "ip", host: "198.51.100.10", port: 3671,
+  id: "c1", name: "gw", type: "ip", host: "198.51.100.10", port: 3671, ipTransport: "auto",
   usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0,
 };
 
