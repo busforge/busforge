@@ -1,7 +1,8 @@
 import dgram from "node:dgram";
+import net from "node:net";
 import {
-  SVC, KNXPORT, CEMI, CEMI_CON_ERROR, knxFrame, hpai, parseHpai,
-  withMessageCode, withSource, cemiSource, numToIa, type Endpoint,
+  SVC, KNXPORT, CEMI, CEMI_CON_ERROR, knxFrame, hpai, hpaiTcp, parseHpai,
+  withMessageCode, withSource, cemiSource, numToIa, KnxIpStreamParser, type Endpoint,
 } from "./frame.ts";
 import { SEARCH_MULTICAST } from "./discover.ts";
 import { localIPv4, localMac } from "./localnet.ts";
@@ -66,17 +67,65 @@ function realSocket(): ServerSocket {
   };
 }
 
+// One accepted TCP connection. Narrow like ServerSocket: write() puts a framed KNXnet/IP frame on
+// the wire, onData() delivers raw stream bytes (which the server reassembles), onClose() fires when
+// the connection ends. A TCP channel is bound to exactly one of these for its whole lifetime.
+export interface ServerTcpSocket {
+  write(frame: Buffer): void;
+  onData(cb: (chunk: Buffer) => void): void;
+  onClose(cb: () => void): void;
+  end(): void;
+}
+
+// The TCP listener seam, mirroring ServerSocket so the tests stay socket-free.
+export interface ServerTcpListener {
+  listen(port: number, cb: () => void): void;
+  onConnection(cb: (sock: ServerTcpSocket) => void): void;
+  close(): void;
+}
+
+function realTcpListener(): ServerTcpListener {
+  const server = net.createServer();
+  return {
+    listen: (port, cb) => { server.listen(port, cb); },
+    onConnection: (cb) => {
+      server.on("connection", (s) => {
+        // 'error' must have a listener or node throws it uncaught; the 'close' that always follows an
+        // error is what actually reaps the channel, so the error handler need only keep the process up.
+        s.on("error", () => {});
+        cb({
+          write: (frame) => { s.write(frame); },
+          onData: (dcb) => { s.on("data", dcb); },
+          onClose: (ccb) => { s.on("close", ccb); },
+          end: () => { s.end(); },
+        });
+      });
+    },
+    close: () => { server.close(); },
+  };
+}
+
 interface Channel {
   id: number;
   ia: number;          // the individual address this tunnel sends from
-  control: Endpoint;   // where connection-state and disconnect answers go
-  data: Endpoint;      // where tunnelling frames go
+  control: Endpoint;   // where connection-state and disconnect answers go (UDP channels only)
+  data: Endpoint;      // where tunnelling frames go (UDP channels only)
+  // Set for a channel established over TCP; when set, EVERY reply for this channel goes back over
+  // this socket and the control/data Endpoints above are unused. null for a UDP channel.
+  tcp: ServerTcpSocket | null;
   txSeq: number;       // our sequence counter towards this client
   rxSeq: number;       // the next sequence number we expect FROM this client
   lastSeen: number;
   ack: { seq: number; resolve: () => void } | null;
   queue: Promise<void>; // serialises server -> client tunnelling; only one frame may be in flight
 }
+
+// Where a datagram/frame came from, and therefore where its response goes. A UDP request answers to
+// the HPAI it carries (with the NAT fallback to the packet source); a TCP request answers on the
+// same connection, ignoring any HPAI. Threaded through dispatch so one code path serves both.
+type Origin =
+  | { kind: "udp"; from: Endpoint }
+  | { kind: "tcp"; sock: ServerTcpSocket };
 
 export interface KnxIpServerOptions {
   transport: KnxTransport;
@@ -91,6 +140,7 @@ export interface KnxIpServerOptions {
   port?: number;
   serialNumber?: Buffer;
   createSocket?: () => ServerSocket;
+  createTcpListener?: () => ServerTcpListener;
   now?: () => number;
   log?: (msg: string) => void;
 }
@@ -102,10 +152,12 @@ export class KnxIpServer {
   private readonly port: number;
   private readonly serialNumber: Buffer;
   private readonly createSocket: () => ServerSocket;
+  private readonly createTcpListener: () => ServerTcpListener;
   private readonly now: () => number;
   private readonly log: (msg: string) => void;
 
   private sock: ServerSocket | null = null;
+  private tcp: ServerTcpListener | null = null;
   private reaper: ReturnType<typeof setInterval> | null = null;
   private me: Endpoint = { address: "0.0.0.0", port: KNXPORT };
   readonly channels = new Map<number, Channel>();
@@ -117,6 +169,7 @@ export class KnxIpServer {
     this.port = opts.port ?? KNXPORT;
     this.serialNumber = opts.serialNumber ?? Buffer.alloc(6);
     this.createSocket = opts.createSocket ?? realSocket;
+    this.createTcpListener = opts.createTcpListener ?? realTcpListener;
     this.now = opts.now ?? (() => Date.now());
     this.log = opts.log ?? (() => {});
   }
@@ -142,6 +195,14 @@ export class KnxIpServer {
     sock.addMembership(SEARCH_MULTICAST); // so a client's multicast SEARCH_REQUEST reaches us
     this.sock = sock;
 
+    // The standard KNXnet/IP Tunnelling-over-TCP listener on the same port. ETS's plain tunnel uses
+    // UDP and keeps working through the socket above; a client that opens a TCP connection and then
+    // CONNECT_REQs gets its own channel here, multiplexed into the same channel map.
+    const tcp = this.createTcpListener();
+    tcp.onConnection((s) => this.onTcpConnection(s));
+    await new Promise<void>((r) => tcp.listen(this.port, () => r()));
+    this.tcp = tcp;
+
     // Everything the bus says goes to every open tunnel, verbatim.
     this.transport.onRawCemi = (cemi) => { for (const ch of this.channels.values()) void this.toClient(ch, cemi); };
 
@@ -154,16 +215,57 @@ export class KnxIpServer {
     // Tell the clients rather than vanishing: a tunnel whose server disappears silently sits there
     // until its own 120 s heartbeat timeout and reports a bus fault in the meantime.
     for (const ch of [...this.channels.values()]) {
-      this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), hpai(this.me.address, this.me.port)])), ch.control);
+      this.toControl(ch, knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), this.controlHpai(ch)])));
+      ch.tcp?.end();
       this.channels.delete(ch.id);
     }
     this.transport.onRawCemi = null;
     this.sock?.close();
     this.sock = null;
+    this.tcp?.close();
+    this.tcp = null;
   }
 
   private send(frame: Buffer, to: Endpoint): void {
     this.sock?.send(frame, to);
+  }
+
+  // A frame directed at an established channel: over its TCP connection if it has one, else to the
+  // matching UDP endpoint. control carries connection-state / disconnect answers, data carries
+  // tunnelling frames; on TCP the two coincide (the one socket), so the split is a UDP concern.
+  private toControl(ch: Channel, frame: Buffer): void { if (ch.tcp) ch.tcp.write(frame); else this.send(frame, ch.control); }
+  private toData(ch: Channel, frame: Buffer): void { if (ch.tcp) ch.tcp.write(frame); else this.send(frame, ch.data); }
+
+  // The control HPAI this server puts in a DISCONNECT_REQUEST it originates. On TCP it is the
+  // zero-address IPV4_TCP HPAI (the connection is the endpoint); on UDP it is this server's address.
+  private controlHpai(ch: Channel): Buffer { return ch.tcp ? hpaiTcp() : hpai(this.me.address, this.me.port); }
+
+  // A KNXnet/IP frame arriving on one accepted TCP connection. The stream is reassembled into whole
+  // frames and each is dispatched through the SAME service logic as a UDP datagram; the difference is
+  // only where the answers go (back over this socket). A stream that cannot be kept in frame is
+  // dropped with the connection, exactly as a malformed datagram is dropped, never crashing the server.
+  private onTcpConnection(sock: ServerTcpSocket): void {
+    const parser = new KnxIpStreamParser();
+    sock.onData((chunk) => {
+      let frames: Buffer[];
+      try { frames = parser.push(chunk); }
+      catch (e) {
+        this.log(`tcp: dropped a connection whose KNXnet/IP stream desynchronised: ${e instanceof Error ? e.message : String(e)}`);
+        sock.end();
+        return;
+      }
+      for (const m of frames) {
+        try { this.dispatch(m, { kind: "tcp", sock }); }
+        catch (e) { this.log(`tcp: dropped a malformed frame: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+    });
+    // A TCP channel's liveness IS its socket (3/8/2 v2: no CONNECTIONSTATE heartbeat on TCP). When the
+    // connection ends, delete its channel; do NOT send a DISCONNECT into a socket that is already gone.
+    sock.onClose(() => {
+      for (const ch of [...this.channels.values()]) {
+        if (ch.tcp === sock && this.channels.delete(ch.id)) this.log(`channel ${ch.id} closed: its TCP connection dropped`);
+      }
+    });
   }
 
   // ---- discovery / description ----
@@ -197,7 +299,7 @@ export class KnxIpServer {
 
   private onDatagram(m: Buffer, from: Endpoint): void {
     try {
-      this.dispatch(m, from);
+      this.dispatch(m, { kind: "udp", from });
     } catch (e) {
       // The socket is bound on the LAN, so every host can send it a truncated or malformed frame,
       // and the parsers here read at fixed and cEMI-relative offsets that a short buffer overruns.
@@ -208,25 +310,25 @@ export class KnxIpServer {
     }
   }
 
-  private dispatch(m: Buffer, from: Endpoint): void {
+  private dispatch(m: Buffer, origin: Origin): void {
     if (m.length < 6 || m[0] !== 0x06 || m[1] !== 0x10) return; // not a KNXnet/IP frame
     const svc = m.readUInt16BE(2);
     const body = m.subarray(6);
     switch (svc) {
       case SVC.SEARCH_REQ:
-        this.send(knxFrame(SVC.SEARCH_RES, Buffer.concat([hpai(this.me.address, this.me.port), this.describe()])), parseHpai(body, 0, from));
+        this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.SEARCH_RES, Buffer.concat([this.responseHpai(origin), this.describe()])));
         return;
       case SVC.DESCRIPTION_REQ:
-        this.send(knxFrame(SVC.DESCRIPTION_RES, this.describe()), parseHpai(body, 0, from));
+        this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.DESCRIPTION_RES, this.describe()));
         return;
       case SVC.CONNECT_REQ:
-        this.onConnect(body, from);
+        this.onConnect(body, origin);
         return;
       case SVC.CONNECTIONSTATE_REQ:
-        this.onConnectionState(body, from);
+        this.onConnectionState(body, origin);
         return;
       case SVC.DISCONNECT_REQ:
-        this.onDisconnect(body, from);
+        this.onDisconnect(body, origin);
         return;
       case SVC.TUNNEL_REQ:
         void this.onTunnelRequest(body);
@@ -239,42 +341,80 @@ export class KnxIpServer {
     }
   }
 
+  // The datagram source a UDP request's HPAI falls back to (its 0.0.0.0:0 NAT form); irrelevant for a
+  // TCP request, whose response never consults an HPAI.
+  private originFrom(origin: Origin): Endpoint { return origin.kind === "udp" ? origin.from : this.me; }
+
+  // Send a response to where a request came from: on TCP over the same connection, on UDP to the HPAI
+  // the request carried (computed lazily, since a TCP request has none worth parsing).
+  private answer(origin: Origin, udpTo: () => Endpoint, frame: Buffer): void {
+    if (origin.kind === "tcp") origin.sock.write(frame);
+    else this.send(frame, udpTo());
+  }
+
+  // The HPAI this server puts in a response (SEARCH_RES / DESCRIPTION_RES / CONNECT_RES). On a TCP
+  // connection it MUST be the zero-address IPV4_TCP HPAI: the connection is the endpoint, and a
+  // strict client (ETS) rejects a TCP handshake whose response advertises a UDP address to answer at.
+  // On UDP it names this server's own address as before.
+  private responseHpai(origin: Origin): Buffer {
+    return origin.kind === "tcp" ? hpaiTcp() : hpai(this.me.address, this.me.port);
+  }
+
   // ---- connection management ----
 
-  private onConnect(body: Buffer, from: Endpoint): void {
+  private onConnect(body: Buffer, origin: Origin): void {
+    const from = this.originFrom(origin);
     const control = parseHpai(body, 0, from);
     const data = parseHpai(body, 8, from);
     const cri = body.subarray(16);
     const reject = (status: number) =>
-      this.send(knxFrame(SVC.CONNECT_RES, Buffer.from([0x00, status])), control);
+      this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.from([0x00, status])));
 
     if (cri[1] !== CRI_TUNNEL) { reject(E_CONNECTION_TYPE); return; }   // device management: not served
     if (cri[2] !== LAYER_LINK) { reject(E_TUNNELLING_LAYER); return; }  // bus-monitor layer: not served
 
     const taken = new Set([...this.channels.values()].map((c) => c.ia));
-    const ia = this.addresses.find((a) => !taken.has(a));
+    // Tunnelling v2 (3/8/4): a client MAY ask for a SPECIFIC tunnel address by extending the CRI to
+    // 6 bytes, the last two carrying the desired individual address (this is what ETS's per-connection
+    // "Individual Address" field sends). It is honoured only within our configured pool and only if
+    // that address is free: the pool is the operator's assertion of which addresses are safe on this
+    // line, so a request for one we do not own, or one already in use, is refused rather than
+    // silently substituted — a client that believes it holds 1.1.253 while actually sending from
+    // 1.1.254 would mislabel every telegram it puts on the bus. Without a request, assign first free.
+    let ia: number | undefined;
+    if (cri[0] >= 6 && cri.length >= 6) {
+      const wanted = (cri[4] << 8) | cri[5];
+      if (!this.addresses.includes(wanted) || taken.has(wanted)) {
+        this.log(`refused a request for tunnel address ${numToIa(wanted)}: ${this.addresses.includes(wanted) ? "already in use" : "not in this server's pool"}`);
+        reject(E_NO_MORE_CONNECTIONS);
+        return;
+      }
+      ia = wanted;
+    } else {
+      ia = this.addresses.find((a) => !taken.has(a));
+    }
     let id = 1;
     while (this.channels.has(id) && id < 0xff) id++;
     if (ia === undefined || this.channels.has(id)) { reject(E_NO_MORE_CONNECTIONS); return; }
 
-    this.channels.set(id, { id, ia, control, data, txSeq: 0, rxSeq: 0, lastSeen: this.now(), ack: null, queue: Promise.resolve() });
+    const tcp = origin.kind === "tcp" ? origin.sock : null;
+    this.channels.set(id, { id, ia, control, data, tcp, txSeq: 0, rxSeq: 0, lastSeen: this.now(), ack: null, queue: Promise.resolve() });
     const crd = Buffer.from([0x04, CRI_TUNNEL, (ia >> 8) & 0xff, ia & 0xff]);
-    this.send(knxFrame(SVC.CONNECT_RES, Buffer.concat([Buffer.from([id, E_NO_ERROR]), hpai(this.me.address, this.me.port), crd])), control);
-    this.log(`channel ${id} open for ${data.address}:${data.port} as ${numToIa(ia)}`);
+    this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.concat([Buffer.from([id, E_NO_ERROR]), this.responseHpai(origin), crd])));
+    this.log(`channel ${id} open ${tcp ? "over TCP" : `for ${data.address}:${data.port}`} as ${numToIa(ia)}`);
   }
 
-  private onConnectionState(body: Buffer, from: Endpoint): void {
+  private onConnectionState(body: Buffer, origin: Origin): void {
     const id = body[0];
     const ch = this.channels.get(id);
-    const to = parseHpai(body, 2, from);
     if (ch) ch.lastSeen = this.now();
-    this.send(knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])), to);
+    this.answer(origin, () => parseHpai(body, 2, this.originFrom(origin)), knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])));
   }
 
-  private onDisconnect(body: Buffer, from: Endpoint): void {
+  private onDisconnect(body: Buffer, origin: Origin): void {
     const id = body[0];
     const ch = this.channels.get(id);
-    this.send(knxFrame(SVC.DISCONNECT_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])), parseHpai(body, 2, from));
+    this.answer(origin, () => parseHpai(body, 2, this.originFrom(origin)), knxFrame(SVC.DISCONNECT_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])));
     if (ch) { this.channels.delete(id); this.log(`channel ${id} closed by the client`); }
   }
 
@@ -284,13 +424,17 @@ export class KnxIpServer {
   private reap(): void {
     const cutoff = this.now() - HEARTBEAT_TIMEOUT_MS;
     for (const ch of [...this.channels.values()]) {
+      // A TCP channel is reaped by its socket's lifetime (onTcpConnection's onClose), never by
+      // heartbeat silence: 3/8/2 v2 does not run the CONNECTIONSTATE procedure over TCP, so a quiet
+      // but connected TCP client has no lastSeen to refresh and must not be dropped for it.
+      if (ch.tcp) continue;
       if (ch.lastSeen < cutoff) this.drop(ch, "no connection-state request for 120 s");
     }
   }
 
   private drop(ch: Channel, why: string): void {
     if (!this.channels.delete(ch.id)) return;
-    this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), hpai(this.me.address, this.me.port)])), ch.control);
+    this.toControl(ch, knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), this.controlHpai(ch)])));
     this.log(`channel ${ch.id} dropped: ${why}`);
   }
 
@@ -309,10 +453,10 @@ export class KnxIpServer {
     // damage this project exists to avoid. Anything else is out of order: drop it, do not ACK it.
     const expected = ch.rxSeq;
     const previous = (expected - 1) & 0xff;
-    if (seq === previous) { this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])), ch.data); return; }
+    if (seq === previous) { this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR]))); return; }
     if (seq !== expected) { this.log(`channel ${id}: dropped a frame out of sequence (got ${seq}, expected ${expected})`); return; }
 
-    this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])), ch.data);
+    this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])));
     ch.rxSeq = (expected + 1) & 0xff;
 
     const cemi = body.subarray(4);
@@ -368,7 +512,7 @@ export class KnxIpServer {
           ch.ack = { seq, resolve: () => resolve(true) };
           setTimeout(() => resolve(false), ACK_TIMEOUT_MS);
         });
-        this.send(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, ch.id, seq, 0x00]), cemi])), ch.data);
+        this.toData(ch, knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, ch.id, seq, 0x00]), cemi])));
         if (await acked) { ch.ack = null; ch.txSeq = (seq + 1) & 0xff; return; }
       }
       ch.ack = null;

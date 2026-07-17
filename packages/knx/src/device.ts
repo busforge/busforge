@@ -138,8 +138,9 @@ export class KnxDevice {
     });
   }
 
-  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = 3): Promise<ParsedApdu | null> {
+  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
     for (let i = 0; i < tries; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, 200));
       const ackP = new Promise<boolean>((res) => { this.ackResolve = () => res(true); setTimeout(() => res(false), 1500); });
       const respP = expectResponse
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); setTimeout(() => res(null), 2000); })
@@ -148,7 +149,16 @@ export class KnxDevice {
       // service APDU (inner TPCI 0) and wrap it for this T-sequence.
       let tpdu = build(this.seq);
       if (this.secure) { const svc = Buffer.from(tpdu); svc[0] &= 0x03; tpdu = this.secure.wrapManagement(svc, this.seq); }
-      await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
+      try {
+        await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
+      } catch (e) {
+        // A negative L_Data.con (BUS_SEND_FAILED) or a tunnel ack timeout means the frame did not
+        // reach the device this time. On a device that intermittently misses its L2-ACK window
+        // (a busy single-core app), that is exactly what a retry is for. Retry until the budget is
+        // spent, then surface the last error.
+        if (i < tries - 1) continue;
+        throw e;
+      }
       if (!(await ackP)) continue;
       if (!expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
       const r = await respP;

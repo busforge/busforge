@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxIpTunnel, type TunnelSocket } from "../src/connection.ts";
-import { KnxIpServer, type ServerSocket } from "../src/ipserver.ts";
+import { KnxIpServer, type ServerSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import { iaToNum, type Endpoint } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
 
@@ -54,7 +54,7 @@ async function connect(): Promise<Rig> {
   const clientSock: TunnelSocket = {
     bind: (_p, cb) => cb(),
     on: (_ev, cb) => { wire.clientMsg = cb; },
-    send: (buf, _port, _ip, cb) => { wire.fromClient(buf); cb(); },
+    send: (buf, _port, _ip, cb) => { wire.fromClient(buf); cb(null); },
     close: () => { wire.clientMsg = null; },
   };
   const serverSock: ServerSocket = {
@@ -65,7 +65,8 @@ async function connect(): Promise<Rig> {
     send: (buf, to) => wire.toClient(buf, to),
     close: () => { wire.serverMsg = null; },
   };
-  const server = new KnxIpServer({ transport: new FakeBus(), createSocket: () => serverSock, now: () => clock.t, name: "Bench" });
+  const noopTcpListener = (): ServerTcpListener => ({ listen: (_p, cb) => cb(), onConnection: () => {}, close: () => {} });
+  const server = new KnxIpServer({ transport: new FakeBus(), createSocket: () => serverSock, createTcpListener: noopTcpListener, now: () => clock.t, name: "Bench" });
   await server.start();
   const tunnel = new KnxIpTunnel("198.51.100.99", 3671, () => clientSock);
   await tunnel.connect();

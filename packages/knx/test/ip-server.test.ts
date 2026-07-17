@@ -1,7 +1,12 @@
 import { test, expect, describe } from "bun:test";
-import { KnxIpServer, type ServerSocket } from "../src/ipserver.ts";
+import { KnxIpServer, type ServerSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import type { KnxTransport } from "../src/transport.ts";
 import { SVC, CEMI, knxFrame, hpai, iaToNum, cemiLData, type Endpoint } from "../src/frame.ts";
+
+// These tests exercise the UDP path only, so the TCP listener is stubbed out: without this the
+// server would try to bind a real TCP port, and two servers in one test would collide. The TCP
+// path has its own coverage in ip-tcp.test.ts.
+const noopTcpListener = (): ServerTcpListener => ({ listen: (_p, cb) => cb(), onConnection: () => {}, close: () => {} });
 
 // Offline tests for the KNXnet/IP server against a fake UDP socket and a fake bus.
 // The wire bytes are hand-derived from the spec and from frame.ts:
@@ -63,6 +68,13 @@ const connectReq = (layer = 0x02, type = 0x04) => knxFrame(SVC.CONNECT_REQ, Buff
   hpai("0.0.0.0", 0), hpai("0.0.0.0", 0), Buffer.from([0x04, type, layer, 0x00]),
 ]));
 
+// Tunnelling v2 CONNECT_REQUEST asking for a SPECIFIC tunnel address: the CRI is extended to 6
+// bytes, the last two carrying the desired individual address (this is what ETS's per-connection
+// "Individual Address" field sends).
+const connectReqAddr = (ia: number) => knxFrame(SVC.CONNECT_REQ, Buffer.concat([
+  hpai("0.0.0.0", 0), hpai("0.0.0.0", 0), Buffer.from([0x06, 0x04, 0x02, 0x00, (ia >> 8) & 0xff, ia & 0xff]),
+]));
+
 const tunnelReq = (channel: number, seq: number, cemi: Buffer) =>
   knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, channel, seq, 0x00]), cemi]));
 
@@ -82,6 +94,7 @@ async function serve(addresses?: number[]): Promise<Rig> {
     transport: bus,
     addresses,
     createSocket: () => sock,
+    createTcpListener: noopTcpListener,
     now: () => clock.t,
     name: "Bench",
   });
@@ -184,6 +197,34 @@ describe("KnxIpServer: connection management", () => {
     expect(body[1]).toBe(0x00);
     expect(b).not.toBe(a);
     expect(body.readUInt16BE(2 + 8 + 2)).toBe(SECOND_IA);
+  });
+
+  test("a client's request for a SPECIFIC free pool address is granted (Tunnelling v2)", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT); // ask for the second, not the first-free
+    await tick();
+    const body = rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6);
+    expect(body[1]).toBe(0x00);
+    expect(body.readUInt16BE(2 + 8 + 2)).toBe(SECOND_IA); // got exactly what it asked for
+  });
+
+  test("a request for an address NOT in the pool is refused, never substituted", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    rig.sock.deliver(connectReqAddr(iaToNum("1.1.99")), CLIENT); // an address this server does not own
+    await tick();
+    const body = rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6);
+    expect(body[1]).toBe(0x24); // E_NO_MORE_CONNECTIONS
+    expect(body[0]).toBe(0x00); // and no channel was allocated
+    expect(rig.server.channels.size).toBe(0);
+  });
+
+  test("a request for a pool address already in use is refused, not silently reassigned", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    await open(rig, CLIENT); // takes IFACE_IA (first free)
+    rig.sock.deliver(connectReqAddr(IFACE_IA), CLIENT2); // asks for the one just taken
+    await tick();
+    const body = rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6);
+    expect(body[1]).toBe(0x24); // E_NO_MORE_CONNECTIONS: that specific address is busy
   });
 
   test("CONNECTIONSTATE_REQUEST is answered ok for a live channel and E_CONNECTION_ID for a dead one", async () => {
@@ -308,7 +349,7 @@ describe("KnxIpServer: client -> bus", () => {
     const propRead = Buffer.from([0xfc, 0x00, 0x08, 0x01, 0x34, 0x10, 0x01]);
 
     const sock = rig.sock;
-    const server = new KnxIpServer({ transport: rig.bus, createSocket: () => sock, now: () => rig.clock.t, log: (m) => notes.push(m) });
+    const server = new KnxIpServer({ transport: rig.bus, createSocket: () => sock, createTcpListener: noopTcpListener, now: () => rig.clock.t, log: (m) => notes.push(m) });
     await server.start();
     sock.clear();
     sock.deliver(connectReq(), CLIENT);

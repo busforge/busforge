@@ -15,9 +15,9 @@ class FakeUdpSocket implements TunnelSocket {
   private msgCb: ((m: Buffer) => void) | null = null;
   bind(_port: number, cb: () => void): void { cb(); }
   on(_ev: "message", cb: (m: Buffer) => void): void { this.msgCb = cb; }
-  send(buf: Buffer, _port: number, _ip: string, cb: () => void): void {
+  send(buf: Buffer, _port: number, _ip: string, cb: (err: Error | null) => void): void {
     this.sent.push(Buffer.from(buf));
-    cb();
+    cb(null);
   }
   close(): void { this.closed = true; }
   inject(m: Buffer): void { this.msgCb!(m); }
@@ -218,6 +218,28 @@ describe("KnxIpTunnel", () => {
       0x08, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ]);
     expect(sock.closed).toBe(true);
+  });
+
+  test("a socket-level send failure rejects connect() with TUNNEL_SEND_FAILED, not a timeout", async () => {
+    // A UDP send can fail on the local host before anything reaches the wire; the case a
+    // user actually hits is macOS denying "Local Network" access (TCC), where the kernel
+    // answers every send with EHOSTUNREACH. Ignoring the send callback's error resolved
+    // the promise anyway, and connect() died 4 s later as a featureless
+    // TUNNEL_CONNECT_TIMEOUT pointing at the gateway instead of at this host.
+    class RefusingUdpSocket extends FakeUdpSocket {
+      override send(_buf: Buffer, _port: number, _ip: string, cb: (err: Error | null) => void): void {
+        cb(new Error("sendto EHOSTUNREACH"));
+      }
+    }
+    const tunnel = new KnxIpTunnel("192.0.2.10", 3671, () => new RefusingUdpSocket());
+
+    const err = await tunnel.connect().then(() => null, (e: unknown) => e as Error & { code?: string });
+    expect(err).not.toBeNull();
+    expect(err!.name).toBe("KnxError");
+    expect(err!.code).toBe("TUNNEL_SEND_FAILED");
+    // The message names the destination and carries the underlying cause.
+    expect(err!.message).toContain("192.0.2.10:3671");
+    expect(err!.message).toContain("EHOSTUNREACH");
   });
 
   test("a heartbeat sends a CONNECTIONSTATE_REQUEST and a positive answer keeps the tunnel up", async () => {

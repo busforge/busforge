@@ -22,12 +22,12 @@ class FakeSocket implements TunnelSocket {
 
   bind(_port: number, cb: () => void) { cb(); }
   on(_ev: "message", cb: (m: Buffer) => void) { this.handler = cb; }
-  send(buf: Buffer, _port: number, _ip: string, cb: () => void) {
+  send(buf: Buffer, _port: number, _ip: string, cb: (err: Error | null) => void) {
     // The real thing throws here once closed. Reproduce that, or the test proves nothing.
     if (this.closedAt !== null) throw new TypeError("null is not an object (evaluating 'kStateSymbol')");
     this.sent.push(Buffer.from(buf));
     this.n++;
-    cb();
+    cb(null);
   }
   close() { this.closedAt = this.n; }
 

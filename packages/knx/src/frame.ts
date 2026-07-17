@@ -68,6 +68,13 @@ export function hpai(ip: string, port: number): Buffer {
   ip.split(".").forEach((o, i) => (b[2 + i] = Number(o)));
   b.writeUInt16BE(port, 6); return b;
 }
+// HPAI for a frame carried on a TCP connection (KNXnet/IP Core v2, 3/8/2 §5.2.1). The host
+// protocol code is 0x02 (IPV4_TCP) and both address and port are zero: on a TCP connection the
+// socket itself is the endpoint, so there is nothing to name and the receiver answers on the same
+// connection rather than at any address these bytes could carry.
+export function hpaiTcp(): Buffer {
+  return Buffer.from([0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+}
 export interface Endpoint { address: string; port: number; }
 // Read an HPAI out of a frame body. A client that sits behind NAT (or simply does not know its
 // own routable address, which is what our own tunnel does) advertises 0.0.0.0:0 and means "answer
@@ -76,6 +83,35 @@ export function parseHpai(b: Buffer, off: number, from: Endpoint): Endpoint {
   const address = `${b[off + 2]}.${b[off + 3]}.${b[off + 4]}.${b[off + 5]}`;
   const port = b.readUInt16BE(off + 6);
   return address === "0.0.0.0" || port === 0 ? from : { address, port };
+}
+
+// KNXnet/IP over UDP is one frame per datagram; over TCP it is a byte stream, where a single frame
+// may arrive split across several reads or several frames coalesced into one read. This reassembles
+// the stream into whole frames. Every KNXnet/IP frame is self-describing: the 6-byte header
+// 06 10 <service:2> <totalLength:2> states the full frame length (header included), so the header
+// alone says where the frame ends. A stream that does not begin with the 06 10 header magic, or
+// that declares a length below the header itself, is a desynchronised or hostile peer with no safe
+// resync point, so push() throws and the caller drops the connection rather than guess. Because the
+// length field is 16 bits, a single frame is bounded at 65535 bytes and cannot force an unbounded
+// allocation.
+export class KnxIpStreamParser {
+  private buf: Buffer = Buffer.alloc(0);
+  // Feed a received chunk and return every complete frame now available, in arrival order.
+  push(chunk: Buffer): Buffer[] {
+    this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : chunk;
+    const out: Buffer[] = [];
+    while (this.buf.length >= 6) {
+      if (this.buf[0] !== 0x06 || this.buf[1] !== 0x10) {
+        throw new Error(`KNXnet/IP TCP stream out of frame: header begins 0x${this.buf[0]!.toString(16)} 0x${this.buf[1]!.toString(16)}, not 06 10`);
+      }
+      const total = this.buf.readUInt16BE(4);
+      if (total < 6) throw new Error(`KNXnet/IP frame length ${total} is below the 6-byte header`);
+      if (this.buf.length < total) break; // the rest of this frame has not arrived yet
+      out.push(this.buf.subarray(0, total));
+      this.buf = this.buf.subarray(total);
+    }
+    return out;
+  }
 }
 
 // Re-stamp a cEMI frame with a different message code, leaving every other byte alone. Used by

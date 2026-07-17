@@ -1,8 +1,8 @@
 export * from "./frame.ts";
 export type { KnxTransport } from "./transport.ts";
 export { parseCemiLData } from "./transport.ts";
-export { KnxIpTunnel } from "./connection.ts";
-export { KnxIpServer, type KnxIpServerOptions, type ServerSocket } from "./ipserver.ts";
+export { KnxIpTunnel, type TunnelSocket, type TcpSocket } from "./connection.ts";
+export { KnxIpServer, type KnxIpServerOptions, type ServerSocket, type ServerTcpSocket, type ServerTcpListener } from "./ipserver.ts";
 export { KnxUsbTransport, listUsbInterfaces, type UsbInterfaceInfo } from "./usb.ts";
 export { searchInterfaces } from "./discover.ts";
 export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER } from "./device.ts";
