@@ -433,7 +433,14 @@ export class KnxIpServer {
   }
 
   private drop(ch: Channel, why: string): void {
-    if (!this.channels.delete(ch.id)) return;
+    // Identity, not id. A channel id is reused as soon as it is freed (see the id search in
+    // onConnectRequest). A stale channel object — one closed while a frame still sat in its send
+    // queue, whose retry loop only expires ~2-4 s later — must never delete the NEW channel that
+    // reused its id, nor send that new client a DISCONNECT into the OLD socket. Deleting by id
+    // alone did exactly that: the successor silently lost its channel and its next tunnelling
+    // request went unacknowledged ("tunnelling ack timeout").
+    if (this.channels.get(ch.id) !== ch) return;
+    this.channels.delete(ch.id);
     this.toControl(ch, knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), this.controlHpai(ch)])));
     this.log(`channel ${ch.id} dropped: ${why}`);
   }
@@ -507,6 +514,10 @@ export class KnxIpServer {
     // connection, so a second send must wait rather than race the first one's ACK.
     ch.queue = ch.queue.then(async () => {
       for (let i = 0; i < ACK_TRIES; i++) {
+        // Stop the moment the channel is gone from the map (closed by the client, or dropped).
+        // Retransmitting to a departed client burns ACK_TIMEOUT_MS per try for nothing, and the
+        // trailing drop() would fire against an id another client may already have reused.
+        if (this.channels.get(ch.id) !== ch) return;
         const seq = ch.txSeq;
         const acked = new Promise<boolean>((resolve) => {
           ch.ack = { seq, resolve: () => resolve(true) };

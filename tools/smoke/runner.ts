@@ -37,9 +37,10 @@ async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseRe
   let pid: string | null = null;
   let did: string | null = null;
   let ok = true;
-  // The bench bridge has ONE tunnel channel; each API bus op opens and closes it. Back-to-back ops
-  // reconnect faster than the bridge releases the channel (a "tunnelling ack timeout"). A short
-  // settle between bus ops is the honest cost of the single-channel bench interface.
+  // A small settle between bus ops. This used to be load-bearing for the wrong reason: back-to-back
+  // ops tripped a bridge bug where a just-closed channel's dying send queue dropped the SUCCESSOR
+  // that reused its id (fixed in packages/knx/src/ipserver.ts — identity-checked drop). It is kept
+  // as a courtesy to the single-channel bench interface, no longer a workaround.
   const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
   // A transient bench-bridge TRANSPORT glitch (a dropped tunnel channel) is worth retrying; a
   // coded product refusal (FLASH_UNVERIFIED, LOAD_PROC_CHECK_FAILED, GA_TABLE_TOO_LARGE, …) is a
