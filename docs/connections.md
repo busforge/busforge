@@ -153,6 +153,39 @@ rather than quietly corrupted. To get the multiplexing, hand the bridge more add
 with `--addresses` — they must be **free on that line**, which nothing in the protocol
 can verify for us, so it is an explicit operator decision and never inferred.
 
+#### The hard limit over USB: extra addresses carry group traffic only (bench-found 2026-07-17)
+
+A KNX-USB stick surfaces to the host **only two kinds of incoming telegram**: group/broadcast
+(always), and connection-oriented point-to-point telegrams addressed to **its own individual
+address** and no other. This is the interface acting as one KNX device with one address; it is
+not something the bridge or `KnxUsbTransport` chooses (neither filters — `usb.ts` delivers every
+`L_Data.ind` it receives, `ipserver.ts` forwards every frame to every channel), and there is no
+protocol step in our stack that reconfigures the interface's address filter.
+
+The consequence bit a whole commissioning session before it was understood: a bridge started
+with `--addresses 1.1.254,1.1.253,1.1.252` (none of them the interface's own `1.1.100`) let
+`prog-mode` scan and address assignment through — those are **broadcast** — but every
+connection-oriented operation (the assign-ia liveness verify, read-back, flash, the full
+download) failed with `DEVICE_NOT_ANSWERING`. The device answered on the bus; its reply, addressed
+to the tunnel's `1.1.254`, was dropped by the USB interface before it ever reached the host.
+Proven by isolation: the same device answered connection-oriented management **first try** both
+directly over the stick and through the bridge **once the single tunnel address was the
+interface's own `1.1.100`**, over TCP and UDP alike.
+
+So with **this** stick (ABB/Weinzierl `147b:5120`), **device management works only on the
+interface's own address, i.e. exactly one tunnel.** Extra `--addresses` are usable only for
+passive/group multiplexing (a second Busforge watching the bus, ETS listening), never for a second
+programming client. Program with the default single-address pool, or set `--addresses` to the
+interface's own address explicitly.
+
+This is a property of the USB controller, not of the bridge, and **it may not be universal**: a
+real KNXnet/IP router does not have the limit at all, and another KNX-USB interface might accept
+additional point-to-point addresses (whether via a cEMI address-filter write or natively) — untested,
+so not claimed either way. That is why the `--addresses` multiplexing is **kept**: it is correct
+where the hardware supports it, and harmless (group/passive) where it does not. The one improvement
+worth making is a bridge warning when handed an address that is not the interface's own, so the
+operator is told up front that management on it will not work on a stick like this one.
+
 ### What it deliberately refuses
 
 | Request | Answer | Why |
