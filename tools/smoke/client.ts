@@ -86,7 +86,7 @@ export class Client {
         .filter((x) => x.deviceId === did && x.kind === kind && x.outcome?.kind !== "dryRun" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
         .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
       if (t) {
-        if (t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
+        if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
         if (t.state === "done" && t.outcome) return t.outcome;
         if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "task failed");
       }

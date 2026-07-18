@@ -119,8 +119,10 @@ async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseRe
     if (result.kind !== "flashed") { layers.push({ layer: "L0 endpoint", state: "fail", detail: `kind=${result.kind}` }); throw new Stop("P5", `commission returned ${result.kind}, expected flashed`); }
     if (result.verified !== true) { layers.push({ layer: "L0 endpoint", state: "fail", detail: "verified=false" }); throw new Stop("P5", "device did not verify the download (verified=false)"); }
     if (recipe.device.mask && result.mask && result.mask !== recipe.device.mask) { layers.push({ layer: "L0 endpoint", state: "fail", detail: `mask ${result.mask}` }); throw new Stop("P5", `mask ${result.mask} != expected ${recipe.device.mask}`); }
-    layers.push({ layer: "L0 endpoint", state: "pass", detail: `flashed verified, ${result.imageBytes}B, mask ${result.mask}` });
-    pass("P5 commission", `${recipe.commission}, ${result.imageBytes}B`);
+    // The stored task outcome does not always carry imageBytes; the dry-run's is the same image.
+    const bytes = result.imageBytes ?? dry.imageBytes ?? "?";
+    layers.push({ layer: "L0 endpoint", state: "pass", detail: `flashed verified, ${bytes}B, mask ${result.mask}` });
+    pass("P5 commission", `${recipe.commission}, ${bytes}B`);
 
     // ── P6 verify ────────────────────────────────────────────────────────────
     // L1: an independent read-back re-reads the device and the config view must show the expected
