@@ -1,6 +1,8 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, type LoadProcedures } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures } from "./loadproc.ts";
+import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
+import { ProductError } from "./errors.ts";
 import type { LoadPlan } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
@@ -177,4 +179,118 @@ export function planAbsoluteParFlash(
     if (has("LdCtrlRestart")) plan.push({ op: "restart" });
   }
   return { plan, changedBytes, segments, unplaceable };
+}
+
+// ── Full download for absolute-segment (System 7) devices ────────────────────────
+//
+// Commission an absolute-segment device by executing its declared load procedure, writing
+// EVERY segment (not just the changed parameter bytes the surgical `par` planner touches):
+//   - the address and association tables from the group-address links (buildGroupTablesMv0705),
+//   - each parameter-bearing segment as its <Data> default overlaid with the active parameter
+//     values (buildAbsoluteSegmentTargets, whole image), and
+//   - every remaining declared segment (com-object table + application code) as its <Data>.
+//
+// The procedure is walked IN ORDER and each verb translated to a LoadStep, so the LSM brackets
+// (and cross-LSM task declarations like the com-object table's LSM5 task nested inside the LSM3
+// load) are reproduced exactly rather than reconstructed. The device drives its LSMs over the
+// memory-mapped interface (MV-0700/0701); the runner is told so via `memMappedLsms`. Connect /
+// app-id CompareProp / disconnect are the caller's (session + preflight), not emitted here.
+export interface AbsFullSegment {
+  id: string;
+  address: number;
+  lsm: number;
+  source: "addrTable" | "assocTable" | "params" | "static";
+  image: Buffer;      // the bytes written to this segment
+  verify: boolean[];  // which of `image` a post-restart read-back may assert (excludes device-stamped bytes)
+}
+export interface AbsFullDownloadPlan {
+  plan: LoadPlan;
+  segments: AbsFullSegment[]; // every segment written, in write order
+  imageBytes: number;
+}
+
+export function planAbsoluteFullDownload(
+  app: AppConfig,
+  values: Map<string, string>,
+  links: ComObjectLink[],
+  ownIa: number,
+  procedure: LoadProcedures,
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean } = {},
+): AbsFullDownloadPlan {
+  // The two group tables live in the segments the app names; every other declared segment is the
+  // application image (params overlaid on <Data>, or plain <Data>). If the app names a table
+  // segment that does not exist, refuse: silently letting it fall through to the static-<Data>
+  // path would write a manufacturer-default (link-less) table where the built one belongs, and
+  // the association table is what actually fires on the bus.
+  const tableAddr = (segId: string | undefined, which: string): number | undefined => {
+    if (segId === undefined) return undefined;
+    const seg = app.absoluteSegments.find((s) => s.id === segId);
+    if (!seg) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the ${which} table names segment ${segId}, which the application does not define; refusing to author the group tables blind`);
+    return seg.address;
+  };
+  const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
+  const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
+  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
+  const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
+  const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
+  const manufacturer = Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
+
+  const imageFor = (address: number, size: number): Pick<AbsFullSegment, "image" | "verify" | "source"> => {
+    // The built table must fit the segment the load procedure reserves for it; overrunning would
+    // write into the adjacent segment (the association/com-object table) with the per-segment
+    // read-back none the wiser. Refuse, as the surgical GA flash does (GA_TABLE_TOO_LARGE).
+    if (addrTableAddr !== undefined && address === addrTableAddr) {
+      if (addr.length > size) throw new ProductError("GA_TABLE_TOO_LARGE", `the address table needs ${addr.length} B but its segment reserves only ${size} B; assign fewer group addresses`);
+      return { image: addr, verify: new Array<boolean>(addr.length).fill(true), source: "addrTable" };
+    }
+    if (assocTableAddr !== undefined && address === assocTableAddr) {
+      if (assoc.length > size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${size} B; remove links`);
+      return { image: assoc, verify: new Array<boolean>(assoc.length).fill(true), source: "assocTable" };
+    }
+    const pt = paramTargets.get(address);
+    if (pt) return { image: pt.bytes, verify: pt.verify, source: "params" };
+    const seg = segByAddr.get(address);
+    if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${address} the application does not define; refusing to write an image we cannot build`);
+    // A pure static segment (com-object table / code): its <Data> laid over the erased-flash state.
+    const image = Buffer.alloc(size, 0xff);
+    seg.data.copy(image);
+    return { image, verify: new Array<boolean>(size).fill(true), source: "static" };
+  };
+
+  const plan: LoadPlan = [];
+  const segments: AbsFullSegment[] = [];
+  let imageBytes = 0;
+  // A declared step whose attributes we cannot read is a recipe we cannot execute; refuse rather
+  // than emit a plan that silently omits it. Same stance as the par path's coverage gate, but on
+  // the "full" step list the planner actually runs.
+  const need = <T>(v: T | undefined, verb: string, what: string): T => {
+    if (v === undefined) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `${verb} is missing its ${what}; refusing to build a partial download`);
+    return v;
+  };
+  for (const s of flattenSteps(procedure, "full")) {
+    switch (s.verb) {
+      case "LdCtrlUnload": plan.push({ op: "unload", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
+      case "LdCtrlLoad": plan.push({ op: "load", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
+      case "LdCtrlAbsSegment": {
+        const l = need(lsmIdx(s), s.verb, "LsmIdx"), a = need(stepAddress(s), s.verb, "Address"), sz = need(stepSize(s), s.verb, "Size");
+        plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s) });
+        const { image, verify, source } = imageFor(a, sz);
+        // The segment data write is implicit in the declaration on these devices; write it now.
+        plan.push({ op: "writeMem", address: a, bytes: image });
+        segments.push({ id: segByAddr.get(a)?.id ?? `@${a}`, address: a, lsm: l, source, image, verify });
+        imageBytes += image.length;
+        break;
+      }
+      case "LdCtrlTaskSegment":
+        plan.push({ op: "taskSegment", lsm: need(lsmIdx(s), s.verb, "LsmIdx"), address: need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion });
+        break;
+      case "LdCtrlLoadCompleted": plan.push({ op: "loadCompleted", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
+      case "LdCtrlRestart": plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true }); break;
+      // Session lifecycle + the app-id check are the caller's (see System7Profile.downloadFull).
+      case "LdCtrlConnect": case "LdCtrlDisconnect": case "LdCtrlCompareProp": break;
+      default:
+        throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe`);
+    }
+  }
+  return { plan, segments, imageBytes };
 }

@@ -1,5 +1,5 @@
 import { KnxDevice, PID } from "./device.ts";
-import { lsmEvent, lsmState, allocSegment, LSM, STATE } from "./flash.ts";
+import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, LSM, STATE } from "./flash.ts";
 import { KnxError } from "./errors.ts";
 import { loadedTableAddr } from "./grouptable-read.ts";
 
@@ -29,6 +29,13 @@ export type LoadStep =
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
   | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0) — a full download does, a par download does not
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
+  // Declare an absolute segment to a memory-mapped LSM (LdCtrlAbsSegment): the segment must be
+  // declared to the LSM before its data is written. Only meaningful with memMappedLsms; asserts
+  // the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
+  | { op: "absSegment"; lsm: number; segType: number; address: number; size: number; access: number; memType: number; segFlags: number }
+  // Declare the task segment (LdCtrlTaskSegment) with the application identity the device checks
+  // at LoadCompleted. Memory-mapped LSMs only.
+  | { op: "taskSegment"; lsm: number; address: number; peiType: number; manufacturer: number; appNumber: number; version: number }
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
@@ -64,6 +71,9 @@ export interface RunOpts {
   // Byte progress within a writeSegment step (a relative segment is one large write,
   // so per-step notification alone would freeze the progress bar for its duration).
   onWrite?: (done: number, total: number) => void;
+  // Drive the LSMs over the memory-mapped interface (0x0104 / 46825+lsm) instead of PID-5
+  // property writes. Set for the BIM M112 masks MV-0700/0701; false/absent everywhere else.
+  memMappedLsms?: boolean;
   // re-read pause after restart is the caller's concern; the runner just fires restart
 }
 
@@ -76,18 +86,28 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "disconnect": await dev.disconnect(); break;
       case "restart": await dev.restart(step.requireReboot ?? true); break;
       case "unload": {
-        await lsmEvent(dev, step.lsm, LSM.UNLOAD);
+        await lsmEvent(dev, step.lsm, LSM.UNLOAD, opts.memMappedLsms);
         break;
       }
       case "load": {
-        await lsmEvent(dev, step.lsm, LSM.LOAD);
+        await lsmEvent(dev, step.lsm, LSM.LOAD, opts.memMappedLsms);
         if (step.assert !== false) {
-          const s = await lsmState(dev, step.lsm);
+          const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
           if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
         }
         break;
       }
       case "alloc": await allocSegment(dev, step.lsm, step.size, step.fill ?? false, step.fillByte ?? 0); break;
+      // Declare an absolute segment, then confirm the LSM did not reject it (still LOADING). A
+      // rejected declaration flips the LSM to ERROR; carrying on would write data into a machine
+      // that will refuse LoadCompleted, so stop here.
+      case "absSegment": {
+        await declareAbsSegmentMM(dev, step.lsm, step.segType, step.address, step.size, step.access, step.memType, step.segFlags);
+        const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
+        if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after AbsSegment @${step.address} (got ${stateName(s)})`);
+        break;
+      }
+      case "taskSegment": await declareTaskSegmentMM(dev, step.lsm, step.address, step.peiType, step.manufacturer, step.appNumber, step.version); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
       case "verifyMode": await dev.setVerifyMode(step.on); break;
@@ -123,15 +143,15 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {
-        await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED);
+        await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
         if (step.assert !== false) {
-          const s = await lsmState(dev, step.lsm);
+          const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
           if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
         }
         break;
       }
       case "assertLoaded": {
-        const s = await lsmState(dev, step.lsm);
+        const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
         if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
         break;
       }

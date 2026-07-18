@@ -34,7 +34,7 @@ low-numbered mask like MV-0701 still lands on the absolute path:
 | Model | Masks (seen here) | Parameters live in | Busforge support |
 | --- | --- | --- | --- |
 | **Relative segment** | MV-07B0 | An LSM4 `RelativeSegment`, allocator-addressed | **read + flash** (the proven path) |
-| **Absolute segment** | MV-0705, MV-0701 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + build/verify + flash planned** (see below) |
+| **Absolute segment** | MV-0705, MV-0701 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + flash** (params + GA); **full download hardware-verified on MV-0701** (memory-mapped BIM M112, ABB US/U 4.2, 2026-07-18). MV-0705 (property-mapped) keeps its com-object table from the device. |
 
 In the reference installation, **8 of 34 devices** use the relative-segment model; the
 other **26** (most push-button sensors, presence detectors) use the absolute-segment

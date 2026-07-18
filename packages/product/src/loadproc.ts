@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag } from "./onode.ts";
+import { ProductError } from "./errors.ts";
 
 // Parse a KNX ApplicationProgram's <LoadProcedures> into a generic, executable step
 // model. The load procedure is the device's own declared programming recipe: which
@@ -121,6 +122,9 @@ export const lsmIdx = (s: LdStep): number | undefined => (s.attrs.LsmIdx !== und
 export const stepAddress = (s: LdStep): number | undefined => (s.attrs.Address !== undefined ? Number(s.attrs.Address) : undefined);
 export const stepSize = (s: LdStep): number | undefined => (s.attrs.Size !== undefined ? Number(s.attrs.Size) : undefined);
 export const memType = (s: LdStep): number | undefined => (s.attrs.MemType !== undefined ? Number(s.attrs.MemType) : undefined);
+export const segType = (s: LdStep): number => (s.attrs.SegType !== undefined ? Number(s.attrs.SegType) : 0);
+export const segAccess = (s: LdStep): number => (s.attrs.Access !== undefined ? Number(s.attrs.Access) : 0);
+export const segFlags = (s: LdStep): number => (s.attrs.SegFlags !== undefined ? Number(s.attrs.SegFlags) : 0);
 
 // ---- par-download step policy ----
 // The par (parameter-only) download deliberately does not execute every step a procedure
@@ -235,7 +239,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
 
 // A CompareProp the flash path must execute before writing: read obj/pid and compare
 // against the declared value (wrong hardware or application aborts the download).
-export interface DeclaredPropCheck { obj: number; pid: number; expect: Buffer; }
+export interface DeclaredPropCheck { obj: number; pid: number; expect: Buffer; mask?: Buffer; }
 
 export interface ParCoverage {
   blocked: { verb: string; detail: string }[];
@@ -253,9 +257,28 @@ export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relat
     const d = assessParStep(step, model);
     if (d.kind === "blocked") blocked.push({ verb: step.verb, detail: d.detail });
     else if (d.kind === "skipped") skipped.push({ verb: step.verb, reason: d.reason });
-    else if (step.verb === "LdCtrlCompareProp") {
-      checks.push({ obj: Number(step.attrs.ObjIdx), pid: Number(step.attrs.PropId), expect: Buffer.from(step.attrs.InlineData, "hex") });
-    }
+    else if (step.verb === "LdCtrlCompareProp") checks.push(comparePropCheck(step));
   }
   return { blocked, skipped, checks };
+}
+
+// Build the app-id / hardware pre-flight a single LdCtrlCompareProp step declares. The Mask
+// selects which InlineData bytes must match (e.g. ABB's 0000FFFF00 checks only the application
+// number, ignoring manufacturer + version); honoured only as strict hex, else a full-byte compare
+// (the stricter fallback). Malformed inline data / addressing throws rather than silently
+// truncating to a shorter (and possibly passing) expected value.
+function comparePropCheck(step: LdStep): DeclaredPropCheck {
+  if (!/^([0-9A-Fa-f]{2})+$/.test(step.attrs.InlineData ?? "") || step.attrs.ObjIdx === undefined || step.attrs.PropId === undefined) {
+    throw new ProductError("LOAD_STEP_UNSUPPORTED", `an LdCtrlCompareProp step has malformed/missing inline data or addressing (${JSON.stringify(step.attrs)}); refusing to run its check blind`);
+  }
+  const maskHex = step.attrs.Mask;
+  const mask = maskHex !== undefined && /^([0-9A-Fa-f]{2})+$/.test(maskHex) ? Buffer.from(maskHex, "hex") : undefined;
+  return { obj: Number(step.attrs.ObjIdx), pid: Number(step.attrs.PropId), expect: Buffer.from(step.attrs.InlineData, "hex"), mask };
+}
+
+// The CompareProp pre-flights a given load OP declares. A full download must source these from its
+// OWN "full" steps, not the "par" steps assessParCoverage walks: a CompareProp declared
+// AppliesTo="full" would otherwise be missed and the app-id guard silently skipped.
+export function declaredPropChecks(lp: LoadProcedures, op: LoadOp): DeclaredPropCheck[] {
+  return flattenSteps(lp, op).filter((s) => s.verb === "LdCtrlCompareProp").map(comparePropCheck);
 }

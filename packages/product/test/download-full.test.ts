@@ -140,7 +140,7 @@ function ctxFor(dev: MockDevice, over: { params?: Map<string, string>; links?: C
   return {
     backups,
     ctx: {
-      deviceId: "d", appXml: xml,
+      deviceId: "d", ia: "1.1.1", appXml: xml,
       params: over.params ?? params,
       links: over.links ?? [],
       moduleInstances: [], dryRun: over.dryRun ?? false,

@@ -56,16 +56,26 @@ export interface MaskInfo {
   memoryModel: MemoryModel;
   /** Human label for the matrix / UI. */
   name: string;
+  /**
+   * How the load-state machines are driven. `true` (the modern default): LSM events/state
+   * are interface-object PROPERTY writes/reads to PID_LOAD_STATE_CONTROL (System B, and the
+   * System 7 MV-0705/2705/5705 variants, `PropertyMappedLsms=1` in the ETS master data).
+   * `false`: the deprecated MEMORY-MAPPED interface (write the load control to StandardMemory
+   * 0x0104, read the load status from 46825+LsmIdx) used by the BIM M112 masks MV-0700/0701.
+   * Only meaningful for application-bearing families; absent/true elsewhere.
+   */
+  propertyMappedLsms?: boolean;
 }
 
 // The full table. One row per known mask version. `m()` keeps the rows terse.
-const m = (hex: number, medium: Medium, family: SystemFamily, memoryModel: MemoryModel, name: string): MaskInfo => ({
+const m = (hex: number, medium: Medium, family: SystemFamily, memoryModel: MemoryModel, name: string, propertyMappedLsms = true): MaskInfo => ({
   mask: `MV-${hex.toString(16).toUpperCase().padStart(4, "0")}`,
   hex,
   medium,
   family,
   memoryModel,
   name,
+  propertyMappedLsms,
 });
 
 export const MASKS: MaskInfo[] = [
@@ -81,8 +91,8 @@ export const MASKS: MaskInfo[] = [
   m(0x0300, "TP", "system-300", "system300", "System 300"),
   m(0x0310, "TP", "interface", "none", "TP1 USB interface v1"),
   m(0x0311, "TP", "interface", "none", "TP1 USB interface v2"),
-  m(0x0700, "TP", "system-7", "absolute", "System 7 (BIM M112)"),
-  m(0x0701, "TP", "system-7", "absolute", "System 7 (BIM M112)"),
+  m(0x0700, "TP", "system-7", "absolute", "System 7 (BIM M112)", false), // memory-mapped LSMs
+  m(0x0701, "TP", "system-7", "absolute", "System 7 (BIM M112)", false), // memory-mapped LSMs
   m(0x0705, "TP", "system-7", "absolute", "System 7 (BIM M112)"),
   m(0x07b0, "TP", "system-b", "relative", "System B"),
   m(0x0810, "TP", "ir-decoder", "none", "IR decoder"),
@@ -143,4 +153,13 @@ export function maskInfo(mask: string): MaskInfo {
   if (known) return known;
   const hex = canon ? parseInt(canon.replace("MV-", ""), 16) : 0;
   return { mask: canon || mask, hex, medium: "TP", family: "unknown", memoryModel: "none", name: `Unknown mask (${mask || "—"})` };
+}
+
+// True when the mask drives its load-state machines through the deprecated MEMORY-MAPPED
+// interface (load control at StandardMemory 0x0104, load status at 46825+LsmIdx) rather than
+// interface-object properties. The BIM M112 masks MV-0700/0701 do; every other supported family
+// is property-mapped. Hardware-confirmed on MV-0701 (ABB US/U 4.2): the property path the
+// MV-0705 flash uses does not drive these devices' LSMs; the memory-mapped one does.
+export function isMemoryMappedLsm(mask: string): boolean {
+  return maskInfo(mask).propertyMappedLsms === false;
 }

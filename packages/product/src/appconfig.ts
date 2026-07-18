@@ -60,7 +60,11 @@ export interface CfgAbsSegment { id: string; address: number; size: number; data
 // under <Static>). MaxEntries is the number of group addresses / associations the device reserves
 // room for. This is what lets us SAFELY grow the tables: writing up to MaxEntries stays inside the
 // pre-reserved segment; beyond it would overrun adjacent memory. Absent => capacity unknown.
-export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; }
+// `addressSegment`/`associationSegment` are the AbsoluteSegment ids the two tables live in
+// (<AddressTable CodeSegment> / <AssociationTable CodeSegment>). A full download needs them to
+// know which of the load procedure's declared segments carry the built group tables (vs the
+// static application image). Absent => the app does not declare them (older/relative devices).
+export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; addressSegment?: string; associationSegment?: string; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 // A com-object's telegram priority, which the com-object table (L3) encodes in the low two bits of
 // its flags byte. These are the values the ETS product schema uses (ComObjectPriority_t), NOT the
@@ -160,6 +164,7 @@ export interface AppConfig {
   mask: string;
   appVersion: number;
   appNumber: number;
+  appPeiType: number; // ApplicationProgram PeiType; declared to the device in the task-segment control on a full download
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -294,6 +299,7 @@ export function parseAppConfig(xml: string): AppConfig {
     mask: appAttrs.MaskVersion ?? "",
     appVersion: Number(appAttrs.ApplicationVersion ?? 0),
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
+    appPeiType: Number(appAttrs.PeiType ?? 0),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,
@@ -438,7 +444,8 @@ function parseAbsoluteSegments(staticKids: ONode[]): CfgAbsSegment[] {
 // tables up to capacity (and to refuse beyond it instead of overrunning device memory).
 function parseGroupTables(staticKids: ONode[]): GroupTableCapacity {
   const num = (tag: string) => { const n = firstByTag(staticKids, tag); const v = n ? attrsOf(n).MaxEntries : undefined; return v !== undefined ? Number(v) : undefined; };
-  return { addressMaxEntries: num("AddressTable"), associationMaxEntries: num("AssociationTable") };
+  const seg = (tag: string) => { const n = firstByTag(staticKids, tag); const v = n ? attrsOf(n).CodeSegment : undefined; return v !== undefined ? String(v) : undefined; };
+  return { addressMaxEntries: num("AddressTable"), associationMaxEntries: num("AssociationTable"), addressSegment: seg("AddressTable"), associationSegment: seg("AssociationTable") };
 }
 
 function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {

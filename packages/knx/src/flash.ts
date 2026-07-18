@@ -30,9 +30,46 @@ function allocPayload(size: number, fill: boolean, fillByte = 0): Buffer {
   return b;
 }
 
-export async function lsmEvent(dev: KnxDevice, obj: number, event: number) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, ev(event)); }
-export async function lsmState(dev: KnxDevice, obj: number) { return (await dev.propRead(obj, PID.LOAD_STATE_CONTROL))[0]; }
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory-mapped LSM interface (BIM M112 masks MV-0700/0701, PropertyMappedLsms=0).
+//
+// These devices predate the property-mapped LSMs above: the load CONTROL is an
+// A_Memory_Write to StandardMemory 0x0104 with the LSM index in the high nibble of byte[0],
+// and the load STATUS is an A_Memory_Read from 46825 + LsmIdx (not a property read of PID 5).
+// The load-event values (Load/LoadCompleted/Unload) and states (Unloaded/Loaded/Loading/Error)
+// are the SAME as the property variant; only the transport differs. Hardware-confirmed on the
+// ABB US/U 4.2 (MV-0701): unload→load→AbsSegment→write→TaskSegment→LoadCompleted drove the
+// address-table LSM through Unloaded→Loading→Loaded and read back byte-identical.
+const MM_CTRL_ADDR = 0x0104;      // load-control register in StandardMemory
+const MM_STATUS_BASE = 46825;     // + LsmIdx -> that LSM's load-status byte
+// A memory-mapped load control is an 11-byte payload; the trailing bytes are zero unless the
+// specific control (segment/task declaration) fills them.
+const mmCtrl = (bytes: number[]): Buffer => { const b = Buffer.alloc(11); bytes.forEach((v, i) => (b[i] = v & 0xff)); return b; };
+
+// Drive an LSM event, over either transport. `memMapped` selects the memory-mapped interface.
+export async function lsmEvent(dev: KnxDevice, obj: number, event: number, memMapped = false) {
+  if (memMapped) await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(obj << 4) | event]), { verify: false }); // 0x0104 is a control register: it does not read back what was written
+  else await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, ev(event));
+}
+export async function lsmState(dev: KnxDevice, obj: number, memMapped = false) {
+  if (memMapped) return (await dev.memRead(MM_STATUS_BASE + obj, 1))[0];
+  return (await dev.propRead(obj, PID.LOAD_STATE_CONTROL))[0];
+}
 export async function allocSegment(dev: KnxDevice, obj: number, size: number, fill = false, fillByte = 0) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size, fill, fillByte)); }
+
+// Declare an ABSOLUTE segment to a memory-mapped LSM (LdCtrlAbsSegment). 11-byte load control:
+// [(lsm<<4)|3, segType, 0(segId), address:2 BE, size:2 BE, access, memType, segFlags, 0]. SegType
+// 0 = data/code segment. The segment DATA is written separately (a plain memWrite to `address`);
+// on these devices that write is implicit in the declared segment when Access != 0.
+export async function declareAbsSegmentMM(dev: KnxDevice, lsm: number, segType: number, address: number, size: number, access: number, memType: number, segFlags: number) {
+  await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(lsm << 4) | 0x03, segType, 0x00, (address >> 8) & 0xff, address & 0xff, (size >> 8) & 0xff, size & 0xff, access, memType, segFlags, 0x00]), { verify: false });
+}
+// Declare the TASK segment to a memory-mapped LSM (LdCtrlTaskSegment): SegType 2, the segment
+// address, then the application identity the device validates at LoadCompleted (PEI type +
+// manufacturer + application number + version). 11-byte load control.
+export async function declareTaskSegmentMM(dev: KnxDevice, lsm: number, address: number, peiType: number, manufacturer: number, appNumber: number, version: number) {
+  await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(lsm << 4) | 0x03, 0x02, 0x00, (address >> 8) & 0xff, address & 0xff, peiType, (manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version]), { verify: false });
+}
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian
 export function appId(manufacturer: number, appNumber: number, version: number): Buffer {
@@ -107,11 +144,16 @@ export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer }): Load
 // procedure's expected value (the pre-download hardware/application check ETS runs).
 // Trailing-zero padding in the expected value is tolerated: ETS pads InlineData to a
 // fixed width while devices return the property's real element size.
-export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer): Promise<{ ok: boolean; got: Buffer }> {
+export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer, mask?: Buffer): Promise<{ ok: boolean; got: Buffer }> {
   const got = await dev.propRead(obj, pid);
-  const ok =
-    got.equals(expect) ||
-    (got.length < expect.length && got.equals(expect.subarray(0, got.length)) && expect.subarray(got.length).every((b) => b === 0));
+  // With a mask, only the bytes the mask selects must match (ABB's app-id check masks out the
+  // manufacturer + version and compares only the application number). Without one, the read must
+  // equal the declared value (a shorter read is accepted only if the missing tail is all zero).
+  const ok = mask
+    ? got.length >= Math.min(mask.length, expect.length) &&
+      Array.from({ length: Math.min(mask.length, expect.length) }).every((_, i) => (got[i] & mask[i]) === (expect[i] & mask[i]))
+    : got.equals(expect) ||
+      (got.length < expect.length && got.equals(expect.subarray(0, got.length)) && expect.subarray(got.length).every((b) => b === 0));
   return { ok, got };
 }
 

@@ -7,9 +7,9 @@ import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash } from "./deviceflash.ts";
-import { maskInfo, type MemoryModel, type SystemFamily } from "./masks.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload } from "./deviceflash.ts";
+import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
@@ -148,7 +148,7 @@ function assertParCoverage(proc: LoadProcedures, model: "absolute" | "relative")
 // ETS performs before a download). Read-only; a mismatch aborts before any write.
 async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise<void> {
   for (const c of coverage.checks) {
-    const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect);
+    const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect, c.mask);
     if (!ok) {
       throw new ProductError("LOAD_PROC_CHECK_FAILED",
         `load-procedure check failed: object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but the application declares ${c.expect.toString("hex")} (wrong hardware or application version?)`);
@@ -252,6 +252,7 @@ export interface ParamFlashCtx {
 // because the com-object table it writes has to agree with the association table it writes.
 export interface FullDownloadCtx {
   deviceId: string;
+  ia: string; // the device's individual address; the System 7 address table stores it, so the plan needs it
   appXml: string;
   params: Map<string, string>;
   links: ComObjectLink[];
@@ -634,7 +635,15 @@ export class System7Profile extends DeviceProfile {
     // Parameters (absolute segments) and links (System-7 tables) are both read back. Parameter
     // and GA flash are hardware-proven on TP (M-0081); the RF/IP variants share the codec
     // but have not been exercised on that medium (see the device-support.md medium caveat).
-    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: false };
+    //
+    // Full download is implemented for the MEMORY-MAPPED System 7 masks (MV-0700/0701): their
+    // load controls (0x0104 / 46825+lsm) are hardware-proven on the ABB US/U 4.2, and the app
+    // ships every segment's <Data> so the whole image (com-object table + code) can be authored.
+    // The property-mapped MV-0705/2705/5705 variants keep their com-object table from the device
+    // (full download not implemented there), so they stay false.
+    const canFull = isMemoryMappedLsm(this.mask) && !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
+      this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined;
+    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull };
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -768,6 +777,76 @@ export class System7Profile extends DeviceProfile {
           (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
         );
         return ok;
+      },
+    });
+  }
+
+  // Commission an absolute-segment (System 7) device from its declared load procedure: author the
+  // address + association tables (from the links), every parameter-bearing segment (its <Data>
+  // overlaid with the active parameters), and the static application segments (com-object table +
+  // code, straight from their <Data>), driving the LSM brackets over the memory-mapped interface
+  // (MV-0700/0701). Unlike the surgical par flash this writes EVERY segment, so a virgin device
+  // comes up running. The device validates none of it; the read-back after the restart is the
+  // only proof, so a "flashed" result carries a real verified flag.
+  async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    const cfg = this.requireCfg("full download");
+    if (!isMemoryMappedLsm(mask)) {
+      throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
+        `full download for property-mapped System 7 devices (mask ${mask}) is not implemented; only the memory-mapped BIM M112 masks (MV-0700/0701) are supported`);
+    }
+    const proc = parseLoadProcedures(ctx.appXml);
+    // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
+    // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
+    // device already holds this application (re-commission); an all-zero read = a virgin device
+    // (the intended from-nothing case); a DIFFERENT non-zero application is refused, so a full
+    // download never lands the wrong app's image on a device. Unmodeled *steps* are refused by the
+    // planner (planAbsoluteFullDownload's default case), which walks the same "full" list.
+    for (const c of declaredPropChecks(proc, "full")) {
+      const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect, c.mask);
+      const virgin = got.length === 0 || got.every((b) => b === 0);
+      if (!ok && !virgin) {
+        throw new ProductError("LOAD_PROC_CHECK_FAILED",
+          `object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but this application is ${c.expect.toString("hex")}; refusing to commission a different application onto this device`);
+      }
+    }
+
+    const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
+    // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
+    // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
+    // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
+    // the configuration is really there.
+    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false });
+    if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
+
+    // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
+    // app's own segment declarations.
+    const stamp = Date.now();
+    const backups: { file: string; bytes: Buffer }[] = [];
+    ctx.onProgress?.("backup");
+    const backTotal = cfg.absoluteSegments.reduce((n, s) => n + s.size, 0);
+    let backDone = 0;
+    for (const seg of cfg.absoluteSegments) {
+      const bytes = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("backup", backDone + d, backTotal));
+      backDone += seg.size;
+      backups.push({ file: `${ctx.deviceId}-abs-${seg.id.split("_").pop()}-${stamp}.bin`, bytes });
+    }
+
+    const memMappedLsms = isMemoryMappedLsm(mask);
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes,
+      diffBytes: imageBytes, // a full download owns every byte it writes
+      backup: `${ctx.deviceId}-full-${stamp}`,
+      backups,
+      write: async () => { await runLoadPlan(dev, plan, { memMappedLsms, onWrite: (d, t) => ctx.onProgress?.("write", d, t) }); },
+      // Read every written segment back and compare to what we built, masking out the download-
+      // recognition bytes the device re-stamps for itself (the MV-0701 P-2228 "Downloaderkennung").
+      // Only a full byte-match across every segment is a verified download.
+      verify: async () => {
+        for (const s of segments) {
+          const back = await dev.memRead(s.address, s.image.length, undefined, (d, n) => ctx.onProgress?.("verify", d, n));
+          if (!verifyMaskedBytes(back, s.image, s.verify)) return false;
+        }
+        return true;
       },
     });
   }

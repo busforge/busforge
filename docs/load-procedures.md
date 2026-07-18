@@ -132,11 +132,21 @@ flashing blind.
   group tables in one bracket, and it is hardware-proven: a virgin GVS AMMA (M-0085)
   came up byte-identical and survived a power cycle, and the OpenKNX AB-PRE (MV-07B0)
   was commissioned from factory state, verified byte-for-byte at the KNX layer, and
-  booted its application on the bus. The app-code / LSM5 segments are still not built
-  (only the parameter image is); for OpenKNX that is not needed, because the firmware
-  ships as a separate USB `.uf2`. **MV-0705 full download is not implemented** (its L3
-  is still kept from the device); a surgical `par` flash is the only write path for
-  those families.
+  booted its application on the bus. For OpenKNX the app-code segments are not needed,
+  because the firmware ships as a separate USB `.uf2`.
+- **Full download / first-time commissioning: DONE for memory-mapped System 7 (MV-0700/0701)**
+  too, hardware-verified on the ABB US/U 4.2. `System7Profile.downloadFull` walks the
+  device's declared load procedure in order, writing EVERY declared segment — address + association
+  tables from the links, parameter-bearing segments from `buildAbsoluteSegmentTargets`, and the
+  static com-object-table + code segments straight from their `<Data>` (these devices, unlike
+  OpenKNX, ship the whole application image in the product XML). The catch was the transport: these
+  BIM M112 masks drive their LSMs through the deprecated MEMORY-MAPPED interface (load control to
+  StandardMemory `0x0104`, status from `46825+LsmIdx`), NOT the PID-5 properties the MV-0705 path
+  uses (`MaskInfo.propertyMappedLsms`). The `LdCtrlAbsSegment`/`LdCtrlTaskSegment` byte layouts were
+  confirmed empirically on the device (LSM state after each control write). **The property-mapped
+  System 7 variants (MV-0705/2705/5705) still keep their com-object table from the device** —
+  `downloadFull` refuses them (`FULL_DOWNLOAD_UNSUPPORTED`); a surgical `par` flash is their only
+  write path.
 - **Relative path through the engine: DONE, and hardware-smoked.** `planRelativeParFlash`
   emits the hardware-proven System B bracket as a `LoadPlan` and `runLoadPlan` executes it
   (the hardcoded `flashParameters` executor is deleted); the planned step stream is locked
