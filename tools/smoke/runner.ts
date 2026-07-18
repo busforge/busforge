@@ -12,6 +12,7 @@
 import { gaToNum } from "../../packages/knx/src/index.ts";
 import { Client, ApiError, type ConfigView } from "./client.ts";
 import { Witness } from "./witness.ts";
+import { UiDriver } from "./ui.ts";
 import type { Recipe } from "./recipe.ts";
 import { RECIPES } from "./recipes/index.ts";
 
@@ -27,9 +28,13 @@ const gasOf = (view: ConfigView): number[] => {
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
 
-async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseResult[]; layers: LayerResult[]; pid: string | null }> {
+async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean; phases: PhaseResult[]; layers: LayerResult[]; pid: string | null }> {
   const client = new Client();
   const witness = new Witness();
+  // The UI drive channel (Playwright against the real web app). When on, the parameter edits in
+  // P4 go through the browser instead of the API; every other step keeps its API path (the design's
+  // UI-vs-API policy, §5 — assertions always read the API, the source of truth the UI renders).
+  const ui = useUi ? new UiDriver() : null;
   const phases: PhaseResult[] = [];
   const layers: LayerResult[] = [];
   const pass = (name: string, detail?: string) => phases.push({ name, state: "pass", detail });
@@ -85,6 +90,10 @@ async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseRe
     did = dev.id;
     await client.setAddress(pid, did, recipe.device.ia);
     pass("P2 place", `${recipe.device.ia}`);
+    if (ui) {
+      try { await ui.launch(); await ui.gotoDevice(pid, did); }
+      catch (e) { throw new Stop("P2", `UI unavailable (is \`bun run dev:web\` up?): ${e instanceof Error ? e.message : String(e)}`); }
+    }
 
     // ── P3 provision ─────────────────────────────────────────────────────────
     if (recipe.precondition) skip("P3 precondition", recipe.precondition);
@@ -101,11 +110,13 @@ async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseRe
     }
 
     // ── P4 configure (params first, they reveal com-objects; then links) ──────
+    // Params go through the browser when --ui is on (the core dynamic-config UI); links stay on the
+    // API (the GA-picker UI needs a project group address to select — a documented follow-up).
     for (const step of recipe.configure) {
-      if ("set" in step) await client.setParam(pid, did, step.set.paramRefId, step.set.value);
+      if ("set" in step) { if (ui) await ui.setParam(step.set.paramRefId, step.set.value); else await client.setParam(pid, did, step.set.paramRefId, step.set.value); }
       else await client.link(pid, did, step.link.comObjRefId, step.link.ga);
     }
-    pass("P4 configure", `${recipe.configure.length} step(s)`);
+    pass("P4 configure", `${recipe.configure.length} step(s)${ui ? " (params via UI)" : ""}`);
 
     // ── P5 commission ────────────────────────────────────────────────────────
     await settle(3000); // let the P3 read-back's tunnel fully release before the download opens one
@@ -169,6 +180,7 @@ async function runRecipe(recipe: Recipe): Promise<{ ok: boolean; phases: PhaseRe
     else phases.push({ name: "?", state: "fail", detail: e instanceof Error ? e.message : String(e) });
   } finally {
     await witness.close().catch(() => undefined);
+    if (ui) await ui.close().catch(() => undefined);
   }
   return { ok, phases, layers, pid };
 }
@@ -182,12 +194,14 @@ function report(recipe: Recipe, r: Awaited<ReturnType<typeof runRecipe>>): void 
 }
 
 async function main() {
-  const ids = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  const args = process.argv.slice(2);
+  const useUi = args.includes("--ui"); // drive the parameter edits through the real web app (needs dev:web)
+  const ids = args.filter((a) => !a.startsWith("--"));
   const chosen = ids.length ? RECIPES.filter((r) => ids.includes(r.id)) : RECIPES;
   if (!chosen.length) { console.error(`no recipe matched ${ids.join(",")}; known: ${RECIPES.map((r) => r.id).join(", ")}`); process.exit(2); }
   let allOk = true;
   for (const recipe of chosen) {
-    const r = await runRecipe(recipe);
+    const r = await runRecipe(recipe, useUi);
     report(recipe, r);
     allOk &&= r.ok;
   }
