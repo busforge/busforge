@@ -25,6 +25,10 @@ const gasOf = (view: ConfigView): number[] => {
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") { const g = (it as { comObject: { gaRaw: number | null } }).comObject.gaRaw; if (g !== null) out.push(g); }
   return out;
 };
+const paramVal = (view: ConfigView, refId: string): string | undefined => {
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param" && (it as { param: { refId: string } }).param.refId === refId) return (it as { param: { value: string } }).param.value;
+  return undefined;
+};
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
 
@@ -171,7 +175,27 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     layers.push({ layer: "L3 camera", state: "not-declared" });
     pass("P6 verify", "L0+L1" + (recipe.verify.bus?.length ? "+L2" : ""));
 
-    // ── P8 teardown (P7 mutate+revert is a documented follow-up) ──────────────
+    // ── P7 mutate + revert (the write-path proof, run every time) ─────────────
+    // Change one parameter, flash it (a surgical param flash, not a full download), require the
+    // device's own read-back to verify it, then flash it back to the canonical value and require
+    // that to verify too. This is the change+restore pattern every manual bench session used, made
+    // mechanical, and it is what exercises the write path on a device that already holds its config.
+    if (recipe.mutation) {
+      const { paramRefId, value: to } = recipe.mutation;
+      const canonical = paramVal(await client.getConfig(pid, did), paramRefId);
+      if (canonical === undefined) throw new Stop("P7", `mutation parameter ${paramRefId} is not on this device`);
+      if (canonical === to) throw new Stop("P7", `mutation value ${to} equals the canonical value; pick a different one`);
+      const flashOnce = async (label: string) => {
+        await settle(3000);
+        const r = await withRetry(label, () => client.flashReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`)), 2);
+        if (r.kind !== "flashed" || r.verified !== true) throw new Stop("P7", `${label} not verified (${r.kind}, verified=${r.verified})`);
+      };
+      await client.setParam(pid, did, paramRefId, to); await flashOnce("mutate");
+      await client.setParam(pid, did, paramRefId, canonical); await flashOnce("revert");
+      pass("P7 mutate+revert", `${paramRefId.split("_").pop()} ${canonical}→${to}→${canonical}, both verified`);
+    } else skip("P7 mutate+revert", "no mutation declared");
+
+    // ── P8 teardown ───────────────────────────────────────────────────────────
     await client.deleteProject(pid); pid = null;
     pass("P8 teardown", "throwaway project deleted");
   } catch (e) {

@@ -41,7 +41,7 @@ test("one changed owned byte -> minimal proven LSM3 bracket", () => {
     { op: "load", lsm: 3 },
     { op: "writeMem", address: 16896 + firstOwned, bytes: Buffer.from([as4200.bytes[firstOwned]]) },
     { op: "loadCompleted", lsm: 3 },
-    { op: "restart" },
+    { op: "restart", requireReboot: true },
   ]);
 });
 
@@ -132,6 +132,6 @@ test("planRelativeParFlash emits exactly the hardware-proven System B bracket", 
     { op: "writeSegment", lsm: 4, bytes: image },
     { op: "stampAppId", lsm: 4, data: id },
     { op: "loadCompleted", lsm: 4 },
-    { op: "restart" },
+    { op: "restart", requireReboot: true },
   ]);
 });

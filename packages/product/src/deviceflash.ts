@@ -112,7 +112,7 @@ export interface AbsParFlashPlan {
 // absolute planner. One DELIBERATE delta vs the retired executor: the engine asserts
 // LOADING after Load (it always did for the absolute path); standard LSM behavior, but
 // not yet hardware-smoked on a System B device (see docs/load-procedures.md).
-export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer): LoadPlan {
+export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer, requireReboot = true): LoadPlan {
   return [
     { op: "unload", lsm },
     { op: "load", lsm },
@@ -120,7 +120,11 @@ export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buf
     { op: "writeSegment", lsm, bytes: image },
     { op: "stampAppId", lsm, data: appIdStamp },
     { op: "loadCompleted", lsm },
-    { op: "restart" },
+    // Whether the closing A_Restart must PROVE a reboot. thelsing/knx persists ON the restart, so no
+    // reboot means the write was lost; other firmware (the GVS AMMA) persists at LoadCompleted and
+    // never goes silent, so demanding a reboot would fail a flash that actually landed. Same
+    // PERSIST_ON_LOAD_COMPLETED distinction the full download already makes.
+    { op: "restart", requireReboot },
   ];
 }
 
@@ -129,7 +133,7 @@ export function planAbsoluteParFlash(
   values: Map<string, string>,
   procedure: LoadProcedures,
   current: Map<string, Buffer>, // AbsoluteSegment Id -> live device bytes
-  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean } = {},
 ): AbsParFlashPlan {
   const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current });
 
@@ -176,7 +180,7 @@ export function planAbsoluteParFlash(
       for (const r of runs) plan.push({ op: "writeMem", address: r.address, bytes: r.bytes });
       plan.push({ op: "loadCompleted", lsm });
     }
-    if (has("LdCtrlRestart")) plan.push({ op: "restart" });
+    if (has("LdCtrlRestart")) plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true });
   }
   return { plan, changedBytes, segments, unplaceable };
 }

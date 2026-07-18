@@ -26,4 +26,8 @@ export const abbUsu42: Recipe = {
     // assertion (the LED actually lights) needs L3. This drive still exercises the witness path.
     bus: [{ groupWrite: { ga: "1/1/1", value: "01" } }],
   },
+  // Send-delay: a numeric parameter whose change does not restructure the com-object table, so the
+  // surgical param flash accepts it. 2 → 5 → 2, each proven by the device's own read-back — this is
+  // what proves the memory-mapped System 7 PARAM flash path (not just the full download) on hardware.
+  mutation: { paramRefId: "M-0002_A-A001-13-63C2_P-3_R-3", value: "5" },
 };

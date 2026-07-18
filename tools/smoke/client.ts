@@ -73,28 +73,34 @@ export class Client {
   }
 
   private async fireAndPoll(pid: string, did: string, path: string, kind: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    // Fire the request; ignore the (possibly never-arriving) HTTP body — the task queue is the truth.
+    // The POST may RESOLVE (a fast flash — even an `unchanged`), REJECT (a coded refusal like
+    // FLASH_UNVERIFIED or LOAD_PROC_CHECK_FAILED), or HANG (a long download whose HTTP response
+    // never arrives before the socket idles). Race the fetch against a task-queue poll and use the
+    // FIRST real answer: the fetch's result/refusal is authoritative when it comes, the poll covers
+    // the hang. Crucially the fetch's error is NOT swallowed — masking a refusal as a timeout would
+    // hide the very regression the harness exists to catch.
     const firedAt = Date.now();
-    const fired = this.call<FlashResult>("POST", path, undefined, 600_000).catch(() => null);
+    const fetchP = this.call<FlashResult>("POST", path, undefined, 600_000);
     let lastPhase = "";
-    for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s
-      await new Promise((r) => setTimeout(r, 5_000));
-      const tasks = await this.tasks(pid).catch(() => [] as Task[]);
-      // The NEWEST matching real task — a prior (retried) attempt's stale errored task must not be
-      // picked, or a retry would report the old failure instead of waiting for this attempt.
-      const t = tasks
-        .filter((x) => x.deviceId === did && x.kind === kind && x.outcome?.kind !== "dryRun" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
-        .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
-      if (t) {
-        if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
-        if (t.state === "done" && t.outcome) return t.outcome;
-        if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "task failed");
+    const pollP = (async (): Promise<FlashResult> => {
+      for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s, for a download whose response never arrives
+        await new Promise((r) => setTimeout(r, 5_000));
+        const tasks = await this.tasks(pid).catch(() => [] as Task[]);
+        // The NEWEST matching real task — a prior (retried) attempt's stale errored task must not be
+        // picked, or a retry would report the old failure instead of waiting for this attempt.
+        const t = tasks
+          .filter((x) => x.deviceId === did && x.kind === kind && x.outcome?.kind !== "dryRun" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
+          .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
+        if (t) {
+          if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
+          if (t.state === "done" && t.outcome) return t.outcome;
+          if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "task failed");
+        }
       }
-    }
-    // Fall back to whatever the fire returned, if anything.
-    const r = await fired;
-    if (r) return r;
-    throw new ApiError(0, "DOWNLOAD_TIMED_OUT", `${kind} did not complete within the poll window`);
+      throw new ApiError(0, "OP_TIMED_OUT", `${kind} did not complete within the poll window`);
+    })();
+    try { return await Promise.race([fetchP, pollP]); }
+    finally { fetchP.catch(() => undefined); } // a late fetch rejection (after the poll won) must not go unhandled
   }
 }
 

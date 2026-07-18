@@ -42,4 +42,10 @@ export interface Recipe {
     // the byte, not to the behaviour).
     bus?: BusCheck[];
   };
+  // P7: the change→verify→revert→verify proof that exercises the write path EVERY run, not just on
+  // a virgin device. The runner captures the parameter's current value, flashes it to `value`,
+  // proves the device holds it, then flashes it back and proves the device is at the canonical
+  // value again. Must be a numeric/enum parameter whose change does NOT restructure the com-object
+  // table (else the flash's own staleness gate refuses it), so a send-delay is the safe choice.
+  mutation?: { paramRefId: string; value: string };
 }

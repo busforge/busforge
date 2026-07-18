@@ -572,7 +572,7 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version)),
+        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg)),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
       // The device restarts after load-completed; verify ONLY the owned bytes.
@@ -702,7 +702,7 @@ export class System7Profile extends DeviceProfile {
       current.set(t.id, onDev);
     }
 
-    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances });
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
       throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
@@ -714,7 +714,10 @@ export class System7Profile extends DeviceProfile {
       backups: targets.map((t) => ({ file: `${ctx.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`, bytes: current.get(t.id)! })),
       write: async () => {
         let wrote = 0;
-        await runLoadPlan(dev, plan, { onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
+        // The memory-mapped System 7 masks (MV-0700/0701) drive their LSMs over 0x0104, not PID 5;
+        // a surgical param flash needs the same transport the full download does, or it would talk
+        // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
+        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
       },
       verify: async () => {
         for (const t of targets) {
@@ -768,7 +771,7 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc }));
+        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc }), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");
