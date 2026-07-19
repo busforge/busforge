@@ -856,7 +856,11 @@ describe("device configuration", () => {
   async function mv0705Device(state: AppState) {
     const { projectId, deviceId } = await importConfig(state);
     state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-00B4-32-3919.xml.gz"), "M-TEST_A-1"]);
-    const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }) }), state))!.json()) as any;
+    // A local port with nothing listening: the flash attempt reaches it and fails FAST and
+    // deterministically (connection refused), never on the network. A real LAN IP assumed "dead"
+    // is not dead-forever: a host appearing there makes the KNXnet/IP connect burn its full 5 s
+    // timeout and race Bun's per-test timeout (seen 2026-07-19 when 198.51.100.10 came alive).
+    const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "127.0.0.1", port: 3671 }) }), state))!.json()) as any;
     await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
     return { projectId, deviceId };
   }
@@ -864,13 +868,13 @@ describe("device configuration", () => {
   test("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
     // GA flash is hardware-verified for MV-0705 now (identity + re-point + revert),
     // so the capability guard must NOT refuse it: the request gets past GA_FLASH_UNSUPPORTED
-    // and only fails later on the unreachable test connection.
+    // and only fails later on the closed-port test connection (see mv0705Device).
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
     const code = ((await res.json()) as any).error?.code;
     // Positively confirm the request got past every pre-flash guard (capability, app program,
-    // connection) and reached the actual flash attempt, which then fails only on the unreachable
+    // connection) and reached the actual flash attempt, which then fails only on the closed-port
     // test gateway. A regression that re-gated or broke an earlier guard would surface as one of
     // these codes and fail the test, rather than silently passing a weaker negative assertion.
     expect(["GA_FLASH_UNSUPPORTED", "APP_PROGRAM_MISSING", "INTERFACE_NOT_SET", "DEVICE_NOT_FOUND"]).not.toContain(code);
