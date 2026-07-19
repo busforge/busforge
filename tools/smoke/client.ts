@@ -17,6 +17,8 @@ export interface FlashResult {
   backup?: string;
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
+interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }
+interface ProjectView { groupRanges: GaRange[] }
 export interface Task { id: string; deviceId: string; kind: string; state: string; phase: string; error: string | null; errorCode: string | null; outcome: FlashResult | null; startedAt?: number; queuedAt?: number }
 
 export class Client {
@@ -57,10 +59,35 @@ export class Client {
   assignIa(pid: string, did: string) { return this.call<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>("POST", `/api/projects/${pid}/devices/${did}/assign-ia`, undefined, 90_000); }
   readBack(pid: string, did: string) { return this.call<ConfigView>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 180_000); }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
+  private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }
+  private createGaRange(pid: string, parentId: number | string | null, num: number, name: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-ranges`, { parentId: parentId === null ? null : Number(parentId), number: num, name }); }
+  // The range id round-trips from the project view as a string; the group-address route requires a number.
+  private createGaAddress(pid: string, rangeId: number | string, sub: number, name: string, dpt: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-addresses`, { rangeId: Number(rangeId), sub, name, dpt }); }
 
-  // Dry-run download: short, returns the plan.
-  downloadDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/download?dry=1`, undefined, 90_000); }
-  flashDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash?dry=1`, undefined, 90_000); }
+  // Ensure a 3-level group address exists as a PROJECT group address, creating the main range,
+  // middle range and address as needed (idempotent). The UI GA picker only offers project group
+  // addresses, so a UI-driven link needs the GA to exist first; the API-driven link does not (it
+  // stores the raw number directly), but a project GA there is harmless and more realistic.
+  async ensureGa(pid: string, ga: string): Promise<void> {
+    const [M, m, s] = ga.split("/").map(Number);
+    if (M === undefined || m === undefined || s === undefined) throw new ApiError(0, "GA_BAD", `not a 3-level group address: ${ga}`);
+    const mainBase = M << 11, midBase = (M << 11) | (m << 8), raw = gaToNum(ga);
+    let proj = await this.projectFull(pid);
+    const findMain = (p: ProjectView) => p.groupRanges.find((r) => r.rangeStart === mainBase);
+    let main = findMain(proj);
+    if (!main) { proj = await this.createGaRange(pid, null, M, `smoke ${M}`); main = findMain(proj); }
+    if (!main) throw new ApiError(0, "GA_RANGE_FAILED", `could not create main range ${M}`);
+    const findMid = (mn: GaRange) => mn.children?.find((r) => r.rangeStart === midBase);
+    let mid = findMid(main);
+    if (!mid) { proj = await this.createGaRange(pid, main.id, m, `smoke ${M}/${m}`); main = findMain(proj)!; mid = findMid(main); }
+    if (!mid) throw new ApiError(0, "GA_RANGE_FAILED", `could not create middle range ${M}/${m}`);
+    if (!mid.addresses?.some((a) => a.raw === raw)) await this.createGaAddress(pid, mid.id, s, `smoke ${ga}`, "1.001");
+  }
+
+  // Dry-run: computes the diff by READING the whole device (an absolute-segment System 7 read
+  // measured ~82 s on the bench), so it needs a read-back-sized budget, not a "short call" one.
+  downloadDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/download?dry=1`, undefined, 180_000); }
+  flashDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash?dry=1`, undefined, 180_000); }
 
   // A real download can take minutes and the HTTP response is not always delivered before the
   // socket idles; fire it and POLL the task queue for the authoritative outcome instead of
@@ -69,7 +96,10 @@ export class Client {
     return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/download`, "download", onPhase);
   }
   async flashReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/flash`, "flash", onPhase);
+    // The kind MUST match the queue's task kind (deviceops.ts enqueues the param flash as
+    // "flash-params"), or the poll would never find its own task and (now that a socket death
+    // defers to the poll as the sole truth) a real refusal would be masked as OP_TIMED_OUT.
+    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/flash`, "flash-params", onPhase);
   }
 
   private async fireAndPoll(pid: string, did: string, path: string, kind: string, onPhase?: (p: string) => void): Promise<FlashResult> {
@@ -80,7 +110,20 @@ export class Client {
     // the hang. Crucially the fetch's error is NOT swallowed — masking a refusal as a timeout would
     // hide the very regression the harness exists to catch.
     const firedAt = Date.now();
-    const fetchP = this.call<FlashResult>("POST", path, undefined, 600_000);
+    // The POST may RESOLVE (a fast flash), REJECT WITH A CODED REFUSAL (an ApiError from a non-ok
+    // response, e.g. FLASH_UNVERIFIED or LOAD_PROC_CHECK_FAILED), or its socket may DIE mid-download (a
+    // transport reset/abort while the download runs on for minutes server-side). Only the first two
+    // are answers. A transport death is NOT: the task keeps running server-side, so letting that
+    // rejection win the race would fire a SPURIOUS retry (a second full download of a device that is
+    // already being programmed). So swallow transport errors here and defer to the authoritative
+    // task-queue poll; keep propagating a coded ApiError refusal, which is a real outcome.
+    const fetchP = this.call<FlashResult>("POST", path, undefined, 600_000).catch((e) => {
+      if (e instanceof ApiError) throw e;
+      // A dropped socket / aborted read mid-download is expected on the single-channel bench tunnel;
+      // it is NOT the outcome. Say so once, then let the poll report what the device actually did.
+      process.stderr.write(`    …${kind}: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
+      return new Promise<FlashResult>(() => {}); // never settles; the poll is the source of truth
+    });
     let lastPhase = "";
     const pollP = (async (): Promise<FlashResult> => {
       for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s, for a download whose response never arrives

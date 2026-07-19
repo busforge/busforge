@@ -3,14 +3,15 @@
 // (the same endpoints the UI calls) and a witness tunnel for the functional bus drive, and it
 // asserts against the server's own honesty contract (FlashResult.verified, the coded refusals).
 //
-// This is the API-driven core (docs/e2e-smoke-framework.md, `--api-only`). The UI-driven variant
-// (playwright-cli against apps/web, needing the DeviceConfig test hooks) is the documented next
-// layer; every step here already has its API twin, which is what that layer would assert through.
+// Two drive channels (docs/e2e-smoke-framework.md §5): by default every step runs through the API;
+// with `--ui` the P4 configure steps (parameter edits AND GA links) run through the real web app in
+// Chromium (tools/smoke/ui.ts). Every UI step has an API twin, and the assertions always read the
+// API: the browser is driven, never asked to confirm itself.
 //
 // Hardware-gated: refuses to run without BUSFORGE_BENCH=1 and a reachable bench bridge. Never part
 // of `bun run check`.
 import { gaToNum } from "../../packages/knx/src/index.ts";
-import { Client, ApiError, type ConfigView } from "./client.ts";
+import { Client, ApiError, findComObject, type ConfigView } from "./client.ts";
 import { Witness } from "./witness.ts";
 import { UiDriver } from "./ui.ts";
 import type { Recipe } from "./recipe.ts";
@@ -62,7 +63,10 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     for (let attempt = 1; ; attempt++) {
       try { return await fn(); }
       catch (e) {
-        if (attempt >= tries || !transient(e)) throw e;
+        if (attempt >= tries || !transient(e)) {
+          process.stdout.write(`    …${label}: FAILED (attempt ${attempt}/${tries}, ${transient(e) ? "transient but out of tries" : "not transient"}): ${e instanceof Error ? e.message : String(e)}\n`);
+          throw e;
+        }
         process.stdout.write(`    …${label}: transient bus glitch (${e instanceof Error ? e.message : String(e)}); settle + retry ${attempt}/${tries - 1}\n`);
         await settle(6000);
       }
@@ -87,7 +91,10 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     const proj = await client.createProject(`smoke-${recipe.id}-${Date.now()}`);
     pid = proj.id;
     await client.attachConnection(pid, conn.id);
-    pass("P1 setup", `project ${pid.slice(0, 8)}, connection ${conn.host}`);
+    // UI mode links a com-object by selecting a PROJECT group address in the picker, so those group
+    // addresses must exist before the browser loads the page. (Harmless for the API path too.)
+    if (ui) for (const step of recipe.configure) if ("link" in step) await client.ensureGa(pid, step.link.ga);
+    pass("P1 setup", `project ${pid.slice(0, 8)}, connection ${conn.host}${ui ? ", GAs created" : ""}`);
 
     // ── P2 place ─────────────────────────────────────────────────────────────
     const dev = await client.placeDevice(pid, recipe.device.appRef, recipe.device.productRef, `smoke ${recipe.id}`);
@@ -114,19 +121,28 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     }
 
     // ── P4 configure (params first, they reveal com-objects; then links) ──────
-    // Params go through the browser when --ui is on (the core dynamic-config UI); links stay on the
-    // API (the GA-picker UI needs a project group address to select — a documented follow-up).
+    // Both params and GA links go through the browser when --ui is on: the params drive the dynamic
+    // config editors, the links drive the GaCombobox (P1 pre-created the project group addresses so
+    // the picker has something to select). Assertions still read the API, the source of truth.
     for (const step of recipe.configure) {
       if ("set" in step) { if (ui) await ui.setParam(step.set.paramRefId, step.set.value); else await client.setParam(pid, did, step.set.paramRefId, step.set.value); }
-      else await client.link(pid, did, step.link.comObjRefId, step.link.ga);
+      else if (ui) {
+        // The GA picker is addressed by the com-object NUMBER, which the config resolves from the
+        // ref the recipe declares (the object is visible now that its enabling params are set).
+        const co = findComObject(await client.getConfig(pid, did), step.link.comObjRefId);
+        if (!co) throw new Stop("P4", `com-object ${step.link.comObjRefId} is not visible for the UI link`);
+        await ui.linkGa(co.number, step.link.ga);
+      } else await client.link(pid, did, step.link.comObjRefId, step.link.ga);
     }
-    pass("P4 configure", `${recipe.configure.length} step(s)${ui ? " (params via UI)" : ""}`);
+    pass("P4 configure", `${recipe.configure.length} step(s)${ui ? " (via UI)" : ""}`);
 
     // ── P5 commission ────────────────────────────────────────────────────────
     await settle(3000); // let the P3 read-back's tunnel fully release before the download opens one
+    process.stdout.write("  → P5 dry-run\n");
     const dry = await withRetry("dry-run", () => (recipe.commission === "download" ? client.downloadDry(pid!, did!) : client.flashDry(pid!, did!)));
     await settle(3000);
     if (dry.kind !== "dryRun") throw new Stop("P5", `dry-run returned ${dry.kind}, expected dryRun`);
+    process.stdout.write(`  → P5 commission (${recipe.commission})\n`);
     const result = await withRetry("commission", () => (recipe.commission === "download"
       ? client.downloadReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`))
       : client.flashReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`))), 2);
@@ -142,6 +158,7 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     // ── P6 verify ────────────────────────────────────────────────────────────
     // L1: an independent read-back re-reads the device and the config view must show the expected
     // GAs on the device's decoded group tables.
+    process.stdout.write("  → P6 verify (read-back + bus)\n");
     await settle(3000); // the download closed its tunnel after the restart; let the bridge release it
     await withRetry("readback", () => client.readBack(pid!, did!));
     await settle(3000);
@@ -181,6 +198,7 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     // that to verify too. This is the change+restore pattern every manual bench session used, made
     // mechanical, and it is what exercises the write path on a device that already holds its config.
     if (recipe.mutation) {
+      process.stdout.write("  → P7 mutate + revert\n");
       const { paramRefId, value: to } = recipe.mutation;
       const canonical = paramVal(await client.getConfig(pid, did), paramRefId);
       if (canonical === undefined) throw new Stop("P7", `mutation parameter ${paramRefId} is not on this device`);
@@ -201,7 +219,10 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
   } catch (e) {
     ok = false;
     if (e instanceof Stop) phases.push({ name: e.phase, state: "fail", detail: e.detail });
-    else phases.push({ name: "?", state: "fail", detail: e instanceof Error ? e.message : String(e) });
+    else {
+      phases.push({ name: "?", state: "fail", detail: e instanceof Error ? e.message : String(e) });
+      if (e instanceof Error && e.stack) process.stderr.write(`\n[unlabeled failure stack]\n${e.stack}\n`);
+    }
   } finally {
     await witness.close().catch(() => undefined);
     if (ui) await ui.close().catch(() => undefined);

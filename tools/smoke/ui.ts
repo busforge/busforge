@@ -57,9 +57,16 @@ export class UiDriver {
     const page = this.req();
     const trigger = `[data-testid="link-${comObjNumber}"]`;
     await page.waitForSelector(trigger, { timeout: 15_000 });
-    await page.click(trigger);           // open the popover
-    await page.click(trigger);           // GaCombobox mounts the popover on first click; a second opens it
-    await page.getByRole("option", { name: new RegExp(`^${gaAddress.replace(/[/]/g, "\\/")}\\b`) }).first().click();
+    // The light trigger mounts AND opens the popover in one click (setActive+setOpen); a second
+    // click would toggle it shut. Type the address to filter, then pick the single match. The
+    // option label renders both the GA name and its address, so match the address as a substring.
+    await page.click(trigger);
+    const search = page.getByPlaceholder(/gruppenadresse|group address|suchen|search/i);
+    await search.waitFor({ state: "visible", timeout: 10_000 });
+    await search.fill(gaAddress);
+    // Match the address but NOT a longer one that shares this prefix: filtering "1/1/1" still leaves
+    // "1/1/10", "1/1/11", … in the list, so forbid a digit or slash right after (tail-anchor).
+    await page.getByRole("option", { name: new RegExp(gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])") }).first().click();
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(300);
   }
