@@ -31,3 +31,5 @@ reference/
 **/.playwright-cli/
 # local git worktrees
 .worktrees/
+# hardware smoke-run report artifacts (evidence, regenerated per run)
+tools/smoke/reports/

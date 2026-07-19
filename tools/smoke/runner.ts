@@ -11,15 +11,20 @@
 // Hardware-gated: refuses to run without BUSFORGE_BENCH=1 and a reachable bench bridge. Never part
 // of `bun run check`.
 import { gaToNum } from "../../packages/knx/src/index.ts";
-import { Client, ApiError, findComObject, type ConfigView } from "./client.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { Client, ApiError, findComObject, type ConfigView, type FlashResult } from "./client.ts";
 import { Witness } from "./witness.ts";
 import { UiDriver } from "./ui.ts";
 import type { Recipe } from "./recipe.ts";
 import { RECIPES } from "./recipes/index.ts";
 
 type PhaseState = "pass" | "fail" | "skip" | "not-run";
-interface PhaseResult { name: string; state: PhaseState; detail?: string }
+interface PhaseResult { name: string; state: PhaseState; detail?: string; durationMs?: number }
 interface LayerResult { layer: string; state: "pass" | "fail" | "not-declared"; detail?: string }
+// The structured evidence a docs/next-steps.md claim can cite: the actual FlashResults the run
+// obtained, keyed by the step that produced them (dry, commission, and P7's mutate/revert flashes).
+type RunResult = { ok: boolean; phases: PhaseResult[]; layers: LayerResult[]; pid: string | null; startedAt: number; durationMs: number; flash: Record<string, FlashResult> };
 
 const gasOf = (view: ConfigView): number[] => {
   const out: number[] = [];
@@ -33,17 +38,21 @@ const paramVal = (view: ConfigView, refId: string): string | undefined => {
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
 
-async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean; phases: PhaseResult[]; layers: LayerResult[]; pid: string | null }> {
+async function runRecipe(recipe: Recipe, useUi: boolean): Promise<RunResult> {
   const client = new Client();
   const witness = new Witness();
   // The UI drive channel (Playwright against the real web app). When on, the parameter edits in
   // P4 go through the browser instead of the API; every other step keeps its API path (the design's
-  // UI-vs-API policy, §5 — assertions always read the API, the source of truth the UI renders).
+  // UI-vs-API policy, §5: assertions always read the API, the source of truth the UI renders).
   const ui = useUi ? new UiDriver() : null;
   const phases: PhaseResult[] = [];
   const layers: LayerResult[] = [];
-  const pass = (name: string, detail?: string) => phases.push({ name, state: "pass", detail });
-  const skip = (name: string, detail: string) => phases.push({ name, state: "skip", detail });
+  const flash: Record<string, FlashResult> = {};
+  const startedAt = Date.now();
+  let lastAt = startedAt; // phase-boundary clock: each recorded phase carries the time since the last
+  const stamp = (): number => { const now = Date.now(); const d = now - lastAt; lastAt = now; return d; };
+  const pass = (name: string, detail?: string) => phases.push({ name, state: "pass", detail, durationMs: stamp() });
+  const skip = (name: string, detail: string) => phases.push({ name, state: "skip", detail, durationMs: stamp() });
   let pid: string | null = null;
   let did: string | null = null;
   let ok = true;
@@ -140,12 +149,14 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     await settle(3000); // let the P3 read-back's tunnel fully release before the download opens one
     process.stdout.write("  → P5 dry-run\n");
     const dry = await withRetry("dry-run", () => (recipe.commission === "download" ? client.downloadDry(pid!, did!) : client.flashDry(pid!, did!)));
+    flash["dry-run"] = dry;
     await settle(3000);
     if (dry.kind !== "dryRun") throw new Stop("P5", `dry-run returned ${dry.kind}, expected dryRun`);
     process.stdout.write(`  → P5 commission (${recipe.commission})\n`);
     const result = await withRetry("commission", () => (recipe.commission === "download"
       ? client.downloadReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`))
       : client.flashReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`))), 2);
+    flash["commission"] = result;
     // L0: the endpoint's own honesty contract.
     if (result.kind !== "flashed") { layers.push({ layer: "L0 endpoint", state: "fail", detail: `kind=${result.kind}` }); throw new Stop("P5", `commission returned ${result.kind}, expected flashed`); }
     if (result.verified !== true) { layers.push({ layer: "L0 endpoint", state: "fail", detail: "verified=false" }); throw new Stop("P5", "device did not verify the download (verified=false)"); }
@@ -206,6 +217,7 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
       const flashOnce = async (label: string) => {
         await settle(3000);
         const r = await withRetry(label, () => client.flashReal(pid!, did!, (p) => process.stdout.write(`    …${p}\n`)), 2);
+        flash[label] = r;
         if (r.kind !== "flashed" || r.verified !== true) throw new Stop("P7", `${label} not verified (${r.kind}, verified=${r.verified})`);
       };
       await client.setParam(pid, did, paramRefId, to); await flashOnce("mutate");
@@ -218,16 +230,16 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<{ ok: boolean;
     pass("P8 teardown", "throwaway project deleted");
   } catch (e) {
     ok = false;
-    if (e instanceof Stop) phases.push({ name: e.phase, state: "fail", detail: e.detail });
+    if (e instanceof Stop) phases.push({ name: e.phase, state: "fail", detail: e.detail, durationMs: stamp() });
     else {
-      phases.push({ name: "?", state: "fail", detail: e instanceof Error ? e.message : String(e) });
+      phases.push({ name: "?", state: "fail", detail: e instanceof Error ? e.message : String(e), durationMs: stamp() });
       if (e instanceof Error && e.stack) process.stderr.write(`\n[unlabeled failure stack]\n${e.stack}\n`);
     }
   } finally {
     await witness.close().catch(() => undefined);
     if (ui) await ui.close().catch(() => undefined);
   }
-  return { ok, phases, layers, pid };
+  return { ok, phases, layers, pid, startedAt, durationMs: Date.now() - startedAt, flash };
 }
 
 function report(recipe: Recipe, r: Awaited<ReturnType<typeof runRecipe>>): void {
@@ -238,9 +250,35 @@ function report(recipe: Recipe, r: Awaited<ReturnType<typeof runRecipe>>): void 
   if (!r.ok && r.pid) console.log(`  kept project ${r.pid} for post-mortem`);
 }
 
+// One run, one JSON artifact: the machine-readable evidence a docs/next-steps.md claim can cite
+// (the FlashResults, the per-phase durations, the layer verdicts). Written only with --report; the
+// terminal summary is always printed. Returns the path so the caller can point at it.
+function writeReport(recipe: Recipe, r: RunResult, dir: string, useUi: boolean): string {
+  mkdirSync(dir, { recursive: true });
+  const iso = new Date(r.startedAt).toISOString();
+  const path = join(dir, `${recipe.id}-${iso.replace(/[:.]/g, "-")}.json`);
+  const artifact = {
+    recipe: recipe.id,
+    device: { ia: recipe.device.ia, mask: recipe.device.mask, appRef: recipe.device.appRef },
+    channel: useUi ? "ui" : "api",
+    startedAt: iso,
+    durationMs: r.durationMs,
+    ok: r.ok,
+    phases: r.phases,
+    layers: r.layers,
+    flash: r.flash, // FlashResults keyed by step: dry-run, commission, and P7's mutate/revert
+    keptProjectId: r.ok ? null : r.pid, // a failed run keeps its project for post-mortem
+  };
+  writeFileSync(path, JSON.stringify(artifact, null, 2) + "\n");
+  return path;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const useUi = args.includes("--ui"); // drive the parameter edits through the real web app (needs dev:web)
+  // --report writes a JSON artifact per recipe; --report=<dir> overrides the default location.
+  const reportArg = args.find((a) => a === "--report" || a.startsWith("--report="));
+  const reportDir = reportArg ? (reportArg.includes("=") ? reportArg.slice(reportArg.indexOf("=") + 1) : join(import.meta.dir, "reports")) : null;
   const ids = args.filter((a) => !a.startsWith("--"));
   const chosen = ids.length ? RECIPES.filter((r) => ids.includes(r.id)) : RECIPES;
   if (!chosen.length) { console.error(`no recipe matched ${ids.join(",")}; known: ${RECIPES.map((r) => r.id).join(", ")}`); process.exit(2); }
@@ -248,6 +286,12 @@ async function main() {
   for (const recipe of chosen) {
     const r = await runRecipe(recipe, useUi);
     report(recipe, r);
+    // The artifact is a side effect: a failure to write it must not eat the run's real verdict
+    // (already printed) nor skip the remaining recipes. Fail loud, keep going.
+    if (reportDir) {
+      try { console.log(`  report: ${writeReport(recipe, r, reportDir, useUi)}`); }
+      catch (e) { console.error(`  report: could not be written (${e instanceof Error ? e.message : String(e)})`); }
+    }
     allOk &&= r.ok;
   }
   process.exit(allOk ? 0 : 1);
