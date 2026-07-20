@@ -57,7 +57,40 @@ export class Client {
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<ConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.call<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>("POST", `/api/projects/${pid}/devices/${did}/assign-ia`, undefined, 90_000); }
-  readBack(pid: string, did: string) { return this.call<ConfigView>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 180_000); }
+  // The read-back triggers a server-side device read enqueued as a "read" task. On a large device
+  // that read outlasts any single HTTP socket on the single-channel bench: the OpenKNX RaumController
+  // reads back in ~4 min, past the old 180 s client timeout, so the POST aborted while the server read
+  // ran on to completion (and every retry fired ANOTHER doomed 4 min read). So the POST is fired and
+  // the TASK is polled to completion, exactly like downloadReal. The read task carries no FlashResult
+  // (reads persist their result to the DB), and the runner ignores this return and re-reads the
+  // persisted state via getConfig, so this resolves void on the task reaching "done". A coded refusal
+  // (e.g. DEVICE_NOT_ANSWERING) still propagates as an ApiError, the same honesty contract as the flash.
+  async readBack(pid: string, did: string, onPhase?: (p: string) => void): Promise<void> {
+    const firedAt = Date.now();
+    const fetchP = this.call<unknown>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 600_000).catch((e) => {
+      if (e instanceof ApiError) throw e; // a coded refusal is a real outcome
+      process.stderr.write(`    …read: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
+      return new Promise<unknown>(() => {}); // never settles; the poll is the source of truth
+    });
+    let lastPhase = "";
+    const pollP = (async (): Promise<void> => {
+      for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s
+        await new Promise((r) => setTimeout(r, 5_000));
+        const tasks = await this.tasks(pid).catch(() => [] as Task[]);
+        const t = tasks
+          .filter((x) => x.deviceId === did && x.kind === "read" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
+          .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
+        if (t) {
+          if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
+          if (t.state === "done") return;
+          if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "read failed");
+        }
+      }
+      throw new ApiError(0, "OP_TIMED_OUT", "read-back did not complete within the poll window");
+    })();
+    try { await Promise.race([fetchP, pollP]); }
+    finally { fetchP.catch(() => undefined); } // a late fetch rejection (after the poll won) must not go unhandled
+  }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
   private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }
   private createGaRange(pid: string, parentId: number | string | null, num: number, name: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-ranges`, { parentId: parentId === null ? null : Number(parentId), number: num, name }); }

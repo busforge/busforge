@@ -63,7 +63,10 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<RunResult> {
   const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
   // A transient bench-bridge TRANSPORT glitch (a dropped tunnel channel) is worth retrying; a
   // coded product refusal (FLASH_UNVERIFIED, LOAD_PROC_CHECK_FAILED, GA_TABLE_TOO_LARGE, …) is a
-  // REAL result and must never be retried away — that is the regression the harness exists to catch.
+  // REAL result and must never be retried away, that is the regression the harness exists to catch.
+  // "abort" is deliberately NOT here: on the OpenKNX bench that was a client-timeout abort of a 4 min
+  // read, and retrying just fired another doomed 4 min read. The read-back's own task poll (client.ts)
+  // is the right fix for that, not a retry.
   const transient = (e: unknown): boolean => {
     const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
     return m.includes("tunnel") || m.includes("acknowledg") || m.includes("econnreset") || m.includes("socket hang");
@@ -170,8 +173,11 @@ async function runRecipe(recipe: Recipe, useUi: boolean): Promise<RunResult> {
     // L1: an independent read-back re-reads the device and the config view must show the expected
     // GAs on the device's decoded group tables.
     process.stdout.write("  → P6 verify (read-back + bus)\n");
-    await settle(3000); // the download closed its tunnel after the restart; let the bridge release it
-    await withRetry("readback", () => client.readBack(pid!, did!));
+    // The closing A_Restart rebooted the device; give it time to boot its application and re-attach
+    // to the bus before the read-back's connection-oriented read starts (the read itself polls its
+    // task to completion, so a slow read is fine, but starting it mid-reboot only wastes time).
+    await settle(8000);
+    await withRetry("readback", () => client.readBack(pid!, did!, (p) => process.stdout.write(`    …read ${p}\n`)));
     await settle(3000);
     const view = await client.getConfig(pid, did);
     const present = new Set(gasOf(view));
