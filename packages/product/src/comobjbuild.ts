@@ -29,9 +29,14 @@
 //      length, a checksum or an id. A wrong table is simply believed.
 //   2. `knx_facade.h getGroupObject(goNr)` indexes the table with NO bounds check. If the table is
 //      shorter than the highest com-object number the firmware actually uses, the device reads and
-//      writes past the end of its own heap array. So the table must cover every object the running
-//      configuration can address, which is why the count is the highest ACTIVE object number and
-//      not merely the number of objects that carry a group address.
+//      writes past the end of its own heap array. So the table must cover every object the firmware
+//      can address, which is the highest com-object number the application DECLARES (across every
+//      choose branch and module instance), NOT merely the highest number the current configuration
+//      activates. Sizing it to the active maximum was hardware-fatal: the OpenKNX RaumController
+//      declares objects up to 1359 and its modules address them by fixed number, so a table claiming
+//      only 138 (the highest active object of a near-default config) sent the firmware off the end of
+//      its group-object array on boot, and the device death-looped and reverted to factory. ETS sizes
+//      to 1359. The declared maximum comes from buildDeviceConfig (maxComObjectNumber).
 import type { AppConfig, ComObjPriority } from "./appconfig.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
@@ -97,15 +102,18 @@ export function comObjectEntry(obj: CfgComObjImage): Buffer {
   return Buffer.from([flags, code]);
 }
 
-// Build the whole table from the com-objects the active configuration reaches (the same
-// `imageComObjects` projection the staleness gate compares, so what we WRITE and what we CHECK can
-// never drift apart).
+// Build the whole table. The ENTRIES come from the com-objects the active configuration reaches
+// (the same `imageComObjects` projection the staleness gate compares, so what we WRITE and what we
+// CHECK can never drift apart); every other slot, including objects the configuration does not
+// reach, stays 0x0000.
 //
-// The count is the highest active object NUMBER, not the number of active objects: entry i is
-// object i, so a configuration whose objects are 1, 4 and 137 needs 137 entries with the gaps
-// zeroed. This mirrors ETS and Kaenx, and it is what keeps the firmware's unchecked
-// getGroupObject(n) inside the array.
-export function buildComObjectTable(active: Map<number, CfgComObjImage>): Buffer {
+// The LENGTH is `declaredCount`, the highest com-object number the application declares (from
+// buildDeviceConfig.maxComObjectNumber), NOT the highest active number: entry i is object i, and the
+// firmware indexes the table by fixed object number with no bounds check, so it must be as long as
+// the firmware's own group-object array (see the header note). `declaredCount` is always >= the
+// highest active number (active objects are a subset of declared), but we Math.max defensively so a
+// malformed count can never truncate an active entry.
+export function buildComObjectTable(active: Map<number, CfgComObjImage>, declaredCount: number): Buffer {
   // Object numbers are 1-based because entry 0 of the table IS the count. An object that resolved
   // to 0 therefore cannot be represented at all: dropping it would leave the association table
   // pointing a group address at the count field, and the download would still verify green,
@@ -119,7 +127,7 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>): Buffer
     throw new ProductError("COM_OBJECT_TABLE_EMPTY",
       "this configuration activates no communication objects, so the device would have nothing to talk with; refusing to write an empty com-object table");
   }
-  const count = Math.max(...active.keys());
+  const count = Math.max(declaredCount, ...active.keys()); // never shorter than the highest active entry
   const buf = Buffer.alloc(2 + count * 2); // gaps stay 0x0000: an object that does not communicate
   buf.writeUInt16BE(count, 0);
   for (const [number, obj] of active) comObjectEntry(obj).copy(buf, 2 + (number - 1) * 2);

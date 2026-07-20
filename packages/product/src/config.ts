@@ -119,6 +119,13 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // module com-objects. Carries the RESOLVED flags (ComObjectRef overrides applied), which
   // the com-object-table build needs. See buildDeviceConfig and CfgComObjImage.
   imageComObjects: Map<number, CfgComObjImage>;
+  // The highest com-object number the application DECLARES (across every choose branch and
+  // module instance, not only the active ones), i.e. the length the firmware's group-object
+  // table must have. thelsing/knx getGroupObject(n) is unbounded and OpenKNX modules address
+  // their objects by fixed number, so a table sized to the highest ACTIVE number instead sends
+  // the firmware off the end of its array on boot (hardware-proven: the RaumController reverts).
+  // The com-object-table build (comobjbuild.ts) sizes the table to this. See buildDeviceConfig.
+  maxComObjectNumber: number;
 }
 
 interface Scope {
@@ -548,6 +555,38 @@ export function buildDeviceConfig(
   };
   imgCollect(app.dynamic, TOP);
 
+  // The com-object TABLE length the firmware needs: the highest com-object number the app DECLARES,
+  // active or not. imageComObjects is choose-gated (it only sees the objects the current config
+  // reaches), but the firmware's group-object array is sized to the DECLARATION: a table shorter than
+  // the highest declared number lets the unbounded getGroupObject(n) read off the end of the heap on
+  // boot (hardware-proven: the OpenKNX RaumController death-loops and reverts to factory when the table
+  // claims 138 objects and a module addresses object 1359).
+  //
+  // A flat (top-level) com-object's declared Number IS its on-device number, so take it straight from
+  // the declaration — independent of whether any dynamic node places it, so a declared-but-unreferenced
+  // object can never shorten the table. A module (BaseNumber) com-object only acquires a device number
+  // inside an instance scope (its Number plus the instance's BaseNumber), so those are resolved by
+  // walking each module instance, in a scope where every argument is present (no unresolved-arg abort).
+  // Every branch is walked, not selectWhens: an object placed only under an inactive choose still sizes
+  // the table, because the firmware indexes by number regardless of the active configuration.
+  let maxComObjectNumber = 0;
+  for (const o of app.comObjects.values()) if (!o.baseNumber) maxComObjectNumber = Math.max(maxComObjectNumber, o.number);
+  const scanModuleComObjNums = (nodes: DynNode[], scope: Scope, inModule: boolean) => {
+    for (const n of nodes) {
+      switch (n.kind) {
+        // Only record inside a module instance: top-level (flat) numbers are covered by the declaration
+        // scan above, and resolving them here would risk a BaseNumber that only makes sense per instance.
+        case "comObjRef": { if (inModule) { const c = resolveComObjImage(n.refId, scope); if (c) maxComObjectNumber = Math.max(maxComObjectNumber, c.number); } break; }
+        case "choose": for (const w of n.whens) scanModuleComObjNums(w.children, scope, inModule); break; // every branch, not selectWhens
+        case "container": case "block": scanModuleComObjNums(n.children, scope, inModule); break;
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) scanModuleComObjNums(def.dynamic, makeScope(n.refId, def, inst), true); break; }
+        // Own no com-object number. Listed, not defaulted, so a new node kind is a compile error here.
+        case "paramRef": case "separator": case "button": case "assign": case "unsupported": break;
+      }
+    }
+  };
+  scanModuleComObjNums(app.dynamic, TOP, false);
+
   // Stable sort each sibling list by DisplayOrder (equal/missing keeps document order).
   const blocks: CfgBlock[] = [];
   const emit = (nodes: Node[], level: number, parentId?: string) => {
@@ -561,7 +600,7 @@ export function buildDeviceConfig(
   };
   emit(roots, 0);
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects };
+  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects, maxComObjectNumber };
 }
 
 // One com-object of an application program's full declaration, resolved the way the

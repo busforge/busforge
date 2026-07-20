@@ -29,7 +29,7 @@ const cfg = parseAppConfig(xml);
 // bytes ETS computes).
 const params = new Map<string, string>();
 const view = buildDeviceConfig(cfg, params, undefined, []);
-const comObjTable = buildComObjectTable(view.imageComObjects);
+const comObjTable = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber);
 const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: [] })!; // 4 = OBJ.APP_PROGRAM (LSM 4)
 const { addr: addrTable, assoc: assocTable } = buildGroupTables([]);
 const CRC_AUG = crc16Ccitt(target.bytes);        // thelsing / OpenKNX (augmented)

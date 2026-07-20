@@ -377,7 +377,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
-    const comObj = buildComObjectTable(view.imageComObjects);
+    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber);
     // A link whose com-object this configuration does not activate cannot be programmed: the
     // association table would point a group address at an entry that reads 0x0000, i.e. at an
     // object that does not communicate. Filtering such a link away and carrying on would leave the

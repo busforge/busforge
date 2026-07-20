@@ -70,7 +70,7 @@ describe("one com-object table entry", () => {
   });
 
   test("a com-object numbered 0 is REFUSED (entry 0 of the table is its count)", () => {
-    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]))).toThrow(/1-based|number 0/i);
+    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]), 1)).toThrow(/1-based|number 0/i);
   });
 
   test("a flags+size combination round-trips as the firmware would decode it", () => {
@@ -102,7 +102,7 @@ describe("the whole table", () => {
     const table = buildComObjectTable(new Map([
       [1, obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: true, comm: true, transmit: false, update: true, readOnInit: false } })],
       [4, obj({ number: 4, objectSize: "2 Bytes", flags: { read: false, write: false, comm: true, transmit: true, update: false, readOnInit: false } })],
-    ]));
+    ]), 4);
     expect(table.readUInt16BE(0)).toBe(4);      // count = the highest NUMBER, not the object count
     expect(table.length).toBe(2 + 4 * 2);
     expect(table.subarray(2, 4)).toEqual(comObjectEntry(obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: true, comm: true, transmit: false, update: true, readOnInit: false } })));
@@ -111,8 +111,22 @@ describe("the whole table", () => {
     expect(table.subarray(8, 10)).toEqual(comObjectEntry(obj({ number: 4, objectSize: "2 Bytes", flags: { read: false, write: false, comm: true, transmit: true, update: false, readOnInit: false } })));
   });
 
+  test("the table is sized to the DECLARED count, not the highest active object", () => {
+    // A near-default config activates only object 1, but the application declares objects up to 1359
+    // (an inactive channel's objects). The firmware's group-object array is sized to the declaration
+    // and getGroupObject(n) is unbounded, so the table must be 1359 long with object 1's entry and the
+    // rest silent. Sizing it to the active maximum (1) is what death-looped the OpenKNX RaumController.
+    const table = buildComObjectTable(new Map([
+      [1, obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: false, comm: true, transmit: true, update: false, readOnInit: false } })],
+    ]), 1359);
+    expect(table.readUInt16BE(0)).toBe(1359);
+    expect(table.length).toBe(2 + 1359 * 2);
+    expect(table.subarray(2, 4)).not.toEqual(Buffer.from([0, 0])); // object 1 present
+    expect(table.subarray(4)).toEqual(Buffer.alloc((1359 - 1) * 2)); // 2..1359 all silent
+  });
+
   test("a configuration with no com-objects is refused, not written as an empty table", () => {
-    expect(() => buildComObjectTable(new Map())).toThrow(/no communication objects/i);
+    expect(() => buildComObjectTable(new Map(), 0)).toThrow(/no communication objects/i);
   });
 });
 
@@ -153,14 +167,25 @@ describe("a System B application, end to end", () => {
     expect(programIdStamp(cfg).toString("hex")).toBe("00faa01255");
   });
 
-  test("the com-object table follows the ACTIVE configuration, not the catalogue", () => {
-    const off = buildComObjectTable(buildDeviceConfig(cfg, new Map()).imageComObjects);
-    expect(off.readUInt16BE(0)).toBe(1); // only the heartbeat: the channel is off
-    expect(off.subarray(2, 4)).toEqual(Buffer.from([0b0100_1111, 7])); // T+R+C, Low, 1 byte
+  test("the table is sized to the DECLARED objects; the ENTRIES follow the active config", () => {
+    // O-5 is declared in a choose branch and only ACTIVATED when P-1=1. Either way the table must be
+    // sized to object 5 (the firmware indexes by fixed number); only whether O-5 carries flags depends
+    // on the configuration. Sizing to the active maximum shrank the table when the channel was off,
+    // which is the L3 bug that reverted the OpenKNX RaumController.
+    const build = (params: Map<string, string>) => {
+      const v = buildDeviceConfig(cfg, params);
+      return buildComObjectTable(v.imageComObjects, v.maxComObjectNumber);
+    };
 
-    const on = buildComObjectTable(buildDeviceConfig(cfg, new Map([["M-00FA_A-A012-55-0000_P-1_R-1", "1"]])).imageComObjects);
-    expect(on.readUInt16BE(0)).toBe(5); // the presence object is #5: entries 2..4 are gaps
-    expect(on.subarray(4, 10)).toEqual(Buffer.alloc(6));
-    expect(on.subarray(10, 12)).toEqual(Buffer.from([0b0100_0110, 0])); // T+C, Alert (urgent class), 1 bit
+    const off = build(new Map());
+    expect(off.readUInt16BE(0)).toBe(5); // O-5 is declared even though its channel is off
+    expect(off.length).toBe(2 + 5 * 2);
+    expect(off.subarray(2, 4)).toEqual(Buffer.from([0b0100_1111, 7])); // O-1: T+R+C, Low, 1 byte
+    expect(off.subarray(10, 12)).toEqual(Buffer.from([0, 0])); // O-5 not activated: silent
+
+    const on = build(new Map([["M-00FA_A-A012-55-0000_P-1_R-1", "1"]]));
+    expect(on.readUInt16BE(0)).toBe(5);
+    expect(on.subarray(4, 10)).toEqual(Buffer.alloc(6)); // 2..4 are gaps
+    expect(on.subarray(10, 12)).toEqual(Buffer.from([0b0100_0110, 0])); // O-5 active: T+C, Alert, 1 bit
   });
 });
