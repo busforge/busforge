@@ -338,6 +338,28 @@ describe("KnxIpServer over TCP", () => {
     expect(con[2]! & 0x01).toBe(0); // confirm: no error
   });
 
+  test("over TCP, back-to-back frames all carrying sequence 0 EACH reach the bus (not read as retransmissions)", async () => {
+    // ETS over TCP leaves the tunnelling sequence counter at 0 on every frame — TCP already
+    // guarantees order and no duplication, so it never increments. The UDP duplicate-detection would
+    // read every frame after the first as a repeat of frame 0 and drop it (ACKed but never put on the
+    // bus), which stalls a download after its very first telegram. On TCP every frame must be sent.
+    const rig = await serveTcp();
+    const { conn, ch } = await openTcp(rig);
+
+    const f1 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));            // T_Connect
+    const f2 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x43, 0x00]));      // a numbered read
+    const f3 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x81]));            // T_Disconnect
+    conn.feed(tunnelReq(ch, 0, f1)); await tick();
+    conn.feed(tunnelReq(ch, 0, f2)); await tick(); // SAME seq 0
+    conn.feed(tunnelReq(ch, 0, f3)); await tick(); // SAME seq 0
+
+    expect(rig.bus.written.length).toBe(3); // all three, not just the first
+    expect(rig.bus.written[0]!.equals(f1)).toBe(true);
+    expect(rig.bus.written[1]!.equals(f2)).toBe(true);
+    expect(rig.bus.written[2]!.equals(f3)).toBe(true);
+    expect(conn.ofService(SVC.TUNNEL_ACK).length).toBe(3); // and each is acknowledged
+  });
+
   test("a bus telegram is delivered to the TCP client as a TUNNELLING_REQUEST and completes on the client ACK", async () => {
     const rig = await serveTcp();
     const { conn, ch } = await openTcp(rig);

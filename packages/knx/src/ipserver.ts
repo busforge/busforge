@@ -1,8 +1,9 @@
 import dgram from "node:dgram";
 import net from "node:net";
 import {
-  SVC, KNXPORT, CEMI, CEMI_CON_ERROR, knxFrame, hpai, hpaiTcp, parseHpai,
-  withMessageCode, withSource, cemiSource, numToIa, KnxIpStreamParser, type Endpoint,
+  SVC, KNXPORT, CEMI, CEMI_CON_ERROR, BROADCAST, knxFrame, hpai, hpaiTcp, parseHpai,
+  withMessageCode, withSource, withDest, cemiSource, cemiDest, cemiIsGroup, numToIa,
+  KnxIpStreamParser, type Endpoint,
 } from "./frame.ts";
 import { SEARCH_MULTICAST } from "./discover.ts";
 import { localIPv4, localMac } from "./localnet.ts";
@@ -173,6 +174,21 @@ export class KnxIpServer {
   private reaper: ReturnType<typeof setInterval> | null = null;
   private me: Endpoint = { address: "0.0.0.0", port: KNXPORT };
   readonly channels = new Map<number, Channel>();
+  // Management NAT (the USB single-address limit): device address -> the channel whose connection-
+  // oriented conversation with that device is being funnelled through the interface's own address.
+  // The bus reply to such a frame is addressed to the interface, not the tunnel, so it is routed
+  // back to the owning channel here. See onTunnelRequest / routeFromBus.
+  //
+  // There is exactly ONE owner per device, and that is not a simplification: a USB interface holds a
+  // single connection-oriented state on its own IA, so two tunnels managing the same device would
+  // both send as that IA and collide at the KNX transport layer regardless of what this map says —
+  // one-owner is the hardware's constraint, not this code's. The entry is keyed by, and identity-
+  // checked against, the live channel (routeFromBus), so a channel that closed — or whose id was
+  // reused by a new client — never inherits a stale conversation: the check fails and the frame
+  // falls through to the ordinary fan-out. A stale entry for a still-open owner is therefore the only
+  // one that survives, and it can only ever route a reply back to that same management tunnel, which
+  // is where it belongs; it is left unpruned because pruning would buy nothing.
+  private readonly mgmtOwner = new Map<number, Channel>();
 
   constructor(opts: KnxIpServerOptions) {
     this.transport = opts.transport;
@@ -215,9 +231,9 @@ export class KnxIpServer {
     await new Promise<void>((r) => tcp.listen(this.port, () => r()));
     this.tcp = tcp;
 
-    // Everything the bus says goes to every open TUNNEL, verbatim (a device-management channel
-    // carries cEMI property frames, never bus telegrams, so it is skipped).
-    this.transport.onRawCemi = (cemi) => { for (const ch of this.channels.values()) if (!ch.mgmt) void this.toClient(ch, cemi); };
+    // Everything the bus says goes to the tunnels; routeFromBus decides whether a frame is broadcast
+    // to every tunnel (group traffic) or handed to the one channel a management conversation belongs to.
+    this.transport.onRawCemi = (cemi) => this.routeFromBus(cemi);
 
     this.reaper = setInterval(() => this.reap(), REAP_INTERVAL_MS);
     this.log(`listening on ${ip}:${this.port} as ${numToIa(this.addresses[0])} (${this.addresses.length} tunnel address${this.addresses.length === 1 ? "" : "es"})`);
@@ -559,17 +575,26 @@ export class KnxIpServer {
     if (!ch) return; // no such channel: there is nothing to acknowledge ON
     ch.lastSeen = this.now();
 
-    // The sequence number is what tells a fresh frame from a retransmission of one whose ACK got
-    // lost. A repeat of the last frame must be acknowledged again (or the client keeps repeating)
-    // but must NOT be put on the bus twice — a duplicated memory write is exactly the kind of
-    // damage this project exists to avoid. Anything else is out of order: drop it, do not ACK it.
-    const expected = ch.rxSeq;
-    const previous = (expected - 1) & 0xff;
-    if (seq === previous) { this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR]))); return; }
-    if (seq !== expected) { this.log(`channel ${id}: dropped a frame out of sequence (got ${seq}, expected ${expected})`); return; }
-
-    this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])));
-    ch.rxSeq = (expected + 1) & 0xff;
+    // The sequence number tells a fresh frame from a retransmission whose ACK got lost — but only
+    // over UDP, and only there does dropping the duplicate matter. Over TCP (3/8/4 v2) the stream is
+    // reliable and ordered: there is nothing to retransmit and no gap to reject, and ETS in fact
+    // leaves the sequence counter at 0 on EVERY frame. Running the UDP duplicate-detection on that
+    // would read every frame after the first as a repeat of frame 0 and drop it — acknowledged but
+    // never put on the bus — which is exactly what stalls a download after its first telegram. So on
+    // TCP: acknowledge and process every frame. (A duplicated memory write is still impossible: TCP
+    // does not duplicate, and the device's own connection-oriented TPCI sequence rejects a repeat.)
+    if (ch.tcp) {
+      this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])));
+    } else {
+      // Over UDP a repeat of the last frame must be re-acknowledged (or the client keeps repeating)
+      // but must NOT be put on the bus twice; anything else is out of order — drop it, do not ACK it.
+      const expected = ch.rxSeq;
+      const previous = (expected - 1) & 0xff;
+      if (seq === previous) { this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR]))); return; }
+      if (seq !== expected) { this.log(`channel ${id}: dropped a frame out of sequence (got ${seq}, expected ${expected})`); return; }
+      this.toData(ch, knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR])));
+      ch.rxSeq = (expected + 1) & 0xff;
+    }
 
     const cemi = body.subarray(4);
     if (cemi[0] !== CEMI.LDATA_REQ) {
@@ -580,11 +605,28 @@ export class KnxIpServer {
     }
 
     // A client that sends from 0.0.0 means "you know who I am": that is this channel's address.
-    const framed = cemiSource(cemi) === 0 ? withSource(cemi, ch.ia) : Buffer.from(cemi);
+    // This is the frame as the client sees it confirmed; the management NAT below may put a
+    // different source on the bus, but the client must never see that.
+    const clientFrame = cemiSource(cemi) === 0 ? withSource(cemi, ch.ia) : Buffer.from(cemi);
+
+    // Management NAT — the USB single-address limit. A USB interface delivers a connection-oriented
+    // point-to-point reply back to the host ONLY when it is addressed to the interface's OWN address.
+    // ETS, though, runs a download over a tunnel whose address is NOT the interface's (it keeps a
+    // persistent interface tunnel and does the management on a SECOND one), so a device replying to
+    // that tunnel's address would be answering into a void the interface never hears, and the download
+    // stalls. So a point-to-point frame leaves the bus sourced from the interface's address, and this
+    // channel is recorded as the owner of the conversation with the destination device, so routeFromBus
+    // can hand the reply — addressed to the interface — back to it. Group and broadcast frames are left
+    // untouched: the interface delivers those to every host regardless of address, so they need no NAT.
+    const iface = this.transport.assignedIa;
+    const p2p = !cemiIsGroup(clientFrame) && cemiDest(clientFrame) !== BROADCAST;
+    const nat = p2p && iface !== 0 && cemiSource(clientFrame) !== iface;
+    const busFrame = nat ? withSource(clientFrame, iface) : clientFrame;
+    if (nat) this.mgmtOwner.set(cemiDest(clientFrame), ch);
 
     let failed = false;
     try {
-      await this.transport.sendCemi(framed);
+      await this.transport.sendCemi(busFrame);
     } catch (e) {
       failed = true;
       this.log(`channel ${id}: the bus did not take the frame: ${e instanceof Error ? e.message : String(e)}`);
@@ -593,8 +635,8 @@ export class KnxIpServer {
     // The L_Data.con is the ONLY way a tunnelling client learns whether its telegram reached the
     // bus. Withholding it on failure would leave the client waiting on a timeout it cannot
     // interpret; sending a clean one would be a lie. So it is sent either way, with the error bit
-    // carrying the truth.
-    const con = withMessageCode(framed, CEMI.LDATA_CON);
+    // carrying the truth. It echoes the client's OWN frame, not the NAT'd one: the NAT is invisible.
+    const con = withMessageCode(clientFrame, CEMI.LDATA_CON);
     // The confirm flag is in ctrl1, which sits AFTER the variable-length additional-info block, so
     // its offset is 2 + the additional-info length, not a fixed 2. Real clients send no additional
     // info (cemi[1] == 0) so the two coincide today, but writing the error bit at a fixed offset
@@ -605,14 +647,42 @@ export class KnxIpServer {
 
     // The other tunnels are on the same bus and must see this frame, exactly as they would have
     // seen it if the client had been a device. Without this, two Busforge instances sharing the
-    // bridge each see only half the conversation.
+    // bridge each see only half the conversation. They see what the bus actually carried (the NAT'd
+    // source), because that is bus reality — the frame a real device would have observed.
     if (!failed) {
-      const ind = withMessageCode(framed, CEMI.LDATA_IND);
+      const ind = withMessageCode(busFrame, CEMI.LDATA_IND);
       for (const other of this.channels.values()) if (other.id !== ch.id && !other.mgmt) void this.toClient(other, ind);
     }
   }
 
   // ---- tunnelling: bus -> client ----
+
+  // A cEMI frame the interface received from the bus, on its way to the tunnelling clients. Group and
+  // broadcast traffic goes to every tunnel verbatim (the whole point of a multiplexing server). The
+  // exception is a point-to-point reply addressed to the interface's OWN address: that is the answer
+  // to a frame the management NAT sent on a client's behalf (see onTunnelRequest), it belongs to
+  // exactly one channel — the one managing that device — and is delivered only there, with the
+  // destination rewritten back to that channel's tunnel address so the client sees a reply addressed
+  // to itself, as a normal interface would present it. If no live channel owns the conversation (a
+  // stray reply, or the owner has since closed), it falls through to the ordinary fan-out, never dropped.
+  private routeFromBus(cemi: Buffer): void {
+    const iface = this.transport.assignedIa;
+    const p = 2 + (cemi[1] ?? 0);
+    if (iface !== 0 && cemi.length >= p + 6 && !cemiIsGroup(cemi) && cemiDest(cemi) === iface) {
+      const owner = this.mgmtOwner.get(cemiSource(cemi));
+      if (owner && !owner.mgmt && this.channels.get(owner.id) === owner) {
+        // Deliberately to the owner ALONE, not fanned out: a connection-oriented management reply
+        // belongs to the one conversation that asked for it. This is the point-to-point counterpart
+        // of the group fan-out in onTunnelRequest — a passive monitor watches group traffic, and has
+        // no place in someone else's download. Rewrite the destination from the interface back to the
+        // owner's tunnel address so the client sees a reply addressed to itself, as a normal interface
+        // would present it.
+        void this.toClient(owner, withDest(cemi, owner.ia));
+        return;
+      }
+    }
+    for (const ch of this.channels.values()) if (!ch.mgmt) void this.toClient(ch, cemi);
+  }
 
   private toClient(ch: Channel, cemi: Buffer): Promise<void> {
     // Over TCP the transport is reliable: 3/8/4 v2 sends a tunnelling request WITHOUT waiting for a

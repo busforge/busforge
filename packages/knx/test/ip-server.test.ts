@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { KnxIpServer, type ServerSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import type { KnxTransport } from "../src/transport.ts";
-import { SVC, CEMI, knxFrame, hpai, iaToNum, cemiLData, type Endpoint } from "../src/frame.ts";
+import { SVC, CEMI, knxFrame, hpai, iaToNum, cemiLData, withMessageCode, tpConnect, tpAck, type Endpoint } from "../src/frame.ts";
 
 // These tests exercise the UDP path only, so the TCP listener is stubbed out: without this the
 // server would try to bind a real TCP port, and two servers in one test would collide. The TCP
@@ -495,6 +495,107 @@ describe("KnxIpServer: bus -> client", () => {
     expect(rig.server.channels.has(ch)).toBe(false);
     expect(rig.sock.ofService(SVC.DISCONNECT_REQ).length).toBe(1);
   }, 5000);
+});
+
+describe("KnxIpServer: management NAT (the USB single-address limit)", () => {
+  const DEV = iaToNum("1.2.32");
+
+  test("a point-to-point frame leaves the bus sourced from the INTERFACE, not the tunnel address", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    // ETS runs its management over a tunnel whose address is NOT the interface's (SECOND_IA here).
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT);
+    await tick();
+    const op = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    rig.sock.deliver(tunnelReq(op, 0, cemiLData(SECOND_IA, DEV, tpConnect())), CLIENT);
+    await tick();
+
+    // On the bus the source is the interface's own address, so the device answers where a USB
+    // interface actually delivers it. The destination is untouched.
+    expect(rig.bus.written[0]!.readUInt16BE(4)).toBe(IFACE_IA);
+    expect(rig.bus.written[0]!.readUInt16BE(6)).toBe(DEV);
+    // The client's confirmation still shows ITS OWN source: the NAT is invisible to ETS.
+    const con = rig.sock.ofService(SVC.TUNNEL_REQ)[0]!.subarray(10);
+    expect(con[0]).toBe(CEMI.LDATA_CON);
+    expect(con.readUInt16BE(4)).toBe(SECOND_IA);
+  });
+
+  test("the device's reply is routed only to the owning channel, re-addressed to it", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    const monitor = await open(rig, CLIENT2);            // a second tunnel just watching (on IFACE_IA)
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT); // the operation tunnel
+    await tick();
+    const op = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    // The operation tunnel manages the device; the NAT records it as the owner.
+    rig.sock.deliver(tunnelReq(op, 0, cemiLData(SECOND_IA, DEV, tpConnect())), CLIENT);
+    await tick();
+    // Drain the resulting con (to op) and ind (to the watcher) so neither channel's send queue is
+    // still waiting on an ACK when the reply arrives.
+    rig.sock.deliver(tunnelAck(op, 0), CLIENT);
+    rig.sock.deliver(tunnelAck(monitor, 0), CLIENT2);
+    await tick();
+    rig.sock.clear();
+
+    // The device answers, addressed to the INTERFACE (that is where the stick delivers it).
+    rig.bus.emit(withMessageCode(cemiLData(DEV, IFACE_IA, tpAck(0)), CEMI.LDATA_IND));
+    await tick();
+
+    const toOp = rig.sock.sent.filter((s) => s.to.port === CLIENT.port && s.frame.readUInt16BE(2) === SVC.TUNNEL_REQ);
+    const toMon = rig.sock.sent.filter((s) => s.to.port === CLIENT2.port && s.frame.readUInt16BE(2) === SVC.TUNNEL_REQ);
+    expect(toOp.length).toBe(1);   // only the owner hears the reply
+    expect(toMon.length).toBe(0);  // the watcher does not: a p2p reply is not its business
+    const routed = toOp[0]!.frame.subarray(10);
+    expect(routed.readUInt16BE(4)).toBe(DEV);       // source: the device, untouched
+    expect(routed.readUInt16BE(6)).toBe(SECOND_IA); // destination: rewritten from interface back to the owner
+    expect(monitor).toBeGreaterThan(0);
+  });
+
+  test("a point-to-point reply for a device NOBODY manages falls through to the fan-out, never dropped", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    const a = await open(rig, CLIENT);
+    rig.sock.deliver(connectReq(), CLIENT2);
+    await tick();
+    const b = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    // No tunnel ever managed DEV, so there is no owner to route to. Hiding the frame would be the
+    // one forbidden move; it is delivered to every tunnel exactly as an ordinary bus telegram.
+    rig.bus.emit(withMessageCode(cemiLData(DEV, IFACE_IA, tpAck(0)), CEMI.LDATA_IND));
+    await tick();
+
+    const out = rig.sock.ofService(SVC.TUNNEL_REQ);
+    const byChannel = (x: number, y: number) => x - y;
+    expect(out.map((f) => f[7]).sort(byChannel)).toEqual([a, b].sort(byChannel));
+  });
+
+  test("group traffic is never NAT-touched: it still reaches every tunnel, verbatim", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    const mon = await open(rig, CLIENT);                 // a watcher on IFACE_IA
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT2); // the operation tunnel
+    await tick();
+    const op = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    // Even while a management conversation is open on one tunnel, a group telegram fans out to both.
+    rig.sock.deliver(tunnelReq(op, 0, cemiLData(SECOND_IA, DEV, tpConnect())), CLIENT2);
+    await tick();
+    rig.sock.deliver(tunnelAck(op, 0), CLIENT2);  // drain the con
+    rig.sock.deliver(tunnelAck(mon, 0), CLIENT);  // drain the ind the watcher got
+    await tick();
+    rig.sock.clear();
+
+    const group = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]);
+    rig.bus.emit(group);
+    await tick();
+
+    const out = rig.sock.ofService(SVC.TUNNEL_REQ);
+    const byChannel = (x: number, y: number) => x - y;
+    expect(out.map((f) => f[7]).sort(byChannel)).toEqual([op, mon].sort(byChannel));
+    expect(out.every((f) => f.subarray(10).equals(group))).toBe(true); // bytes untouched
+  });
 });
 
 describe("KnxIpServer: malformed input from the LAN", () => {

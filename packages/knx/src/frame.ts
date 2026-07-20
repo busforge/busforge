@@ -133,6 +133,17 @@ export function withSource(cemi: Buffer, src: number): Buffer {
   out.writeUInt16BE(src, 2 + out[1] + 2);
   return out;
 }
+// Destination address of a cEMI L_Data frame, and its address type. The destination sits two bytes
+// after the source (same variable offset), and the address-type bit is the top bit of the second
+// control field: set means a group/broadcast address, clear means an individual (point-to-point)
+// address. Together they tell a management frame (individual dest) from group traffic.
+export const cemiDest = (cemi: Buffer): number => cemi.readUInt16BE(2 + cemi[1] + 4);
+export const cemiIsGroup = (cemi: Buffer): boolean => (cemi[2 + cemi[1] + 1] & 0x80) !== 0;
+export function withDest(cemi: Buffer, dst: number): Buffer {
+  const out = Buffer.from(cemi);
+  out.writeUInt16BE(dst, 2 + out[1] + 4);
+  return out;
+}
 // L_Data.req cEMI carrying a raw TPDU (point-to-point, individual dest)
 export function cemiLData(src: number, dst: number, tpdu: Buffer): Buffer {
   const head = Buffer.from([0x11, 0x00, 0xbc, 0x60, (src >> 8) & 0xff, src & 0xff, (dst >> 8) & 0xff, dst & 0xff, tpdu.length - 1]);

@@ -189,8 +189,11 @@ operator is told up front that management on it will not work on a stick like th
 ### Speaking enough KNXnet/IP for ETS 6 (2026-07-20)
 
 ETS 6 is stricter than Busforge's own client, and getting it to use the bridge as an interface took
-four things, each proven on the bench (ETS 6 under Wine on macOS → the bridge → an OpenKNX device,
-group monitor recording live bus traffic):
+six things, each proven on the bench (ETS 6 under Wine on macOS → the bridge → an OpenKNX device).
+**Proven end to end on 2026-07-20: ETS did a full download of an OpenKNX RaumController through the
+bridge — individual address, the complete parameter image (116 `A_MemoryExtended_Write` frames), and
+the restart — and the device came up provisioned and survived the restart.** The group monitor works
+too; both run over the same interface at once.
 
 - **Advertise Core service family v2.** KNXnet/IP tunnelling over TCP is a Core-v2 feature; on Core v1
   ETS does the `DESCRIPTION` over TCP and then gives up without ever sending a `CONNECT_REQUEST`.
@@ -201,21 +204,28 @@ group monitor recording live bus traffic):
   (83) are the two ETS hard-requires; medium type (cEMI Server Object PID 51 = TP1) and the additional
   individual addresses (KNXnet/IP Parameter Object PID 53) round it out. See `acceptMgmt` /
   `onDeviceConfig` / `propValue` in `ipserver.ts`.
-- **Do not run the UDP ack-and-retransmit loop on a TCP channel.** Over TCP the transport is reliable
-  and ETS deliberately does not send `TUNNELLING_ACK`; the old code dropped the client the instant the
-  first bus telegram reached it ("acknowledged neither the frame nor its repetition"). On TCP the
-  bridge now sends the tunnelling request once and advances the sequence, no ack wait, no drop.
+- **Do not run the UDP ack-and-retransmit loop on a TCP channel (server → client).** Over TCP the
+  transport is reliable and ETS deliberately does not send `TUNNELLING_ACK`; the old code dropped the
+  client the instant the first bus telegram reached it ("acknowledged neither the frame nor its
+  repetition"). On TCP the bridge now sends the request once and advances the sequence, no ack wait.
+- **Do not apply UDP duplicate-detection to a TCP channel (client → server).** ETS over TCP leaves the
+  tunnelling **sequence counter at 0 on every frame** — TCP already guarantees order and no
+  duplication, so it never increments. The UDP dedup then read every frame after the first as a
+  retransmission of frame 0 and dropped it (ACKed but never put on the bus), stalling a download after
+  its very first telegram. On TCP the bridge now acknowledges and processes every frame; a duplicated
+  memory write stays impossible (TCP does not duplicate, and the device's own TPCI sequence rejects a
+  repeat). This was the bug behind "ETS does the restart and then nothing happens".
 - **Hand out more than one tunnel address.** ETS keeps a persistent interface tunnel AND opens a
   second tunnel for the group monitor. With a single address the second gets `E_NO_MORE_CONNECTIONS`.
   Run the bench bridge with e.g. `--addresses 1.1.100,1.1.101,1.1.102,1.1.103`.
-
-The address rule from the hard-limit section still governs which tunnel can do WHAT: the group monitor
-rides an extra address (group traffic passes on any address), but **programming must run on the tunnel
-that holds `1.1.100`** (the stick only returns point-to-point management replies to its own address).
-ETS's interface tunnel is the first it opens, so it claims `1.1.100` and programs correctly while the
-monitor sits on `1.1.101`. If a future ETS build ever put programming on an extra address, force the
-single-address pool (`--addresses 1.1.100`) for the programming session. (ETS programming through the
-bridge is not yet hardware-proven; the group monitor is.)
+- **Route point-to-point management through the interface's own address (management NAT).** The stick
+  returns connection-oriented replies only to its own `1.1.100`, but ETS may run the management over a
+  tunnel that holds a different address. So the bridge sends a point-to-point frame onto the bus
+  **sourced from `1.1.100`**, records which channel owns the conversation with that device, and routes
+  the reply — addressed to `1.1.100` — back to that channel with the destination rewritten to its own
+  tunnel address. The client never sees the NAT. Group and broadcast frames are never touched. This is
+  what lets ETS program regardless of which of its tunnels it picks for the download. See
+  `onTunnelRequest` / `routeFromBus` / `mgmtOwner` in `ipserver.ts`.
 
 ### What it deliberately refuses
 
