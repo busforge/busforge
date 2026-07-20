@@ -113,7 +113,15 @@ export function comObjectEntry(obj: CfgComObjImage): Buffer {
 // the firmware's own group-object array (see the header note). `declaredCount` is always >= the
 // highest active number (active objects are a subset of declared), but we Math.max defensively so a
 // malformed count can never truncate an active entry.
-export function buildComObjectTable(active: Map<number, CfgComObjImage>, declaredCount: number): Buffer {
+//
+// `linked` is the set of com-object numbers that carry a group-address link (the same objects the
+// association table connects). ETS clears the Communication flag on every object WITHOUT a link: an
+// object with no association cannot communicate, so the flag would be meaningless, and ETS leaves it
+// off. We match that byte for byte (hardware-verified against the ETS-programmed RaumController: the
+// only difference from ETS was this flag on the unlinked objects; clearing it made the table
+// identical). The object stays fully present (its size and every other flag), it just does not
+// advertise communication. All other flags come straight from the resolved declaration.
+export function buildComObjectTable(active: Map<number, CfgComObjImage>, declaredCount: number, linked: ReadonlySet<number>): Buffer {
   // Object numbers are 1-based because entry 0 of the table IS the count. An object that resolved
   // to 0 therefore cannot be represented at all: dropping it would leave the association table
   // pointing a group address at the count field, and the download would still verify green,
@@ -130,7 +138,11 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
   const count = Math.max(declaredCount, ...active.keys()); // never shorter than the highest active entry
   const buf = Buffer.alloc(2 + count * 2); // gaps stay 0x0000: an object that does not communicate
   buf.writeUInt16BE(count, 0);
-  for (const [number, obj] of active) comObjectEntry(obj).copy(buf, 2 + (number - 1) * 2);
+  for (const [number, obj] of active) {
+    // Clear Communication on an object with no group-address link, exactly as ETS does.
+    const entry = linked.has(number) ? obj : { ...obj, flags: { ...obj.flags, comm: false } };
+    comObjectEntry(entry).copy(buf, 2 + (number - 1) * 2);
+  }
   return buf;
 }
 

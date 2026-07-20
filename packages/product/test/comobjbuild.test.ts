@@ -70,7 +70,7 @@ describe("one com-object table entry", () => {
   });
 
   test("a com-object numbered 0 is REFUSED (entry 0 of the table is its count)", () => {
-    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]), 1)).toThrow(/1-based|number 0/i);
+    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]), 1, new Set([0]))).toThrow(/1-based|number 0/i);
   });
 
   test("a flags+size combination round-trips as the firmware would decode it", () => {
@@ -102,7 +102,7 @@ describe("the whole table", () => {
     const table = buildComObjectTable(new Map([
       [1, obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: true, comm: true, transmit: false, update: true, readOnInit: false } })],
       [4, obj({ number: 4, objectSize: "2 Bytes", flags: { read: false, write: false, comm: true, transmit: true, update: false, readOnInit: false } })],
-    ]), 4);
+    ]), 4, new Set([1, 4])); // both linked: their Communication flag is kept
     expect(table.readUInt16BE(0)).toBe(4);      // count = the highest NUMBER, not the object count
     expect(table.length).toBe(2 + 4 * 2);
     expect(table.subarray(2, 4)).toEqual(comObjectEntry(obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: true, comm: true, transmit: false, update: true, readOnInit: false } })));
@@ -118,15 +118,30 @@ describe("the whole table", () => {
     // rest silent. Sizing it to the active maximum (1) is what death-looped the OpenKNX RaumController.
     const table = buildComObjectTable(new Map([
       [1, obj({ number: 1, objectSize: "1 Bit", flags: { read: false, write: false, comm: true, transmit: true, update: false, readOnInit: false } })],
-    ]), 1359);
+    ]), 1359, new Set([1]));
     expect(table.readUInt16BE(0)).toBe(1359);
     expect(table.length).toBe(2 + 1359 * 2);
     expect(table.subarray(2, 4)).not.toEqual(Buffer.from([0, 0])); // object 1 present
     expect(table.subarray(4)).toEqual(Buffer.alloc((1359 - 1) * 2)); // 2..1359 all silent
   });
 
+  test("the Communication flag is cleared on an object with no group-address link, as ETS does", () => {
+    // Two identical objects, one linked (in the association table) and one not. ETS keeps Communication
+    // on the linked object and clears it on the unlinked one (it has no association, so it cannot
+    // communicate). Hardware-verified against the ETS-programmed RaumController.
+    const flags = { read: true, write: false, comm: true, transmit: true, update: false, readOnInit: false };
+    const table = buildComObjectTable(new Map([
+      [1, obj({ number: 1, objectSize: "1 Byte", flags })],
+      [2, obj({ number: 2, objectSize: "1 Byte", flags })],
+    ]), 2, new Set([1])); // only object 1 is linked
+    const COMM = 1 << 10; // bit 2 of the flags byte
+    expect(table.readUInt16BE(2) & COMM).toBe(COMM); // object 1 (linked): Communication kept
+    expect(table.readUInt16BE(4) & COMM).toBe(0);    // object 2 (unlinked): Communication cleared
+    expect(table.readUInt16BE(4) & ~COMM).toBe(table.readUInt16BE(2) & ~COMM); // every OTHER bit identical
+  });
+
   test("a configuration with no com-objects is refused, not written as an empty table", () => {
-    expect(() => buildComObjectTable(new Map(), 0)).toThrow(/no communication objects/i);
+    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/no communication objects/i);
   });
 });
 
@@ -172,9 +187,11 @@ describe("a System B application, end to end", () => {
     // sized to object 5 (the firmware indexes by fixed number); only whether O-5 carries flags depends
     // on the configuration. Sizing to the active maximum shrank the table when the channel was off,
     // which is the L3 bug that reverted the OpenKNX RaumController.
+    // Treat every active object as linked here so the entry flags reflect the declaration; the
+    // Communication-flag-clearing for unlinked objects is covered by its own test above.
     const build = (params: Map<string, string>) => {
       const v = buildDeviceConfig(cfg, params);
-      return buildComObjectTable(v.imageComObjects, v.maxComObjectNumber);
+      return buildComObjectTable(v.imageComObjects, v.maxComObjectNumber, new Set(v.imageComObjects.keys()));
     };
 
     const off = build(new Map());

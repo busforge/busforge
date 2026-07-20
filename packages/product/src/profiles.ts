@@ -377,7 +377,6 @@ export class SystemBProfile extends DeviceProfile {
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
-    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber);
     // A link whose com-object this configuration does not activate cannot be programmed: the
     // association table would point a group address at an entry that reads 0x0000, i.e. at an
     // object that does not communicate. Filtering such a link away and carrying on would leave the
@@ -388,6 +387,10 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
+    // The linked objects are exactly those the association table connects; ETS clears the
+    // Communication flag on every other object, so the com-object table build needs to know them.
+    const linked = new Set(ctx.links.map((l) => l.comObjNum));
+    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
 
     // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a

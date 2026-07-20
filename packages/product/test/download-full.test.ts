@@ -29,7 +29,9 @@ const cfg = parseAppConfig(xml);
 // bytes ETS computes).
 const params = new Map<string, string>();
 const view = buildDeviceConfig(cfg, params, undefined, []);
-const comObjTable = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber);
+// No group-address links in this download (buildGroupTables([]) below), so every object is unlinked
+// and ETS clears its Communication flag; pass the matching empty linked set.
+const comObjTable = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set());
 const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: [] })!; // 4 = OBJ.APP_PROGRAM (LSM 4)
 const { addr: addrTable, assoc: assocTable } = buildGroupTables([]);
 const CRC_AUG = crc16Ccitt(target.bytes);        // thelsing / OpenKNX (augmented)
