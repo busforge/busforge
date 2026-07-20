@@ -186,13 +186,43 @@ where the hardware supports it, and harmless (group/passive) where it does not. 
 worth making is a bridge warning when handed an address that is not the interface's own, so the
 operator is told up front that management on it will not work on a stick like this one.
 
+### Speaking enough KNXnet/IP for ETS 6 (2026-07-20)
+
+ETS 6 is stricter than Busforge's own client, and getting it to use the bridge as an interface took
+four things, each proven on the bench (ETS 6 under Wine on macOS → the bridge → an OpenKNX device,
+group monitor recording live bus traffic):
+
+- **Advertise Core service family v2.** KNXnet/IP tunnelling over TCP is a Core-v2 feature; on Core v1
+  ETS does the `DESCRIPTION` over TCP and then gives up without ever sending a `CONNECT_REQUEST`.
+- **Serve the local device-management connection.** ETS opens a device-management connection
+  (`CRI` type 0x03) alongside its tunnel and reads the interface's own interface-object properties
+  over it (`DEVICE_CONFIGURATION_REQUEST` → cEMI `M_PropRead`). Refusing it made ETS abort the whole
+  session. The bridge now answers: Device Object `PID_MAX_APDULENGTH` (56) and `PID_DEVICE_DESCRIPTOR`
+  (83) are the two ETS hard-requires; medium type (cEMI Server Object PID 51 = TP1) and the additional
+  individual addresses (KNXnet/IP Parameter Object PID 53) round it out. See `acceptMgmt` /
+  `onDeviceConfig` / `propValue` in `ipserver.ts`.
+- **Do not run the UDP ack-and-retransmit loop on a TCP channel.** Over TCP the transport is reliable
+  and ETS deliberately does not send `TUNNELLING_ACK`; the old code dropped the client the instant the
+  first bus telegram reached it ("acknowledged neither the frame nor its repetition"). On TCP the
+  bridge now sends the tunnelling request once and advances the sequence, no ack wait, no drop.
+- **Hand out more than one tunnel address.** ETS keeps a persistent interface tunnel AND opens a
+  second tunnel for the group monitor. With a single address the second gets `E_NO_MORE_CONNECTIONS`.
+  Run the bench bridge with e.g. `--addresses 1.1.100,1.1.101,1.1.102,1.1.103`.
+
+The address rule from the hard-limit section still governs which tunnel can do WHAT: the group monitor
+rides an extra address (group traffic passes on any address), but **programming must run on the tunnel
+that holds `1.1.100`** (the stick only returns point-to-point management replies to its own address).
+ETS's interface tunnel is the first it opens, so it claims `1.1.100` and programs correctly while the
+monitor sits on `1.1.101`. If a future ETS build ever put programming on an extra address, force the
+single-address pool (`--addresses 1.1.100`) for the programming session. (ETS programming through the
+bridge is not yet hardware-proven; the group monitor is.)
+
 ### What it deliberately refuses
 
 | Request | Answer | Why |
 |---|---|---|
-| Device-management connection | `E_CONNECTION_TYPE` | Not implemented. A client that believed it was would wait forever. |
-| Bus-monitor layer | `E_TUNNELLING_LAYER` | Not implemented. |
-| A second tunnel with one address | `E_NO_MORE_CONNECTIONS` | See above. |
+| Bus-monitor layer | `E_TUNNELLING_LAYER` | Not implemented (a USB stick in data-link mode cannot passively monitor the whole line anyway). |
+| A second tunnel when the address pool is exhausted | `E_NO_MORE_CONNECTIONS` | One address per tunnel; see the hard-limit section. |
 | A cEMI that is not `L_Data.req` | tunnel-ACKed, content refused and logged | The ACK is about the datagram; forwarding unknown content to a real bus is not. |
 | Starting with an unknown interface address | `BRIDGE_NO_ADDRESS` | A tunnel on 0.0.0 is an address no device can answer to. |
 

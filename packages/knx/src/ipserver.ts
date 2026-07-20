@@ -19,12 +19,15 @@ import { KnxError } from "./errors.ts";
 // that looks like a bus fault. A KNXnet/IP server MULTIPLEXES: several tunnels share one physical
 // interface. That failure class disappears.
 //
+// It also accepts the LOCAL DEVICE-MANAGEMENT connection ETS opens alongside its tunnel, and answers
+// the interface-object property reads over it (its own addresses, medium, capabilities); refusing it
+// made ETS abort the whole session. See acceptMgmt / onDeviceConfig.
+//
 // What it deliberately does NOT do:
 //   - routing (no multicast forwarding; the routing multicast address in the DIB stays 0.0.0.0)
-//   - device-management connections (a client asking for one is refused, not silently accepted)
-//   - bus-monitor layer connections (same)
-// Each of those is answered with the KNXnet/IP error code that says so, because a client that
-// believes it has a connection and then hears nothing is the worst of the three outcomes.
+//   - bus-monitor layer connections (a client asking for one is refused, not silently accepted)
+// That one is answered with the KNXnet/IP error code that says so, because a client that believes it
+// has a connection and then hears nothing is the worst outcome.
 
 // KNXnet/IP connect/state status codes (3/8/2 §7.5.1)
 const E_NO_ERROR = 0x00;
@@ -34,7 +37,15 @@ const E_NO_MORE_CONNECTIONS = 0x24;
 const E_TUNNELLING_LAYER = 0x29;   // requested layer not supported
 
 const CRI_TUNNEL = 0x04;   // connection type: tunnelling
+const CRI_DEVICE_MGMT = 0x03; // connection type: local device management (cEMI property access)
 const LAYER_LINK = 0x02;   // TUNNEL_LINKLAYER, the only layer we serve
+
+// cEMI local-device-management message codes (M_Prop*). A device-configuration connection carries
+// these instead of L_Data: a client (ETS) reads the interface's OWN interface-object properties
+// (its addresses, medium, capabilities) over it. .con is our answer to a .req; nrOfElem 0 on a
+// read-con means "no such property/element" and the single data byte is the negative-response code.
+const MPR_READ_REQ = 0xfc, MPR_READ_CON = 0xfb, MPR_WRITE_REQ = 0xf6, MPR_WRITE_CON = 0xf5;
+const PROP_ERR_VOID = 0x07; // "the property does not exist / element out of range"
 
 // 3/8/4: a tunnelling client acknowledges within 1 s; the server retries once and then considers
 // the client gone. 3/8/2: the client sends a CONNECTIONSTATE_REQUEST every 60 s, and the server
@@ -107,6 +118,7 @@ function realTcpListener(): ServerTcpListener {
 
 interface Channel {
   id: number;
+  mgmt?: boolean;      // a local device-management channel (cEMI property access), not a tunnel
   ia: number;          // the individual address this tunnel sends from
   control: Endpoint;   // where connection-state and disconnect answers go (UDP channels only)
   data: Endpoint;      // where tunnelling frames go (UDP channels only)
@@ -203,8 +215,9 @@ export class KnxIpServer {
     await new Promise<void>((r) => tcp.listen(this.port, () => r()));
     this.tcp = tcp;
 
-    // Everything the bus says goes to every open tunnel, verbatim.
-    this.transport.onRawCemi = (cemi) => { for (const ch of this.channels.values()) void this.toClient(ch, cemi); };
+    // Everything the bus says goes to every open TUNNEL, verbatim (a device-management channel
+    // carries cEMI property frames, never bus telegrams, so it is skipped).
+    this.transport.onRawCemi = (cemi) => { for (const ch of this.channels.values()) if (!ch.mgmt) void this.toClient(ch, cemi); };
 
     this.reaper = setInterval(() => this.reap(), REAP_INTERVAL_MS);
     this.log(`listening on ${ip}:${this.port} as ${numToIa(this.addresses[0])} (${this.addresses.length} tunnel address${this.addresses.length === 1 ? "" : "es"})`);
@@ -286,10 +299,12 @@ export class KnxIpServer {
     return b;
   }
 
-  // CORE and TUNNELLING only. DEVICE MANAGEMENT (family 0x03) is not advertised because it is not
-  // implemented, and a client that saw it advertised would open such a connection and then wait
-  // forever for an answer we never send.
-  private static readonly SUPP_SVC_DIB = Buffer.from([0x06, 0x02, 0x02, 0x01, 0x04, 0x01]);
+  // Advertise CORE v2, DEVICE MANAGEMENT v2 and TUNNELLING v1. Core MUST be v2 or a strict client
+  // (ETS) will not attempt a connection over TCP at all: KNXnet/IP tunnelling over TCP is a Core-v2
+  // feature, so on Core v1 ETS does the DESCRIPTION over TCP and then gives up without a CONNECT.
+  // Device management is advertised because ETS opens such a connection alongside its tunnel and we
+  // now answer it (acceptMgmt / onDeviceConfig).
+  private static readonly SUPP_SVC_DIB = Buffer.from([0x08, 0x02, 0x02, 0x02, 0x03, 0x02, 0x04, 0x01]);
 
   private describe(): Buffer {
     return Buffer.concat([this.deviceInfoDib(), KnxIpServer.SUPP_SVC_DIB]);
@@ -330,6 +345,11 @@ export class KnxIpServer {
       case SVC.DISCONNECT_REQ:
         this.onDisconnect(body, origin);
         return;
+      case SVC.DEVICE_CONFIG_REQ:
+        this.onDeviceConfig(body);
+        return;
+      case SVC.DEVICE_CONFIG_ACK:
+        return; // the client acknowledging one of our config responses; nothing more to do
       case SVC.TUNNEL_REQ:
         void this.onTunnelRequest(body);
         return;
@@ -370,10 +390,11 @@ export class KnxIpServer {
     const reject = (status: number) =>
       this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.from([0x00, status])));
 
-    if (cri[1] !== CRI_TUNNEL) { reject(E_CONNECTION_TYPE); return; }   // device management: not served
+    if (cri[1] === CRI_DEVICE_MGMT) { this.acceptMgmt(control, data, origin); return; } // ETS opens one alongside its tunnel
+    if (cri[1] !== CRI_TUNNEL) { reject(E_CONNECTION_TYPE); return; }
     if (cri[2] !== LAYER_LINK) { reject(E_TUNNELLING_LAYER); return; }  // bus-monitor layer: not served
 
-    const taken = new Set([...this.channels.values()].map((c) => c.ia));
+    const taken = new Set([...this.channels.values()].filter((c) => !c.mgmt).map((c) => c.ia));
     // Tunnelling v2 (3/8/4): a client MAY ask for a SPECIFIC tunnel address by extending the CRI to
     // 6 bytes, the last two carrying the desired individual address (this is what ETS's per-connection
     // "Individual Address" field sends). It is honoured only within our configured pool and only if
@@ -402,6 +423,90 @@ export class KnxIpServer {
     const crd = Buffer.from([0x04, CRI_TUNNEL, (ia >> 8) & 0xff, ia & 0xff]);
     this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.concat([Buffer.from([id, E_NO_ERROR]), this.responseHpai(origin), crd])));
     this.log(`channel ${id} open ${tcp ? "over TCP" : `for ${data.address}:${data.port}`} as ${numToIa(ia)}`);
+  }
+
+  // ETS 6 opens a local device-management connection ALONGSIDE its tunnel and reads the interface's
+  // own interface-object properties over it (its individual address, additional tunnel addresses,
+  // medium, capabilities). Refusing it made ETS abort the whole session ("connection type not
+  // supported"), so it is accepted as its own channel; the property answers live in propValue().
+  private acceptMgmt(control: Endpoint, data: Endpoint, origin: Origin): void {
+    let id = 1;
+    while (this.channels.has(id) && id < 0xff) id++;
+    if (this.channels.has(id)) { this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.from([0x00, E_NO_MORE_CONNECTIONS]))); return; }
+    const tcp = origin.kind === "tcp" ? origin.sock : null;
+    // ia 0: a device-management channel sends from no tunnel address and must never be counted as
+    // holding one (else it would starve the tunnel of the single address ETS also wants).
+    this.channels.set(id, { id, mgmt: true, ia: 0, control, data, tcp, txSeq: 0, rxSeq: 0, lastSeen: this.now(), ack: null, queue: Promise.resolve() });
+    const crd = Buffer.from([0x02, CRI_DEVICE_MGMT]); // device-management CRD is just its length + type
+    this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.concat([Buffer.from([id, E_NO_ERROR]), this.responseHpai(origin), crd])));
+    this.log(`device-management channel ${id} open ${tcp ? "over TCP" : `for ${data.address}:${data.port}`}`);
+  }
+
+  private onDeviceConfig(body: Buffer): void {
+    const id = body[1], seq = body[2];
+    const ch = this.channels.get(id);
+    if (!ch || !ch.mgmt) return;
+    ch.lastSeen = this.now();
+    this.toData(ch, knxFrame(SVC.DEVICE_CONFIG_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR]))); // the config ACK
+    const cemi = body.subarray(4);
+    if (cemi.length === 0) return; // a config frame with no cEMI carries nothing to act on
+    const mc = cemi[0];
+    if (mc !== MPR_READ_REQ && mc !== MPR_WRITE_REQ) { this.log(`device-management channel ${id}: ignoring cEMI mc 0x${mc.toString(16)}`); return; }
+    const objType = cemi.readUInt16BE(1), objInst = cemi[3], pid = cemi[4];
+    const ne = cemi[5] >> 4, startIdx = ((cemi[5] & 0x0f) << 8) | cemi[6];
+    if (mc === MPR_WRITE_REQ) {
+      // We expose no writable properties; confirm the write as void rather than pretend it took.
+      this.log(`device-management channel ${id}: WRITE obj=${objType}/${objInst} PID=${pid} -> refused (void)`);
+      this.sendConfig(ch, Buffer.from([MPR_WRITE_CON, (objType >> 8) & 0xff, objType & 0xff, objInst, pid, (startIdx >> 8) & 0x0f, startIdx & 0xff, PROP_ERR_VOID]));
+      return;
+    }
+    const val = this.propValue(objType, objInst, pid, startIdx, ne);
+    const head = Buffer.from([MPR_READ_CON, (objType >> 8) & 0xff, objType & 0xff, objInst, pid, 0, 0]);
+    if (val) {
+      head[5] = (ne << 4) | ((startIdx >> 8) & 0x0f); head[6] = startIdx & 0xff;
+      this.log(`device-management channel ${id}: READ obj=${objType}/${objInst} PID=${pid} start=${startIdx} ne=${ne} -> ${val.toString("hex")}`);
+      this.sendConfig(ch, Buffer.concat([head, val]));
+    } else {
+      head[5] = (startIdx >> 8) & 0x0f; head[6] = startIdx & 0xff; // nrOfElem 0 == negative response
+      this.log(`device-management channel ${id}: READ obj=${objType}/${objInst} PID=${pid} start=${startIdx} ne=${ne} -> VOID (unknown)`);
+      this.sendConfig(ch, Buffer.concat([head, Buffer.from([PROP_ERR_VOID])]));
+    }
+  }
+
+  // Send one device-configuration response, carrying our own outgoing sequence number.
+  private sendConfig(ch: Channel, cemi: Buffer): void {
+    const seq = ch.txSeq;
+    ch.txSeq = (seq + 1) & 0xff;
+    this.toData(ch, knxFrame(SVC.DEVICE_CONFIG_REQ, Buffer.concat([Buffer.from([0x04, ch.id, seq, 0x00]), cemi])));
+  }
+
+  // The value of one interface-object property ETS reads over device management, or null for a
+  // property we do not model (answered VOID). The two ETS hard-requires (Device Object PID 56 and 83)
+  // and the two it needs for a usable tunnel (medium type, additional addresses) all return real
+  // data; the rest are polish. Values verified against the thelsing/knx and Calimero property tables.
+  private propValue(objType: number, _objInst: number, pid: number, start: number, ne: number): Buffer | null {
+    const u16 = (n: number) => Buffer.from([(n >> 8) & 0xff, n & 0xff]);
+    if (objType === 0) { // Device Object
+      if (pid === 56) return u16(254);          // PID_MAX_APDULENGTH (required; interface-discretionary)
+      if (pid === 83) return u16(0x07b0);       // PID_DEVICE_DESCRIPTOR / mask version (required; any valid mask)
+      if (pid === 1) return u16(0);             // PID_OBJECT_TYPE
+      if (pid === 11) return Buffer.from(this.serialNumber); // PID_SERIAL_NUMBER (6 B)
+      if (pid === 12) return u16(0x00fa);       // PID_MANUFACTURER_ID
+    } else if (objType === 8) { // cEMI Server Object
+      if (pid === 51) return u16(0x0002);       // PID_MEDIUM_TYPE = TP1 (required; wire code 0x02, NOT thelsing's 0x20)
+      if (pid === 52) return Buffer.from([0x00]); // PID_COMM_MODE = Data Link Layer
+      if (pid === 64) return u16(0x0001);       // PID_COMM_MODES_SUPPORTED = DLL
+    } else if (objType === 11) { // KNXnet/IP Parameter Object
+      if (pid === 52) return u16(this.transport.assignedIa || this.addresses[0] || 0); // PID_KNX_INDIVIDUAL_ADDRESS
+      if (pid === 53) { // PID_ADDITIONAL_INDIVIDUAL_ADDRESSES: an array; index 0 answers the element count
+        if (start === 0) return u16(this.addresses.length);
+        const sel = this.addresses.slice(start - 1, ne ? start - 1 + ne : undefined);
+        return sel.length ? Buffer.concat(sel.map(u16)) : null; // out-of-range element read -> VOID, not an empty positive
+
+      }
+      if (pid === 76) { const n = Buffer.alloc(30); Buffer.from(this.name, "latin1").copy(n); return n; } // PID_FRIENDLY_NAME
+    }
+    return null;
   }
 
   private onConnectionState(body: Buffer, origin: Origin): void {
@@ -503,15 +608,29 @@ export class KnxIpServer {
     // bridge each see only half the conversation.
     if (!failed) {
       const ind = withMessageCode(framed, CEMI.LDATA_IND);
-      for (const other of this.channels.values()) if (other.id !== ch.id) void this.toClient(other, ind);
+      for (const other of this.channels.values()) if (other.id !== ch.id && !other.mgmt) void this.toClient(other, ind);
     }
   }
 
   // ---- tunnelling: bus -> client ----
 
   private toClient(ch: Channel, cemi: Buffer): Promise<void> {
-    // Serialised per channel: KNXnet/IP allows exactly one unacknowledged tunnelling frame per
-    // connection, so a second send must wait rather than race the first one's ACK.
+    // Over TCP the transport is reliable: 3/8/4 v2 sends a tunnelling request WITHOUT waiting for a
+    // TUNNELLING_ACK, and the client (ETS) does not send one. Running the UDP ack-and-retransmit loop
+    // below on a TCP channel would therefore drop every TCP client the instant the first bus telegram
+    // reached it (it never acks), which is exactly the "acknowledged neither the frame nor its
+    // repetition" drop ETS was hitting. So on TCP: send once, advance the sequence, done.
+    if (ch.tcp) {
+      ch.queue = ch.queue.then(() => {
+        if (this.channels.get(ch.id) !== ch) return;
+        const seq = ch.txSeq;
+        ch.txSeq = (seq + 1) & 0xff;
+        this.toData(ch, knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, ch.id, seq, 0x00]), cemi])));
+      }).catch((e: unknown) => this.log(`channel ${ch.id}: send failed: ${e instanceof Error ? e.message : String(e)}`));
+      return ch.queue;
+    }
+    // Serialised per channel: KNXnet/IP over UDP allows exactly one unacknowledged tunnelling frame
+    // per connection, so a second send must wait rather than race the first one's ACK.
     ch.queue = ch.queue.then(async () => {
       for (let i = 0; i < ACK_TRIES; i++) {
         // Stop the moment the channel is gone from the map (closed by the client, or dropped).

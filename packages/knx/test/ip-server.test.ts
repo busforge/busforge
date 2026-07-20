@@ -130,10 +130,10 @@ describe("KnxIpServer: discovery", () => {
     // Routing multicast address stays 0.0.0.0: this server does not route and says so.
     expect([...dib.subarray(14, 18)]).toEqual([0, 0, 0, 0]);
 
-    // Supported service families: CORE (0x02) v1 and TUNNELLING (0x04) v1. Device management
-    // (0x03) must NOT appear — it is not implemented.
+    // Supported service families: CORE (0x02) v2, DEVICE MANAGEMENT (0x03) v2, TUNNELLING (0x04) v1.
+    // Core MUST be v2 or a strict TCP client (ETS) will not attempt a connection at all.
     const fam = res[0]!.subarray(6 + 8 + 54);
-    expect([...fam]).toEqual([0x06, 0x02, 0x02, 0x01, 0x04, 0x01]);
+    expect([...fam]).toEqual([0x08, 0x02, 0x02, 0x02, 0x03, 0x02, 0x04, 0x01]);
   });
 
   test("joins the KNXnet/IP discovery multicast group, or no client would ever find it", async () => {
@@ -155,14 +155,50 @@ describe("KnxIpServer: connection management", () => {
     // Same layout our own client parses in connection.ts, so the two are wire-compatible.
   });
 
-  test("a device-management connection is REFUSED, not silently accepted", async () => {
+  test("a device-management connection is ACCEPTED (ETS opens one alongside its tunnel)", async () => {
     const { sock } = await serve();
     sock.deliver(connectReq(0x02, 0x03), CLIENT); // connection type 0x03 = device management
     await tick();
 
     const body = sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6);
-    expect(body[1]).toBe(0x22); // E_CONNECTION_TYPE
-    expect(body[0]).toBe(0x00); // and no channel was allocated
+    expect(body[1]).toBe(0x00);            // E_NO_ERROR
+    expect(body[0]).not.toBe(0x00);        // a channel was allocated
+    expect(body[body.length - 1]).toBe(0x03); // the CRD names the device-management connection type
+  });
+
+  test("answers a device-management property read (Device Object PID 56 = max APDU), not VOID", async () => {
+    const { sock } = await serve();
+    sock.deliver(connectReq(0x02, 0x03), CLIENT); // device management
+    await tick();
+    const chId = sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    sock.clear();
+    // M_PropRead.req: IOT 0, instance 1, PID 56, NoE 1, start 1.
+    const propRead = Buffer.from([0xfc, 0x00, 0x00, 0x01, 0x38, 0x10, 0x01]);
+    sock.deliver(knxFrame(SVC.DEVICE_CONFIG_REQ, Buffer.concat([Buffer.from([0x04, chId, 0, 0x00]), propRead])), CLIENT);
+    await tick();
+    expect(sock.ofService(SVC.DEVICE_CONFIG_ACK).length).toBe(1); // the request is acknowledged
+    const cemi = sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(10); // strip KNXnet/IP + connection header
+    expect(cemi[0]).toBe(0xfb);        // M_PropRead.con
+    expect(cemi[4]).toBe(0x38);        // PID 56
+    expect(cemi[5] >> 4).toBe(1);      // number-of-elements 1 (a success, NOT the NoE=0 that aborts ETS)
+    expect([...cemi.subarray(7)]).toEqual([0x00, 0xfe]); // 254
+  });
+
+  test("answers the additional-individual-addresses array read (count at index 0, address at index 1)", async () => {
+    const { sock } = await serve([iaToNum("1.1.100")]);
+    sock.deliver(connectReq(0x02, 0x03), CLIENT);
+    await tick();
+    const chId = sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    sock.clear();
+    const rd = (start: number, ne: number) => knxFrame(SVC.DEVICE_CONFIG_REQ, Buffer.concat([
+      Buffer.from([0x04, chId, 0, 0x00]),
+      Buffer.from([0xfc, 0x00, 0x0b, 0x01, 0x35, (ne << 4) | ((start >> 8) & 0x0f), start & 0xff]),
+    ]));
+    sock.deliver(rd(0, 1), CLIENT); await tick(); // index 0 -> element count
+    expect([...sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(17)]).toEqual([0x00, 0x01]);
+    sock.clear();
+    sock.deliver(rd(1, 1), CLIENT); await tick(); // index 1 -> the address itself
+    expect([...sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(17)]).toEqual([0x11, 0x64]); // 1.1.100
   });
 
   test("a bus-monitor layer connection is REFUSED with the code that says why", async () => {
