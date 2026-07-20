@@ -351,10 +351,17 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
     // exactly: a naive includes("signed") also matches "unsignedInt", which would
     // mis-decode every unsigned value >= 128 as negative on read-back.
     const typeAttr = String(ia.Type ?? "").toLowerCase();
+    // A TypeFloat carries no SizeInBit; its width lives in the Encoding: "IEEE-754 Single"
+    // is a 4-byte IEEE float (DPT-14), "DPT 9" the 2-byte KNX float. Defaulting every
+    // encoding to 16 silently mis-encoded IEEE-754 params as DPT-9 (hardware-observed on the
+    // OpenKNX RaumController: Latitude 50.115 was written as a garbage half-float instead of
+    // 0x42487625). The codec keys IEEE vs DPT-9 off sizeInBit (32 vs 16), so the width must be
+    // right here. An explicit SizeInBit, if ever present, still wins.
+    const floatWidth = String(ia.Encoding ?? "").includes("IEEE-754 Single") ? 32 : 16;
     out.set(id, {
       id, base, kind: tag,
       // IP host address is 4 bytes; ETS leaves SizeInBit unset, so pin it to 32.
-      sizeInBit: base === "IPAddress" ? 32 : Number(ia.SizeInBit ?? (base === "Float" ? 16 : 0)),
+      sizeInBit: base === "IPAddress" ? 32 : Number(ia.SizeInBit ?? (base === "Float" ? floatWidth : 0)),
       signed: typeAttr.includes("signed") && !typeAttr.includes("unsigned"),
       enums,
       min: num(ia.minInclusive),

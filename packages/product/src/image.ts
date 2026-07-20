@@ -131,8 +131,11 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
   if (type.base === "Float") {
     const v = Number(valStr);
     if (!Number.isFinite(v)) return false;
-    if (type.sizeInBit === 32) { if (offset + 4 <= img.length) { img.writeFloatBE(v, offset); return true; } return false; } // DPT 14 (IEEE-754)
-    if (offset + 2 <= img.length) { img.writeUInt16BE(encodeDpt9(v), offset); return true; } // DPT 9
+    if (type.sizeInBit === 32) { if (offset + 4 <= img.length) { img.writeFloatBE(v, offset); return true; } return false; } // DPT 14 (IEEE-754 Single)
+    if (type.sizeInBit === 16) { if (offset + 2 <= img.length) { img.writeUInt16BE(encodeDpt9(v), offset); return true; } return false; } // DPT 9
+    // The two KNX TypeFloat encodings are exactly these (Encoding "IEEE-754 Single"/"DPT 9",
+    // sized in appconfig). Any other width is a float codec we do not have (e.g. an IEEE-754
+    // Double); refuse to own the bytes rather than silently writing a wrong-sized value.
     return false;
   }
   // Only Value (enum/restriction) and Number are integer-coded into the image. Text,
@@ -185,7 +188,8 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   }
   if (type.base === "Float") {
     if (type.sizeInBit === 32) return offset + 4 > img.length ? undefined : String(img.readFloatBE(offset));
-    return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
+    if (type.sizeInBit === 16) return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
+    return undefined; // unknown float width: no codec (mirrors encode's refusal)
   }
   if (type.base !== "Value" && type.base !== "Number") return undefined; // text/time/other
   const { sizeInBit } = type;

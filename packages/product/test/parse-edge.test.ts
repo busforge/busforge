@@ -50,6 +50,23 @@ describe("dangling references", () => {
   });
 });
 
+describe("TypeFloat width comes from Encoding, not a SizeInBit", () => {
+  const app = (enc: string) => parseAppConfig(wrap(`<ApplicationProgram Id="M-1_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-1"><Static>
+    <ParameterTypes><ParameterType Id="TF"><TypeFloat Encoding="${enc}"/></ParameterType></ParameterTypes>
+  </Static></ApplicationProgram>`));
+
+  test('an "IEEE-754 Single" TypeFloat is 32 bits (DPT-14), not the 16-bit default', () => {
+    // The XML never states a width for this type; it must be inferred from Encoding, or an
+    // IEEE-754 float lands in the image as a wrong-sized DPT-9 half-float (the OpenKNX
+    // Latitude/Longitude bug).
+    expect(app("IEEE-754 Single").types.get("TF")!.sizeInBit).toBe(32);
+  });
+
+  test('a "DPT 9" TypeFloat stays 16 bits', () => {
+    expect(app("DPT 9").types.get("TF")!.sizeInBit).toBe(16);
+  });
+});
+
 describe("segment Data as an attribute (older-catalogue form)", () => {
   test("attrOrText reads Data from an attribute, equivalent to the child element", () => {
     const asAttr = wrap(`<ApplicationProgram Id="M-1_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-1"><Static>
