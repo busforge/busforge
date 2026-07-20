@@ -115,9 +115,15 @@ carry the strongest evidence of all, a full first-time commission:
   reads back byte-identical (0 of 2816 bytes differ) and survived a power cycle
   byte-identical.
 - **OpenKNX AB-PRE (MV-07B0):** individual-address assignment plus a full download
-  (application id + parameter image + com-object table + group tables) verified
-  byte-for-byte at the KNX layer, after which the device boots its application and
-  sends its heartbeat on the bus.
+  (application id + parameter image + com-object table + group tables), after which
+  the device boots its application and sends its heartbeat on the bus. Two honest
+  caveats specific to this device: the byte-for-byte check is the device's CRC over
+  the segment against **our own** built image (`device == our image`), not a diff
+  against an ETS-produced image (`our image == ETS` is unproven, the one place an
+  image bug could still hide, see [openknx.md](openknx.md)). And unlike the AMMA
+  below, it has **not** been shown to survive a power cycle: the post-power-cut
+  module-state restore deadlocks (upstream firmware behaviour under investigation).
+  So this is a first-boot correctness result, not a survives-restart one.
 
 What this means concretely:
 
