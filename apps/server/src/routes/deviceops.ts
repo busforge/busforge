@@ -1,4 +1,4 @@
-import { parseAppConfig } from "@busforge/product";
+import { parseAppConfig, comObjectTableChanges, type AppConfig, type ModuleInstance } from "@busforge/product";
 import { getProjectConnection } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
@@ -24,6 +24,25 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
   const appXml = resolveAppXml(state, projectId, dev.appRef);
   if (!appXml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
   return { dev, conn, appXml };
+}
+
+// A parameter or link change that would alter the device's com-object table (L3) cannot be a
+// surgical flash: busforge keeps L3 from the device (see @busforge/product comobjtable.ts). The
+// honest resolution is a full download, which AUTHORS L3, so where the family can commission from
+// scratch we point the UI at that with a distinct code (the FlashDialog offers the download);
+// where it cannot, we refuse honestly. Returns an error Response to short-circuit with, or null to
+// let the surgical flash proceed. Runs pre-enqueue, like the capability guards: no snapshot, no bus.
+function comObjectTableGuard(
+  app: AppConfig | null,
+  base: Map<string, string>,
+  now: Map<string, string>,
+  modules: ModuleInstance[],
+): Response | null {
+  if (!app) return null; // no cfg: the profile layer's requireCfg refuses downstream
+  if (!comObjectTableChanges(app, base, now, modules).length) return null;
+  return classify(app).capabilities().fullDownload
+    ? err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400)
+    : err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 
 // On-bus device operations: read-back, secure identify, the two flash routes,
@@ -168,6 +187,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaParams = getDeviceParams(db, id, deviceId);
     const gaBase = getDeviceParamBase(db, id, deviceId);
     const gaModules = getDeviceModules(db, id, deviceId);
+    // If wiring these links would leave the device's kept-from-device com-object table stale,
+    // a surgical GA flash cannot fix it: promote to a full download (or refuse). Pre-enqueue.
+    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules);
+    if (gaStale) return gaStale;
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
     const result = await state.queue.enqueue(
@@ -252,6 +275,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // table was compiled for: the profile refuses the flash if ours implies a different table
     // (see @busforge/product comobjtable.ts). Read from the same pre-enqueue snapshot point.
     const flashBase = getDeviceParamBase(db, id, deviceId);
+    // If these parameters change which com-objects the device has (or their flags), a surgical
+    // parameter flash would leave its kept-from-device com-object table stale. Promote to a full
+    // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
+    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules);
+    if (flStale) return flStale;
     const keepDrift = unwrittenParamRefs(state, id, deviceId, flashParams, flashModules);
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());

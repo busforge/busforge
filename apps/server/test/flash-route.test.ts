@@ -44,10 +44,13 @@ const realAppXml = gunzipSync(readFileSync(join(
   import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0081_A-FE01-11-75D9.xml.gz",
 ))).toString("utf8");
 
-// Hand-chosen refs from the real M-0081 app program: P-4_R-4 is a memory-backed
-// Value-typed parameter (image-writable, so a verified flash adopts it into the
-// baseline), O-0_R-63 is com-object 0 in the default view (so a GA flash covers it).
-const PARAM_REF = "M-0081_A-FE01-11-75D9_P-4_R-4";
+// Hand-chosen refs from the real M-0081 app program: P-6_R-6 is a memory-backed
+// Value-typed parameter that is image-writable AND com-object-table-neutral, so a
+// verified flash both adopts it into the baseline and passes the com-object staleness
+// guard (a param like P-4_R-4, which activates com-object 8, would be promoted to a full
+// download instead — see the promote-to-download suite below). O-0_R-63 is com-object 0 in
+// the default view (so a GA flash covers it).
+const PARAM_REF = "M-0081_A-FE01-11-75D9_P-6_R-6";
 const LINK_KEY = "O-0_R-63";
 
 const tmps: string[] = [];
@@ -59,16 +62,15 @@ function freshState(): AppState {
 }
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 
-// Import the demo project, swap its device's application program for the real M-0081
-// (MV-0705, flashParams+flashLinks capable), and point the project at a saved connection
-// so the route passes isConnectionReady. Same setup pattern as server.test.ts.
-async function m0081Project(state: AppState): Promise<{ projectId: string; deviceId: string }> {
+// Import the demo project, swap its device's application program for `xml`, and point the project
+// at a saved connection so the route passes isConnectionReady. Same setup pattern as server.test.ts.
+async function projectWithApp(state: AppState, xml: string): Promise<{ projectId: string; deviceId: string }> {
   const form = new FormData();
   form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
   form.set("password", "tester12");
   const imp = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
   const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
-  state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml, "M-TEST_A-1"]);
+  state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, "M-TEST_A-1"]);
   const conn = (await (await handleApi(req("/api/connections", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }),
@@ -78,6 +80,8 @@ async function m0081Project(state: AppState): Promise<{ projectId: string; devic
   }), state);
   return { projectId: imp.id, deviceId: proj.devices[0].id };
 }
+// The real M-0081 (MV-0705, flashParams+flashLinks capable) is the default device for these tests.
+const m0081Project = (state: AppState) => projectWithApp(state, realAppXml);
 
 const flashed = (verified: boolean): FlashResult =>
   ({ kind: "flashed", mask: "MV-0705", imageBytes: 1, diffBytes: 1, verified, backup: "x" });
@@ -177,7 +181,8 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
     // skips it (active.get(ref) === undefined) and the flash never writes it. Its type is
     // perfectly image-writable, so the old unflashableParamRefs (type-only) would have
     // adopted it into the baseline, fabricating "in sync" for a value that never reached
-    // the device. PARAM_REF (P-4_R-4) is visible and genuinely written.
+    // the device. PARAM_REF (P-6_R-6) is visible, genuinely written, and com-object-table-
+    // neutral (so the promote-to-download guard does not fire on it).
     const HIDDEN_REF = "M-0081_A-FE01-11-75D9_P-16_R-16";
     setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
     setDeviceParam(state.db, projectId, deviceId, HIDDEN_REF, "1");
@@ -227,5 +232,60 @@ describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
     expect(((await res.json()) as any).verified).toBe(true);
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(false);
+  });
+});
+
+// A parameter (or link) edit that alters the device's com-object table (L3) cannot be a surgical
+// flash: the route refuses BEFORE any bus write. Where the family can commission from scratch it
+// points the UI at a full download (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD, which the FlashDialog turns
+// into a download button); where it cannot, it refuses honestly (COM_OBJECT_TABLE_STALE). The
+// surgical-flash orchestrators must never be reached in either case.
+describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full download (or refused)", () => {
+  const readReal = (f: string) => gunzipSync(readFileSync(join(
+    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f,
+  ))).toString("utf8");
+  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: fullDownload capable
+  const m008e = readReal("M-008E_A-7079-10-9C41.xml.gz"); // MV-0705: flashParams but NOT fullDownload
+  const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30"; // System B: activates a com-object
+  const TABLE_CHANGING_7 = "M-008E_A-7079-10-9C41_P-11_R-11"; // MV-0705: activates com-objects 53, 54, …
+
+  test("param flash, full-download-capable family (System B) -> USE_DOWNLOAD, and the surgical flash never runs", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m0162);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+  });
+
+  test("param flash, family that cannot full-download (MV-0705) -> plain COM_OBJECT_TABLE_STALE", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m008e);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_7, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE");
+  });
+
+  test("the GA flash is gated the same way: an L3-changing param promotes it too", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m0162);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
+    gaFlashImpl = async () => { throw new Error("the surgical GA flash must not be reached"); };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+  });
+
+  test("an unchanged com-object table still reaches the surgical flash (the guard does not over-fire)", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m0162);
+    let reached = false;
+    paramFlashImpl = async () => { reached = true; return flashed(true); };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(200);
+    expect(reached).toBe(true);
   });
 });

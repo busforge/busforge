@@ -110,6 +110,14 @@ authors the com-object table (L3) that the surgical parameter flash keeps from t
 implemented and byte-verified on real hardware; the mechanics, and the several device quirks that
 had to be learned to make it survive, are documented in [openknx.md](openknx.md).
 
+The full download is also the **resolution when a surgical flash cannot proceed**. A parameter or
+group-address edit that would change L3 (a channel toggled, a flag flipped) leaves the kept-from-device
+table stale, so the surgical flash refuses it (`COM_OBJECT_TABLE_STALE`). Where the family can
+commission from scratch, that refusal now carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`)
+and the UI offers the full download in place of the surgical flash, run on the device's existing
+address, no programming-mode press or address reassignment. So the same edit that ETS would apply by
+re-downloading the whole device is applied here the same way, instead of being turned away.
+
 **The device's application starts.** It was demonstrated on 2026-07-12: an AB-PRE, commissioned by
 Busforge alone, booted its application, read its sensors and sent its heartbeat on the group address
 it had been given. What had been missing was the closing **`A_Restart`**, the only trigger this stack

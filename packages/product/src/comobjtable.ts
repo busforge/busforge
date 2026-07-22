@@ -82,18 +82,33 @@ export function diffComObjectTables(was: Map<number, CfgComObjImage>, now: Map<n
   return changes.sort((a, b) => a.number - b.number);
 }
 
+// The com-object table changes a reconfiguration implies, relative to the programmed baseline:
+// empty iff the device's kept-from-device L3 stays valid for the new parameters. Both the flash
+// gate below (assertComObjectTableStable) and the route's promote-to-full-download decision are
+// built on this one predicate, so they can never disagree about what "stale" means.
+export function comObjectTableChanges(
+  app: AppConfig,
+  baseParams: Map<string, string>,
+  newParams: Map<string, string>,
+  instances: ModuleInstance[] = [],
+): ComObjTableChange[] {
+  return diffComObjectTables(comObjectTable(app, baseParams, instances), comObjectTable(app, newParams, instances));
+}
+
 // Refuse a write whose configuration implies a different com-object table than the one the device
 // was last programmed with. Runs before any bus write, on BOTH the parameter flash and the group-
 // address flash: the parameter flash would leave the stale table behind its new parameters, and
 // the GA flash would point associations at object numbers that table does not configure. Same
-// staleness, same refusal.
+// staleness, same refusal. This is the profile-layer last line: the route promotes the common
+// case to a full download before it reaches here (see deviceops.ts), so a caller that reaches this
+// throw is either a family that cannot full-download or a direct product-layer/test caller.
 export function assertComObjectTableStable(
   app: AppConfig,
   baseParams: Map<string, string>,
   newParams: Map<string, string>,
   instances: ModuleInstance[] = [],
 ): void {
-  const changes = diffComObjectTables(comObjectTable(app, baseParams, instances), comObjectTable(app, newParams, instances));
+  const changes = comObjectTableChanges(app, baseParams, newParams, instances);
   if (!changes.length) return;
   const shown = changes.slice(0, 5).map((c) => `#${c.number} (${c.fields.join(", ")})`).join(", ");
   const more = changes.length > 5 ? `, and ${changes.length - 5} more` : "";
