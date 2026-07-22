@@ -351,7 +351,7 @@ const en = {
     readbackUnsupportedParams: "busforge cannot read this device's parameters back yet. The parameter values shown come from the import and were not confirmed against the device.",
     readbackUnsupportedLinks: "busforge cannot read this device's group-address links back yet. The links shown come from the import and were not confirmed against the device.",
     readbackUnverifiableTextColor: "Text and colour parameters cannot be read back from the device, so their values are never verified against it (they also cannot be flashed).",
-    readbackComObjectFlags: "Communication-object flags (read/write/transmit/update) and the set of active objects are not programmed or verified yet; only parameter values and group-address links are. A change that would alter them is refused rather than flashed, so the device cannot end up behaving differently from what is shown here.",
+    readbackComObjectFlags: "Communication-object flags (read/write/transmit/update) and the set of active objects are kept from the device by a surgical flash and not covered by read-back. A change that would alter them needs a full download, which authors the com-object table: it is offered where the device family supports it, and refused otherwise, so the device never ends up behaving differently from what is shown here.",
     unsupportedType: "{{type}} not supported yet",
     unsupportedElement: "Not supported yet: {{tag}} (this section is hidden until busforge can render it)",
     buttonNotSupported: "This button runs the manufacturer's ETS script action \"{{handler}}\". busforge has no ETS script host, so it cannot run it.",
