@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import {
-  buildComObjectTable, comObjectEntry, objectSizeInBits, programIdStamp,
+  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
   parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
@@ -142,6 +142,70 @@ describe("the whole table", () => {
 
   test("a configuration with no com-objects is refused, not written as an empty table", () => {
     expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/no communication objects/i);
+  });
+});
+
+// The property-mapped System 7 (MV-0705) table is NOT rebuilt from scratch like System B: the app
+// ships the manufacturer's complete static L3 as the <ComObjectTable> segment's <Data>, and the
+// full download overlays only the dynamic config byte (and, for configured objects, the type). The
+// entry is 4 bytes: [dataPtr: u16 BE][config: u8][type: u8], one per object 0-based, after a 3-byte
+// [count: u8][ramEnd: u16 BE] header. config = prio(bits0-1) | 0x04 linked | 0x08 read | 0x10 write
+// | 0x40 transmit | 0x80 unconfigured. Byte-verified on the MDT BE-02001.02 (docs/mv0705-full-download.md).
+describe("the property-mapped (MV-0705) com-object table", () => {
+  // count=2 -> entries for objects 0 and 1. obj0 carries a stale "linked" bit the author must clear;
+  // obj1 is the one the configuration reaches.
+  const template = Buffer.from([
+    0x02, 0x12, 0x34,       // count=2, ramEnd=0x1234
+    0xaa, 0xbb, 0x80, 0x00, // obj0: dataPtr 0xAABB, config 0x80 (unconfigured), type 0
+    0xcc, 0xdd, 0x84, 0x00, // obj1: dataPtr 0xCCDD, config 0x84 (unconfigured + STALE linked), type 0
+  ]);
+
+  test("a configured object gets its dynamic config + type; the data pointer is left untouched", () => {
+    const active = new Map([[1, obj({ number: 1, objectSize: "1 Byte", priority: "Low",
+      flags: { read: true, write: false, comm: true, transmit: true, update: false, readOnInit: false } })]]);
+    const out = buildComObjectTableMv0705(template, active, new Set([1]));
+    expect(out.subarray(0, 3)).toEqual(Buffer.from([0x02, 0x12, 0x34])); // header preserved
+    expect(out.subarray(7, 9)).toEqual(Buffer.from([0xcc, 0xdd]));        // data pointer untouched
+    // config = Low(0b11) | linked(0x04) | read(0x08) | transmit(0x40) = 0x4F; 0x80 dropped; type = 1 Byte = 7.
+    expect(out[9]).toBe(0x4f);
+    expect(out[10]).toBe(0x07);
+  });
+
+  test("an unconfigured object keeps its template entry verbatim, minus any stale linked bit", () => {
+    // obj0 is not in `active`: its data pointer, type and the 0x80 bit stay, but the 0x04 it must
+    // never keep (the template's stale link) is cleared. obj1 here is unconfigured too (config 0x84 -> 0x80).
+    const out = buildComObjectTableMv0705(template, new Map(), new Set());
+    expect(out.subarray(3, 7)).toEqual(Buffer.from([0xaa, 0xbb, 0x80, 0x00]));  // obj0: already unlinked
+    expect(out.subarray(7, 11)).toEqual(Buffer.from([0xcc, 0xdd, 0x80, 0x00])); // obj1: stale 0x04 cleared
+  });
+
+  test("a template too short even for the header is REFUSED, never authored blind", () => {
+    expect(() => buildComObjectTableMv0705(Buffer.from([0x01, 0x00]), new Map(), new Set()))
+      .toThrow(/template.*too short|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
+  });
+
+  test("a template whose declared count overruns the buffer is REFUSED, not truncated", () => {
+    // count=5 but only the 3-byte header is present: the first entry already runs off the end.
+    expect(() => buildComObjectTableMv0705(Buffer.from([0x05, 0x00, 0x00]), new Map(), new Set()))
+      .toThrow(ProductError);
+  });
+
+  test("a configured object whose size Busforge cannot express is REFUSED, never guessed", () => {
+    const active = new Map([[0, obj({ number: 0, objectSize: "3 Cubits" })]]);
+    expect(() => buildComObjectTableMv0705(template, active, new Set()))
+      .toThrow(/cannot express|COM_OBJECT_SIZE_UNKNOWN/i);
+  });
+
+  test("an object numbered beyond the template's entry count is REFUSED, not silently dropped", () => {
+    // The template declares 2 entries (objects 0 and 1); a config that activates object 2 (or links it)
+    // has no slot in this L3, yet the association table would still reference it -> the device reads past
+    // its L3 array. Refuse, like System B's declared-count guard, instead of dropping it silently.
+    const active = new Map([[2, obj({ number: 2, objectSize: "1 Bit" })]]);
+    expect(() => buildComObjectTableMv0705(template, active, new Set()))
+      .toThrow(/beyond the 2-entry|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
+    // and the same for a link (linked set) that points past the template
+    expect(() => buildComObjectTableMv0705(template, new Map(), new Set([2])))
+      .toThrow(/beyond the 2-entry|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
   });
 });
 

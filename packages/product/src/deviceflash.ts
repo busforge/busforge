@@ -2,6 +2,8 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
+import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
+import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 import type { LoadPlan } from "@busforge/knx";
 
@@ -203,7 +205,7 @@ export interface AbsFullSegment {
   id: string;
   address: number;
   lsm: number;
-  source: "addrTable" | "assocTable" | "params" | "static";
+  source: "addrTable" | "assocTable" | "comObjTable" | "params" | "static";
   image: Buffer;      // the bytes written to this segment
   verify: boolean[];  // which of `image` a post-restart read-back may assert (excludes device-stamped bytes)
 }
@@ -219,8 +221,13 @@ export function planAbsoluteFullDownload(
   links: ComObjectLink[],
   ownIa: number,
   procedure: LoadProcedures,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean } = {},
+  // `comObjectTable` is supplied only for property-mapped System 7 (MV-0705): the active com-objects
+  // (visibility-gated) and the set of linked object numbers, so the planner can AUTHOR L3 into the
+  // <ComObjectTable> segment instead of writing the manufacturer's static default. Absent (memory-
+  // mapped MV-0700/0701) => L3 is the static <Data>, exactly as the hardware-proven path did.
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } } = {},
 ): AbsFullDownloadPlan {
+  const propertyMapped = opts.comObjectTable !== undefined;
   // The two group tables live in the segments the app names; every other declared segment is the
   // application image (params overlaid on <Data>, or plain <Data>). If the app names a table
   // segment that does not exist, refuse: silently letting it fall through to the static-<Data>
@@ -234,12 +241,18 @@ export function planAbsoluteFullDownload(
   };
   const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
   const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
+  // Only property-mapped devices author L3; memory-mapped ones keep writing the static <Data>.
+  const comObjTableAddr = propertyMapped ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
   const manufacturer = Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
 
-  const imageFor = (address: number, size: number): Pick<AbsFullSegment, "image" | "verify" | "source"> => {
+  // Returns the bytes to write to a segment, or null to declare the segment in the LSM bracket but
+  // write NOTHING to it (a property-mapped device fills its own computed segments, e.g. the RAM/
+  // system segment AS-0700-class the app declares with no <Data>; ETS writes 0 bytes there and the
+  // firmware populates it during LoadCompleted).
+  const imageFor = (address: number, size: number): Pick<AbsFullSegment, "image" | "verify" | "source"> | null => {
     // The built table must fit the segment the load procedure reserves for it; overrunning would
     // write into the adjacent segment (the association/com-object table) with the per-segment
     // read-back none the wiser. Refuse, as the surgical GA flash does (GA_TABLE_TOO_LARGE).
@@ -251,10 +264,25 @@ export function planAbsoluteFullDownload(
       if (assoc.length > size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${size} B; remove links`);
       return { image: assoc, verify: new Array<boolean>(assoc.length).fill(true), source: "assocTable" };
     }
+    // Property-mapped L3: overlay the configured objects' flags onto the manufacturer's static
+    // template (the segment's <Data>). Memory-mapped devices never reach here (comObjTableAddr is
+    // undefined for them) and keep writing the static image below.
+    if (comObjTableAddr !== undefined && address === comObjTableAddr) {
+      const seg = segByAddr.get(address);
+      if (!seg || seg.data.length === 0) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the com-object table segment at ${address} carries no <Data> template; refusing to author L3 blind`);
+      const image = buildComObjectTableMv0705(seg.data, opts.comObjectTable!.active, opts.comObjectTable!.linked);
+      if (image.length > size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${image.length} B but its segment reserves only ${size} B`);
+      return { image, verify: new Array<boolean>(image.length).fill(true), source: "comObjTable" };
+    }
     const pt = paramTargets.get(address);
     if (pt) return { image: pt.bytes, verify: pt.verify, source: "params" };
     const seg = segByAddr.get(address);
     if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${address} the application does not define; refusing to write an image we cannot build`);
+    // A segment the app declares with no static image: on a property-mapped device this is a
+    // computed/RAM segment the firmware fills itself (ETS writes nothing to it), so declare it but
+    // do not write. On a memory-mapped device the historical behaviour (write the erased-flash 0xFF)
+    // is preserved, since that path is hardware-proven.
+    if (propertyMapped && seg.data.length === 0) return null;
     // A pure static segment (com-object table / code): its <Data> laid over the erased-flash state.
     const image = Buffer.alloc(size, 0xff);
     seg.data.copy(image);
@@ -278,11 +306,15 @@ export function planAbsoluteFullDownload(
       case "LdCtrlAbsSegment": {
         const l = need(lsmIdx(s), s.verb, "LsmIdx"), a = need(stepAddress(s), s.verb, "Address"), sz = need(stepSize(s), s.verb, "Size");
         plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s) });
-        const { image, verify, source } = imageFor(a, sz);
-        // The segment data write is implicit in the declaration on these devices; write it now.
-        plan.push({ op: "writeMem", address: a, bytes: image });
-        segments.push({ id: segByAddr.get(a)?.id ?? `@${a}`, address: a, lsm: l, source, image, verify });
-        imageBytes += image.length;
+        const built = imageFor(a, sz);
+        // A null image means the segment is declared but the device fills it itself: no memory write,
+        // nothing to read back (so it is not added to `segments`).
+        if (built) {
+          // The segment data write is implicit in the declaration on these devices; write it now.
+          plan.push({ op: "writeMem", address: a, bytes: built.image });
+          segments.push({ id: segByAddr.get(a)?.id ?? `@${a}`, address: a, lsm: l, source: built.source, image: built.image, verify: built.verify });
+          imageBytes += built.image.length;
+        }
         break;
       }
       case "LdCtrlTaskSegment":

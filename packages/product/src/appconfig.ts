@@ -64,7 +64,11 @@ export interface CfgAbsSegment { id: string; address: number; size: number; data
 // (<AddressTable CodeSegment> / <AssociationTable CodeSegment>). A full download needs them to
 // know which of the load procedure's declared segments carry the built group tables (vs the
 // static application image). Absent => the app does not declare them (older/relative devices).
-export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; addressSegment?: string; associationSegment?: string; }
+// `comObjectSegment` is the AbsoluteSegment id the com-object table (L3) lives in
+// (<ComObjectTable CodeSegment>). A property-mapped System 7 (MV-0705) full download authors L3 into
+// that segment (see comobjbuild.ts buildComObjectTableMv0705); without it the planner would write the
+// manufacturer's static default L3, which does not reflect the configured objects' flags.
+export interface GroupTableCapacity { addressMaxEntries?: number; associationMaxEntries?: number; addressSegment?: string; associationSegment?: string; comObjectSegment?: string; }
 export interface ComObjFlags { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean; }
 // A com-object's telegram priority, which the com-object table (L3) encodes in the low two bits of
 // its flags byte. These are the values the ETS product schema uses (ComObjectPriority_t), NOT the
@@ -452,7 +456,7 @@ function parseAbsoluteSegments(staticKids: ONode[]): CfgAbsSegment[] {
 function parseGroupTables(staticKids: ONode[]): GroupTableCapacity {
   const num = (tag: string) => { const n = firstByTag(staticKids, tag); const v = n ? attrsOf(n).MaxEntries : undefined; return v !== undefined ? Number(v) : undefined; };
   const seg = (tag: string) => { const n = firstByTag(staticKids, tag); const v = n ? attrsOf(n).CodeSegment : undefined; return v !== undefined ? String(v) : undefined; };
-  return { addressMaxEntries: num("AddressTable"), associationMaxEntries: num("AssociationTable"), addressSegment: seg("AddressTable"), associationSegment: seg("AssociationTable") };
+  return { addressMaxEntries: num("AddressTable"), associationMaxEntries: num("AssociationTable"), addressSegment: seg("AddressTable"), associationSegment: seg("AssociationTable"), comObjectSegment: seg("ComObjectTable") };
 }
 
 function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {

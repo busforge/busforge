@@ -639,13 +639,17 @@ export class System7Profile extends DeviceProfile {
     // and GA flash are hardware-proven on TP (M-0081); the RF/IP variants share the codec
     // but have not been exercised on that medium (see the device-support.md medium caveat).
     //
-    // Full download is implemented for the MEMORY-MAPPED System 7 masks (MV-0700/0701): their
-    // load controls (0x0104 / 46825+lsm) are hardware-proven on the ABB US/U 4.2, and the app
-    // ships every segment's <Data> so the whole image (com-object table + code) can be authored.
-    // The property-mapped MV-0705/2705/5705 variants keep their com-object table from the device
-    // (full download not implemented there), so they stay false.
-    const canFull = isMemoryMappedLsm(this.mask) && !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
-      this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined;
+    // Full download needs the group-table segments and, for the memory-mapped System 7 masks
+    // (MV-0700/0701, hardware-proven on the ABB US/U 4.2), nothing more: the app ships every
+    // segment's <Data> so the whole image is authored from it. The property-mapped MV-0705 variants
+    // do NOT ship a configured com-object table; downloadFull authors L3 into the <ComObjectTable
+    // CodeSegment>, so a full download is possible exactly when the app declares that segment
+    // (buildComObjectTableMv0705). Byte-verified against two ETS captures of the MDT BE-02001.02 and
+    // live-hardware certified on it (1.1.56): full download verified=true, and the device answers
+    // group communication on a flashed link, unchanged across a bus power-cycle (docs/mv0705-full-download.md).
+    const canFull = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
+      this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
+      (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
     return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull };
   }
 
@@ -796,9 +800,16 @@ export class System7Profile extends DeviceProfile {
   // only proof, so a "flashed" result carries a real verified flag.
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("full download");
-    if (!isMemoryMappedLsm(mask)) {
+    // Property-mapped System 7 (MV-0705) authors its com-object table (L3); memory-mapped MV-0700/0701
+    // writes L3 as the manufacturer's static <Data>. The two paths share planAbsoluteFullDownload; the
+    // difference is whether `comObjectTable` is supplied (see deviceflash.ts). ETS puts these devices
+    // into verify mode (DeviceControl obj0/PID14 |= VERIFY_MODE) so the device echoes each write; we do
+    // not need it — planAbsoluteFullDownload's writeMem reads every write back instead, the mechanism
+    // the MV-0705 par flash is hardware-proven on for this device family (docs/mv0705-full-download.md).
+    const propertyMapped = !isMemoryMappedLsm(mask);
+    if (propertyMapped && !cfg.groupTables.comObjectSegment) {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
-        `full download for property-mapped System 7 devices (mask ${mask}) is not implemented; only the memory-mapped BIM M112 masks (MV-0700/0701) are supported`);
+        `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
     const proc = parseLoadProcedures(ctx.appXml);
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
@@ -817,11 +828,28 @@ export class System7Profile extends DeviceProfile {
     }
 
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    // A link whose com-object this configuration does not activate would build an association to an
+    // object the device ignores: a group address the UI calls programmed and the device never answers.
+    // Refuse, exactly as the surgical GA flash and the System B full download do. Without this the
+    // MV-0705 L3 author clears the (inactive) object's linked bit while the association is still emitted.
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    // The com-object table is authored only for property-mapped devices: the visibility-gated active
+    // objects (imageComObjects) overlaid on the segment's static template, with the linked set from
+    // the group-address links (see comobjbuild.ts buildComObjectTableMv0705 and its two-capture proof).
+    const comObjectTable = propertyMapped
+      ? { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) }
+      : undefined;
     // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
     // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
     // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
     // the configuration is really there.
-    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false });
+    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, comObjectTable });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the

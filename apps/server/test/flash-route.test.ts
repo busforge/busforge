@@ -245,9 +245,34 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f,
   ))).toString("utf8");
   const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: fullDownload capable
-  const m008e = readReal("M-008E_A-7079-10-9C41.xml.gz"); // MV-0705: flashParams but NOT fullDownload
   const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30"; // System B: activates a com-object
-  const TABLE_CHANGING_7 = "M-008E_A-7079-10-9C41_P-11_R-11"; // MV-0705: activates com-objects 53, 54, …
+
+  // A device that can flash but CANNOT full-download: System B with NO parameter segment (no LSM4
+  // RelativeSegment -> hasParamSegment false -> fullDownload false, flashParams still true). Its P-1
+  // is a project-only param (no <Memory>) that activates com-object 5 via a choose, so it changes the
+  // com-object table without a segment to write. No corpus fixture is flashable-but-not-full-
+  // downloadable any more (un-gating MV-0705 made every flashable real device full-download-capable),
+  // so this branch is exercised on a synthetic app. Modelled on the M-00FA app in comobjbuild.test.ts.
+  const noParamSegApp = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00FA"><ApplicationPrograms>
+<ApplicationProgram Id="M-00FA_A-A012-55-0000" ApplicationNumber="40978" ApplicationVersion="85" MaskVersion="MV-07B0" DefaultLanguage="de-DE" Name="NoParamSeg">
+<Static>
+<ParameterTypes><ParameterType Id="M-00FA_A-A012-55-0000_PT-1"><TypeRestriction Base="Value" SizeInBit="1"><Enumeration Text="nein" Value="0"/><Enumeration Text="ja" Value="1"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="M-00FA_A-A012-55-0000_P-1" ParameterType="M-00FA_A-A012-55-0000_PT-1" Text="Kanal aktiv" Value="0"/></Parameters>
+<ParameterRefs><ParameterRef Id="M-00FA_A-A012-55-0000_P-1_R-1" RefId="M-00FA_A-A012-55-0000_P-1"/></ParameterRefs>
+<ComObjectTable>
+<ComObject Id="M-00FA_A-A012-55-0000_O-1" Number="1" Name="Heartbeat" Text="In Betrieb" ObjectSize="1 Byte" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+<ComObject Id="M-00FA_A-A012-55-0000_O-5" Number="5" Name="Presence" Text="Präsenz" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+</ComObjectTable>
+<ComObjectRefs><ComObjectRef Id="M-00FA_A-A012-55-0000_O-1_R-1" RefId="M-00FA_A-A012-55-0000_O-1"/><ComObjectRef Id="M-00FA_A-A012-55-0000_O-5_R-5" RefId="M-00FA_A-A012-55-0000_O-5"/></ComObjectRefs>
+</Static>
+<Dynamic><ParameterBlock Id="M-00FA_A-A012-55-0000_PB-1" Name="Basis" Text="Basis">
+<ParameterRefRef RefId="M-00FA_A-A012-55-0000_P-1_R-1"/>
+<ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-1_R-1"/>
+<choose ParamRefId="M-00FA_A-A012-55-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-5_R-5"/></when></choose>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const TABLE_CHANGING_NOSEG = "M-00FA_A-A012-55-0000_P-1_R-1"; // activates com-object 5
 
   test("param flash, full-download-capable family (System B) -> USE_DOWNLOAD, and the surgical flash never runs", async () => {
     const state = freshState();
@@ -259,10 +284,10 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
   });
 
-  test("param flash, family that cannot full-download (MV-0705) -> plain COM_OBJECT_TABLE_STALE", async () => {
+  test("param flash, family that cannot full-download -> plain COM_OBJECT_TABLE_STALE (no download offered)", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await projectWithApp(state, m008e);
-    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_7, "1");
+    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_NOSEG, "1");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
     expect(res.status).toBe(400);

@@ -79,13 +79,15 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
 describe("device profile capabilities (read vs flash, per memory model)", () => {
   // Read and write are independent capabilities. MV-0705 supports both (absolute params +
   // System-7 group tables); GA flash is hardware-verified on TP. System B does both too.
-  test("System 7 (MV-0705) absolute-segment device: reads and flashes both aspects", () => {
+  test("System 7 (MV-0705) absolute-segment device: reads, flashes, AND full-downloads", () => {
     const cfg = realApp("M-0083_A-00B4-32-3919.xml.gz"); // BE-06001.02, mask MV-0705
     expect(cfg.mask).toBe("MV-0705");
+    expect(cfg.groupTables.comObjectSegment).toBeDefined(); // it declares where L3 lives, so L3 can be authored
     const caps = classify(cfg).capabilities();
-    // fullDownload false: commissioning an absolute-segment device from nothing has never been
-    // exercised, and a memory model that has not been proven must refuse rather than try.
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: false });
+    // fullDownload true: property-mapped System 7 authors its com-object table into the declared
+    // <ComObjectTable CodeSegment> (buildComObjectTableMv0705), live-hardware certified on the sibling
+    // MDT BE-02001.02 (1.1.56). A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true });
   });
 
   test("System B device: read-back and GA flash both supported", () => {
