@@ -21,7 +21,9 @@ class FakeSocket implements TunnelSocket {
   private n = 0;
 
   bind(_port: number, cb: () => void) { cb(); }
-  on(_ev: "message", cb: (m: Buffer) => void) { this.handler = cb; }
+  on(ev: "message", cb: (m: Buffer) => void): void;
+  on(ev: "error", cb: (e: Error) => void): void;
+  on(ev: "message" | "error", cb: ((m: Buffer) => void) | ((e: Error) => void)) { if (ev === "message") this.handler = cb as (m: Buffer) => void; }
   send(buf: Buffer, _port: number, _ip: string, cb: (err: Error | null) => void) {
     // The real thing throws here once closed. Reproduce that, or the test proves nothing.
     if (this.closedAt !== null) throw new TypeError("null is not an object (evaluating 'kStateSymbol')");

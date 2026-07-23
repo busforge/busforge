@@ -171,6 +171,18 @@ management works at all on a busy live bus:
 5. **Authorize.** Devices with an access level set need `A_Authorize_Request` (key
    `0xFFFFFFFF` for default/free access) before the load procedure. Devices with no
    key configured accept unauthenticated management.
+6. **Handle the UDP socket's asynchronous error channel, and know it is
+   platform-dependent.** A `CONNECT_REQUEST` sent to a gateway IP with nothing
+   listening draws an ICMP port-unreachable. On **Linux** the kernel delivers that
+   back as an `ECONNREFUSED` on the datagram socket's `error` event; with no listener
+   Node/Bun rethrows it as an uncaught exception that crashes the process. On
+   **macOS** the same error is never surfaced, so the connect merely times out.
+   Result: a dead gateway "works" (times out cleanly) on a Mac dev machine and
+   **crashes on a Linux CI runner** for the identical code. The UDP `connect()` must
+   attach an `error` handler and route it like the TCP path does (a coded
+   `TUNNEL_CONNECT_FAILED` while connecting, an `onClosed` once the tunnel is up).
+   The `send()` callback is not enough: that ICMP error arrives on a later receive,
+   not in the send completion.
 
 ---
 

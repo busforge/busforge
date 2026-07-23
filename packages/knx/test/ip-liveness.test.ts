@@ -53,7 +53,8 @@ async function connect(): Promise<Rig> {
   const clock = { t: 1_000_000 };
   const clientSock: TunnelSocket = {
     bind: (_p, cb) => cb(),
-    on: (_ev, cb) => { wire.clientMsg = cb; },
+    // on() is overloaded (message | error); this liveness test only drives the message channel.
+    on: (ev, cb) => { if (ev === "message") wire.clientMsg = cb as (m: Buffer) => void; },
     send: (buf, _port, _ip, cb) => { wire.fromClient(buf); cb(null); },
     close: () => { wire.clientMsg = null; },
   };

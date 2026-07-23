@@ -18,6 +18,11 @@ const CONNECTIONSTATE_TRIES = 3;
 export interface TunnelSocket {
   bind(port: number, cb: () => void): void;
   on(ev: "message", cb: (m: Buffer) => void): void;
+  // The socket's asynchronous error channel. On Linux a UDP datagram sent to a port with nothing
+  // listening comes back as an ECONNREFUSED here (the kernel surfaces the ICMP port-unreachable);
+  // without a listener Node/Bun rethrows it as an uncaught exception. dgram.Socket already overloads
+  // on() for this, so the real socket satisfies it for free.
+  on(ev: "error", cb: (e: Error) => void): void;
   // The callback carries node's send error (null on success). It must not be dropped:
   // a UDP send can fail on the local host before anything reaches the wire.
   send(buf: Buffer, port: number, ip: string, cb: (err: Error | null) => void): void;
@@ -146,6 +151,18 @@ export class KnxIpTunnel implements KnxTransport {
         console.error(`KNX/IP: dropped a datagram: ${e instanceof Error ? e.message : "unknown error"}`);
       });
     });
+    // A UDP socket has an asynchronous error channel that MUST be handled or Node/Bun rethrows it as
+    // an uncaught exception. The case that bites: on Linux (a CI container, or any Linux host) a
+    // CONNECT_REQ sent to a gateway IP with nothing listening draws an ICMP port-unreachable, which
+    // the kernel delivers back as an ECONNREFUSED on the next receive. macOS never surfaces it, so a
+    // dead gateway there just times out — which is why this stayed hidden until it ran on Linux. Route
+    // it like any bus-connect fault: while connecting, fail the connect at once with a coded error;
+    // once the tunnel is up, report it as a closure rather than crash the process.
+    this.sock.on("error", (e) => {
+      if (this.closed) return; // a late error during teardown is expected, not a failure
+      if (this.connectResWaiter) this.connectResWaiter.reject(new KnxError("TUNNEL_CONNECT_FAILED", `connect to ${this.ifaceIp}:${this.port} failed: ${e.message}`));
+      else this.onClosed?.(`the bus connection reported an error: ${e.message}`);
+    });
 
     // Advertise a NAT-mode HPAI (0.0.0.0:0) so the gateway replies to the
     // observed packet source instead of an address we name. Required behind NAT
@@ -273,14 +290,17 @@ export class KnxIpTunnel implements KnxTransport {
     this.onClosed?.(reason);
   }
 
-  private connectResWaiter: { match: (m: Buffer) => boolean; resolve: (m: Buffer) => void } | null = null;
+  private connectResWaiter: { match: (m: Buffer) => boolean; resolve: (m: Buffer) => void; reject: (e: Error) => void } | null = null;
   // Only used for the CONNECT_RES waiter: a timeout here means the gateway never answered
   // the connect request (offline, wrong IP, or blocked), the most common bus-connect failure
-  // and fully user-actionable, so it gets a coded error like the reject/ack-timeout paths.
+  // and fully user-actionable, so it gets a coded error like the reject/ack-timeout paths. `reject`
+  // lets a hard socket error (a Linux ECONNREFUSED) fail the connect at once instead of waiting the
+  // full timeout out into a featureless TUNNEL_CONNECT_TIMEOUT.
   private once(match: (m: Buffer) => boolean, ms: number, what: string) {
     return new Promise<Buffer>((resolve, reject) => {
-      this.connectResWaiter = { match, resolve: (m) => { this.connectResWaiter = null; resolve(m); } };
-      setTimeout(() => reject(new KnxError("TUNNEL_CONNECT_TIMEOUT", `${what} timeout`)), ms);
+      const timer = setTimeout(() => { this.connectResWaiter = null; reject(new KnxError("TUNNEL_CONNECT_TIMEOUT", `${what} timeout`)); }, ms);
+      const clear = () => { clearTimeout(timer); this.connectResWaiter = null; };
+      this.connectResWaiter = { match, resolve: (m) => { clear(); resolve(m); }, reject: (e) => { clear(); reject(e); } };
     });
   }
 

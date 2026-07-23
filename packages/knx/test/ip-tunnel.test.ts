@@ -13,8 +13,14 @@ class FakeUdpSocket implements TunnelSocket {
   sent: Buffer[] = [];
   closed = false;
   private msgCb: ((m: Buffer) => void) | null = null;
+  private errCb: ((e: Error) => void) | null = null;
   bind(_port: number, cb: () => void): void { cb(); }
-  on(_ev: "message", cb: (m: Buffer) => void): void { this.msgCb = cb; }
+  on(ev: "message", cb: (m: Buffer) => void): void;
+  on(ev: "error", cb: (e: Error) => void): void;
+  on(ev: "message" | "error", cb: ((m: Buffer) => void) | ((e: Error) => void)): void {
+    if (ev === "message") this.msgCb = cb as (m: Buffer) => void; else this.errCb = cb as (e: Error) => void;
+  }
+  injectError(e: Error): void { this.errCb!(e); }
   send(buf: Buffer, _port: number, _ip: string, cb: (err: Error | null) => void): void {
     this.sent.push(Buffer.from(buf));
     cb(null);
@@ -303,5 +309,34 @@ describe("KnxIpTunnel", () => {
     expect(closed.length).toBe(1);
     expect(closed[0]!).toContain("DISCONNECT_REQUEST");
     expect(sock.closed).toBe(true);
+  });
+
+  test("a socket error mid-connect fails fast with TUNNEL_CONNECT_FAILED, not an uncaught exception", async () => {
+    // On Linux a CONNECT_REQ to a gateway IP with nothing listening draws an ICMP port-unreachable,
+    // delivered back as an async ECONNREFUSED on the UDP socket's error channel. With no handler this
+    // is an uncaught exception that crashes the run (it did, in CI on Linux, while passing on macOS
+    // which never surfaces it). The handler must turn it into a coded connect failure instead.
+    const sock = new FakeUdpSocket();
+    const tunnel = new KnxIpTunnel("192.0.2.10", 3671, () => sock);
+    const p = tunnel.connect().then(() => null, (e: unknown) => e as Error & { code?: string });
+    await tick(); // bind resolves, CONNECT_REQ goes out, the waiter is armed
+    sock.injectError(new Error("ECONNREFUSED: connection refused, recv"));
+    const err = await p;
+    expect(err).not.toBeNull();
+    expect(err!.name).toBe("KnxError");
+    expect(err!.code).toBe("TUNNEL_CONNECT_FAILED");
+    expect(err!.message).toContain("192.0.2.10:3671");
+  });
+
+  test("a socket error AFTER connect is reported as a closure, not thrown", async () => {
+    const { sock, tunnel } = await connected();
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => closed.push(r);
+    sock.injectError(new Error("ECONNREFUSED: connection refused, recv"));
+    await tick();
+    // The tunnel is already up, so there is no connect to fail: the error surfaces through onClosed
+    // (a dead channel the caller can react to) rather than crashing.
+    expect(closed.length).toBe(1);
+    expect(closed[0]!).toContain("error");
   });
 });
