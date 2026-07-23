@@ -3,7 +3,7 @@
 // ACTS on the tables the flash wrote, which the byte-level read-back alone cannot. It connects
 // only BETWEEN server bus operations (the bench bridge has one tunnel channel; the server
 // releases it after each queued op), so the runner must not run a witness check while an API
-// bus op is in flight. Same pattern as the manual _smoke/_usuga scripts.
+// bus op is in flight.
 import { KnxIpTunnel, cemiLDataGroup, groupValueRead, decodeGroupApdu, gaToNum } from "../../packages/knx/src/index.ts";
 
 export class Witness {

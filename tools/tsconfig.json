@@ -1,0 +1,13 @@
+// tools/ is a workspace only so the root typecheck (`bun run --filter='*' typecheck`) covers its
+// scripts, incl. tools/smoke/ (the bench smoke framework). It ships nothing, so it is private with no
+// build/test. DOM lib + react-jsx are for tools/smoke/ui.ts (Playwright).
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ESNext", "DOM"],
+    "jsx": "react-jsx",
+    "types": ["bun-types"]
+  },
+  "include": ["*.ts", "smoke/**/*.ts"]
+}

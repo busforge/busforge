@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "workspaces": ["packages/*", "apps/*", "plugins/*"],
+  "workspaces": ["packages/*", "apps/*", "plugins/*", "tools"],
   "scripts": {
     "knx": "bun run packages/knx/src/cli.ts",
     "dev:server": "bun run --cwd apps/server dev",

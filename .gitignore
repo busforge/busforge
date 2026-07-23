@@ -16,6 +16,8 @@ apps/server/data/
 
 # local device backups / scratch
 *.bin
+# repo scratchpad: bench captures + throwaway analysis scripts, kept locally only
+scratchpad/
 
 # os
 .DS_Store
