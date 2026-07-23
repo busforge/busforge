@@ -31,10 +31,14 @@ export async function setParamChan(ctx: ChanCtx, paramRefId: string, value: stri
 }
 
 // Link a com-object to a group address. The GA is ensured as a project group address first (the UI
-// picker only offers those; harmless on the API path), then linked by number (UI) or ref (API).
+// picker only offers those; harmless on the API path), then linked by number (UI) or ref (API). On
+// the ui channel the page must be reloaded after ensureGa: the app reads the project's group-address
+// list once at load, so a GA created afterwards is absent from the picker's cache and the option
+// would never appear (a 30 s click timeout). The reload re-fetches the list; the linkable state (the
+// baseline params) is persisted, so it survives the reload.
 export async function linkChan(ctx: ChanCtx, obj: { refId: string; number: number }, ga: string): Promise<void> {
   await ctx.client.ensureGa(ctx.pid, ga);
-  if (ctx.channel === "ui") await ctx.ui!.linkGa(obj.number, ga);
+  if (ctx.channel === "ui") { await ctx.ui!.gotoDevice(ctx.pid, ctx.did); await ctx.ui!.linkGa(obj.number, ga); }
   else await ctx.client.link(ctx.pid, ctx.did, obj.refId, ga);
 }
 

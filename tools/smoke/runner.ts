@@ -106,6 +106,12 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       if ("set" in step) await client.setParam(pid, did, step.set.paramRefId, step.set.value);
       else { const co = (await client.getConfig(pid, did)); const obj = allComObjects(co).find((c) => c.refId === step.link.comObjRefId || c.refId.endsWith(step.link.comObjRefId)); if (!obj) throw new Stop("configure", `baseline com-object ${step.link.comObjRefId} not visible`); await linkChan({ ...chan, channel: "api" }, { refId: obj.refId, number: obj.number }, step.link.ga); }
     }
+    // The configure above runs server-side (API plumbing), but the browser page was loaded in setup
+    // BEFORE it. Dynamic visibility is resolved from the config the page holds, so a switch channel the
+    // baseline just enabled (its params, its com-object link rows) is still hidden in the stale page,
+    // and every ui write driver would time out waiting for an element that will never appear. Reload so
+    // the ui channel sees the configured, linkable state. (No-op on the api channel.)
+    if (ui) await ui.gotoDevice(pid, did);
 
     // ── capabilities: run exactly what the product claims, in this channel ────
     const caps = (await client.getConfig(pid, did)).capabilities;
