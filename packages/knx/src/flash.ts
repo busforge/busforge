@@ -95,7 +95,7 @@ export function appId(manufacturer: number, appNumber: number, version: number):
 // read-back verified, like every memory write (the old memWrite call verified by default).
 // Load+alloc run in the coded order com-obj, addr, assoc; write/complete/check run com-obj,
 // assoc, addr.
-export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }): LoadPlan {
+export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true): LoadPlan {
   const C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
     { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
@@ -109,7 +109,12 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
     { op: "loadCompleted", lsm: A, assert: false },
     { op: "loadCompleted", lsm: D, assert: false },
     { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
-    { op: "restart" },
+    // A device that persists at LoadCompleted (e.g. GVS AMMA) writes its tables to flash before the
+    // A_Restart and does not reboot in answer to it; requiring a reboot would reject that as
+    // RESTART_IGNORED even though the flash succeeded. The caller passes requireReboot=false for those
+    // (persistsOnLoadCompleted), mirroring the parameter-flash and full-download paths. The default
+    // stays strict so an unproven device that ignores the restart still fails loud.
+    { op: "restart", requireReboot },
   ];
 }
 

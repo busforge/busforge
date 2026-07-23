@@ -235,3 +235,57 @@ project + product data; byte-identical to the segment loaded on the device.
 Unions / conditional visibility (choosing the active parameter per offset) were not
 needed for this device; that is the remaining dynamic-engine work for devices that
 use them.
+
+## 9. A group-address flash must rewrite the com-object table, not just the group tables
+
+A "group address" (GA) flash — the surgical download that changes which group
+addresses an object talks on — writes the address table (L1) and the association
+table (L2). The obvious implementation keeps the device's com-object table (L3)
+untouched: a link change does not add or remove objects, so why rewrite L3?
+
+Because **L3 carries a per-object Communication flag, and ETS clears it on every
+object without a link** (`comobjbuild.ts` `buildComObjectTable`: an object with no
+association has `comm=0`, byte-verified against an ETS-programmed device). So an
+object that was **unlinked at the last full download holds `comm=0`** in the
+device's L3. Writing only L1+L2 to link it then points a group address at an object
+whose L3 still says "does not communicate". The device happily **acknowledges
+telegrams to that group address** (the address is in L1, so the data-link layer
+ACKs), and the read-back **verifies green** (the group tables match our image), yet
+the object is **functionally deaf**: it neither answers a `GroupValueRead` nor
+transmits on change. A textbook "green ≠ device-correct".
+
+**Hardware-proven on the GVS AMMA (System B, MV-07B0, `1.1.203`), three runs:**
+
+| Setup | Status object answers? |
+| --- | --- |
+| Full download WITH the switch + status linked | ✓ transmits + answers reads |
+| Baseline full download (no links) **then a GA flash** to add the links | ✗ dead (transmit + read both silent) |
+| Same GA flash, **after the fix** (GA flash rewrites L3) | ✓ transmits + answers reads |
+
+The switch relay clacked in every case (the write path and the device's reaction
+were never in doubt); only the status object, linked purely by a GA flash, was
+dead. It came alive the instant L3 was rewritten with its Communication flag set.
+
+**The fix:** the GA flash rebuilds L3 from the current link set
+(`buildComObjectTable`) and writes **L3+L1+L2 in one bracket**. It stays surgical:
+those three are small tables, so it never touches the large parameter image (L4) —
+the reason a mere link change is NOT promoted to a full download. The staleness gate
+(`assertComObjectTableStable`) still guarantees the only L3 change is link-driven,
+so a pure re-point of an already-linked object writes L3 byte-identical (a no-op).
+
+**One behaviour change to keep in mind:** the GA flash used to write the device's own
+L3 back verbatim; it now **re-authors L3 from busforge's model** of the com-object
+table. On a device busforge itself programmed this is byte-identical apart from the
+link-driven comm flags. But a device last programmed elsewhere (ETS, or with drifted
+parameters) may hold an L3 that differs from busforge's authoring in non-link bytes,
+and a GA flash now rewrites those objects too — then verifies green against busforge's
+own table. This is the project's standing caveat (device == our image is proven, our
+image == ETS is not), now reaching the GA path: after a GA flash the device's L3 is
+busforge's, not whatever it held before.
+
+**Lesson (the general one):** flash exactly the segments that diverge from the
+device, at the segment granularity — do not fall back to a full download for a
+change that only moves L1/L2/L3. And the read-back verify is a **placement** proof,
+never a **behaviour** proof: a link can be byte-perfect and still deaf, which is why
+the smoke framework observes the bus (it was the behaviour check, not the read-back,
+that caught this).

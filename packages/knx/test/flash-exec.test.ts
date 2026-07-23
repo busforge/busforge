@@ -144,8 +144,16 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
       { op: "loadCompleted", lsm: 2, assert: false },
       { op: "loadCompleted", lsm: 1, assert: false },
       { op: "assertLoaded", lsm: 3 }, { op: "assertLoaded", lsm: 2 }, { op: "assertLoaded", lsm: 1 },
-      { op: "restart" },
+      { op: "restart", requireReboot: true }, // default: strict, unless the caller opts out for a persist-at-LoadCompleted device
     ]);
+  });
+
+  test("requireReboot=false opts the closing restart out of the reboot proof (persist-at-LoadCompleted device, e.g. GVS AMMA)", () => {
+    // Only the restart step changes; a device that persists its tables at LoadCompleted and does
+    // not reboot in answer to A_Restart must not be rejected as RESTART_IGNORED. The caller passes
+    // this via !persistsOnLoadCompleted(cfg), mirroring the parameter-flash and full-download paths.
+    const plan = planSystemBGaFlash(tables, false);
+    expect(plan[plan.length - 1]).toEqual({ op: "restart", requireReboot: false });
   });
 
   test("exact device call order: unload 3,2,1; load+alloc 3,1,2; write comObj,assoc,addr; complete 3,2,1; batch checks; restart", async () => {

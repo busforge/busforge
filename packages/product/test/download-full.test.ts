@@ -281,3 +281,50 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     expect(dev.mem).toEqual(before);
   });
 });
+
+// The GA flash must rewrite the com-object table (L3), not just the group tables. ETS (and
+// buildComObjectTable) clears the Communication flag on every object WITHOUT a link, so an object
+// unlinked at the last full download holds comm=0 in the device's L3. A GA flash that wrote only the
+// address/association tables and kept that L3 wired the group address to a deaf object: the read-back
+// verified green (the group tables matched) yet the link was functionally dead. Hardware-proven on
+// the GVS AMMA (a status object linked by a GA flash never answered a read nor transmitted; the same
+// object linked by a full download did). This locks the fix: the GA flash rebuilds L3 from the link
+// set and writes L3+L1+L2 in one bracket, WITHOUT touching the parameter image (L4).
+describe("SystemB flashGroupTables rewrites the com-object table for a newly-linked object", () => {
+  const profile = classify(cfg);
+  const COMM = 1 << 2; // bit 2 of the System B flags byte (comobjbuild.ts)
+  const gaCtx = (links: ComObjectLink[]) => ({
+    deviceId: "d", ia: "1.1.1", links, params: new Map<string, string>(), baseParams: new Map<string, string>(),
+    moduleInstances: [], dryRun: false, persistBackups: () => "backup",
+  });
+  const commByteOf = (dev: MockDevice, n: number) => dev.mem.get(A[OBJ.COMOBJ] + 2 + (n - 1) * 2) ?? 0; // flags byte of object n
+
+  test("linking a previously-unlinked object sets its Communication flag in the device's L3 (a kept-L3 flash left it a dead link)", async () => {
+    const dev = new MockDevice();
+    // Seed an already-programmed device via a full download with NO links: every object's L3 entry
+    // carries comm=0 (unlinked), exactly the state that made the GVS status link dead.
+    await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
+    const obj = activeComObjNums[0]; // an object this configuration activates
+    expect(commByteOf(dev, obj) & COMM).toBe(0); // sanity: unlinked -> comm cleared
+
+    // GA-flash a link onto that object. The fix must lift its comm flag in L3, not keep the stale one.
+    const res = await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: obj, gaRaws: [2305] }]));
+    expect(res.kind).toBe("flashed");
+    expect((res as { verified: boolean }).verified).toBe(true);
+    expect(commByteOf(dev, obj) & COMM).toBe(COMM); // the link now communicates
+
+    // And the whole L3 equals the table independently built for this link set (not the kept one).
+    const expected = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set([obj]));
+    const back = await dev.memRead(A[OBJ.COMOBJ], expected.length);
+    expect(back.equals(expected)).toBe(true);
+  }, 20_000);
+
+  test("the parameter segment (L4) is left untouched: this is a surgical link flash, not a full download", async () => {
+    const dev = new MockDevice();
+    await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
+    const paramSegBefore = await dev.memRead(A[OBJ.LSM], target.size);
+    await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
+    const paramSegAfter = await dev.memRead(A[OBJ.LSM], target.size);
+    expect(paramSegAfter.equals(paramSegBefore)).toBe(true); // L4 (the 21601-byte image) never rewritten
+  }, 20_000);
+});

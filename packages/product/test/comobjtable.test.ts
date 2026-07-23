@@ -133,8 +133,11 @@ describe("the GROUP-ADDRESS flash is gated too (the parameter flash alone is not
   const profile = classify(cfg);
   const CHANNEL_ACTIVE = "M-0048_A-493B-21-B471_P-57_R-57";
 
+  // com-object 241 is active in this app's default configuration (the switch channels start at 241);
+  // a link must target an object the configuration activates, or the GA flash refuses it
+  // (LINK_COM_OBJECT_INACTIVE) before the staleness gate is what these tests are exercising.
   const gaCtx = (params: Map<string, string>, base: Map<string, string>) => ({
-    deviceId: "d", ia: "1.2.53", links: [{ comObjNum: 1, gaRaws: [2305] }],
+    deviceId: "d", ia: "1.2.53", links: [{ comObjNum: 241, gaRaws: [2305] }],
     params, baseParams: base, dryRun: false,
     persistBackups: () => { throw new Error("BACKUP-PERSISTED"); },
   });

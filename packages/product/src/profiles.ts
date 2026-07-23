@@ -589,15 +589,38 @@ export class SystemBProfile extends DeviceProfile {
     // table is the one it was last programmed with. Associating a group address with an object
     // that table does not configure wires it to nothing, and the verify (which only re-reads the
     // tables we wrote) would still report success. Refuse for the same reason the param flash does.
-    assertComObjectTableStable(this.requireCfg("group address flash"), ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
+    const cfg = this.requireCfg("group address flash");
+    assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
+    // Author the com-object table (L3) that THIS link set implies, and write it alongside the group
+    // tables. It is NOT enough to write the address/association tables and keep the device's L3: ETS
+    // (and buildComObjectTable) clears the Communication flag on every object WITHOUT a link, so an
+    // object that was unlinked at the last full download holds comm=0 in the device's L3. Writing only
+    // the association would then wire a group address to an object the device still refuses to talk on
+    // — the link reads back byte-perfect (the group tables match our image) yet is functionally dead
+    // (hardware-proven on the GVS AMMA: a status object linked by a GA flash never answered a read nor
+    // transmitted, while the same object linked by a full download did). So the GA flash rebuilds L3
+    // from the current config and writes L3+L1+L2 in one bracket. It stays a SURGICAL flash: L3/L1/L2
+    // are small tables, so this never touches the large parameter image (L4) — the point of not
+    // promoting a mere link change to a full download. The staleness gate above guarantees the only L3
+    // difference is link-driven (params did not move it), so on a pure re-point L3 is byte-identical.
+    const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    const linked = new Set(ctx.links.map((l) => l.comObjNum));
+    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
-    // The dry-run preview compares only address + association; the com-object table is read
-    // only to write it back unchanged on a real flash, so skip it when previewing.
-    const cur = await readGroupTables(dev, undefined, ctx.dryRun);
+    // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
+    // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
+    const cur = await readGroupTables(dev, undefined, false);
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     return runFlashOp(dev, mask, ctx, {
-      imageBytes: addr.length + assoc.length,
-      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc), // 0 iff both tables match
+      imageBytes: addr.length + assoc.length + comObj.length,
+      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj), // 0 iff all three match
       backup: prefix,
       backups: [
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
@@ -606,13 +629,13 @@ export class SystemBProfile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj: cur.comObj })); // keep the device's com-object table
+        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg))); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
         const { ok } = await verifySettled(
           () => readGroupTables(dev),
-          (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+          (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj),
         );
         return ok;
       },
