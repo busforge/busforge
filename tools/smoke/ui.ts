@@ -106,22 +106,26 @@ export class UiDriver {
   async flash(target: FlashTarget | "both" = "both"): Promise<void> {
     const page = this.req();
     await this.openFlash(target);
-    // Wait for EVERY target's preview to settle before deciding. The dialog dry-runs the targets
-    // SEQUENTIALLY and shows the flash button as soon as the FIRST target has a diff, while a later
-    // target is still checking; clicking then would flash only that first target and miss the rest.
-    // awaitSettled gates on no checking spinner, and flash-part-insync marks an already-in-sync target
-    // so an all-in-sync dialog settles too (rather than hanging on a button that never appears).
+    // Dismiss the dialog whether this settles or throws: a dialog left open on a failure covers the
+    // page with a modal overlay that intercepts every click, so the NEXT capability would fail on the
+    // overlay, not on its own merits (a cascade that hides the real first failure).
     try {
-      await this.awaitSettled('[data-testid="confirm-flash"], [data-testid="flash-needs-download"], [data-testid="flash-part-fail"], [data-testid="flash-part-insync"]');
-    } catch { throw new Error(`flash: the dialog never settled a preview — ${await this.dialogText()}`); }
-    if (await page.$('[data-testid="flash-needs-download"]')) throw new Error("flash: refused as com-object-table stale; use flashDownload()");
-    if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: dry-run failed — ${await this.dialogText()}`);
-    if (!(await page.$('[data-testid="confirm-flash"]'))) throw new Error(`flash: nothing to program (every target already in sync) — ${await this.dialogText()}`);
-    await page.click('[data-testid="confirm-flash"]');
-    await this.awaitSettled('[data-testid="flash-part-ok"], [data-testid="flash-part-fail"]');
-    if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: not verified — ${await this.dialogText()}`);
-    if (!(await page.$('[data-testid="flash-part-ok"]'))) throw new Error("flash: no verified target after the write");
-    await this.dismiss();
+      // Wait for EVERY target's preview to settle before deciding. The dialog dry-runs the targets
+      // SEQUENTIALLY and shows the flash button as soon as the FIRST target has a diff, while a later
+      // target is still checking; clicking then would flash only that first target and miss the rest.
+      // awaitSettled gates on no checking spinner, and flash-part-insync marks an already-in-sync target
+      // so an all-in-sync dialog settles too (rather than hanging on a button that never appears).
+      try {
+        await this.awaitSettled('[data-testid="confirm-flash"], [data-testid="flash-needs-download"], [data-testid="flash-part-fail"], [data-testid="flash-part-insync"]');
+      } catch { throw new Error(`flash: the dialog never settled a preview — ${await this.dialogText()}`); }
+      if (await page.$('[data-testid="flash-needs-download"]')) throw new Error("flash: refused as com-object-table stale; use flashDownload()");
+      if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: dry-run failed — ${await this.dialogText()}`);
+      if (!(await page.$('[data-testid="confirm-flash"]'))) throw new Error(`flash: nothing to program (every target already in sync) — ${await this.dialogText()}`);
+      await page.click('[data-testid="confirm-flash"]');
+      await this.awaitSettled('[data-testid="flash-part-ok"], [data-testid="flash-part-fail"]');
+      if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: not verified — ${await this.dialogText()}`);
+      if (!(await page.$('[data-testid="flash-part-ok"]'))) throw new Error("flash: no verified target after the write");
+    } finally { await this.dismiss().catch(() => undefined); }
   }
 
   // The FlashDialog full-download route: a change that rewrites the com-object table is refused as a
@@ -130,16 +134,17 @@ export class UiDriver {
   async flashDownload(target: FlashTarget = "params"): Promise<void> {
     const page = this.req();
     await this.openFlash(target);
-    try { await page.waitForSelector('[data-testid="flash-needs-download"]', { timeout: 60_000 }); }
-    catch { throw new Error(`flashDownload: no full-download offer (change does not alter the table?) — ${await this.dialogText()}`); }
-    await page.click('[data-testid="flash-needs-download"]');
-    // The offer dry-runs the download first; confirm it once the preview is ready.
-    await page.waitForSelector('[data-testid="confirm-download"], [data-testid="flash-dl-fail"], [data-testid="flash-download-retry"]', { timeout: 180_000 });
-    if (!(await page.$('[data-testid="confirm-download"]'))) throw new Error(`flashDownload: preview failed — ${await this.dialogText()}`);
-    await page.click('[data-testid="confirm-download"]');
-    await this.awaitSettled('[data-testid="flash-dl-ok"], [data-testid="flash-dl-fail"]');
-    if (await page.$('[data-testid="flash-dl-fail"]')) throw new Error(`flashDownload: not verified — ${await this.dialogText()}`);
-    await this.dismiss();
+    try { // dismiss in finally: a dialog left open on failure blocks the next capability (see flash()).
+      try { await page.waitForSelector('[data-testid="flash-needs-download"]', { timeout: 60_000 }); }
+      catch { throw new Error(`flashDownload: no full-download offer (change does not alter the table?) — ${await this.dialogText()}`); }
+      await page.click('[data-testid="flash-needs-download"]');
+      // The offer dry-runs the download first; confirm it once the preview is ready.
+      await page.waitForSelector('[data-testid="confirm-download"], [data-testid="flash-dl-fail"], [data-testid="flash-download-retry"]', { timeout: 180_000 });
+      if (!(await page.$('[data-testid="confirm-download"]'))) throw new Error(`flashDownload: preview failed — ${await this.dialogText()}`);
+      await page.click('[data-testid="confirm-download"]');
+      await this.awaitSettled('[data-testid="flash-dl-ok"], [data-testid="flash-dl-fail"]');
+      if (await page.$('[data-testid="flash-dl-fail"]')) throw new Error(`flashDownload: not verified — ${await this.dialogText()}`);
+    } finally { await this.dismiss().catch(() => undefined); }
   }
 
   // Commission from the device menu: scan for programming mode, assign the IA, full download. The
@@ -151,25 +156,26 @@ export class UiDriver {
     await page.click('[data-testid="commission-device"]');
     await page.waitForSelector(DIALOG, { timeout: 10_000 });
     await page.waitForTimeout(500); // let the dialog's own scan-on-open start before we inspect it
-    const deadline = Date.now() + 300_000;
-    for (;;) {
-      // Wait out any in-flight scan (the dialog spins while scanning), then decide on its result.
-      await this.awaitSettled('[data-testid="commission-assign"], [data-testid="commission-rescan"]');
-      if (await page.$('[data-testid="commission-assign"]')) break; // exactly one device in prog mode
-      if (Date.now() > deadline) throw new Error("commission: no single device in programming mode within the wait window");
-      onPrompt("press the programming button on the device (exactly one), then re-scanning…");
-      await page.click('[data-testid="commission-rescan"]');
-      await page.waitForTimeout(1500);
-    }
-    await page.click('[data-testid="commission-assign"]');
-    // The download CTA appears only after the assign VERIFIED and its preview dry-run is ready; if it
-    // never does, the assign or preview failed (its line shows the reason).
-    await page.waitForSelector('[data-testid="commission-download"], [data-testid="commission-fail"], [data-testid="commission-recheck"]', { timeout: 180_000 });
-    if (!(await page.$('[data-testid="commission-download"]'))) throw new Error(`commission: assign/preview failed — ${await this.dialogText()}`);
-    await page.click('[data-testid="commission-download"]');
-    await this.awaitSettled('[data-testid="commission-ok"], [data-testid="commission-fail"]');
-    if (await page.$('[data-testid="commission-fail"]')) throw new Error(`commission: not verified — ${await this.dialogText()}`);
-    await this.dismiss();
+    try { // dismiss in finally: a dialog left open on failure blocks the next capability (see flash()).
+      const deadline = Date.now() + 300_000;
+      for (;;) {
+        // Wait out any in-flight scan (the dialog spins while scanning), then decide on its result.
+        await this.awaitSettled('[data-testid="commission-assign"], [data-testid="commission-rescan"]');
+        if (await page.$('[data-testid="commission-assign"]')) break; // exactly one device in prog mode
+        if (Date.now() > deadline) throw new Error("commission: no single device in programming mode within the wait window");
+        onPrompt("press the programming button on the device (exactly one), then re-scanning…");
+        await page.click('[data-testid="commission-rescan"]');
+        await page.waitForTimeout(1500);
+      }
+      await page.click('[data-testid="commission-assign"]');
+      // The download CTA appears only after the assign VERIFIED and its preview dry-run is ready; if it
+      // never does, the assign or preview failed (its line shows the reason).
+      await page.waitForSelector('[data-testid="commission-download"], [data-testid="commission-fail"], [data-testid="commission-recheck"]', { timeout: 180_000 });
+      if (!(await page.$('[data-testid="commission-download"]'))) throw new Error(`commission: assign/preview failed — ${await this.dialogText()}`);
+      await page.click('[data-testid="commission-download"]');
+      await this.awaitSettled('[data-testid="commission-ok"], [data-testid="commission-fail"]');
+      if (await page.$('[data-testid="commission-fail"]')) throw new Error(`commission: not verified — ${await this.dialogText()}`);
+    } finally { await this.dismiss().catch(() => undefined); }
   }
 
   // Trigger a read-back through the config page's own button (the read-back UI surface) and wait for

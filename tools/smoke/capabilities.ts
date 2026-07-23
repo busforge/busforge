@@ -78,10 +78,15 @@ export async function capFullDownload(ctx: CapCtx): Promise<CapabilityResult> {
     if (canonical === undefined) return { ...base, state: "fail", detail: `uiFullDownloadTrigger param ${trig.paramRefId} not on this device` };
     if (canonical === trig.value) return { ...base, state: "fail", detail: `uiFullDownloadTrigger value ${trig.value} equals the canonical value; pick one that alters the com-object table` };
     await setParamChan(ctx, trig.paramRefId, trig.value);
-    await ctx.ui!.flashDownload("params"); // needs-download → confirm-download
+    await ctx.ui!.flashDownload("params"); // needs-download → confirm-download: THE proof this route works
     await ctx.settle(3000);
+    // Restore the canonical value. Unlike the trigger set (which must take the needs-download route, or
+    // the trigger was the wrong one and the driver fails loud), the restore is only cleanup: route it
+    // surgical-or-download exactly as the api path does, so a trigger whose reverse happens to be a plain
+    // parameter change (the device already holds the trigger's com-object table) still restores cleanly
+    // instead of failing on a "no full-download offer" the proof above already delivered.
     await setParamChan(ctx, trig.paramRefId, canonical);
-    await ctx.ui!.flashDownload("params"); // restore the canonical config with a second full download
+    await flashParamsChan(ctx, "restore fullDownload trigger");
     const view = await readBackConfig(ctx);
     return { ...base, state: "pass", detail: `UI full-download via FlashDialog needs-download (trigger ${short(trig.paramRefId)}), restored, ${allComObjects(view).length} objects` };
   }
