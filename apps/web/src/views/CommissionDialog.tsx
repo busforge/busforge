@@ -113,14 +113,16 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
 
   const assignLine = () => {
     if (assign.running) return line(spinner, t("commission.assigning"), "run");
-    if (assign.error) return line(warnIcon, errMsg(t, assign.error), "err");
+    // A failed or unverified assign is a terminal commission failure; mark it so a driver waiting on
+    // the download step sees the failure instead of hanging (the smoke UI channel keys on this).
+    if (assign.error) return <span data-testid="commission-fail">{line(warnIcon, errMsg(t, assign.error), "err")}</span>;
     const r = assign.result;
     if (!r) return <span className="text-muted-foreground">…</span>;
     return (
       <span className="flex flex-col gap-0.5">
         {r.verified
           ? line(okIcon, t("commission.assigned", { previous: r.previous, assigned: r.assigned }), "ok")
-          : line(warnIcon, t("commission.assignedUnverified", { ia: device.ia }), "err")}
+          : <span data-testid="commission-fail">{line(warnIcon, t("commission.assignedUnverified", { ia: device.ia }), "err")}</span>}
         {r.verified && !r.progModeCleared && line(warnIcon, t("commission.progModeNotCleared", { error: r.progModeError ?? "?" }), "warn")}
       </span>
     );
@@ -131,10 +133,10 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")
-        : line(warnIcon, t("commission.doneUnverified"), "err");
+        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}</span>
+        : <span data-testid="commission-fail">{line(warnIcon, t("commission.doneUnverified"), "err")}</span>;
     }
-    if (dl.error) return line(warnIcon, errMsg(t, dl.error), "err");
+    if (dl.error) return <span data-testid="commission-fail">{line(warnIcon, errMsg(t, dl.error), "err")}</span>;
     if (dl.checking) return line(spinner, t("commission.checking"), "run");
     if (dl.dry) return dl.dry.kind === "dryRun"
       ? <span>{t("commission.willWrite", { diff: dl.dry.diffBytes, total: dl.dry.imageBytes, mask: dl.dry.mask })}</span>

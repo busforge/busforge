@@ -3,6 +3,10 @@
 // coded error verbatim (the {error:{code,message}} contract), so a refusal is a first-class,
 // inspectable outcome rather than a swallowed 4xx.
 import { gaToNum } from "../../packages/knx/src/index.ts";
+// The authoritative config-view + capability types, imported from the product so the runner reads
+// exactly the shapes the server sends (a field renamed on either side is a compile error here).
+import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities } from "../../packages/product/src/index.ts";
+export type { DeviceConfigView as ConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities };
 
 export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -52,9 +56,9 @@ export class Client {
   attachConnection(pid: string, connectionId: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/connection`, { connectionId }); }
   placeDevice(pid: string, appRef: string, productRef: string, name: string) { return this.call<{ id: string; ia: string }>("POST", `/api/projects/${pid}/devices`, { appRef, productRef, name }); }
   setAddress(pid: string, did: string, ia: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/devices/${did}/address`, { ia }); }
-  getConfig(pid: string, did: string, lang = "de") { return this.call<ConfigView>("GET", `/api/projects/${pid}/devices/${did}/config?lang=${lang}`); }
-  setParam(pid: string, did: string, paramRefId: string, value: string) { return this.call<ConfigView>("PUT", `/api/projects/${pid}/devices/${did}/params`, { paramRefId, value, lang: "de" }); }
-  link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<ConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
+  getConfig(pid: string, did: string, lang = "de") { return this.call<DeviceConfigView>("GET", `/api/projects/${pid}/devices/${did}/config?lang=${lang}`); }
+  setParam(pid: string, did: string, paramRefId: string, value: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/params`, { paramRefId, value, lang: "de" }); }
+  link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.call<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>("POST", `/api/projects/${pid}/devices/${did}/assign-ia`, undefined, 90_000); }
   // The read-back triggers a server-side device read enqueued as a "read" task. On a large device
@@ -121,6 +125,10 @@ export class Client {
   // measured ~82 s on the bench), so it needs a read-back-sized budget, not a "short call" one.
   downloadDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/download?dry=1`, undefined, 180_000); }
   flashDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash?dry=1`, undefined, 180_000); }
+  flashGaDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash-ga?dry=1`, undefined, 180_000); }
+  async flashGaReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
+    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/flash-ga`, "flash-ga", onPhase);
+  }
 
   // A real download can take minutes and the HTTP response is not always delivered before the
   // socket idles; fire it and POLL the task queue for the authoritative outcome instead of
@@ -180,25 +188,33 @@ export class Client {
   }
 }
 
-// The subset of the config view the runner reads.
-export interface ConfigView {
-  blocks: { id: string; name: string; items: ConfigItem[] }[];
-  readbackSupport?: { params: boolean; links: boolean };
-}
-export type ConfigItem =
-  | { kind: "param"; param: { refId: string; value: string; changed?: boolean } }
-  | { kind: "comObject"; comObject: { refId: string; number: number; name: string; gaRaw: number | null } }
-  | { kind: "separator"; text: string }
-  | { kind: string; [k: string]: unknown };
-
-// Walk a config view for a com-object by ref (full or suffix match) and its current gaRaw.
-export function findComObject(view: ConfigView, refId: string): { refId: string; number: number; gaRaw: number | null } | undefined {
+// Walk a config view. Refs are matched full OR by suffix, so a spec can pin the short
+// `A-....._O-2_R-3` ref the catalogue lists even though the device stores it fully qualified.
+export function findComObject(view: DeviceConfigView, refId: string): CfgComObjView | undefined {
   for (const b of view.blocks) for (const it of b.items) {
-    if (it.kind === "comObject") { const c = (it as { comObject: { refId: string; number: number; gaRaw: number | null } }).comObject; if (c.refId === refId || c.refId.endsWith(refId)) return c; }
+    if (it.kind === "comObject" && (it.comObject.refId === refId || it.comObject.refId.endsWith(refId))) return it.comObject;
   }
   return undefined;
 }
-export function hasParamRef(view: ConfigView, refId: string): boolean {
-  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param" && (it as { param: { refId: string } }).param.refId === refId) return true;
-  return false;
+export function findParam(view: DeviceConfigView, refId: string): CfgParamView | undefined {
+  for (const b of view.blocks) for (const it of b.items) {
+    if (it.kind === "param" && (it.param.refId === refId || it.param.refId.endsWith(refId))) return it.param;
+  }
+  return undefined;
+}
+export function hasParamRef(view: DeviceConfigView, refId: string): boolean { return !!findParam(view, refId); }
+// Every param / com-object the view currently exposes (visibility already resolved by the server).
+export function allParams(view: DeviceConfigView): CfgParamView[] {
+  const out: CfgParamView[] = [];
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") out.push(it.param);
+  return out;
+}
+export function allComObjects(view: DeviceConfigView): CfgComObjView[] {
+  const out: CfgComObjView[] = [];
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") out.push(it.comObject);
+  return out;
+}
+// The GAs currently linked, as raw numbers, across the whole view.
+export function linkedGaRaws(view: DeviceConfigView): number[] {
+  return allComObjects(view).map((c) => c.gaRaw ?? null).filter((g): g is number => g !== null);
 }

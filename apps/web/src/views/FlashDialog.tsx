@@ -125,14 +125,14 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (p.done) {
       if (p.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>; // raced to in-sync between preview and write
       return p.done.verified
-        ? <span className="flex items-center gap-2 text-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}</span>
-        : <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {t("flash.doneUnverified")}</span>;
+        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-part-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}</span>
+        : <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {t("flash.doneUnverified")}</span>;
     }
-    if (p.error) return <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
+    if (p.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
     if (p.checking) return <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>;
     if (p.dry) return p.dry.kind === "dryRun"
       ? <span>{t("flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}</span>
-      : <span className="text-muted-foreground">{t("flash.inSync")}</span>;
+      : <span className="text-muted-foreground" data-testid="flash-part-insync">{t("flash.inSync")}</span>;
     return <span className="text-muted-foreground">…</span>;
   };
 
@@ -142,10 +142,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? <span className="flex items-center gap-2 text-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.dlDoneVerified", { bytes: dl.done.diffBytes })}</span>
-        : <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {t("flash.dlDoneUnverified")}</span>;
+        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-dl-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.dlDoneVerified", { bytes: dl.done.diffBytes })}</span>
+        : <span className="flex items-center gap-2 text-destructive" data-testid="flash-dl-fail"><AlertTriangle className="size-4 shrink-0" /> {t("flash.dlDoneUnverified")}</span>;
     }
-    if (dl.error) return <span className="flex items-center gap-2 text-destructive"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, dl.error)}</span>;
+    if (dl.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-dl-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, dl.error)}</span>;
     if (dl.checking) return <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>;
     if (dl.dry) return dl.dry.kind === "dryRun"
       ? <span>{t("flash.dlWillWrite", { total: dl.dry.imageBytes, mask: dl.dry.mask })}</span>

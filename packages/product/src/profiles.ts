@@ -4,7 +4,7 @@ import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, v
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
-import { buildDeviceConfig } from "./config.ts";
+import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
@@ -203,15 +203,9 @@ async function runFlashOp(
 // device_parameters; the caller persists only the aspects whose *Read flag is true.
 export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; }
 
-// What can be done with a device today, split by aspect. Read and write are independent
-// capabilities (an unsupported family may be neither), as are parameters and links.
-export interface DeviceCapabilities {
-  readParams: boolean; readLinks: boolean; flashParams: boolean; flashLinks: boolean;
-  // Can this device be commissioned from nothing: application id, parameter image, com-object
-  // table and group tables all written in one bracket? A parameter-only download rewrites an
-  // existing segment and cannot bring a virgin device to life.
-  fullDownload: boolean;
-}
+// DeviceCapabilities lives in config.ts (the lower module) so the wire view can carry it without a
+// cycle; re-exported here (imported above) because it is the return type of capabilities().
+export type { DeviceCapabilities };
 
 export interface ReadStateCtx {
   liveParams: Map<string, string>;

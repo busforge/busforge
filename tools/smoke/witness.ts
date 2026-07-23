@@ -8,7 +8,8 @@ import { KnxIpTunnel, cemiLDataGroup, groupValueRead, decodeGroupApdu, gaToNum }
 
 export class Witness {
   private tun: KnxIpTunnel | null = null;
-  constructor(private readonly host = process.env.BUSFORGE_BENCH_HOST ?? "198.51.100.231", private readonly port = 3671) {}
+  // The bench bridge listens on 3681 (apps/bridge --port 3681); override with BUSFORGE_BENCH_PORT.
+  constructor(private readonly host = process.env.BUSFORGE_BENCH_HOST ?? "198.51.100.231", private readonly port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681)) {}
 
   async connect(): Promise<void> {
     const tun = KnxIpTunnel.tcp(this.host, this.port);
@@ -32,6 +33,24 @@ export class Witness {
       await tun.sendCemi(cemiLDataGroup(tun.assignedIa, n, groupValueRead()));
       await new Promise((r) => setTimeout(r, waitMs));
     } finally { tun.onCemi = prev; }
+    return value;
+  }
+
+  // Listen for a device-INITIATED telegram on a GA (a GroupValueWrite or GroupValueResponse the
+  // device sends unprompted), within a window. Returns the value as hex, or null if silent. This is
+  // how a heartbeat / cyclically-transmitting object is verified: we send nothing, we only observe.
+  async listen(ga: string, windowMs: number): Promise<string | null> {
+    const tun = this.req();
+    const n = gaToNum(ga);
+    let value: string | null = null;
+    const prev = tun.onCemi;
+    tun.onCemi = (_src, dst, tpdu, isGroup) => {
+      if (isGroup && dst === n && value === null) {
+        const g = decodeGroupApdu(tpdu);
+        if (g.apci === "GroupValueWrite" || g.apci === "GroupValueResponse") value = g.value.toString("hex");
+      }
+    };
+    try { await new Promise((r) => setTimeout(r, windowMs)); } finally { tun.onCemi = prev; }
     return value;
   }
 

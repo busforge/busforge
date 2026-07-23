@@ -116,8 +116,9 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // can be verified against the device. When false, the change indicators reflect
   // edits-vs-import only and were NEVER confirmed against the hardware, so the UI
   // must say so rather than imply a verified "no changes".
-  const rbCaps = classify(app).capabilities();
-  view.readbackSupport = { params: rbCaps.readParams, links: rbCaps.readLinks };
+  const caps = classify(app).capabilities();
+  view.readbackSupport = { params: caps.readParams, links: caps.readLinks };
+  view.capabilities = caps;
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI
@@ -143,7 +144,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport };
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities };
   return extra ? { ...wire, ...extra } : wire;
 }
 

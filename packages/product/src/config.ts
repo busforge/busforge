@@ -85,6 +85,18 @@ export interface CfgBlock {
 // silently leaving the client reading undefined.
 export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number }
 
+// What can be done with a device today, split by aspect. Read and write are independent
+// capabilities (an unsupported family may be neither), as are parameters and links. Defined here
+// (the lower module) so the wire view can carry it without config.ts importing profiles.ts, which
+// imports config.ts; profiles.ts re-exports it so `classify().capabilities()` reads the same shape.
+export interface DeviceCapabilities {
+  readParams: boolean; readLinks: boolean; flashParams: boolean; flashLinks: boolean;
+  // Can this device be commissioned from nothing: application id, parameter image, com-object
+  // table and group tables all written in one bracket? A parameter-only download rewrites an
+  // existing segment and cannot bring a virgin device to life.
+  fullDownload: boolean;
+}
+
 // The SERIALIZABLE device-configuration wire view: the HTTP contract itself, imported directly
 // by the web client (apps/web api.ts) so there is one authoritative definition instead of a
 // hand-mirror that drifts. It deliberately carries NO Maps, because JSON.stringify renders a Map as
@@ -99,6 +111,11 @@ export interface DeviceConfigView {
   // Attached by the server (not buildDeviceConfig). When params/links is false, the
   // shown change state was never confirmed against the device. See readbackSupport.
   readbackSupport?: { params: boolean; links: boolean };
+  // The full capability record for this device (classify().capabilities()), attached by the
+  // server. The single source of truth the server gate, the UI, and the smoke framework all read,
+  // so the UI never offers a flash the server would refuse. readbackSupport is the read subset,
+  // kept for the read-back honesty text.
+  capabilities?: DeviceCapabilities;
   // Present only on a read-back response: what the read actually covered. Attached by the
   // server (the read-back route), never by buildDeviceConfig.
   readback?: DeviceReadbackInfo;

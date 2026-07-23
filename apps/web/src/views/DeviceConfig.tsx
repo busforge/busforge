@@ -119,7 +119,14 @@ export function DeviceConfig() {
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
-  const flashTargetsAvail: FlashTarget[] = [...(hasParams ? ["params" as const] : []), ...(hasComObjects ? ["ga" as const] : [])];
+  // Gate each flash target on the device's real capability (classify().capabilities()), not just on
+  // whether params/com-objects exist, so the UI never offers a flash the server would refuse. When
+  // capabilities are not yet loaded, fall back to presence (the prior behaviour).
+  const caps = view?.capabilities;
+  const flashTargetsAvail: FlashTarget[] = [
+    ...(hasParams && (caps ? caps.flashParams : true) ? ["params" as const] : []),
+    ...(hasComObjects && (caps ? caps.flashLinks : true) ? ["ga" as const] : []),
+  ];
 
   // Honest read-back disclosure: every way the shown change state was NOT confirmed
   // against the hardware. Device-class limits (params/links unsupported) plus the
@@ -513,7 +520,8 @@ export function DeviceConfig() {
               <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
                 <Repeat2 className="size-4" /> {t("replace.menu")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setCommissionOpen(true)} data-testid="commission-device">
+              {/* Commissioning is a full download; only offer it where the device can be commissioned. */}
+              <DropdownMenuItem onClick={() => setCommissionOpen(true)} disabled={!!caps && !caps.fullDownload} data-testid="commission-device">
                 <RadioTower className="size-4" /> {t("commission.menu")}
               </DropdownMenuItem>
             </DropdownMenuContent>
