@@ -377,6 +377,36 @@ verify now uses the corrected `memRead`, so a write that crossed a boundary woul
 (verify mismatch) rather than corrupt silently. No flash target here crosses a boundary, so
 this path is untested on hardware and left unchanged.
 
+## A_MemoryExtended: reaching a segment above 64 KB
+
+The classic `A_Memory_Read` / `A_Memory_Write` services carry a **2-byte** address, so they
+reach `0x0000`-`0xFFFF` and no further. Several System B devices allocate their parameter
+segment **above** that: the **Jung 400021SE** (Tasterschnittstelle 2fach Secure, `M-0004_A-7072`,
+mask MV-07B0) puts its parameter image at **`0x15000`**. Busforge used to refuse such a device
+outright (`MEMORY_ADDRESS_TOO_HIGH`, "refuse rather than truncate the address and write to the
+wrong place"). It now speaks **A_MemoryExtended**, the KNX answer for a 3-byte (24-bit) address:
+
+- **APCIs:** `A_MemoryExtended_Write` = `0x1FB`, `_Write_Response` = `0x1FC`,
+  `A_MemoryExtended_Read` = `0x1FD`, `_Read_Response` = `0x1FE`. Unlike classic memory, the byte
+  **count is a payload octet**, not folded into the low APCI bits.
+- **Request:** `[count(1)] [address(3, big-endian)] [data…(write only)]`. The write request layout
+  is corroborated by ETS captures (`tools/etsdiff.ts` parses exactly this).
+- **Response:** `[returnCode(1)] [address(3)]` and then, for a read, the data (no repeated count).
+  A non-zero return code, or an echoed address that is not the one asked for, is **refused**, never
+  taken as proof. **A_MemoryExtended_Write is a confirmed service** (every write is answered), so
+  the return code is the per-chunk write proof, the extended counterpart of the classic verify-mode
+  echo.
+- **Confirmed against hardware.** The response layout was decoded byte-for-byte from a live Jung
+  400021SE on the bench: a read at `0x15000` answered `00 01 50 00 <8 data bytes>` (return code 0,
+  address `0x015000`), and a read at `0x0000` answered `fd 00 00 00` (return code `0xFD` = that
+  address is forbidden, a legitimate refusal).
+
+`KnxDevice.memRead` / `memWrite` **auto-select**: a range whose last byte exceeds `0xFFFF` is served
+entirely by the extended path; everything at or below `0xFFFF` stays on the classic path,
+byte-identical (so every device proven so far is unaffected). This is what let Busforge commission
+the Jung 400021SE **from factory**: full download `verified=true`, all four load states LOADED after
+the closing `A_Restart` (the 10361-byte image, parameter segment included, read back byte-matched).
+
 ## Read-back corpus (kept out of git)
 
 To develop against ground truth, every reachable device was read back from the bus

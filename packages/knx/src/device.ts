@@ -52,16 +52,17 @@ export const OBJ = {
 // runs a Sync first to learn the device's tool-access sequence. Without it the path
 // is byte-for-byte the plain one. Hardware-verified on an MDT IP interface.
 
-// A_Memory_Read/Write carry a 2-BYTE address, so they reach 0x0000..0xFFFF and no further. A
-// device may well allocate a segment above that (the KNX answer is A_MemoryExtended, which this
-// transport does not speak yet). Truncating the address silently would write the right bytes to
-// the WRONG place, which on a load-state machine means a device that comes up believing a table
-// it never received. Refuse instead, and say what is missing.
+// A_Memory_Read/Write carry a 2-BYTE address, so they reach 0x0000..0xFFFF and no further. A device
+// that allocates a segment above that is handled by A_MemoryExtended: memRead/memWrite route any range
+// whose last byte exceeds 0xFFFF to the extended path BEFORE this guard runs. So reaching here with a
+// too-high last byte can only mean a negative (invalid) base address, never an unhandled high segment.
+// Refuse it rather than truncate: a truncated address writes the right bytes to the WRONG place, which
+// on a load-state machine means a device that comes up believing a table it never received.
 function assertAddressable(addr: number, len: number, what: string): void {
   const last = addr + len - 1;
   if (addr < 0 || last > 0xffff) {
     throw new KnxError("MEMORY_ADDRESS_TOO_HIGH",
-      `${what} at 0x${addr.toString(16)}..0x${last.toString(16)} is beyond the 16-bit address these memory services reach; this device needs A_MemoryExtended, which Busforge does not implement yet`);
+      `${what} at 0x${addr.toString(16)}..0x${last.toString(16)} is not a valid 16-bit memory address (a range past 0xFFFF is served by A_MemoryExtended before this guard)`);
   }
 }
 
@@ -180,6 +181,9 @@ export class KnxDevice {
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+    // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended (a device that
+    // allocates a segment there answers only that service). Classic path stays byte-identical below.
+    if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, chunk, onProgress, signal);
     assertAddressable(addr, len, "memory read");
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
     // MemoryRead that spans an internal memory boundary (they answer with an empty data
@@ -244,6 +248,9 @@ export class KnxDevice {
   }
 
   async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
+    // Past the 16-bit reach of A_Memory_Write, the device is written with A_MemoryExtended. Classic
+    // path (and every device that fits in 16 bits) stays byte-identical below.
+    if (addr >= 0 && addr + data.length - 1 > 0xffff) return this.memWriteExtended(addr, data, opts);
     assertAddressable(addr, data.length, "memory write");
     const chunk = opts.chunk ?? 12;
     const total = Math.ceil(data.length / chunk);
@@ -282,6 +289,74 @@ export class KnxDevice {
     if (opts.verify ?? true) {
       const back = await this.memRead(addr, data.length);
       if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `memWrite verify mismatch @0x${addr.toString(16)}`);
+    }
+  }
+
+  // ---- A_MemoryExtended (3-byte address) ----
+  // A device that allocates a segment past 0xFFFF answers only these services. The address is 3
+  // octets (0x000000..0xFFFFFF) and the requested byte count is a payload octet (not folded into the
+  // APCI, the way classic memory folds it). Request format is [count, addrHi, addrMid, addrLo, ...data
+  // for a write]; the RESPONSE leads with [returnCode, addrHi, addrMid, addrLo] and then, for a read,
+  // the data (no repeated count) — confirmed byte-for-byte against a Jung 400021SE on the bench. A
+  // non-zero return code, or an echoed address that is not the one asked for, is refused, not trusted.
+  private assertExtAddressable(addr: number, len: number, what: string): void {
+    if (addr < 0 || addr + len - 1 > 0xffffff) {
+      throw new KnxError("MEMORY_ADDRESS_TOO_HIGH", `${what} at 0x${addr.toString(16)} is outside the 24-bit A_MemoryExtended address space`);
+    }
+  }
+  async memReadExtended(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+    this.assertExtAddressable(addr, len, "extended memory read");
+    chunk = Math.min(Math.max(1, chunk), 255); // the count is a single request octet
+    const out = Buffer.alloc(len);
+    let pos = 0;
+    while (pos < len) {
+      if (signal?.aborted) throw new KnxError("READ_ABORTED", "read aborted");
+      const want = Math.min(chunk, len - pos);
+      const a = addr + pos;
+      const tail = Buffer.from([want, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]);
+      const r = await this.request((s) => apdu(s, APCI.MEMORY_EXT_READ, tail), true);
+      const d = r!.data; // [returnCode, addr(3), data...]
+      if (d.length < 4) throw new KnxError("DEVICE_READ_REFUSED", `extended read @0x${a.toString(16)}: short response (${d.length}B)`);
+      if (d[0] !== 0x00) throw new KnxError("DEVICE_READ_REFUSED", `extended read @0x${a.toString(16)} returned code 0x${d[0].toString(16)}`);
+      const echoedAt = (d[1] << 16) | (d[2] << 8) | d[3];
+      if (echoedAt !== a) throw new KnxError("DEVICE_READ_REFUSED", `extended read echoed 0x${echoedAt.toString(16)} for a request to 0x${a.toString(16)}`);
+      const got = d.subarray(4, 4 + want);
+      if (got.length === 0) throw new KnxError("DEVICE_READ_REFUSED", `extended read @0x${a.toString(16)}: device returned no bytes`);
+      got.copy(out, pos);
+      pos += got.length;
+      onProgress?.(pos, len);
+    }
+    return out;
+  }
+  // `echo` is accepted for signature-compatibility with memWrite (the load executor sets it): the
+  // extended write is ALWAYS per-chunk confirmed by its return code, so echo's intent (a per-write
+  // acceptance proof) is inherently satisfied and the flag is a no-op here, not silently dropped.
+  async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
+    this.assertExtAddressable(addr, data.length, "extended memory write");
+    const chunk = Math.min(Math.max(1, opts.chunk ?? 12), 255); // the count is a single request octet
+    const total = Math.ceil(data.length / chunk) || 1;
+    let done = 0;
+    for (let pos = 0; pos < data.length; ) {
+      const n = Math.min(chunk, data.length - pos);
+      const slice = data.subarray(pos, pos + n);
+      const a = addr + pos;
+      const tail = Buffer.concat([Buffer.from([n, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]), slice]);
+      // A_MemoryExtended_Write is CONFIRMED: the device always answers [returnCode, addr(3)]. That
+      // return code is the per-chunk proof the write landed (the extended counterpart of the classic
+      // verify-mode echo); a non-zero code or a mismatched address is a hard failure, never taken as
+      // success.
+      const r = await this.request((s) => apdu(s, APCI.MEMORY_EXT_WRITE, tail), true);
+      const d = r!.data; // [returnCode, addr(3)]
+      if (d.length < 4) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended write @0x${a.toString(16)}: short confirmation (${d.length}B)`);
+      if (d[0] !== 0x00) throw new KnxError("FLASH_VERIFY_MISMATCH", `the device rejected an extended write to 0x${a.toString(16)} with code 0x${d[0].toString(16)}`);
+      const echoedAt = (d[1] << 16) | (d[2] << 8) | d[3];
+      if (echoedAt !== a) throw new KnxError("FLASH_VERIFY_MISMATCH", `the device confirmed an extended write to 0x${echoedAt.toString(16)} for a write to 0x${a.toString(16)}; refusing to take that as proof`);
+      pos += n;
+      opts.onProgress?.(++done, total);
+    }
+    if (opts.verify ?? true) {
+      const back = await this.memReadExtended(addr, data.length);
+      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended memWrite verify mismatch @0x${addr.toString(16)}`);
     }
   }
   // A_Restart, acknowledged — never fired blind.

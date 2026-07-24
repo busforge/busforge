@@ -161,7 +161,7 @@ const en = {
     FULL_DOWNLOAD_UNSUPPORTED: "Commissioning this device from scratch is not supported yet: its memory model has never been proven to survive a full download, so Busforge refuses rather than half-write it.",
     COM_OBJECT_SIZE_UNKNOWN: "A communication object declares a datapoint size Busforge cannot express as a KNX value field type. It refuses to write a com-object table with a guessed size.",
     COM_OBJECT_TABLE_EMPTY: "This configuration activates no communication objects, so the device would have nothing to talk with.",
-    MEMORY_ADDRESS_TOO_HIGH: "This device places its memory above the 16-bit range the standard memory services reach. Programming it needs extended memory services, which Busforge does not implement yet, so it refuses rather than write to the wrong address.",
+    MEMORY_ADDRESS_TOO_HIGH: "A memory operation targeted an address outside the addressable range, so Busforge refuses rather than write to the wrong place. (Segments above the classic 16-bit range are programmed with extended memory services; this error means the address was invalid even for those.)",
     COM_OBJECT_PRIORITY_UNKNOWN: "A communication object declares a priority the ETS schema does not define. Busforge refuses to guess what to write into the device rather than silently demote it.",
     COM_OBJECT_NUMBER_INVALID: "A communication object resolves to number 0, which cannot exist in a device\u0027s com-object table. Refusing to program it.",
     LINK_COM_OBJECT_INACTIVE: "Some group-address links point at communication objects this configuration does not activate. The device would ignore them, so Busforge refuses rather than report them as programmed.",

@@ -35,6 +35,12 @@ export const CEMI_CON_ERROR = 0x01;
 export const APCI = {
   DEVICE_DESCRIPTOR_READ: 0x300, DEVICE_DESCRIPTOR_RESPONSE: 0x340,
   MEMORY_READ: 0x200, MEMORY_RESPONSE: 0x240, MEMORY_WRITE: 0x280,
+  // A_MemoryExtended: a 3-byte address (reaches 0x000000..0xFFFFFF), for devices that allocate a
+  // segment above the 16-bit reach of the classic memory services (System B parameter segments can
+  // sit past 0x10000). Unlike classic memory, the byte count is a payload octet, not folded into the
+  // APCI low bits, and the write is a CONFIRMED service (every write is answered with a return code).
+  MEMORY_EXT_WRITE: 0x1fb, MEMORY_EXT_WRITE_RESP: 0x1fc,
+  MEMORY_EXT_READ: 0x1fd, MEMORY_EXT_READ_RESP: 0x1fe,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
   RESTART: 0x380,
   // Individual-address management. These are BROADCAST services (unnumbered, destination
