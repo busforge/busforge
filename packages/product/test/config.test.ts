@@ -274,6 +274,65 @@ describe("access and text decoding", () => {
   });
 });
 
+describe("a Merker computed in a hidden (Access=None) block still gates visible content", () => {
+  // The Jung 400021SE pattern: every channel's com-objects hang off a choose on a Merker
+  // ("show channel N") that is only PLACED inside an Access="None" block. The display walk hid
+  // Access="None" blocks wholesale, so the Merker was never placed, the gate read unset, and the
+  // whole channel set (params AND com-objects) vanished from the view — even though the image built
+  // them correctly. The walk must run an invisible block's Merker/Assign side effects (respecting the
+  // same choose gating), just not display it.
+  const merkerGateXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+<ApplicationProgram Id="M-TEST_A-30" ApplicationNumber="30" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Merker Gate" DefaultLanguage="en-US">
+  <Static>
+    <ParameterTypes>
+      <ParameterType Id="M-TEST_A-30_PT-N" Name="N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="100" /></ParameterType>
+    </ParameterTypes>
+    <Parameters>
+      <Parameter Id="M-TEST_A-30_P-1" Name="Visible" ParameterType="M-TEST_A-30_PT-N" Text="Visible" Value="1"><Memory CodeSegment="M-TEST_A-30_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-30_P-M" Name="ShowChannel" ParameterType="M-TEST_A-30_PT-N" Text="" Value="1" Access="None" />
+    </Parameters>
+    <ParameterRefs>
+      <ParameterRef Id="M-TEST_A-30_P-1_R-1" RefId="M-TEST_A-30_P-1" />
+      <ParameterRef Id="M-TEST_A-30_P-M_R-2" RefId="M-TEST_A-30_P-M" />
+    </ParameterRefs>
+    <ComObjectTable>
+      <ComObject Id="M-TEST_A-30_O-1" Name="Chan" Number="7" Text="Channel object" FunctionText="sw" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+    </ComObjectTable>
+    <ComObjectRefs>
+      <ComObjectRef Id="M-TEST_A-30_O-1_R-1" RefId="M-TEST_A-30_O-1" />
+    </ComObjectRefs>
+  </Static>
+  <Dynamic>
+    <ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-30_PB-1" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-30_P-1_R-1" />
+      </ParameterBlock>
+      <ParameterBlock Id="M-TEST_A-30_PB-H" Name="hidden" Text="Hidden" Access="None">
+        <ParameterRefRef RefId="M-TEST_A-30_P-M_R-2" />
+      </ParameterBlock>
+      <choose ParamRefId="M-TEST_A-30_P-M_R-2">
+        <when test="1">
+          <ParameterBlock Id="M-TEST_A-30_PB-C" Name="chan" Text="Channel">
+            <ComObjectRefRef RefId="M-TEST_A-30_O-1_R-1" />
+          </ParameterBlock>
+        </when>
+      </choose>
+    </ChannelIndependentBlock>
+  </Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const merkerGateApp = parseAppConfig(merkerGateXml);
+
+  test("the gated com-object renders because the hidden block placed its Merker", () => {
+    const v = buildDeviceConfig(merkerGateApp, new Map());
+    const cos = comObjs(v);
+    expect(cos.length).toBe(1); // was 0 before the fix (Merker unplaced -> choose fails -> object hidden)
+    expect((cos[0] as { comObject: { number: number } }).comObject.number).toBe(7);
+    // The Merker itself (Access=None) stays out of the visible parameter list.
+    expect(params(v).map((p) => p.param.refId)).toEqual(["M-TEST_A-30_P-1_R-1"]);
+  });
+});
+
 describe("localization", () => {
   test("German overrides param and enum text, falls back to base otherwise", () => {
     const v = buildDeviceConfig(app, new Map(), "de-DE");

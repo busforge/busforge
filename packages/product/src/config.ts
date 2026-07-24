@@ -421,7 +421,13 @@ export function buildDeviceConfig(
         case "container": collect(n.children, items, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
         case "unsupported": items.push({ kind: "unsupported", label: n.tag }); break; // surface, never drop
-        case "block": break; // nested blocks become their own sections (walkBlocks)
+        // Nested blocks become their own sections (handled by walk, which also runs a hidden
+        // block's Merker/Assign side effects via applyEnv). Known limit: a hidden block nested
+        // DIRECTLY inside a visible ParameterBlock is not descended here, so a Merker it places
+        // would read stale for a choose collected at this same visible level. No device authored
+        // that way is known (Jung/HMG place the hidden block at container/top level, where walk
+        // orders it correctly); it can only ever under-show vs the image, never mis-place.
+        case "block": break;
       }
     }
   };
@@ -460,11 +466,33 @@ export function buildDeviceConfig(
     return { layout: n.layout, rows: lines(n.rows), cols: lines(n.cols) };
   };
 
+  // A block marked Access="None" is not shown, but its side effects on `env` still matter: a
+  // manufacturer often computes a "Merker" helper parameter (or Assigns one) inside an invisible
+  // block and then gates a later, VISIBLE choose on it. The Jung 400021SE hides its whole channel set
+  // exactly this way ("Kanal N anzeigen" is a Merker computed in the "Unsichtbar" block, and every
+  // channel's module hangs off a choose on it), so skipping the block wholesale left the Merker unset
+  // and every channel hidden. Run the env-mutating side effects of an invisible subtree (Merker
+  // assignments and Assigns) in document order, descending into blocks regardless of access, emitting
+  // nothing. Same choose selection and value resolution as the display walk, so a later choose reads
+  // exactly the env it should (the image pass does the equivalent via imgEnv).
+  const applyEnv = (nodes: DynNode[], scope: Scope) => {
+    for (const n of nodes) {
+      switch (n.kind) {
+        case "paramRef": assignIfMerker(n.refId, scope, env); break;
+        case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
+        case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope); break;
+        case "container": case "block": applyEnv(n.children, scope); break;
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) applyEnv(def.dynamic, makeScope(n.refId, def, inst)); break; }
+        case "comObjRef": case "separator": case "button": case "unsupported": break;
+      }
+    }
+  };
+
   const walk = (nodes: DynNode[], scope: Scope, into: Node[]) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
-          if (n.access === "None") break; // ETS hides Access="None" blocks
+          if (n.access === "None") { applyEnv(n.children, scope); break; } // hidden, but its Merker/Assign side effects still gate later chooses
           const items: CfgItem[] = [];
           collect(n.children, items, scope);
           if (items.length) {
