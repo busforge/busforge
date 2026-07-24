@@ -19,5 +19,19 @@ export const abbUsu42: DeviceSpec = {
   // behaviour to assert, so this device is proven to the BYTE (download + link + param sweep), not to
   // the behaviour. Stated honestly rather than faked with an unverifiable groupWrite.
   behaviours: [],
+  // Enabling the "Telegr. Ventilspülung" object ADDS com-object #29 (baseline objects [1,3] → [1,3,29]),
+  // which rewrites the com-object table, so the surgical param flash is refused stale and the UI
+  // FlashDialog offers the needs-download route (the automatable UI full-download proof on this
+  // kept-addressed device). Deliberately additive and off the baseline objects [1,3]: it does not touch
+  // "Ausgang A" (object 1) the flashLinks capability binds to. The runner sets it, runs the UI download,
+  // then restores 0. (A param that only flips a byte would make FlashDialog offer a surgical flash and
+  // never reach the full-download route.)
+  uiFullDownloadTrigger: { paramRefId: "M-0002_A-A001-13-63C2_P-437_R-437", value: "1" },
+  // The sweep draws from the full visible param set on purpose: the channel-function selectors and
+  // object-enables that rewrite the com-object table are NOT excluded, so the sweep also exercises the
+  // promote-to-full-download route (COM_OBJECT_TABLE_STALE) alongside the surgical byte flash. Only the
+  // baseline channel selector P-9_R-9 is held out, because the sweep drawing it would tear down the
+  // objects [1,3] flashLinks binds to. A structural sweep candidate is slower (a full download per
+  // mutate + revert), which is the cost of the coverage, not a reason to drop it.
   fuzz: { gaRange: { main: 1, mid: 1, subStart: 1 }, excludeParams: ["_P-9_R-9"], paramSweepRounds: 3 },
 };
