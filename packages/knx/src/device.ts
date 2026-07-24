@@ -22,6 +22,19 @@ export const PID = {
 // telegrams later.
 export const VERIFY_MODE = 0x04;
 
+// Chunk sizes (data bytes per request) for the A_MemoryExtended path. Classic memory is stuck at 12
+// (small standard frames), but extended memory moves more per round trip, which matters for the large
+// System B parameter segments it exists to reach (a 10 KB segment at 12 bytes is ~850 round trips over a
+// tunnelled bench bridge — minutes). READ and WRITE have DIFFERENT ceilings because a read request is
+// tiny (count + 3-byte address; the data comes back in the RESPONSE, which the transport reassembles on
+// receive) while a write request CARRIES the data. Over the bench ABB KNX-USB stick, whose HID transport
+// sends one report and does not fragment, the limits measured on a Jung 400021SE are: reads up to 48
+// data bytes, writes up to 32 (a ~55-byte USB payload; 40+ overflows the single report and the send is
+// dropped). Both are a safe default for a real KNX-IP interface too (it tolerates at least this). Capped
+// at the 255 the single-octet count field allows; override to probe another interface's ceiling.
+export const EXT_READ_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_READ_CHUNK) || 48), 255);
+export const EXT_WRITE_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_WRITE_CHUNK) || 32), 255);
+
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
 export const RESTART_MASTER = 0x01;
@@ -183,7 +196,7 @@ export class KnxDevice {
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended (a device that
     // allocates a segment there answers only that service). Classic path stays byte-identical below.
-    if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, chunk, onProgress, signal);
+    if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, EXT_READ_CHUNK, onProgress, signal);
     assertAddressable(addr, len, "memory read");
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
     // MemoryRead that spans an internal memory boundary (they answer with an empty data
@@ -304,7 +317,7 @@ export class KnxDevice {
       throw new KnxError("MEMORY_ADDRESS_TOO_HIGH", `${what} at 0x${addr.toString(16)} is outside the 24-bit A_MemoryExtended address space`);
     }
   }
-  async memReadExtended(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+  async memReadExtended(addr: number, len: number, chunk = EXT_READ_CHUNK, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     this.assertExtAddressable(addr, len, "extended memory read");
     chunk = Math.min(Math.max(1, chunk), 255); // the count is a single request octet
     const out = Buffer.alloc(len);
@@ -333,7 +346,7 @@ export class KnxDevice {
   // acceptance proof) is inherently satisfied and the flag is a no-op here, not silently dropped.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
-    const chunk = Math.min(Math.max(1, opts.chunk ?? 12), 255); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, opts.chunk ?? EXT_WRITE_CHUNK), 255); // the count is a single request octet
     const total = Math.ceil(data.length / chunk) || 1;
     let done = 0;
     for (let pos = 0; pos < data.length; ) {
