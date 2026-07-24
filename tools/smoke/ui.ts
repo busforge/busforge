@@ -92,13 +92,33 @@ export class UiDriver {
   // menu, and its main button already flashes that target).
   private async openFlash(target: FlashTarget | "both"): Promise<void> {
     const page = this.req();
-    if (target !== "both" && (await page.$('[data-testid="flash-menu"]'))) {
-      await page.click('[data-testid="flash-menu"]');
-      await page.click(`[data-testid="flash-only-${target}"]`);
-    } else {
+    if (target === "both" || !(await page.$('[data-testid="flash-menu"]'))) {
       await page.click('[data-testid="program-device"]');
+      await page.waitForSelector(DIALOG, { timeout: 10_000 });
+      return;
     }
-    await page.waitForSelector(DIALOG, { timeout: 10_000 });
+    // The flash split-button's menu is a Radix DropdownMenu: the target item mounts in a portal only
+    // after the trigger opens it, with an entrance transition. Clicking trigger and item back-to-back
+    // races that mount, and a click that lands while the menu is still animating in can be dropped or
+    // dismiss the menu (the bench symptom: a 30 s timeout on flash-only-params). Open, wait for the
+    // item to be actually visible, then select it; if the dialog does not appear the open did not take
+    // (a swallowed click), so retry the whole open-and-select a few times before failing loud.
+    const item = page.locator(`[data-testid="flash-only-${target}"]`);
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await page.click('[data-testid="flash-menu"]');
+        await item.waitFor({ state: "visible", timeout: 5_000 });
+        await item.click();
+        await page.waitForSelector(DIALOG, { timeout: 10_000 });
+        return;
+      } catch (e) {
+        lastErr = e;
+        await page.keyboard.press("Escape").catch(() => undefined); // close a half-open menu before retrying
+        await page.waitForTimeout(300);
+      }
+    }
+    throw new Error(`openFlash: could not open the ${target} flash dialog via the split-button menu — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
   }
 
   // A surgical flash: open, confirm the previewed diff, wait for the write to verify. Throws if the
