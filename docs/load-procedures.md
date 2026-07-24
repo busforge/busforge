@@ -124,6 +124,23 @@ flashing blind.
   + batch `assertLoaded` (its loads/completions were never asserted inline); its writes
   stay read-back verified as before, so it too carries no new wire behavior.
 
+### The pre-unload backup is opt-in (`backupBeforeUnload`, default OFF)
+
+A full download UNLOADs every segment before it rewrites them, so whatever the device held is gone the
+moment it starts. `downloadFull` can first read the device's current memory back and persist it to
+`.bin` files, a recovery copy for the one case where it matters: a device holding a configuration
+Busforge cannot reproduce (programmed by ETS, never imported). That read is expensive: the parameter
+segment alone is ~1800 twelve-byte TP round trips, minutes of bus traffic, on a device whose every byte
+the download is about to derive from the project and replace.
+
+So it is gated behind `FullDownloadCtx.backupBeforeUnload`, **default `false`**. The whole backup path
+(size the segments from the device's own MCB / table headers, refuse rather than guess a length, persist
+before any unload) stays implemented and tested (`packages/product/test/download-full.test.ts`), it just
+does not run unless asked. No server route sets the flag today, so production full downloads skip it and
+finish minutes sooner. A future UI can offer "back up before commissioning" for the ETS-migration case;
+until then the recovery path for a botched download is to re-run it from the project (the device is left
+`LOADING`, recoverable, never restarted on a failed write).
+
 ## Deferred (named, not silent)
 
 - **Full download / first-time commissioning: DONE for System B.** `downloadFull`

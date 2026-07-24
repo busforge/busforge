@@ -252,6 +252,15 @@ export interface FullDownloadCtx {
   links: ComObjectLink[];
   moduleInstances?: ModuleInstance[];
   dryRun: boolean;
+  // Read and persist the device's CURRENT memory to .bin files BEFORE the unload/rewrite destroys it,
+  // as a recovery copy for a full download that lands on a device holding a configuration we cannot
+  // reproduce (e.g. one programmed by ETS, never imported). OFF by default: on a full download every
+  // written byte is derived from the project, so the image is reproducible and the backup's payoff is
+  // narrow, while reading the whole parameter segment back (~1800 TP round trips, minutes) dominates the
+  // wall-clock. The backup PATH stays fully implemented and tested; this only gates whether it runs, so
+  // a future UI can offer "back up before commissioning" for the ETS-migration case. See
+  // docs/load-procedures.md and docs/next-steps.md.
+  backupBeforeUnload?: boolean;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
 }
@@ -403,41 +412,47 @@ export class SystemBProfile extends DeviceProfile {
     // is not something this codebase does anywhere else.
     const stamp = Date.now();
     const backups: { file: string; bytes: Buffer }[] = [];
-    ctx.onProgress?.("backup");
-    // Sizes first, bytes second. Reading the parameter segment back is ~1800 twelve-byte round
-    // trips over TP, i.e. minutes; without a done/total the phase reports 0/0 for all of it and is
-    // indistinguishable from a hang. It was mistaken for one. Sum the work before doing it so the
-    // progress is against a real total.
-    const segs: { obj: number; what: string; at: number; size: number }[] = [];
-    for (const [obj, what] of [[LSM, "params"], [OBJ.COMOBJ_TABLE, "comobj"], [OBJ.ASSOC_TABLE, "assoc"], [OBJ.ADDR_TABLE, "addr"]] as [number, string][]) {
-      const at = await dev.tableAddr(obj);
-      if (at === 0) continue; // never loaded: there is nothing there to lose
-      // Size the backup from the DEVICE's own loaded segment, never from the image we are about to
-      // write. A device programmed (by ETS or by us) with a LARGER parameter segment than our new
-      // image has a tail the unload is about to destroy; sizing this backup by `target.size` would
-      // silently omit exactly those bytes and produce a "backup" that cannot restore what it
-      // replaced. The parameter segment reports its loaded size in its MCB (PID_MCB_TABLE); the
-      // group tables report theirs in their count header. If either cannot be determined, refuse the
-      // whole download rather than back up a guessed length.
-      let size: number;
-      if (obj === LSM) {
-        const mcb = await readSegmentCrc(dev, LSM);
-        if (mcb === null || mcb.size === 0) {
-          throw new ProductError("SEGMENT_SIZE_UNKNOWN",
-            `the device will not report the size of its loaded parameter segment (PID_MCB_TABLE); refusing the full download rather than back up a guessed length and let the unload destroy the remainder`);
+    // The pre-unload backup is OFF by default (ctx.backupBeforeUnload): reading the whole parameter
+    // segment back is minutes of bus traffic to preserve bytes a full download reproduces from the
+    // project anyway. The whole read stays here, gated, so it can be turned back on (a future UI for
+    // the ETS-migration case). See FullDownloadCtx.backupBeforeUnload.
+    if (ctx.backupBeforeUnload) {
+      ctx.onProgress?.("backup");
+      // Sizes first, bytes second. Reading the parameter segment back is ~1800 twelve-byte round
+      // trips over TP, i.e. minutes; without a done/total the phase reports 0/0 for all of it and is
+      // indistinguishable from a hang. It was mistaken for one. Sum the work before doing it so the
+      // progress is against a real total.
+      const segs: { obj: number; what: string; at: number; size: number }[] = [];
+      for (const [obj, what] of [[LSM, "params"], [OBJ.COMOBJ_TABLE, "comobj"], [OBJ.ASSOC_TABLE, "assoc"], [OBJ.ADDR_TABLE, "addr"]] as [number, string][]) {
+        const at = await dev.tableAddr(obj);
+        if (at === 0) continue; // never loaded: there is nothing there to lose
+        // Size the backup from the DEVICE's own loaded segment, never from the image we are about to
+        // write. A device programmed (by ETS or by us) with a LARGER parameter segment than our new
+        // image has a tail the unload is about to destroy; sizing this backup by `target.size` would
+        // silently omit exactly those bytes and produce a "backup" that cannot restore what it
+        // replaced. The parameter segment reports its loaded size in its MCB (PID_MCB_TABLE); the
+        // group tables report theirs in their count header. If either cannot be determined, refuse the
+        // whole download rather than back up a guessed length.
+        let size: number;
+        if (obj === LSM) {
+          const mcb = await readSegmentCrc(dev, LSM);
+          if (mcb === null || mcb.size === 0) {
+            throw new ProductError("SEGMENT_SIZE_UNKNOWN",
+              `the device will not report the size of its loaded parameter segment (PID_MCB_TABLE); refusing the full download rather than back up a guessed length and let the unload destroy the remainder`);
+          }
+          size = mcb.size;
+        } else {
+          size = await tableByteLength(dev, obj, at);
         }
-        size = mcb.size;
-      } else {
-        size = await tableByteLength(dev, obj, at);
+        segs.push({ obj, what, at, size });
       }
-      segs.push({ obj, what, at, size });
-    }
-    const backupTotal = segs.reduce((n, s) => n + s.size, 0);
-    let backupDone = 0;
-    for (const s of segs) {
-      const bytes = await dev.memRead(s.at, s.size, undefined, (d) => ctx.onProgress?.("backup", backupDone + d, backupTotal));
-      backupDone += s.size;
-      backups.push({ file: `${ctx.deviceId}-full-${stamp}-${s.what}.bin`, bytes });
+      const backupTotal = segs.reduce((n, s) => n + s.size, 0);
+      let backupDone = 0;
+      for (const s of segs) {
+        const bytes = await dev.memRead(s.at, s.size, undefined, (d) => ctx.onProgress?.("backup", backupDone + d, backupTotal));
+        backupDone += s.size;
+        backups.push({ file: `${ctx.deviceId}-full-${stamp}-${s.what}.bin`, bytes });
+      }
     }
 
     return runFlashOp(dev, mask, ctx, {
@@ -870,16 +885,21 @@ export class System7Profile extends DeviceProfile {
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
-    // app's own segment declarations.
+    // app's own segment declarations. OFF by default (ctx.backupBeforeUnload): the download rebuilds
+    // every segment from the project, so reading them all back first is minutes of bus traffic for a
+    // recovery copy whose payoff is narrow (see FullDownloadCtx.backupBeforeUnload). The read stays
+    // here, gated, for a future opt-in.
     const stamp = Date.now();
     const backups: { file: string; bytes: Buffer }[] = [];
-    ctx.onProgress?.("backup");
-    const backTotal = cfg.absoluteSegments.reduce((n, s) => n + s.size, 0);
-    let backDone = 0;
-    for (const seg of cfg.absoluteSegments) {
-      const bytes = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("backup", backDone + d, backTotal));
-      backDone += seg.size;
-      backups.push({ file: `${ctx.deviceId}-abs-${seg.id.split("_").pop()}-${stamp}.bin`, bytes });
+    if (ctx.backupBeforeUnload) {
+      ctx.onProgress?.("backup");
+      const backTotal = cfg.absoluteSegments.reduce((n, s) => n + s.size, 0);
+      let backDone = 0;
+      for (const seg of cfg.absoluteSegments) {
+        const bytes = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("backup", backDone + d, backTotal));
+        backDone += seg.size;
+        backups.push({ file: `${ctx.deviceId}-abs-${seg.id.split("_").pop()}-${stamp}.bin`, bytes });
+      }
     }
 
     const memMappedLsms = isMemoryMappedLsm(mask);

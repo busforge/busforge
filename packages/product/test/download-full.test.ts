@@ -137,7 +137,11 @@ const asDev = (m: MockDevice) => m as unknown as KnxDevice;
 // "backup-persisted" into the SAME event stream the mock records unloads/writes into, so the
 // backup-before-unload ordering is a positive assertion on one timeline (runFlashOp calls
 // persistBackups before any write reaches the device).
-function ctxFor(dev: MockDevice, over: { params?: Map<string, string>; links?: ComObjectLink[]; dryRun?: boolean } = {}) {
+// backupBeforeUnload mirrors the production default (OFF): the pre-unload backup is opt-in, so a test
+// that asserts the backup path must ask for it explicitly. persistBackups is still always called (with
+// an empty list when the backup is off), so the backup-before-unload ORDERING assertions keep a
+// "backup-persisted" marker to anchor on.
+function ctxFor(dev: MockDevice, over: { params?: Map<string, string>; links?: ComObjectLink[]; dryRun?: boolean; backupBeforeUnload?: boolean } = {}) {
   const backups: { file: string; bytes: Buffer }[] = [];
   return {
     backups,
@@ -146,6 +150,7 @@ function ctxFor(dev: MockDevice, over: { params?: Map<string, string>; links?: C
       params: over.params ?? params,
       links: over.links ?? [],
       moduleInstances: [], dryRun: over.dryRun ?? false,
+      backupBeforeUnload: over.backupBeforeUnload ?? false,
       persistBackups: (files: { file: string; bytes: Buffer }[]) => { backups.push(...files); dev.events.push("backup-persisted"); return "backup"; },
     },
   };
@@ -180,7 +185,7 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     // The com-object table region seeds a 60000-entry count header: the reader's twin refuses this
     // exact condition, and so must the backup, instead of returning size 0 and unloading it anyway.
     const dev = new MockDevice({ seedTableCount: { [OBJ.COMOBJ]: 60000 } });
-    const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx).catch((e) => e);
+    const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { backupBeforeUnload: true }).ctx).catch((e) => e);
     expect(err?.code).toBe("GROUP_TABLE_UNREADABLE");
     // It refused during backup: nothing was unloaded, nothing written.
     expect(dev.events).not.toContain("unload");
@@ -189,7 +194,7 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
 
   test("Finding 5b: a device that will not report its loaded segment size REFUSES, not backs up a guess (SEGMENT_SIZE_UNKNOWN)", async () => {
     const dev = new MockDevice({ mcb: null }); // PID_MCB_TABLE answers < 8 bytes
-    const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx).catch((e) => e);
+    const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { backupBeforeUnload: true }).ctx).catch((e) => e);
     expect(err?.code).toBe("SEGMENT_SIZE_UNKNOWN");
     expect(dev.events).not.toContain("unload");
   });
@@ -201,7 +206,7 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     // backup loop, so this asserts the sizing without the slow write/restart bracket.)
     const biggerSize = target.size + 64;
     const dev = new MockDevice({ mcb: { size: biggerSize, crc: 0 } });
-    const { ctx, backups } = ctxFor(dev, { dryRun: true });
+    const { ctx, backups } = ctxFor(dev, { dryRun: true, backupBeforeUnload: true });
     const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
     expect(res.kind).toBe("dryRun");
@@ -215,7 +220,7 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     // download equals the augmented CRC the verify computes, so the verify accepts it without
     // reading the whole segment back.
     const dev = new MockDevice({ mcb: "actual" });
-    const { ctx, backups } = ctxFor(dev);
+    const { ctx, backups } = ctxFor(dev, { backupBeforeUnload: true });
     const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
     expect(res.kind).toBe("flashed");
@@ -256,7 +261,9 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
       mcb: { size: target.size, crc: 0xdead }, // matches neither CRC_AUG nor CRC_PLAIN
       onRestart: (mem) => { mem.set(A[OBJ.LSM] + flip, target.bytes[flip] ^ 0xff); }, // the write did not stick
     });
-    const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+    // Backup ON so the full-read count is backup(1) + verify-fallback(>=1); the subject is the verify
+    // fallback, but the assertion below counts both, matching how this test was authored.
+    const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { backupBeforeUnload: true }).ctx);
 
     expect(res.kind).toBe("flashed");
     if (res.kind !== "flashed") throw new Error("unreachable");
@@ -268,10 +275,10 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     expect(fullReads.length).toBeGreaterThanOrEqual(2);
   }, 20_000);
 
-  test("dryRun: captures the backup but writes NOTHING to the device", async () => {
+  test("dryRun with backup ON: captures the backup but writes NOTHING to the device", async () => {
     const dev = new MockDevice();
     const before = new Map(dev.mem);
-    const { ctx, backups } = ctxFor(dev, { dryRun: true });
+    const { ctx, backups } = ctxFor(dev, { dryRun: true, backupBeforeUnload: true });
     const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
     expect(res.kind).toBe("dryRun");
@@ -280,6 +287,31 @@ describe("SystemB downloadFull orchestration (real M-0162 app, mock device)", ()
     expect(dev.events).not.toContain("unload");
     expect(dev.mem).toEqual(before);
   });
+
+  test("DEFAULT (backupBeforeUnload OFF): no pre-unload backup read, yet the download still writes and verifies", async () => {
+    // The production default: the full download does NOT read the device's memory back before the
+    // unload/rewrite, because the image it writes is derived from the project and reproducible. The
+    // ~1800-round-trip parameter read that dominated the wall-clock is gone; the download proceeds and
+    // verifies exactly as before. persistBackups is still called (with an EMPTY list) so the ordering
+    // hook stays intact.
+    const dev = new MockDevice({ mcb: "actual" });
+    const { ctx, backups } = ctxFor(dev); // backupBeforeUnload defaults to false
+    const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
+
+    expect(res.kind).toBe("flashed");
+    if (res.kind !== "flashed") throw new Error("unreachable");
+    expect(res.verified).toBe(true);
+    expect(backups.length).toBe(0); // nothing was backed up
+    // The parameter segment was NOT read at full length before the write (the verify accepts the MCB
+    // CRC, so it is not read at full length after either): zero full-segment reads by the download.
+    const fullReads = dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === target.size).length;
+    expect(fullReads).toBe(0);
+    // The download still wrote every segment and did so AFTER the (empty) backup was persisted.
+    expect(dev.events[0]).toBe("backup-persisted");
+    expect(dev.events).toContain("unload");
+    expect(dev.events).toContain("write");
+    expect((await dev.memRead(A[OBJ.LSM], target.size)).equals(target.bytes)).toBe(true);
+  }, 20_000);
 });
 
 // The GA flash must rewrite the com-object table (L3), not just the group tables. ETS (and
