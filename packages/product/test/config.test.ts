@@ -25,6 +25,10 @@ describe("matchTest grammar", () => {
     expect(matchTest("1 2 3", 4)).toBe(false);
   });
   test("operators", () => {
+    // `=N` is in ETS's own schema for When/@test, next to the bare-integer list form.
+    expect(matchTest("=5", 5)).toBe(true);
+    expect(matchTest("=5", 4)).toBe(false);
+    expect(matchTest("=-1", -1)).toBe(true);
     expect(matchTest("<8", 5)).toBe(true);
     expect(matchTest("<8", 8)).toBe(false);
     expect(matchTest(">1", 2)).toBe(true);
@@ -32,6 +36,17 @@ describe("matchTest grammar", () => {
     expect(matchTest(">=8", 8)).toBe(true);
     expect(matchTest("!=1", 1)).toBe(false);
     expect(matchTest("!=1", 0)).toBe(true);
+  });
+  // A token this grammar does not know used to be skipped, so a `choose` whose every branch
+  // tested an unknown form silently fell through to `default` and that branch went into the
+  // flashed image. The wrong branch is unobservable in the UI and in the read-back (the device
+  // faithfully holds the wrong bytes), so it must refuse instead.
+  test("an unsupported token is refused, never treated as no-match", () => {
+    expect(() => matchTest("1..3", 2)).toThrow(/1\.\.3/);
+    try { matchTest("1..3", 2); } catch (e) { expect((e as { code?: string }).code).toBe("PARAM_TEST_UNSUPPORTED"); }
+    // A well-formed token in the same expression does not excuse the unknown one: the branch
+    // would still be decided on a partial reading of the condition.
+    expect(() => matchTest("1 0x02", 1)).toThrow(/0x02/);
   });
 });
 

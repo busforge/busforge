@@ -146,6 +146,7 @@ const en = {
     COM_OBJECT_TABLE_STALE_USE_DOWNLOAD: "This change alters which communication objects the device has (or their flags), so its com-object table has to be rewritten. A surgical flash cannot do that, but a full download can: run one to apply this configuration to the device.",
     MODULE_ARG_UNRESOLVED: "A channel module of this device is missing the argument that places its memory. Refusing to guess a placement that could overwrite another channel.",
     COMOBJ_ARG_UNRESOLVED: "A channel module of this device is missing the argument that numbers its communication objects. Refusing to guess the numbering.",
+    PARAM_TEST_UNSUPPORTED: "This device's product data uses a form of parameter condition Busforge does not understand. Which settings the condition shows or hides cannot be decided, so Busforge refuses rather than pick a branch and program the wrong values.",
     EMPTY_IMAGE: "The parameter image came out empty. Refusing to flash.",
     PARAM_VALUE_OUT_OF_RANGE: "A stored parameter value does not fit the type the application declares for it. Busforge refuses to write it rather than truncate it into the wrong bits on the device.",
     PROG_MODE_NO_DEVICE: "No device is in programming mode. Press the programming button on the device you want to address, then try again.",

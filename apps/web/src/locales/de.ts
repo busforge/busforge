@@ -146,6 +146,7 @@ const de: Messages = {
     COM_OBJECT_TABLE_STALE_USE_DOWNLOAD: "Diese Änderung verändert, welche Kommunikationsobjekte das Gerät hat (oder deren Flags), also muss die Com-Objekt-Tabelle neu geschrieben werden. Ein chirurgischer Flash kann das nicht, ein vollständiger Download schon: Führe einen aus, um diese Konfiguration auf das Gerät zu schreiben.",
     MODULE_ARG_UNRESOLVED: "Einem Kanalmodul dieses Geräts fehlt das Argument, das seinen Speicher platziert. Eine geratene Platzierung könnte einen anderen Kanal überschreiben, daher abgelehnt.",
     COMOBJ_ARG_UNRESOLVED: "Einem Kanalmodul dieses Geräts fehlt das Argument, das seine Kommunikationsobjekte nummeriert. Eine geratene Nummerierung wird abgelehnt.",
+    PARAM_TEST_UNSUPPORTED: "Die Produktdaten dieses Geräts verwenden eine Form von Parameterbedingung, die Busforge nicht versteht. Welche Einstellungen die Bedingung ein- oder ausblendet, lässt sich damit nicht entscheiden. Busforge lehnt ab, statt einen Zweig zu raten und falsche Werte zu programmieren.",
     EMPTY_IMAGE: "Das Parameter-Image ist leer. Flashen abgelehnt.",
     PARAM_VALUE_OUT_OF_RANGE: "Ein gespeicherter Parameterwert passt nicht in den Typ, den die Applikation dafür deklariert. Busforge lehnt das Schreiben ab, statt ihn abgeschnitten in die falschen Bits des Geräts zu legen.",
     PROG_MODE_NO_DEVICE: "Kein Gerät ist im Programmiermodus. Drücke die Programmiertaste am gewünschten Gerät und versuche es erneut.",

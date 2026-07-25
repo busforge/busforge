@@ -160,18 +160,29 @@ const TOP: Scope = {
 };
 
 // `test` grammar: space-separated tokens, OR-combined. A token is a bare integer
-// (equality) or one of <N, >N, <=N, >=N, !=N. Compares the raw integer value.
+// (equality) or one of =N, !=N, <N, >N, <=N, >=N. Compares the raw integer value.
+// This is ETS's own grammar for When/@test: `((-?\d+\s)*-?\d+)|((=|!=|>|<|>=|<=)-?\d+)`.
+// ETS forbids mixing the list form with an operator token; accepting that superset is harmless.
+//
+// Every token is validated BEFORE any is evaluated, and an unrecognised one refuses. Skipping it
+// would decide the branch on a partial reading of the condition: a `choose` whose branches all
+// test an unknown form would fall through to `default`, and that branch's parameters go into the
+// flashed image. Nothing downstream can catch it, because the device faithfully holds whatever it
+// was given and reads back green.
+const TEST_OP = /^(<=|>=|<|>|!=|=)(-?\d+)$/;
 export function matchTest(test: string, v: number): boolean {
-  for (const tok of test.trim().split(/\s+/)) {
-    if (tok === "") continue;
-    let m: RegExpExecArray | null;
-    if ((m = /^(<=|>=|<|>|!=)(-?\d+)$/.exec(tok))) {
-      const n = Number(m[2]);
-      const ok = m[1] === "<" ? v < n : m[1] === ">" ? v > n : m[1] === "<=" ? v <= n : m[1] === ">=" ? v >= n : v !== n;
-      if (ok) return true;
-    } else if (/^-?\d+$/.test(tok)) {
-      if (v === Number(tok)) return true;
+  const tokens = test.trim().split(/\s+/).filter((t) => t !== "");
+  for (const tok of tokens) {
+    if (!TEST_OP.test(tok) && !/^-?\d+$/.test(tok)) {
+      throw new ProductError("PARAM_TEST_UNSUPPORTED", `unsupported token "${tok}" in parameter condition "${test}"`);
     }
+  }
+  for (const tok of tokens) {
+    const m = TEST_OP.exec(tok);
+    if (m) {
+      const n = Number(m[2]);
+      if (m[1] === "<" ? v < n : m[1] === ">" ? v > n : m[1] === "<=" ? v <= n : m[1] === ">=" ? v >= n : m[1] === "!=" ? v !== n : v === n) return true;
+    } else if (v === Number(tok)) return true;
   }
   return false;
 }
@@ -673,7 +684,7 @@ export interface ComObjUniverseEntry {
 export function comObjectUniverse(app: AppConfig, lang?: string): ComObjUniverseEntry[] {
   // A ModuleDef ALONE does not make the com-objects per-instance: an app may carry an unused
   // ModuleDef stub yet expand every channel to flat, top-level com-objects at generation time
-  // (OpenKNX's RaumController does exactly this, see docs/openknx.md). What actually forces
+  // (OpenKNX's RaumController does exactly this, see docs/commissioning.md). What actually forces
   // per-instance objects is a com-object whose number is BaseNumber-relative, resolvable only
   // inside a module instance. So refuse only when such an object really exists, not merely
   // because `hasModules` is set; otherwise a whole family of enumerable apps is refused wrongly.
