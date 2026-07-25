@@ -12,7 +12,7 @@ import type { LoadPlan } from "@busforge/knx";
 // Why surgical and not a full-segment write: an absolute segment without a <Data>
 // default image (e.g. Steinel M-008E) cannot be reconstructed byte-for-byte, because
 // ETS computes non-zero parameter defaults from a default image these devices do not
-// ship (the irreducible 4-byte residual in docs/mv0705-spike-findings.md). Writing a
+// ship (the irreducible 4-byte residual in docs/device-memory-model.md). Writing a
 // whole segment would therefore push our zero approximation over the device's correct
 // (but, to us, unknowable) defaults. So we only ever WRITE bytes we can positively
 // justify: bytes owned by an active, resolved parameter (buildAbsoluteSegmentTargets'

@@ -32,7 +32,7 @@
 // writes into their own segments (above the parameter segment) are built by a different Busforge
 // path (buildComObjectTable / buildGroupTables) and are reported here only as an address span. A
 // live-read-back variant (diff against the real device rather than a capture, resolving the base
-// from the device itself) is the durable form; see docs/next-steps.md.
+// from the device itself) is the durable form; see docs/roadmap.md.
 import { loadKnxproj, readAppProgram, deviceParamValues } from "../packages/project/src/index.ts";
 import { readZip } from "../packages/project/src/zip.ts";
 import { parseAppConfig, resolveModuleInstances, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
@@ -123,5 +123,5 @@ for (const v of divs) console.log(`  @0x${(v.addr + base).toString(16).padStart(
 console.log(`\nsummary: ${divs.length} divergences / ${paramWrites.length} ETS param writes (base 0x${base.toString(16)}).`);
 console.log(divs.length === 0
   ? "PASS — busforge's image matches ETS at every configured byte."
-  : "FAIL — busforge's image disagrees with ETS (see docs/next-steps.md). CRC-verify cannot catch this.");
+  : "FAIL — busforge's image disagrees with ETS (see docs/verification.md). CRC-verify cannot catch this.");
 process.exit(divs.length === 0 ? 0 : 1);

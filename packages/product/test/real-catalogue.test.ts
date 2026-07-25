@@ -43,7 +43,7 @@ describe("real catalogue (per-manufacturer regression)", () => {
         // Stability lock, not a correctness proof: the golden hashes prove the default
         // absolute build, its owned/verify masks and the surgical flash plan are
         // UNCHANGED since the reviewed regeneration; device-correctness is pinned by
-        // the hardware byte-matches (docs/mv0705-spike-findings.md). The presence
+        // the hardware byte-matches (docs/device-memory-model.md). The presence
         // checks are explicit because toEqual treats a missing key like `undefined`:
         // a fixture silently gaining or losing its absolute sections (e.g. the parser
         // dropping AbsoluteSegments) must fail HERE, loudly, not blur through.

@@ -41,7 +41,7 @@ export interface ProjectExport {
   // unsealed from the master key, so the project is never separated from its keys.
   // The only protection is the .busforge container password; an unencrypted export
   // therefore exposes them, which the UI must warn about before exporting. Optional
-  // so artifacts from before secure support still import. See docs/knx-secure-design.md.
+  // so artifacts from before secure support still import. See docs/knx-secure.md.
   deviceSecurity?: { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; source: string }[];
 }
 

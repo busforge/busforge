@@ -5,7 +5,7 @@ import { appProgramId, type CatalogProduct } from "@busforge/project";
 // id (the value of appProgramId(appRef)). Global and shared across projects; a
 // re-import or a second project using the same product reuses the stored entry.
 // We keep the decrypted XML and parse it at runtime, so the parser stays the
-// single source of truth (see docs/storage-and-snapshots-design.md, milestone 1).
+// single source of truth (see docs/storage-and-snapshots.md, milestone 1).
 
 // Store an application program (idempotent: the XML for a given id is identical
 // manufacturer data, so an existing row is left untouched).

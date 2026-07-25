@@ -1,16 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 520" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="busforge's three ways to reach the KNX bus: local USB, KNX-IP interface, and remote USB via the bridge">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 520" font-family="'Archivo', system-ui, sans-serif" role="img" aria-label="busforge's three ways to reach the KNX bus: local USB, KNX-IP interface, and remote USB via the bridge">
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Instrument+Serif:ital@0;1&amp;display=swap');
     :root{
-      --paper:#faf7f2; --paper2:#f2ede4; --ink:#1c1917; --muted:#57534e; --soft:#78716c;
-      --rule:rgba(28,25,23,0.12); --rule2:rgba(120,113,108,0.25);
-      --accent:#b5523a; --accent-tint:rgba(181,82,58,0.08); --store:rgba(28,25,23,0.04);
-    }
-    @media (prefers-color-scheme: dark){
-      :root{
-        --paper:#1c1917; --paper2:#292524; --ink:#faf7f2; --muted:#a8a29e; --soft:#8e8680;
-        --rule:rgba(250,247,242,0.12); --rule2:rgba(168,162,158,0.25);
-        --accent:#d6724a; --accent-tint:rgba(214,114,74,0.12); --store:rgba(250,247,242,0.05);
-      }
+      --paper:#090e12; --paper2:#13181d; --ink:#e5e8eb; --muted:#8d9399; --soft:#717880;
+      --rule:rgba(229,232,235,0.12); --rule2:rgba(141,147,153,0.25);
+      --accent:#f3a44a; --accent-tint:rgba(243,164,74,0.10); --store:rgba(229,232,235,0.05);
     }
     .bg{fill:var(--paper)}
     .box{fill:var(--paper);stroke:var(--ink);stroke-width:1}
@@ -18,13 +12,13 @@
     .focal{fill:var(--accent-tint);stroke:var(--accent);stroke-width:1.5}
     .busbar{fill:var(--paper2);stroke:var(--rule2);stroke-width:1}
     .name{fill:var(--ink);font-size:13px;font-weight:600}
-    .sub{fill:var(--muted);font-size:9px;font-family:ui-monospace,'SF Mono',Menlo,monospace}
-    .eyebrow{fill:var(--soft);font-size:8px;font-weight:500;font-family:ui-monospace,monospace;letter-spacing:.18em}
+    .sub{fill:var(--muted);font-size:9px;font-family:'JetBrains Mono',ui-monospace,monospace}
+    .eyebrow{fill:var(--soft);font-size:8px;font-weight:500;font-family:'JetBrains Mono',ui-monospace,monospace;letter-spacing:.18em}
     .title{fill:var(--ink);font-size:26px;font-family:'Instrument Serif',Georgia,serif}
     .tag{fill:none;stroke:var(--muted);stroke-width:.8}
-    .tagt{fill:var(--muted);font-size:7px;font-family:ui-monospace,monospace;letter-spacing:.08em}
+    .tagt{fill:var(--muted);font-size:7px;font-family:'JetBrains Mono',ui-monospace,monospace;letter-spacing:.08em}
     .ftag{stroke:var(--accent)} .ftagt{fill:var(--accent)}
-    .alabel{fill:var(--soft);font-size:8px;font-family:ui-monospace,monospace;letter-spacing:.06em}
+    .alabel{fill:var(--soft);font-size:8px;font-family:'JetBrains Mono',ui-monospace,monospace;letter-spacing:.06em}
     .mask{fill:var(--paper)}
     .callout{fill:var(--soft);font-size:13px;font-style:italic;font-family:'Instrument Serif',Georgia,serif}
     .flow{stroke:var(--muted);stroke-width:1.2;fill:none}
@@ -72,7 +66,7 @@
   <text class="sub" x="390" y="144" text-anchor="middle">server · runs anywhere</text>
 
   <!-- KnxTransport seam label -->
-  <text class="alabel" x="390" y="176" text-anchor="middle" fill="var(--soft)">KnxTransport &#8212; connect · sendCemi · onCemi</text>
+  <text class="alabel" x="390" y="176" text-anchor="middle" fill="var(--soft)">KnxTransport: connect · sendCemi · onCemi</text>
 
   <!-- transports -->
   <rect class="box" x="80" y="196" width="140" height="44" rx="6"/>
@@ -86,7 +80,7 @@
   <!-- endpoints -->
   <rect class="ext" x="80" y="296" width="140" height="48" rx="6"/>
   <text class="name" x="150" y="318" text-anchor="middle">KNX-USB</text>
-  <text class="sub" x="150" y="333" text-anchor="middle">interface (147b:5120)</text>
+  <text class="sub" x="150" y="333" text-anchor="middle">interface (HID)</text>
 
   <rect class="ext" x="320" y="296" width="140" height="48" rx="6"/>
   <text class="name" x="390" y="318" text-anchor="middle">KNXnet/IP</text>
@@ -95,11 +89,10 @@
   <!-- bridge boundary (another machine) -->
   <rect class="boundary" x="548" y="286" width="196" height="70" rx="8"/>
   <rect class="mask" x="566" y="280" width="150" height="12"/>
-  <text class="alabel" x="574" y="289" fill="var(--accent)">ANOTHER MACHINE · THE BENCH</text>
+  <text class="alabel" x="574" y="289" fill="var(--accent)">ANOTHER MACHINE</text>
 
   <!-- busforge-bridge (FOCAL) -->
   <rect class="focal" x="560" y="296" width="180" height="56" rx="6"/>
-  <rect class="tag ftag" x="568" y="302" width="60" height="12" rx="2"/><text class="tagt ftagt" x="598" y="311" text-anchor="middle">NEW</text>
   <text class="name" x="650" y="330" text-anchor="middle">busforge-bridge</text>
   <text class="sub" x="650" y="344" text-anchor="middle">KnxIpServer + KnxUsbTransport</text>
 
@@ -108,7 +101,7 @@
   <text class="name" x="410" y="426" text-anchor="middle">KNX TP bus</text>
 
   <!-- editorial callout: multiplexing -->
-  <text class="callout" x="40" y="474">A gateway to the client, either way &#8212; and the bridge multiplexes:</text>
+  <text class="callout" x="40" y="474">A gateway to the client, either way, and the bridge multiplexes:</text>
   <text class="callout" x="40" y="492">one USB interface, many tunnels, so a monitor and a download run at once.</text>
 
   <!-- legend -->

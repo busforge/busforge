@@ -154,7 +154,7 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
 // image, then overlays only the dynamic state per entry. So this takes the template and changes only
 // the config byte (and, for configured objects, the type byte from the resolved size). Reverse-
 // engineered in docs/device-memory-model.md and byte-verified against two ETS full-download captures
-// of an MDT BE-02001.02 (docs/mv0705-full-download.md).
+// of an MDT BE-02001.02 (docs/commissioning.md).
 //
 // LAYOUT (mask MV-0705): [count: u8][ramEnd: u16 BE] then one 4-byte entry per com-object, entry i is
 // com-object i (0-based, so entry 0 is a real object, not the count): [dataPtr: u16 BE][config: u8][type: u8].
@@ -181,7 +181,7 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
   // This also pins the 0-based number -> slot mapping below (`active.get(n)` / `linked.has(n)`): entry n
   // is com-object n, reverse-engineered and byte-verified on the MDT BE-02001.02. A manufacturer that
   // numbered its MV-0705 objects from 1 would trip this guard or shift the whole table by one slot, so
-  // any non-MDT MV-0705 product is UNPROVEN until byte-checked on it (docs/mv0705-full-download.md).
+  // any non-MDT MV-0705 product is UNPROVEN until byte-checked on it (docs/commissioning.md).
   const beyond = [...active.keys(), ...linked].filter((n) => n >= count);
   if (beyond.length) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",

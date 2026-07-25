@@ -6,7 +6,7 @@ import { ApiError } from "../errors.ts";
 // instance master key (see secrets.ts). The plaintext tool key only exists in
 // memory while a secure session uses it; the DB holds the sealed blob. Populated
 // at project import from the parsed <Security> elements, by manual deposit, or by
-// provisioning. See docs/knx-secure-design.md.
+// provisioning. See docs/knx-secure.md.
 
 export type SecuritySource = "import" | "manual" | "provisioned";
 

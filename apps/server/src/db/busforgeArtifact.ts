@@ -8,7 +8,7 @@ import { ApiError } from "../errors.ts";
 const scrypt = promisify(scryptCb) as (password: Buffer, salt: Buffer, keylen: number, options: ScryptOptions) => Promise<Buffer>;
 
 // The .busforge artifact container (our own format, documented in
-// docs/busforge-export-format.md). The payload is always the export JSON.
+// docs/export-format.md). The payload is always the export JSON.
 //
 //   unencrypted: a bare gzip stream of the JSON (utf-8). Open it with one
 //                command, no busforge needed: `gunzip < project.busforge`.

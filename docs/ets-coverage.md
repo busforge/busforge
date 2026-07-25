@@ -1,215 +1,138 @@
-# ETS coverage and engine status
+# ETS coverage
 
-Living status of how completely busforge renders an ETS application program,
-what it does not yet support, and the rules that keep gaps visible instead of
-silent. The end goal is 100% parity with ETS for the device configuration view.
+How completely Busforge renders an ETS application program, what it does not support, and the rules
+that keep the gaps visible instead of silent. The goal is parity with ETS for the device
+configuration view.
+
+This tracks the **engine's coverage of the ETS product format**. Whether a device is actually
+programmed correctly is a different question, answered in [status.md](status.md).
 
 ## Guiding rule: never drop silently
 
-Anything the engine cannot render must be shown in the UI as an explicit
-"not supported yet" marker, never omitted and never rendered as an empty or
-misleading control. A missing parameter that looks like it is simply absent is
-worse than a clearly labelled gap: it hides drift (a changed value the user
-cannot see) and erodes trust in the configuration. Two mechanisms enforce this:
+Anything the engine cannot render must appear in the UI as an explicit "not supported yet" marker.
+It is never omitted, and never rendered as an empty or misleading control. A missing parameter that
+looks simply absent is worse than a clearly labelled gap: it hides drift (a changed value the user
+cannot see) and it makes the change indicator lie. Two mechanisms enforce this:
 
-- Unknown dynamic elements become an `unsupported` node (with the original tag)
-  instead of being discarded, so they appear as a warning row in place.
-- Parameters whose datapoint/type the engine cannot edit keep a visible row with
-  a "not supported yet" badge and their raw stored value, instead of a blank
-  control.
+- An unknown dynamic element becomes an `unsupported` node carrying the original tag, so it appears
+  as a warning row in place.
+- A parameter whose datapoint type the engine cannot edit keeps a visible row with a "not supported"
+  badge and its raw stored value, instead of a blank control.
 
-## What we found (June 2026)
-
-- **`<Repeat>` was dropped entirely.** Channel banks (e.g. the six HMG 6 T
-  heating channels) are declared as a `<Module>` wrapped in a `<Repeat>`. The
-  dynamic parser had no case for `Repeat`, so it hit `default: return null` and
-  discarded the module and every channel under it. Device 1.1.x rendered 12
-  blocks / 62 params instead of the real 92 blocks / 597 params. Fixed: `Repeat`
-  is now a transparent container and the existing module-instance path expands
-  each channel.
-- **The "many changes, nothing visible" symptom was a real, honest indicator.**
-  The change counter is an unfiltered symmetric difference of stored vs baseline
-  values; it correctly counted changed parameters that lived inside the dropped
-  `Repeat` channels, which the page then could not render. It was not a counting
-  bug and nothing was patched away to hide it. The `Repeat` fix removes the
-  cause. Lesson: the change indicator is only as trustworthy as the UI is
-  complete, so completeness is a correctness property, not just UX.
-- **Read-back inherits UI completeness.** Read-back records drift only for refs
-  the config view exposes (`relevantRefs`). Before the `Repeat` fix it ignored
-  channel drift. Re-read channel devices captured before the fix.
-- **A class of structural drops remains.** `<Channel>` carries a localized label
-  (e.g. "Inputs A-F", "Logic", "GRUNDMODUL {{0}}") that ETS shows as a heading;
-  the engine flattens it to a transparent container and drops the heading. Same
-  failure class as `Repeat`, lower blast radius (a label, not whole params).
-
-## Silently-ignored attributes & semantics (audit 2026-06-23)
-
-We surface unknown *elements* and uneditable *types* in the UI, but for a long
-time silently ignored *attributes* and *layout semantics* the catalogues carry,
-the class the `DisplayOrder` ordering bug belonged to. Full inventory against the
-11 real catalogues: **26 attributes present in the data are not read; 6 are HIGH
-impact**, plus ~6 ignored semantics. This list is the backlog toward ETS parity.
-
-HIGH impact (changes what is shown, the order, visibility, or numbering):
-
-| Where | Attribute / semantic | Status | Effect when ignored |
-|---|---|---|---|
-| ParameterRef (block heading) | `DisplayOrder` | **fixed** | blocks now ordered by it, not document order |
-| Enumeration | `DisplayOrder` (2435×) | open | dropdown options shown in document order, not ETS order |
-| ParameterRefRef (rows) | `IndentLevel` (904×) | **fixed** | rows now indented by IndentLevel; per-row DisplayOrder is a no-op (within-block document order already equals DisplayOrder) |
-| `<Channel>` | heading `Text`/`Number`/`TextParameterRefId` (99×) | **fixed** | channel sections now shown as navigable groups with `{{0}}` substituted |
-| ParameterBlock | `Access="None"`/`Read` (29×) | open | we render blocks ETS hides |
-| ParameterBlock | `ShowInComObjectTree` (263×) | open | com-object grouping signal ignored |
-| ComObject | `ReadOnInitFlag` (2204×) | open | the 6th flag missing on every object (we show only R/W/C/T/U) |
-| ParameterBlock (item-less) | self-closing collector blocks | **fixed** | a reached childless header (e.g. "Scene") is shown as an empty navigable section; headers in inactive choose branches stay hidden (no noise) |
-
-MED impact, resolved:
-
-| Where | Attribute | Status | Notes |
-|---|---|---|---|
-| TypeNumber | `Increment` | **fixed** | becomes the number input's spinner step (e.g. PSU current in 5 mA steps); verified live on 1.1.x |
-| TypeNumber | `UIHint="Slider"` | **fixed** | a bounded number renders as a range slider with a live readout; verified live on 1.1.x (0-255) |
-
-MED impact, analyzed and deferred (each with a concrete reason, not silently skipped):
-
-- `Parameter/@InitialValue` (1× in the catalogues): on a hidden `Access="None"`
-  parameter and equal to `Value`. We already drop `Access="None"` rows and the
-  view is driven by `Value`, so honoring `InitialValue` would have **zero visible
-  effect**. Reading it would only matter for "unchanged since factory" detection,
-  which busforge does not do. Left unread on purpose.
-- `Parameter/@BaseValue` (5×): on read-only mirror parameters inside modules,
-  pointing at a module `Argument`. This is the per-instance allocator/numbering
-  mechanism, i.e. exactly the work tracked under "Planned: unify the model"
-  below. Deferred to that effort, not addressed piecemeal.
-- `TypeFloat/@Encoding` (3×): `TypeFloat` is wholly unsupported today (shown with
-  a "not supported" badge), so its `Encoding` is moot until float rendering lands
-  (roadmap item 2). Surfaced via the unsupported-type badge already.
-
-LOW (safe to ignore): `InternalDescription`,
-`Tag`, `DefaultUnionParameter`, `Inline`, `Icon`, `SecurityRequired`, plugin
-validation, `LegacyPatchAlways`, color/IP/time sub-attributes (types unsupported
-anyway).
-
-The flash/image path (`application.ts`) is correct for its scope (reads
-Memory/CodeSegment/Offset/BitOffset, SizeInBit, signed Type); its only real gap
-is allocator/`Repeat Count` module expansion, guarded by `unmappedParamRefs`.
-
-**Prioritized fixes:** (1) Channel heading text, (2) Enumeration `DisplayOrder`,
-(3) per-row `DisplayOrder` ordering, (4) ParameterBlock `Access="None"` hiding,
-(5) `IndentLevel` row nesting, (6) `ReadOnInitFlag`, (7) item-less collector
-blocks, (8) `Increment`/slider. All landed; the only remaining attribute work
-(`BaseValue` allocator) is folded into the model-unification effort below.
-
-**Visibility mechanism:** keep this inventory current and provide a re-runnable
-audit (a dev script that, given a project's app XMLs, lists attributes present
-but unread) so a new ignored attribute is found by us, not by the user.
+The change counter is an unfiltered symmetric difference of stored values against the programmed
+baseline. It therefore counts changes the page might not be able to render, and that has already
+surfaced a real gap. **Completeness of the view is a correctness property, not a UX nicety**: the
+change indicator is only as trustworthy as the view is complete, and read-back inherits the same
+limit, because it records drift only for the refs the view exposes.
 
 ## Dynamic element coverage
 
 | Element | Status | Notes |
 |---|---|---|
-| ParameterBlock (+ heading from Text / ParamRefId / Name) | full | |
-| ParameterRefRef / ComObjectRefRef | full | |
-| choose / when / default (+ `test` grammar) | full | all catalogue test strings parse |
-| ParameterSeparator | full | rendered as heading / ruler / error |
-| Module instantiation (+ scope rewrite, com-object base numbering) | full | from the device's 0.xml instances |
-| Repeat | full | transparent container; expands via module instances |
-| Assign / Union / TextParameterRefId substitution | full | |
-| ChannelIndependentBlock | full | transparent container |
-| Channel | full | heading shown as a navigable section (Text + `{{0}}` substitution) |
-| Unknown / vendor element | surfaced | emitted as an `unsupported` marker (no longer silent) |
+| `ParameterBlock` (heading from `Text` / `ParamRefId` / `Name`) | full | including item-less collector blocks, which render as an empty navigable section |
+| `ParameterBlock` with `Layout="Grid"` / `"Table"` | full | `<Rows>`/`<Columns>` geometry with per-item `Cell="row,col"`; an unreadable geometry is surfaced rather than swallowed |
+| `ParameterRefRef` / `ComObjectRefRef` | full | |
+| `choose` / `when` / `default` (and the `test` grammar) | full | every test string in the bundled catalogues parses; a token outside the known grammar refuses (`PARAM_TEST_UNSUPPORTED`) instead of falling through to `default` |
+| `ParameterSeparator` | full | rendered as heading, ruler or error by `UIHint` |
+| `Module` instantiation | full | scope rewrite, text-argument substitution, com-object base numbering; arguments from the device's `0.xml`, or resolved from `<Allocators>` for a device placed from the catalog |
+| `Repeat` | full | transparent container; expands through module instances |
+| `Assign` / union / `TextParameterRefId` substitution | full | |
+| `ChannelIndependentBlock` | full | transparent container |
+| `Channel` | full | heading shown as a navigable section, with `{{0}}` substitution |
+| `Button` | parsed, inert | the scripted action is shown as a named element, not as an "unsupported" marker; it does nothing |
+| Unknown or vendor element | surfaced | emitted as an `unsupported` marker, never dropped |
 
 ## Parameter type coverage
 
 | Type | Status | Notes |
 |---|---|---|
-| TypeRestriction (enumeration) | full | dropdown |
-| TypeNumber | full | number input; `Increment` spinner step; `UIHint="Slider"` renders a range slider |
-| TypeText | full | text input |
-| TypeRestriction Base="BinaryValue" | not yet | shown with "not supported" badge |
-| TypeFloat | not yet | KNX 2-byte float / IEEE; badge |
-| TypeTime | not yet | badge |
-| TypeColor (RGB) | full | native colour picker; stores #RRGGBB |
-| TypeColor (HSV) | not yet | badge; sRGB picker would mis-encode HSV, pending encoding check |
-| TypeIPAddress | not yet | badge |
-| TypeNone (display) | not yet | informational; badge |
+| `TypeRestriction` (enumeration) | full | dropdown, options ordered by `DisplayOrder` |
+| `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider |
+| `TypeFloat` | full | decimal input; the codec takes its width from `Encoding` (KNX 2-byte DPT-9, or IEEE-754 Single) and refuses an unknown width |
+| `TypeText` | full | text input |
+| `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
+| `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
+| `TypeColor` (RGB) | full | native colour picker, stores `#RRGGBB` |
+| `TypeNone` (named) | full | display-only caption, rendered read-only; a nameless one is a pure layout spacer and is dropped |
+| `TypeRestriction` `Base="BinaryValue"` | not supported | badge |
+| `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register |
+| `TypePicture` | not supported | badge |
 
-## Roadmap (priority order)
+## Attributes and layout semantics
 
-1. `<Channel>` heading/label (reuse `blockTitle`; same class as the Repeat fix).
-2. Render the remaining parameter types: Float, Time, IP address, Binary,
-   and TypeNone displays (Color is done: native picker).
-3. Allocator-based module numbering / `Repeat Count` without 0.xml instances
-   (needed once we support adding channels, not just reading existing config).
+Unknown *elements* and uneditable *types* are surfaced in the UI. *Attributes* are the quieter
+class: an attribute the parser does not read changes what is shown, in what order, or whether it is
+shown at all, with nothing on screen to say so. The inventory below was taken against the bundled
+real catalogues and is the parity backlog.
 
-## Planned: unify the model (parse = UI = image)
+Read and honoured:
 
-The deeper problem behind the `Repeat` and the channel-flash bugs is structural:
-there are **two independent parsers** with different coverage that have drifted.
+| Where | Attribute / semantic | Effect |
+|---|---|---|
+| `ParameterRef` (block heading) | `DisplayOrder` | blocks are ordered by it, not by document order |
+| `Enumeration` | `DisplayOrder` | dropdown options in ETS order |
+| `ParameterRefRef` | `IndentLevel` | rows are nested; per-row `DisplayOrder` is a no-op because within a block document order already equals it |
+| `Channel` | `Text` / `Number` / `TextParameterRefId` | channel sections become navigable groups with `{{0}}` substituted |
+| `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
+| `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
+| `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
+| `Parameter` | `LegacyPatchAlways` | marks a parameter ETS itself patches during download, so the image builder does not claim to own it |
+| `ParameterBlock` (item-less) | self-closing collector blocks | a reached childless header renders as an empty navigable section; headers inside an inactive `choose` branch stay hidden |
 
-- `parseAppConfig` (config UI) expands modules/Repeat, evaluates visibility, and
-  localizes, but knows nothing about memory layout.
-- `parseApplication` (image/flash) knows static refs, segments, and memory
-  offsets, but does **not** expand module instances at all.
+Not read, with the reason:
 
-They read the same XML and must describe the same device, but a feature added to
-one side (module/Repeat support landed in the UI parser) silently leaves the
-other behind. What we parse, what we show, and what we program must be the same
-model. The plan, in three stages:
+| Where | Attribute | Why it is still open |
+|---|---|---|
+| `ParameterBlock` | `ShowInComObjectTree` | a com-object grouping signal; the com-object list is flat today |
+| `Parameter` | `InitialValue` | present once in the catalogues, on a hidden `Access="None"` parameter and equal to `Value`. Honouring it would have zero visible effect. It matters only for "unchanged since factory" detection, which Busforge does not do. Left unread deliberately. |
+| `Parameter` | `BaseValue` | on read-only mirror parameters inside modules, pointing at a module `Argument`. The per-instance numbering it describes is resolved through the module offset path instead. |
 
-1. **Make divergence impossible to ship silently (done).** The UI surfaces every
-   unknown element / uneditable type as a visible "not supported" marker, and the
-   flash path refuses to program when the stored configuration contains
-   parameters the image builder cannot place (`unmappedParamRefs`). A mismatch is
-   now always either visible or blocked, never silent.
-2. **One parse, two projections (done).** There is now a single parser
-   (`parseAppConfig`): it reads the memory layout (parameter offsets, segments) in
-   the same pass as the visibility/i18n data, tagging each entry's provenance
-   (module-def / union). `parseApplication` is no longer a parser, it is a thin
-   projection (`toAppModel`) onto the flat image model, dropping module-def and
-   union entries so it stays **byte-identical** to the standalone parser it
-   replaced (verified old-vs-new on every real catalogue app program, including the
-   ones flashed on hardware; the regression is pinned by `sample-image-app.xml`).
-   A field authored as a child element rather than an attribute (a segment's base64
-   `Data`) is read uniformly via `attrOrText`, restoring the transparency the merged
-   parser had. The UI is the visibility-filtered, localized projection; the image is
-   the byte projection; both read one model.
-   - **DONE, hardware-verified (the hard part):** per-instance **memory-offset**
-     resolution for module instances = `ModuleDef static offset + the instance value of
-     the Memory@BaseOffset argument` (from the 0.xml for imports, re-run from
-     `<Allocators>` from scratch; oracle-perfect 67/67 instances). Module instances are
-     byte-placed in both image codecs and `unmappedParamRefs` no longer refuses them.
-     Confirmed on hardware: build byte-matches the device on 3/5 Theben HMG (0 owned
-     diffs), and a module-param change was flashed + restored byte-checked on a relative
-     device and the MV-0705 module device (M-0083, 1.1.56). See
-     [device-memory-model.md](device-memory-model.md).
-3. **Lock it in CI (done).** A coverage test per catalogue/device asserts the
-   UI-exposed param-ref set is fully image-placeable: for every real fixture,
-   `unmappedParamRefs(toAppModel(app, {instances}), <every editable ref the config
-   view exposes>)` is empty (`real-catalogue.test.ts`, plus the 493B's channel-active
-   path in `modules.test.ts`). The runtime guard from stage 1 stays as flash-time
-   defense; this lifts the same invariant to a build-time assertion, so a feature
-   added to one projection but not the other fails the build. It is the **coverage**
-   direction, not literal set equality: the image is a deliberate superset (Access="None"
-   internal params, union members and all-branch bytes the UI never shows), so equality
-   would be wrong; UI-exposed must be a subset of image-placeable. Before per-instance
-   module offsets landed (stage 2) this failed for module devices, which is exactly the
-   regression it now pins. Round-trip is locked too: per fixture the codec must be its
-   own inverse on the real model wiring, so the flash-verify path's build/read-back agree.
-   Relative (System B) segments rebuild from their decoded image byte-for-byte; absolute
-   (MV-0705) segments re-encode every decoded value over a copy with no byte change
-   (`real-catalogue.test.ts`). This is self-consistency; directional correctness (MSB-first
-   bit order, DPT-9 vectors) stays pinned by `image.test.ts` and the hardware byte-match.
+Safe to ignore: `InternalDescription`, `Tag`, `DefaultUnionParameter`, `Inline`, `Icon`,
+`SecurityRequired`, plugin validation, and the sub-attributes of types that are unsupported anyway.
 
-Also to verify: whether the GA-flash path (`flash-ga`) has the same
-module/channel gap as the parameter-image path.
+**Keep this inventory current.** It is maintained by hand today. The mechanism that would make it
+self-checking is a re-runnable audit: a script that, given a project's application XMLs, lists the
+attributes present in the data but never read. That script does not exist yet
+([roadmap.md](roadmap.md)). Until it does, a newly ignored attribute is found only by review, not
+automatically, and the risk this table is meant to remove stays open.
+
+## One model, two projections
+
+The deep failure mode behind this whole page is structural: **a device can be parsed twice**, once
+for the UI and once for the bytes, and the two drift. A feature added to the view then silently
+leaves the image builder behind, and the device is programmed with something other than what was on
+screen.
+
+Busforge has one parser. `parseAppConfig` reads the memory layout (parameter offsets, segments) in
+the same pass as the visibility and localisation data, tagging each entry's provenance (module
+definition, union). The image side is not a parser but a thin projection, `toAppModel`, which drops
+the module-definition and union entries. The configuration view is the visibility-filtered,
+localised projection; the image is the byte projection; both read one model.
+
+Three things hold that together:
+
+1. **Divergence cannot ship silently.** The view surfaces every unknown element and uneditable type
+   as a visible marker, and the flash path refuses to program when the stored configuration contains
+   parameters the image builder cannot place (`unmappedParamRefs`). A mismatch is always either
+   visible or blocked.
+2. **Per-instance memory offsets are resolved**, not approximated: a module instance's offset is the
+   module definition's static offset plus the instance's value of the `Memory@BaseOffset` argument,
+   taken from the device's `0.xml` on import and re-derived from `<Allocators>` for a device placed
+   from the catalog. Module instances are byte-placed in both image codecs.
+3. **CI locks the invariant.** Per bundled fixture, every editable ref the configuration view
+   exposes must be placeable by the image builder. This is a **coverage** assertion, not set
+   equality: the image is a deliberate superset (`Access="None"` internal parameters, union members,
+   the bytes of branches the view never shows), so equality would be wrong. The round trip is locked
+   the same way, per fixture: the codec must be its own inverse on the real model wiring, so the
+   build and the read-back of the flash-verify path agree. Directional correctness (bit order, DPT
+   vectors) is pinned separately, and neither substitutes for the hardware byte-match.
 
 ## Notes
 
-- Mask versions (MV-0012/0701/0705/07B0) are intentionally irrelevant to the
-  config view. They also do not select the flash/image path: that is chosen by the
-  app's segment structure (`RelativeSegment` vs `AbsoluteSegment`), so e.g. MV-0701
-  uses the absolute path despite the low number. The image path is validated
-  byte-for-byte against real hardware.
-- The config language follows the UI language, mapped to the nearest catalogue
-  language (exact, then primary subtag, then the catalogue's base text).
+- **Mask versions do not select the configuration view, and they do not select the image path
+  either.** The image path is chosen by the application's segment structure (`RelativeSegment` vs
+  `AbsoluteSegment`), which is why a low mask number can still use the absolute path. Device
+  classification is [device-support.md](device-support.md).
+- The configuration language follows the UI language, mapped to the nearest catalogue language
+  (exact match, then primary subtag, then the catalogue's base text).
+- Remaining parity work is listed in [roadmap.md](roadmap.md).

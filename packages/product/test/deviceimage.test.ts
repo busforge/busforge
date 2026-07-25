@@ -7,7 +7,7 @@ import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
 // M-0081 is a real MV-0705 (absolute-segment) device. Its image build is hardware
-// byte-verified on 13 instances (docs/mv0705-spike-findings.md); these tests pin the
+// byte-verified on 13 instances (docs/device-memory-model.md); these tests pin the
 // behaviour that produces that match WITHOUT embedding real device memory (which is
 // gitignored): the segment parses, the build is surgical (only visible parameters
 // touch the <Data> default), and an override lands exactly at the parameter's bytes.

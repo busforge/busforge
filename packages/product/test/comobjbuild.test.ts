@@ -150,7 +150,7 @@ describe("the whole table", () => {
 // full download overlays only the dynamic config byte (and, for configured objects, the type). The
 // entry is 4 bytes: [dataPtr: u16 BE][config: u8][type: u8], one per object 0-based, after a 3-byte
 // [count: u8][ramEnd: u16 BE] header. config = prio(bits0-1) | 0x04 linked | 0x08 read | 0x10 write
-// | 0x40 transmit | 0x80 unconfigured. Byte-verified on the MDT BE-02001.02 (docs/mv0705-full-download.md).
+// | 0x40 transmit | 0x80 unconfigured. Byte-verified on the MDT BE-02001.02 (docs/commissioning.md).
 describe("the property-mapped (MV-0705) com-object table", () => {
   // count=2 -> entries for objects 0 and 1. obj0 carries a stale "linked" bit the author must clear;
   // obj1 is the one the configuration reaches.
@@ -212,7 +212,7 @@ describe("the property-mapped (MV-0705) com-object table", () => {
 // The real OpenKNX RaumController application is NOT committed as a fixture: it is 75 MB (4.5 MB
 // gzipped, four times the whole existing corpus) and parsing it would cost every test run seconds
 // and gigabytes. It is exercised where it counts instead, against the real device on the bus, and
-// the layout above is what those runs depend on. See docs/openknx.md.
+// the layout above is what those runs depend on. See docs/commissioning.md.
 describe("a System B application, end to end", () => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00FA"><ApplicationPrograms>

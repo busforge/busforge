@@ -1,129 +1,229 @@
-# Device memory model: LSMs, masks, and what Busforge supports
+# Device memory model
 
-A KNX device's commissioned state lives in several memory segments, each governed by
-a **Load State Machine (LSM)**. Programming a device means driving the right LSM
-through its load procedure and writing the segment. This note explains the segments,
-which device generations use which parameter model, and exactly what Busforge can and
-cannot do today, so nobody mistakes a partial capability for full coverage.
+A KNX device's commissioned state lives in several memory segments, each governed by a
+**Load State Machine (LSM)**. Programming a device means driving the right LSM through its
+load procedure and writing the segment. This document describes the segments, how the
+parameter image is computed from the application program, which bytes Busforge claims
+authority over, and where the model stops.
 
-## The segments (LSMs)
+For how the transfer itself is driven see [load-procedures.md](load-procedures.md); for how
+the bytes are checked see [verification.md](verification.md). What is proven on real
+hardware, per device and per capability, lives in **[status.md](status.md)** and nowhere
+else.
+
+## The segments
 
 | LSM | Segment | Holds |
 | --- | --- | --- |
 | **LSM1** | Address table | The group addresses the device answers to |
 | **LSM2** | Association table | Links each group-address entry to a com-object |
-| **LSM3** | Com-object table | Com-object descriptors and their flags |
-| **LSM4** | Application / parameter segment | The **parameter memory image** (offsets, defaults, your values) |
-| **LSM5** | Secondary application segment | Extra application code/data on some masks (full "par" load) |
+| **LSM3** | Com-object table | Com-object descriptors, flags and datapoint sizes |
+| **LSM4** | Application / parameter segment | The parameter memory image |
+| **LSM5** | Secondary application segment | Extra application code/data on some masks |
 
 Two largely independent axes:
 
-- **Group communication** (LSM1/2/3) — which group addresses the device talks on.
-- **Parameters** (LSM4, or a different model, see below) — how the device behaves.
+- **Group communication** (LSM1/2/3): which group addresses the device talks on.
+- **Parameters** (LSM4, or an absolute segment, see below): how the device behaves.
 
-You can reconfigure one without the other.
+One can be reconfigured without the other.
 
 ## Two parameter models
 
 Not every device stores parameters in an LSM4 memory image. There are two families,
-distinguished by the **segment structure the app declares** (a `RelativeSegment` vs an
-`AbsoluteSegment`), not by the mask number. The masks below are simply the ones seen here;
-the build picks the path by structure (`app.absoluteSegments` non-empty -> absolute), so a
-low-numbered mask like MV-0701 still lands on the absolute path:
+distinguished by the **segment structure the application declares** (`RelativeSegment` vs
+`AbsoluteSegment`), not by the mask number. The build picks the path by structure
+(`app.absoluteSegments` non-empty selects the absolute path), so a low-numbered mask can
+still land on the absolute path.
 
-| Model | Masks (seen here) | Parameters live in | Busforge support |
+| Model | Masks seen so far | Parameters live in | Address source |
 | --- | --- | --- | --- |
-| **Relative segment** | MV-07B0 | An LSM4 `RelativeSegment`, allocator-addressed | **read + flash** (the proven path) |
-| **Absolute segment** | MV-0705, MV-0701 | One or more `AbsoluteSegment`s at fixed EEPROM addresses | **read + flash** (params + GA); **full download hardware-verified on both** — MV-0701 (memory-mapped BIM M112, ABB US/U 4.2, 2026-07-18) and MV-0705 (property-mapped, MDT BE-02001.02, 2026-07-22, where `downloadFull` authors the com-object table). |
+| **Relative segment** | MV-07B0 (System B) | an LSM4 `RelativeSegment` | assigned by the device during allocation, read back via `PID_TABLE_REFERENCE` |
+| **Absolute segment** | MV-0700/0701, MV-0705 (System 7) | one or more `AbsoluteSegment`s at fixed EEPROM addresses | a literal `Address` in the application XML |
 
-In the reference installation, **8 of 34 devices** use the relative-segment model; the
-other **26** (most push-button sensors, presence detectors) use the absolute-segment
-model. The absolute-segment model was originally thought to be opaque "property based"
-storage; it is not. These devices keep their parameters in fixed-address segments, and
-the correct image is the manufacturer `<Data>` default (or a cleared parameter region
-for `<Data>`-less segments) overlaid with the visibility-resolved active parameter set.
-Busforge reads, builds, and byte-verifies these images against real hardware, and plans
-a surgical flash for them; see `docs/mv0705-spike-findings.md`.
+The absolute-segment family was long assumed to be opaque "property based" storage. It is
+not. These devices keep their parameters in fixed-address segments, and the correct image is
+the manufacturer `<Data>` default (or a cleared parameter region for `<Data>`-less segments)
+overlaid with the visibility-resolved active parameter set. The codec is the same for both
+families; the differences are the address source and the load procedure verbs
+(`LdCtrlRelSegment` vs `LdCtrlAbsSegment`).
 
-### Relative-segment flash is surgical too (owned-byte overlay)
+A genuine property-based model does exist (parameters loaded through interface-object
+property writes rather than a memory image, as IP interfaces, routers and cEMI servers do).
+It is **not implemented**; see the gap table at the end.
 
-The relative (System B) flash does NOT write a from-scratch full image. A System B download
-rewrites the whole LSM4 segment after reallocation, but Busforge supplies that image by
-reading the live segment and overlaying ONLY the bytes it OWNS, carrying every other byte
-over from the device unchanged. Ownership (`buildRelativeSegmentTarget`, owned mask):
+## From settings to bytes: the visibility model
 
-- a plain top-level memory parameter is owned at its effective default. ETS writes every
-  such default and the device holds it (the freshly ETS-flashed PSU M-0162 byte-matches the
-  full image only with this default fallback; gating it off regressed 51 bytes);
-- a `<Union>` member or a module-instance (`…_MI-…`) parameter is owned only when it is the
-  ACTIVE branch (visibility-resolved). Overlapping union branches must not all be written;
-- an `Access="None"` parameter that is NOT active is NOT owned. Its on-device value is
-  computed by ETS, not derived from a static default. The Theben channel devices carry a
-  928-bit `<Union>` of `Access="None"` "Objektlink" (com-object link) tables that ETS
-  generates from the channel/link allocation; Busforge cannot reproduce those bytes, so it
-  leaves them untouched rather than zeroing them with a full-image write.
+### Static declares what exists, Dynamic declares what is active
 
-Consequence and scope: re-configuring an already-commissioned device (changing parameters)
-is safe, because the ETS-computed regions are preserved. Initial commissioning of a complex
-module device from scratch still needs ETS to lay down the object-link allocation once. The
-post-flash verify compares only owned bytes, since a reload can recompute the unowned ones.
+Every ETS application program has two halves:
 
-Getting the owned set right is subtle: a top-level param whose memory a module instance now
-occupies is a displaced channel variant and must NOT be owned (writing its default would
-corrupt the channel). For the repeatable method that finds these, see
-[`drift-forensics.md`](drift-forensics.md): trace every byte-level diff to its parameter,
-classify it, and decide own-vs-preserve before flashing.
+- **`<Static>`** declares what exists: parameters, their types (width, signedness, enum or
+  number), the `ParameterRef`s that name them, and the memory segments. Every parameter
+  carries a `<Memory>` element (segment, `Offset`, `BitOffset`): its fixed address in the
+  image.
+- **`<Dynamic>`** declares what is active and visible: a tree of blocks, `choose`/`when`
+  branches, `Assign`s and modules. The UI walks it to decide what to render, and the same
+  structure decides what is written to memory.
+
+A setting is never a byte directly. A setting is a parameter value. Static says where it
+lives and how to encode it, Dynamic says whether it is active at all.
+
+### The choose/when gate
+
+```xml
+<choose ParamRefId="P-constant-light">
+  <when test="1"> ...constant-lighting sub-parameters... </when>
+  <when default="true"> ...the simple branch... </when>
+</choose>
+```
+
+The controlling parameter's current value selects the branch. Only parameters reached inside
+a taken branch are **active**: parameters in an untaken branch are neither shown in the UI
+nor written to the image. This is the mechanism ETS uses and it mirrors what the firmware
+does at runtime, where the controlling value routes execution down one path and the code for
+the other path is never entered.
+
+`buildDeviceConfig` (`packages/product/src/config.ts`) walks the Dynamic tree with the
+current values and collects `imageValues`: the effective value of every parameter reached in
+the active branches. That includes `Access="None"` internal parameters, which ETS hides from
+the UI but does write to memory, taking their value from whichever `ParameterRef` the active
+branch references.
 
 ### ETS evaluates every matching `<when>`, not just the first
 
-A `<choose ParamRefId="X">` selects branches by testing X against each `<when test="...">`.
-It is tempting to read this as a switch (first match wins, then break), but ETS evaluates
-**every** `<when>` whose test matches; the `default` branch fires only when none match. This
-only differs from first-match when tests OVERLAP, which manufacturers use deliberately to
-drive two independent placements from one selector. The Theben RMG 8 S contact block is the
-canonical case: one choose on the channel-function param places the contact-type field (bits
-0-1) under whens `0 1 3`/`2 4` AND a union member (bits 2-3) under whens `0 1`/`2 3 4`, so
-every value matches exactly two whens and both fields get written. First-match left the union
-bits unwritten; the device read-back disproved it (channel-function 0 -> union default 2,
-channel-function 2 -> union default 0). The resolver (`config.ts` `selectWhens`) and the
-module allocator (`modules.ts`) both walk all matching whens so the config view, the image
-build, and the from-scratch instance set stay consistent with ETS.
-
-A consequence for the surgical image: an active branch can now reach a member of the wide
-`Access="None"` "Objektlink" union (the per-channel link tables ETS computes, hundreds of
-bits). Those are never authored from a static default, so the relative build refuses to own
-any parameter the integer codec cannot represent (> 6 bytes wide) and preserves the device
-bytes. Small `Access="None"` members that DO carry a real default (e.g. a 2-bit hidden
-behaviour setting) are still owned, because ETS writes their default like any other.
+A `<choose>` looks like a switch, but ETS evaluates **every** `<when>` whose test matches;
+the `default` branch fires only when none match. This differs from first-match only when
+tests overlap, which manufacturers use deliberately to drive two independent placements from
+one selector. A Theben channel actuator is the canonical case: one choose on the
+channel-function parameter places a contact-type field (bits 0-1) under one set of `when`
+tests and a union member (bits 2-3) under another, so every value matches exactly two
+`when`s and both fields are written. First-match left the union bits unwritten, and a device
+read-back disproved it. The resolver (`selectWhens` in `config.ts`) and the module allocator
+(`modules.ts`) both walk all matching branches, so the config view, the image build and the
+from-scratch instance set stay consistent.
 
 ### `<Assign>` targets are written, even when placed only in an inactive branch
 
-An `<Assign TargetParamRefRef="T" SourceParamRefRef="S">` sets parameter T's value to S's.
-ETS writes T's memory with that value. A common manufacturer pattern assigns a hidden
-`Access="None"` parameter from a visible one in the ACTIVE branch and places T's own
-`<ParameterRef>` only in a different (inactive) branch, e.g. Steinel M-0083:
+`<Assign TargetParamRefRef="T" SourceParamRefRef="S">` sets parameter T's value from S, and
+ETS writes T's memory with it. A common manufacturer pattern assigns a hidden
+`Access="None"` parameter from a visible one in the ACTIVE branch while placing T's own
+`<ParameterRef>` only in a different, inactive branch:
 
 ```
 <choose ParamRefId="P-38">
-  <when test="0"> place P-1; <Assign Target="P-26" Source="P-1"/> </when>   (active: P-38=0)
+  <when test="0"> place P-1; <Assign Target="P-26" Source="P-1"/> </when>   (active)
   <when test="1"> ... place P-26 ... </when>                                (inactive)
 </choose>
 ```
 
-The image set (`imageValues`) is built by visiting reached `<ParameterRef>` nodes, so an
-assigned-but-not-placed target would be missed and its byte left at the default. It is
-written by ETS, so `buildDeviceConfig` records each `<Assign>` target's value in `imageValues`
-directly (non-memory Merker targets have no offset and are ignored by the image build).
-Hardware-confirmed on 1.1.56: `P-26` (SendFallingOnInit) assigned from `P-1`
-(SendRisingOnInit) and written to bit 4.
+Because the image set is built by visiting reached `<ParameterRef>` nodes, an
+assigned-but-not-placed target would keep its default. So `buildDeviceConfig` records each
+`<Assign>` target's value in `imageValues` directly (non-memory Merker targets have no
+offset and are ignored by the image build). Hardware-confirmed on a Steinel sensor, where
+the assigned target landed in the expected bit.
 
-One exception keeps the union-overlap invariant: a `<Union>`-member assign target is NOT
-recorded. Union branches share one region and the image build owns a union byte only for the
-actively-placed branch; injecting an assigned alternative would let two members claim the
-same byte (the relative builder iterates refs unordered). The active branch's own placement
-still writes it. M-0083 has ten such union-member assigns, all left to their active branch.
+One exception preserves the union invariant: a `<Union>`-member assign target is **not**
+recorded. Union branches share one region and the image owns a union byte only for the
+actively placed branch; injecting an assigned alternative would let two members claim the
+same byte. The active branch's own placement still writes it.
 
-## Bit-field layout: fields are NOT necessarily byte-aligned
+### A block that is invisible still runs its side effects
+
+A `<choose>` can be gated on a Merker (an `Access="None"`, no-memory visibility flag) that
+is only placed by a `<ParameterRefRef>` inside an invisible block. Skipping an
+`Access="None"` block wholesale therefore leaves the Merker unplaced and the dependent
+`choose` reads it as unset, so whole channels vanish from the config view while the image
+still materialises them. `buildDeviceConfig` runs an invisible block's Merker/Assign side
+effects (with the same `selectWhens` gating, so an inactive branch's placement is still not
+reached) without emitting the block.
+
+### Owned bytes and left-alone bytes
+
+`buildAbsoluteSegmentTargets` / `buildRelativeSegmentTarget`
+(`packages/product/src/deviceimage.ts`) lay the resolved values into the segment image and
+mark every byte they actually wrote as **owned**.
+
+| Kind | Where it comes from | Flash authority |
+| --- | --- | --- |
+| **Owned** | encoded from an active, resolved parameter | may be written |
+| **Left alone** | manufacturer default, an erased `0xFF` gap, an inactive-branch parameter, an ETS-computed table | never written |
+
+Ownership is gated on the encoder actually writing: a type the image does not represent
+(text, time, color) or a malformed value writes nothing and claims no bytes.
+
+A second, narrower mask, `verify`, is the subset a post-flash read-back may assert. It
+excludes bytes owned only by `Access="None"` device-internal markers (download-recognition
+stamps and counters the device rewrites for itself on every download). Those bytes are still
+written, because they are part of the correct image, but asserting them would report every
+successful flash as failed.
+
+![How a setting becomes a byte, and what we leave alone](mv0705-visibility-model.svg)
+
+### Why a disabled feature's bytes are irrelevant
+
+A byte belonging to a parameter in an untaken branch is one the firmware never reads,
+because the controlling parameter's value routes execution away from it. Whatever it holds
+(0, a leftover value, junk from a previous configuration) cannot change the device's
+behaviour. The claim is sound because the byte's relevance is gated by the very parameter
+value that was already resolved: the branch is inactive if and only if the firmware does not
+consult those bytes.
+
+**Honest caveat.** "Irrelevant" is an inference about firmware behaviour from the visibility
+model, not something instrumented at the silicon level. It is the same bet ETS makes: ETS
+writes its precomputed default there, Busforge leaves the device's existing value, and both
+assume the firmware respects its own visibility gating. The read-back corpus supports the
+bet (toggling a feature on a real device changes exactly the active bytes), it does not
+prove it.
+
+### Unions
+
+A `<Union>` is the same idea applied to shared memory: several parameters get one memory
+base, and only the visible branch is active. Ownership needs no special case: an inactive
+union branch is simply unowned, exactly like an inactive `choose` branch.
+
+The parsing detail matters, because it is easy to miss: the **`<Union>` element carries the
+real `<Memory>`** (code segment plus base offset and bit), and its child `<Parameter>`s have
+no `<Memory>` of their own, only a *relative* `Offset`/`BitOffset` into it. A parser that
+looks for a `<Memory>` child on the parameter gives union members no location at all and
+silently drops them from the image, which makes a union-heavy device look unsupported when its
+parameters are merely unplaced. A union member's location is `union base + relative offset`.
+
+## Ownership rules, in detail
+
+The rules below are hardware-derived. They are the difference between a re-configuration
+that preserves a working device and one that corrupts a channel.
+
+- **A plain top-level memory parameter is owned at its effective default**, active or not.
+  ETS writes every such default and the device holds it: without this fallback, a freshly
+  ETS-flashed power supply misses 51 bytes of its image.
+- **A `<Union>` member or a module-instance (`…_MI-…`) parameter is owned only when it is the
+  ACTIVE branch.** Overlapping branches must not all be written.
+- **An inactive `Access="None"` parameter is not owned.** Its on-device value is computed by
+  ETS, not derived from a static default. Theben channel devices carry wide `<Union>`s of
+  `Access="None"` "Objektlink" (com-object link) tables that ETS generates from the
+  channel/link allocation. Busforge cannot reproduce those bytes, so it leaves them
+  untouched rather than zeroing them with a full-image write.
+- **A parameter wider than 6 bytes is never owned.** The integer codec caps there
+  (`MAX_INT_BYTES`), and anything wider is an ETS-computed table rather than a static
+  default. This guard matters because the all-matching `<when>` walk can reach such a union
+  member.
+- **A displaced channel variant is not owned.** A channel configured as a module occupies the
+  memory of the simple-channel variant. The top-level variant's parameters still parse and
+  still carry an offset there, but the memory belongs to the module instance, so an inactive
+  top-level parameter whose offset falls inside an active module region must not be written.
+  Owning it would push a default into channel memory.
+
+Consequence and scope: re-configuring an already-commissioned device is safe, because the
+ETS-computed regions are preserved. A first-time commissioning of a complex module device
+from scratch can still need ETS once, to lay down the object-link allocation. The post-flash
+verify compares only owned (and verifiable) bytes, because a reload recomputes the rest.
+
+For the repeatable method that finds a new not-owned case, see the drift-forensics section
+of [verification.md](verification.md): trace every byte-level diff to its parameter, classify
+it, and decide own-versus-preserve before flashing.
+
+## Bit fields are not necessarily byte-aligned
 
 A parameter occupies `SizeInBit` bits starting at `BitOffset`, counted **MSB-first** from the
 byte at its `Offset`. Both numbers matter, and a field straddles byte boundaries whenever
@@ -132,297 +232,295 @@ byte at its `Offset`. Both numbers matter, and a field straddles byte boundaries
 | Product | Type | Layout |
 | --- | --- | --- |
 | OpenKNX RaumController | `PT-DelayTime` | 14 bits at BitOffset 2 (the low 14 bits of a 2-byte word) |
-| Theben 493B | `P-70` | 11 bits at BitOffset 5 (3 low bits of one byte + all of the next) |
-| M-0008 | `P-2782` | 14 bits at BitOffset 0 |
+| Theben channel actuator | an 11-bit time | 11 bits at BitOffset 5 (3 low bits of one byte plus all of the next) |
 
-The codec (`image.ts`) therefore computes a field's byte span as `ceil((BitOffset + SizeInBit) / 8)`
-and splices the value into the big-endian word it spans, touching no neighbouring bit. It used to
-compute the span as `SizeInBit >> 3` (**floor**, so 14 bits came out as *one* byte) and ignore
-`BitOffset` entirely for anything 8 bits or wider. That placed such a field in the wrong bits, and
-threw a raw `RangeError` out of the byte writer as soon as its value exceeded 255.
+So the codec (`image.ts`) computes a field's byte span as `ceil((BitOffset + SizeInBit) / 8)`
+and splices the value into the big-endian word it spans, touching no neighbouring bit. Both
+shortcuts are wrong and both are silent: a span computed as `SizeInBit >> 3` (floor) makes a
+14-bit field one byte, and ignoring `BitOffset` for widths of 8 bits and up places the field in
+the wrong bits and throws a raw `RangeError` once the value exceeds 255. The offline corpus
+cannot catch either, because none of the 110 such parameters in the catalogue fixtures is ever
+written; the first write of one is a device operation (enabling an OpenKNX channel writes a
+14-bit delay).
 
-The bug was latent on the existing corpus (110 such parameters exist across the 13 catalogue
-fixtures, but none of them is ever *written*: they resolve to no value, so the encoder never runs
-on them, and the byte-match stayed green). It is not latent on OpenKNX, whose very first
-operation, enabling a channel, writes a 14-bit delay. A value that does not fit its declared type
-is now refused rather than masked into the field, so a corrupt input cannot become wrong bits on
-the device.
+MSB-first is not a convention choice: KNX numbers `BitOffset` from the most significant bit,
+so a width-`w` field at offset `b` inside an `n`-byte span is shifted left by
+`n*8 - b - w`. An LSB-first codec agrees on byte-aligned fields only, and disagrees with every
+sub-byte device on hardware. A value that does not fit its declared type is refused
+(`PARAM_VALUE_OUT_OF_RANGE`) rather than masked into the field.
 
-## Support matrix (honest)
+## Float widths come from the encoding, not the size
 
-| Capability | State | Proven on |
-| --- | --- | --- |
-| Read device descriptor / mask | yes | all non-secure devices |
-| Read group tables (LSM1/2/3) | yes | 32 non-secure devices (read-back corpus) |
-| **Group-address flashing** (LSM1/2 rebuilt, LSM3 written back unchanged) | yes, incl. re-point and **adding/removing** GAs up to the device's reserved capacity | hardware-proven on MV-07B0 (1.1.x, 1.1.x) and MV-0705 (1.1.x: re-point + adding a GA, byte-verified). For System 7 the table sizes are fixed-reserved; growth is bounded by `<AddressTable>`/`<AssociationTable>` `MaxEntries` (e.g. 22 on M-0081), refused beyond it. System B reallocates via `allocSegment`. |
-| Read parameter image (LSM4) | yes, memory-image devices only | the 8 LSM4 devices |
-| **Parameter flashing** (LSM4 image) | yes, surgical owned-byte overlay (module + non-module, memory-image, non-secure); preserves ETS-computed regions | hardware-proven on **1.1.x** (no-op, 0 diff) and **1.1.x** (Theben HMG: a module-instance param change applied + restored, byte-checked) |
-| **Module/channel** per-instance offsets (build + place + flash) | yes (offsets resolved both for imported projects and from scratch), **hardware-verified** | build byte-matches the device on 3/5 Theben HMG (1.1.x = 0 owned diffs; 1.1.x/1.1.x differ only in project-device drift, confirmed by sibling consistency); a module-param change + restore was byte-checked on **1.1.x** (relative) and **1.1.56** (M-0083, MV-0705 absolute - the resolved module offset placed correctly on hardware) |
-| Read + build/verify parameter image for **absolute-segment** devices (MV-0705) | yes | part of the corpus sweep below |
-| **Owned-byte image match across the corpus** (`tools/verify-images.ts`, surgical owned scope) | yes | **28/32 reachable devices** byte-match on owned bytes (2 KNX-Secure skipped). Remaining 4 are not modelling gaps. The MV-0701 device (1.1.x, M-0048 A-140C) is built correctly by the generic absolute path (structure-detected, not mask-gated): its only owned diff is the internal download-recognition marker P-2228 ("Wert $AA, Downloaderkennung", Access="None", default 0xAA; the device reads 0), and its second segment (AS-4C00) is unused erased EEPROM (0xFF) that the surgical flash leaves untouched. The other 3 are single-byte project-vs-device drifts where OUR build is correct and the device is stale (1.1.x, 1.1.x, 1.1.x). Both union-placement cases are fixed: the relative module-internal union and the absolute assign-target write (1.1.56). See "ETS evaluates every matching when" below and [`drift-forensics.md`](drift-forensics.md) |
-| **Parameter flashing** for MV-0705 | yes, by driving the device's declared load procedure | hardware-verified on M-0081, M-0008, M-0048, M-008E and M-0083 (1.1.56, module param): each a real param change applied + restored, byte-checked; surgical `par` download, see [load-procedures.md](load-procedures.md). M-008E self-stamps `AS-4B00[0:2]` on download (our build over-claims those 2 bytes). |
-| Com-object flags table (LSM3) authoring | **System B: yes** (full download authors it, byte-verified vs the OpenKNX AB-PRE); the surgical par flash still keeps L3 from the device by design. **MV-0705: authoring implemented** (`buildComObjectTableMv0705`, template + config-byte overlay), byte-verified offline against two ETS full-download captures of an MDT BE-02001.02; the surgical par flash still keeps L3 from the device. | See [comobjbuild.ts](../packages/product/src/comobjbuild.ts), [mv0705-full-download.md](mv0705-full-download.md), [openknx.md](openknx.md) |
-| First-time full download (app id + params + L3 + group tables) | **System B: yes** (`downloadFull`), verified at the KNX layer on real hardware. **MV-0705: yes** (`downloadFull` authors L3, group tables and the parameter image, skips device-filled segments), byte-verified offline against ETS captures **and live-hardware certified** on the MDT BE-02001.02 (2026-07-22): `verified=true`, group comm on a flashed link, unchanged across a bus power-cycle. | [mv0705-full-download.md](mv0705-full-download.md), [openknx.md](openknx.md) |
-| **KNX Data Secure** devices | **read + write** over the secure channel (tool key from the project; AES-128-CCM); full secure param-flash pending suitable hardware | 2 MDT IP interfaces; see [knx-secure-design.md](knx-secure-design.md) |
+`<TypeFloat Encoding="IEEE-754 Single">` carries **no `SizeInBit`**. Defaulting every
+`TypeFloat` to 16 bits silently encodes an IEEE-754 single as a 2-byte DPT-9 half float,
+which is how a pair of latitude/longitude parameters ended up wrong on an OpenKNX device
+while every read-back check still passed. The float width is derived from `Encoding`
+("IEEE-754 Single" gives 32 bits, "DPT 9" gives 16), and the codec refuses any other width
+rather than writing a wrong-sized value.
 
-The flash path's safety rails (mask check, segment backup, dry-run, post-flash
-read-back-verify) apply to everything it does write. For how correctness vs stability
-is verified, see [verification.md](verification.md).
+## Which parameter types reach the image at all
 
-## Is that all the models? Two axes, and the real gaps
+Only `Value` (enum/restriction), `Number`, `Float` and `IPAddress` are encoded into the
+parameter image. Text, time-of-day, color and unrecognised bases write nothing and therefore
+own nothing, so a numeric-looking text value can never be written as a bogus integer. Three
+type details are easy to get wrong:
 
-"How many models are there" sounds like one question but is two. Conflating them is
-what made the parameter work feel open-ended.
+- **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
+  and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as
+  `0x003C`). Treating it as an unrepresentable "other" type leaves its bytes at the default
+  instead.
+- **`TypeIPAddress` carries no `SizeInBit`.** It is a 4-byte host address written as
+  big-endian octets, so the width is pinned to 32 rather than read from the XML.
+- **Signedness must be tested exactly.** KNX writes `TypeNumber@Type` as `signedInt` or
+  `unsignedInt`, and a naive `includes("signed")` also matches `unsignedInt`, which
+  mis-decodes every unsigned value from 128 upwards as negative on read-back.
 
-**Axis A: parameter memory layout** (how the image bytes are arranged). This is the
-small, finite set the image builder cares about:
+## Segments without a `<Data>` default
 
-1. **Relative segment** (LSM4, allocator-addressed) - MV-07B0.
-2. **Absolute segment** (fixed EEPROM address) - MV-0705, MV-0701. Chosen by the app's
-   segment structure (`AbsoluteSegment` present), not the mask number.
-3. **Module / channel placement** - not a separate storage class, a per-instance
-   offset modifier on (1)/(2). The effective device offset of a module parameter is
-   `its static offset in the ModuleDef + the per-instance value of the Memory@BaseOffset
-   argument`. That per-instance base comes from one of two interchangeable sources:
-   ETS pins it into the project 0.xml (`<ModuleInstance>` arguments) for an imported
-   device, and for a from-scratch device (placed from the catalogue, no project) we
-   re-run the application's `<Allocators>` to compute the identical value (counter =
-   `Start + cumulative Allocates`, walked over the visibility-resolved active tree, a
-   `<Repeat Count="k">` instantiating k copies). The allocator re-run was validated
-   against the real Theben 493B devices: it reproduced all 67 of their 0.xml module
-   instances exactly. Placement is **hardware-verified**: with the boundary-aware read
-   (see "Reading device memory") the Theben HMG devices read full-length and the build
-   byte-matches the device on 3 of 5 (0 owned diffs), the other 2 differing only in
-   project-device drift (confirmed by sibling consistency). A module-instance param change
-   was flashed and restored, byte-checked, on both a relative device and the one
-   MV-0705 module device (M-0083, 1.1.56), so the resolved offset is correct on hardware.
-4. **Property / interface-object** - the genuine "property-based" model: parameters
-   load via interface-object property writes, not a memory image.
+Some applications declare parameter segments with no `<Data>` default (a self-closing
+`AbsoluteSegment`; a Steinel sensor is the reference case). A segment with no manufacturer
+image has no precomputed default, so it is built like this:
 
-**Axis B: load procedure** (how the transfer is driven and activated), orthogonal to
-the layout. KNX devices carry a `LoadProcedureStyle`:
+- **Gaps** (bytes owned by no parameter) stay at the erased EEPROM state `0xFF`.
+- **Parameter-owned bytes** start at `0x00` (ETS clears parameter memory before download, so
+  a disabled feature's parameters read back as 0), then the active values overlay them.
 
-- **Data-driven** (System 7 / System B / IP, "merged"/product procedure): the procedure
-  is shipped *as data* in the product XML as `LdCtrl...` load controls, selected by mask
-  version. No per-device code, the XML is the procedure.
-- **Hardcoded legacy** (BCU1 `DefaultProcedure`, BCU2 native): the procedure is fixed
-  per mask version, not described in the product.
+This is safe by construction: every device that ships a full-size `<Data>` never takes the
+path. It leaves one **irreducible residual**: a handful of parameters that sit in an inactive
+branch yet hold a non-zero default on the device. Reconstructing those exactly would mean
+reproducing ETS's full default-image computation, the very thing `<Data>` normally ships
+precomputed. Because the flash writes only owned bytes, those bytes are never written, so
+the gap costs nothing: "we cannot reconstruct them" stays "we leave them alone" instead of
+becoming "we flash them wrong".
 
-So "flashable" depends on both axes. The four layout models above describe the
-parameter-image building, which is generic and XML-driven; but a device is only
-end-to-end programmable if its load procedure (axis B) is also handled.
+## Module and channel placement
 
-**Known gaps beyond the four layout models** (none require per-device hand-coding; all
-are mask-version-keyed, generic capabilities still to add):
+Module placement is not a separate storage class, it is a per-instance offset modifier on
+either layout. The effective device offset of a module parameter is
 
-| Gap | What it is | Status |
-| --- | --- | --- |
-| **True property-based loading** | Some IP / System-B devices load parameters via interface-object property writes, not a memory image. Needs a generic `A_PropertyValue_Write` download path. This was the original "property-based" premise; MV-0705 turned out *not* to be it, but real property-loaders exist (IP interfaces/routers, cEMI servers). | not implemented |
-| **Legacy System 1 / BCU1** | MV-001x devices, hardcoded `DefaultProcedure`, different memory map. One MV-0012 device is in the corpus. | config shown; flash procedure not implemented |
-| **Full first-time commissioning** | Application id + parameter image (LSM4) + com-object table (LSM3) + group tables (LSM1/2). | **System B: done** (`downloadFull`), L3 authored, byte-verified on hardware; app-start not yet proven. **MV-0705: done** (`downloadFull` authors L3), live-hardware certified on the MDT BE-02001.02 (2026-07-22): `verified=true` + functional group comm + power-cycle survival. LSM5 (application code) not written and, for OpenKNX, not needed (firmware is a USB `.uf2`). See [mv0705-full-download.md](mv0705-full-download.md), [openknx.md](openknx.md). |
-| **KNX Secure** | Data Secure + IP Secure devices read as descriptor MV-FFFF, no plain access. | not supported |
-| **Non-TP media (RF, PL)** | Different addressing and services than the TP-over-IP path used today. | out of scope |
+```
+its static offset in the ModuleDef + the per-instance value of the Memory@BaseOffset argument
+```
 
-The reassuring part: even the legacy and property cases stay generic. They are selected
-by mask version and (for modern devices) described by the product XML's `LdCtrl` load
-controls, exactly the model ETS uses. There is no path here that needs a hand-written,
-per-device programming recipe.
+That per-instance base comes from one of two interchangeable sources:
 
-## Com-object table (L3) format, reverse-engineered (MV-0705)
+- **An imported project**: ETS pins it into `0.xml` as `<ModuleInstance>` arguments.
+- **A device placed from the catalogue** (no project): Busforge re-runs the application's
+  `<Allocators>` to compute the identical value. The counter is `Start + cumulative
+  Allocates`, walked over the visibility-resolved active tree, with `<Repeat Count="k">`
+  instantiating k copies. The re-run was validated against real multi-channel devices,
+  reproducing all 67 of their project-pinned module instances exactly.
 
-Toward authoring the com-object table on MV-0705. (System B L3 authoring is done and byte-verified,
-see [comobjbuild.ts](../packages/product/src/comobjbuild.ts); on MV-0705 L3 is still kept from the
-device, and this section is the reverse-engineering toward changing that.)
-Read-only investigation across **all five MV-0705 families on the house bus** (M-0008,
-M-0048, M-0081, M-008E, M-0083, 24 devices) established the model:
+Both memory models resolve module offsets, and both have been exercised on hardware
+([status.md](status.md)).
 
-- L3 lives at the app program's `<ComObjectTable CodeSegment=…>` fixed absolute address (e.g.
-  `AS-405C` = `0x405C`, 91 B for M-0081). It is **not** behind the object-3 table pointer:
-  `tableAddr(3)` (PID 7) returns `0` on MV-0705, unlike System B.
-- Layout: a **3-byte header** (`[count:1][ramEnd:2 BE]`), then one **4-byte entry per com-object**:
-  `[dataPtr:2 BE][config:1][type:1]`.
-  - `dataPtr` points into the `0x07xx` RAM value segment; `type` is the KNX size enum
-    (`0x00`=1 bit, `0x03`=4 bit, `0x07`=1 byte, `0x08`=2 bytes, …).
-  - `config` byte: bits 0-1 = priority, `0x04` = linked group address, `0x08` = read, `0x10` = write,
-    `0x40` = transmit, `0x80` = **unconfigured marker** (the manufacturer template's "not yet
-    configured" bit, which ETS clears when it configures an object). Confirmed cross-family on clean
-    re-flashed devices (M-0081 obj 1 `r0 w0` clears `0x08`; M-008E obj 81 `r1 w0` sets it).
+## The com-object table (L3)
 
-### The build model: manufacturer template + per-device overlay
+L3 is the table a device consults for **every** group telegram: which com-objects exist,
+each one's datapoint size, its KNX flags and its priority. A wrong byte does not fail
+loudly, it mis-communicates: an object goes deaf, answers a read it should not, or
+interprets a 2-byte float as a 1-byte scale. The firmware performs no validation on this
+table, so there is no safety net between the builder and a misbehaving device.
 
-The decisive finding: the app program's `<ComObjectTable>` `AbsoluteSegment` carries a base64
-**`<Data>` blob** that is the manufacturer's complete static image of L3 (header + every entry,
-including `dataPtr`, `type`, sizes, and a template `config` byte with `0x80` set). ETS writes that
-image, then **overlays only the dynamic state** onto each entry. So the build is:
+### System B layout
 
-1. Start from the segment `<Data>` blob (truth for header, `dataPtr`, sizes, and inactive entries).
-2. For each entry, overlay the `config` byte:
-   - `0x04` (linked) := the object has a GA in the device's group/association table.
-   - **Configured (active) objects**: `config = priority | linked | read | write | transmit` from the
-     **resolved** com-object flags (`ComObject` base overlaid with the active `ComObjectRef`); the
-     `0x80` marker drops; the `type` byte is rewritten from the resolved object size.
-   - **Unconfigured objects**: keep the template entry verbatim, only clear the linked bit.
+```
+[count: u16 BE][entry x count],  entry = [flags: u8][sizeCode: u8],  entry i is com-object i (1-based)
+flags: bit7 Update | bit6 Transmit | bit5 ReadOnInit | bit4 Write | bit3 Read | bit2 Communication
+       bits1..0 priority (00 System, 01 Normal, 10 Urgent, 11 Low)
+```
 
-This is robust by construction (the manufacturer image is the base; we change only what ETS changes)
-rather than rebuilding every byte from first principles. The active set + resolved flags come from
-`buildDeviceConfig().imageComObjects` (the com-object analog of `imageValues`: every com-object
-reached in the active dynamic tree, incl. hidden Access="None" blocks and per-instance module
-objects, keyed by resolved number).
+An all-zero entry is an object that does not communicate: that is how numbering gaps and
+objects the active configuration does not reach are represented. The layout is not a guess
+for this family; OpenKNX devices run the open thelsing/knx stack, so it is read off the
+firmware that consumes it (`group_object_table_object.cpp`, `group_object.cpp`), and Kaenx's
+independent implementation agrees bit for bit.
 
-### Build + byte-match status (Phase 2A, offline, read-only)
+The size field is the KNX "value field type" code, which is genuinely irregular (5 bytes is
+code 15, not 11), so it is written out rather than computed. The size comes from ETS's
+human-readable object size ("1 Bit", "14 Bytes"), not from the datapoint type: in one
+OpenKNX application 451 of 1255 com-objects carry no datapoint type at all.
 
-Offline builder vs live device L3, all 24 MV-0705 devices:
+**Priority is only ever exercised at Low.** Nothing in the corpus uses High or Alert, so the
+first device that does is also the device that confirms the mapping; a wrong priority costs
+bus arbitration order, not data.
 
-- **18 / 24 byte-match exactly**, including **all 12 M-0081** and one M-0008.
-- **Bit layout CONFIRMED** (clean re-flashed 1.1.x + 1.1.x, cross-family single-ref objects):
-  `0x08 = read`, `0x10 = write`, `0x40 = transmit`, `0x04 = linked`, `0x80 = unconfigured`. Proof that
-  `0x08 = read` (and not some output bit): M-0081 obj 1 `r0 w0` has `0x08` **clear** while M-008E obj 81
-  `r1 w0` has it **set**; same write, the bit tracks read. The builder's layout was correct all along.
-- **Bit layout and flag rule re-confirmed by correlation (169 configured objects, 23
-  MV-0705 devices, drifted 1.1.x / MV-0701 1.1.x excluded).** Counting per-bit disagreements between
-  the resolved active ComObjectRef flag and the device config byte: `write = 0`, `read = 7` (every one
-  is the M-0008 obj 64 below), `transmit = 2` (both the M-008E obj 13 below). The flag rule
-  `config = priority | linked | read | write | transmit` from the resolved ref is correct; the residual
-  is two isolated single-flag anomalies, not a missed formula. Candidate formulas were tested against
-  the live corpus and **rejected** (each makes the fit far worse): `read = read || transmit` -> 77
-  disagreements, `transmit = transmit && !write` -> 69. So obj 64 / obj 13 are not explained by any
-  flags-derived rule; they are device-specific.
-- The remaining 6 devices differ only in the config byte of a small, bounded set of objects, all from
-  **ComObjectRef / association resolution** (NOT the bit layout, NOT drift; confirmed because a clean
-  ETS "download all" of 1.1.x and 1.1.x left their diffs unchanged):
-  - **One anomalous object** (M-0008 obj 64, 7 devices): the general rule "L3 flags = the resolved
-    active ComObjectRef" is correct for **every** clean object except this one. obj 64 (the "measured
-    room temperature" output) resolves via the active ref R-1249 to `r0 w0 t1`, and the device takes
-    its **write/transmit from that resolved ref** (`w0 t1`) but its **read from the base ComObject**
-    (`r1`), giving `r1 w0 t1`. R-1011 (`r1 w1`) is NOT active (its merker branch P-2378 is never 1),
-    so this is not a merge of two active refs. It is also not "w0 -> read=1" (M-0081 obj 1 is `w0`
-    with base read 0 and the device keeps read 0). So the read flag here specifically ignores the
-    ComObjectRef's `ReadFlag="Disabled"` and uses the base ComObject's read. **It is not a general
-    "read from base" rule either**: the corpus has 349 ComObjectRefs that set
-    `ReadFlag="Disabled"`, and the device honours every one of them (resolved read wins) **except**
-    this single ref R-1249. The exact trigger (why this one object keeps base read) is undetermined
-    from the available samples; it is a single isolated residual on a sensor-output object
-    (`r0 w0 t1`, "measured room temperature").
-  - **A single flag mis-resolves** (M-008E obj 13): built transmit=1, device transmit=0, again a
-    ComObjectRef resolution detail.
-  - **Module-object linked bit** (M-008E obj 170-178): the device marks them linked (`0x04`) but the
-    association table has only 11 entries (none of them). So module com-objects get their linked/active
-    bit from a separate mechanism (likely "module instance active"), not the association table.
-  - **Module "configured" predicate is per-active-ref, not per-link** (M-0083 1.1.56
-    BE-06001.02): the device leaves obj 36 / obj 39 **unconfigured** (`0x80` kept) while the builder
-    configures them, because both resolve to the module ref `O-2-36_R-9`. Within the *same* module
-    instances the device DOES configure obj 38 / obj 41 (ref `R-1`, configured **and unlinked**) and
-    obj 44 (ref `R-5`). So neither "configured = linked" nor "configured = reached" holds for module
-    objects: a channel's selected mode picks which ComObjectRef is live, and only that ref's object is
-    configured. The builder's `imgCollect` reaches `R-9` for two instances whose mode does not select
-    it (an over-inclusion in the module-internal branch selection, the all-match `selectWhens` walk).
-    Top-level objects are unaffected (the device configures reached top-level objects even when
-    unlinked, e.g. M-0048 1.1.x obj 0).
-  - **Large/special objects** (M-0048 obj 116 "Software version", 14 B): the device leaves it
-    **unconfigured** (`0x80` kept) though its siblings 114/115 in the *same* container are configured,
-    so it is a property of the object. **Not a simple size rule**: configured objects of 3/6/8 B exist
-    (M-0048 obj 0, M-008E obj 0/109); only obj 116 at 14 B is unconfigured. Likely "> 8 B / string DPT".
-  - **Drift, not a model gap** (re-confirmed): M-0008 1.1.x (obj 66-74, unique to this one
-    sibling of nine) and the MV-0701 device M-0048 1.1.x (12 objects, several **linked yet
-    `0x80`-unconfigured** on the device, an impossible clean state) are stale device L3, not builder
-    errors. They are excluded from the correlation above and settle on a clean ETS re-flash.
+### Two things the firmware will not protect you from
 
-  **TWO EARLIER ERRORS in git history for obj 64, both corrected here.** (1) It was called
-  project-vs-device drift after reading param P-2387 as `1`; that used LSB-first bit extraction, but
-  the codec is MSB-first (`shift = 8 - bit - sizeInBit`, image.ts), so P-2387 = `0` (matches project),
-  and a clean download-all left obj 64 unchanged: **not drift**. (2) It was then called a bit-layout
-  bug ("`0x08` is not read"); that was wrong too, polluted by obj 64's own mis-resolved flags. The
-  verified truth: `0x08 = read`, and obj 64 is a multi-ref **flag-merge** gap. The clean-re-flash
-  method remains the right gate (it disproved both wrong theories and gave the clean samples).
+1. `TableObject::loadEvent` accepts whatever bytes it is given. LoadCompleted checks no
+   length, no checksum, no id. A wrong table is simply believed.
+2. `getGroupObject(n)` indexes the table with **no bounds check**. If the table is shorter
+   than the highest com-object number the firmware actually uses, the device reads and
+   writes past the end of its own heap array.
 
-So the **format and the build model (template + per-device overlay) are proven and robust**, the bit
-layout and flag rule are confirmed by correlation over 169 clean objects, and 18/24 devices
-byte-match. The residual is now precisely bounded into three kinds, none a missed general rule:
-(1) **two isolated single-flag anomalies** on specific manufacturer objects (M-0008 obj 64 read,
-M-008E obj 13 transmit), device-specific with no flags-derived formula; (2) the **module "configured"
-predicate** (per active ComObjectRef inside the module's mode selection, plus the module linked bit and
-the large-object case), the one structural gap left, tied to module-internal branch selection; and
-(3) **drift** on individual devices (1.1.x, MV-0701 1.1.x), settled by a clean ETS re-flash, not code.
-Each genuine gap needs real samples, not a heuristic, and a per-object patch for obj 64 / obj 13 would
-be exactly the hand-coded special-casing to avoid.
+So the table must be as long as the highest com-object number the application **declares**
+(across every choose branch and every module instance), not the highest number the current
+configuration activates. Sizing it to the active maximum was hardware-fatal: an OpenKNX
+application declares objects up to 1359 and its modules address them by fixed number, so a
+table claiming 138 sent the firmware off the end of its array on boot, and the device
+death-looped and reverted to factory. `buildDeviceConfig` reports `maxComObjectNumber` and
+`buildComObjectTable` sizes to it.
 
-**Update: the builder is now wired into the MV-0705 full download** (`buildComObjectTableMv0705`,
-[mv0705-full-download.md](mv0705-full-download.md)), and byte-matches ETS on the one device it has been
-captured against (MDT BE-02001.02, both a no-links and a one-link full download, 0 diff). This is the
-template + per-device overlay proven here, so the FULL DOWNLOAD authors L3. The **surgical par flash still
-keeps L3 from the device** by design (a re-configuration re-points links, it does not rebuild the object
-set), and the residuals above (obj 64 / obj 13, the module "configured" predicate) are still open on the
-house corpus — so a full download of a device whose configuration exercises those cases must be
-byte-checked against the device before it is trusted. The byte-match gate stays mandatory: a wrong
-com-object flag breaks the object's communication.
+### The Communication flag on unlinked objects
 
-## Reading device memory: chunking and read boundaries
+ETS clears the Communication flag on every object **without** a group-address link: an
+object with no association cannot communicate. Busforge matches that byte for byte
+(hardware-verified against an ETS-programmed device, where this flag on the unlinked objects
+was the only remaining difference). The object stays fully present, it just does not
+advertise communication. The consequence for a group-address flash is in
+[findings.md](findings.md) §7: writing only L1+L2 to link an object whose L3 still says
+`comm=0` produces a link that verifies green and is functionally dead.
 
-`KnxDevice.memRead` reads a segment in chunks (12 bytes by default). Some M112 devices
-have **internal read boundaries**: they refuse any single `MemoryRead` that spans the
-boundary, answering with an empty data response (each byte is individually readable; only
-a request that straddles the line is refused). Confirmed on the house installation:
-M-0048 refuses reads crossing `0x4008`-`0x4009`, and M-0008 has a
-boundary inside its `0x4000` segment.
+### MV-0705 layout: manufacturer template plus overlay
 
-`memRead` therefore places bytes **by address** and, on a short/empty chunk response,
-shrinks the request until it fits within a boundary and advances only by what was actually
-returned. (The earlier loop concatenated chunk responses and advanced by the requested
-length regardless, so a refused chunk produced a buffer that was both short and
-**misaligned** - silently corrupting read-back of any segment crossing such a boundary.
-It stayed hidden because the only fully-verified device, M-0081, never crosses one, and the
-surgical flash targets in this house happen not to either; it is a latent-correctness fix.)
-`memWrite` uses the same fixed-chunk loop and is **not** boundary-aware, but its read-back
-verify now uses the corrected `memRead`, so a write that crossed a boundary would fail loud
-(verify mismatch) rather than corrupt silently. No flash target here crosses a boundary, so
-this path is untested on hardware and left unchanged.
+Property-mapped System 7 uses a different layout, and it is **not** rebuilt from scratch:
 
-## A_MemoryExtended: reaching a segment above 64 KB
+```
+[count: u8][ramEnd: u16 BE]  then one 4-byte entry per com-object, entry i is com-object i (0-based)
+entry = [dataPtr: u16 BE][config: u8][type: u8]
+config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 unconfigured
+```
+
+There is no update or read-on-init bit. `dataPtr` points into the `0x07xx` RAM value
+segment. L3 lives at the application's `<ComObjectTable CodeSegment>` fixed absolute address
+and is **not** behind the object-3 table pointer (`tableAddr(3)` returns 0 on MV-0705,
+unlike System B).
+
+The decisive finding is that this segment ships a base64 `<Data>` blob which is the
+manufacturer's complete static image of L3 (header, every entry's data pointer, type, and a
+template config byte with the `0x80` "not yet configured" bit set). ETS writes that image and
+then overlays only the dynamic state. So the build is:
+
+1. Start from the segment `<Data>` (authoritative for the header, data pointers, sizes and
+   every inactive entry).
+2. **Configured objects** (those the active configuration reaches):
+   `config = priority | linked | read | write | transmit` from the resolved flags, `0x80`
+   dropped, `type` rewritten from the resolved size.
+3. **Unconfigured objects**: keep the template entry verbatim, clearing only a stale linked
+   bit.
+
+This is robust by construction (the manufacturer image is the base, only what ETS changes is
+changed) rather than rebuilding every byte from first principles. The bit layout is a
+correlation fit over 169 configured objects across 23 devices; the plausible alternative
+formulas (`read = read || transmit`, `transmit = transmit && !write`) fit that same corpus
+measurably worse.
+
+The **entry-to-object-number mapping is 0-based**, byte-checked against two ETS full-download
+captures of one product. A manufacturer numbering its MV-0705 objects from 1 would either trip
+the builder's range guard or shift the whole table by one slot, so the mapping needs its own
+byte check on every further product ([status.md](status.md)).
+
+### Known residuals on MV-0705 L3
+
+Six of 24 devices across five MV-0705 application families do not byte-match exactly. The
+residuals decompose into named, bounded cases, none of them a missed general rule:
+
+- **Two isolated single-flag anomalies** on specific manufacturer objects (one sensor output
+  keeps the base ComObject's read flag although the active `ComObjectRef` disables it; one
+  object's transmit flag resolves differently). The corpus honours 349 other refs that
+  disable the read flag, so this is not a general "read from base" rule, and no
+  flags-derived formula explains it. Device-specific, and a per-object patch would be
+  exactly the hand-coded special-casing this project rejects.
+- **The module "configured" predicate.** Neither "configured = linked" nor "configured =
+  reached" holds for module com-objects: a channel's selected mode picks which
+  `ComObjectRef` is live, and only that ref's object is configured. The current active-set
+  walk over-includes refs from module instances whose mode does not select them. Top-level
+  objects are unaffected (the device configures a reached top-level object even when
+  unlinked).
+- **Large or special objects.** A 14-byte "software version" object is left unconfigured
+  while 3-, 6- and 8-byte siblings are configured, so it is not a simple size rule (likely
+  "> 8 bytes / string DPT").
+- **Device drift**, settled by a clean ETS re-flash rather than by code.
+
+None of these bit the configurations that have been driven on hardware so far, so a full
+download of a device whose configuration exercises them must be byte-checked before it is
+trusted.
+
+## Reading device memory
+
+### Chunking and internal read boundaries
+
+`KnxDevice.memRead` reads a segment in chunks (12 bytes by default on the classic path).
+Some BIM M112 devices have **internal read boundaries**: they refuse any single
+`A_Memory_Read` that spans the boundary and answer with an empty data response. Every byte
+is individually readable; only a request that straddles the line is refused.
+
+So `memRead` places bytes **by address** and, on a short or empty chunk response, shrinks
+the request until it fits inside a boundary and advances only by what was actually returned.
+A loop that instead concatenates chunk responses and advances by the *requested* length turns
+a refused chunk into a buffer that is both short and **misaligned**, silently corrupting the
+read-back of every segment that crosses such a boundary.
+
+`memWrite` uses a fixed-chunk loop and is **not** boundary-aware, but its read-back verify
+uses the corrected `memRead`, so a write that crossed a boundary fails loudly (verify
+mismatch) instead of corrupting silently. No flash target exercised so far crosses one, so
+that path is untested on hardware and deliberately left unchanged.
+
+### A_MemoryExtended: reaching a segment above 64 KB
 
 The classic `A_Memory_Read` / `A_Memory_Write` services carry a **2-byte** address, so they
 reach `0x0000`-`0xFFFF` and no further. Several System B devices allocate their parameter
-segment **above** that: the **Jung 400021SE** (Tasterschnittstelle 2fach Secure, `M-0004_A-7072`,
-mask MV-07B0) puts its parameter image at **`0x15000`**. Busforge used to refuse such a device
-outright (`MEMORY_ADDRESS_TOO_HIGH`, "refuse rather than truncate the address and write to the
-wrong place"). It now speaks **A_MemoryExtended**, the KNX answer for a 3-byte (24-bit) address:
+segment above that (a Jung 2-fold universal interface puts its parameter image at
+`0x15000`). Those are served by **A_MemoryExtended**, the KNX service with a 3-byte (24-bit)
+address. An address outside even that space is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather
+than truncated and written to the wrong place.
 
-- **APCIs:** `A_MemoryExtended_Write` = `0x1FB`, `_Write_Response` = `0x1FC`,
-  `A_MemoryExtended_Read` = `0x1FD`, `_Read_Response` = `0x1FE`. Unlike classic memory, the byte
-  **count is a payload octet**, not folded into the low APCI bits.
-- **Request:** `[count(1)] [address(3, big-endian)] [data…(write only)]`. The write request layout
-  is corroborated by ETS captures (`tools/etsdiff.ts` parses exactly this).
-- **Response:** `[returnCode(1)] [address(3)]` and then, for a read, the data (no repeated count).
-  A non-zero return code, or an echoed address that is not the one asked for, is **refused**, never
-  taken as proof. **A_MemoryExtended_Write is a confirmed service** (every write is answered), so
-  the return code is the per-chunk write proof, the extended counterpart of the classic verify-mode
+- **APCIs**: `A_MemoryExtended_Write` = `0x1FB`, `_Write_Response` = `0x1FC`,
+  `A_MemoryExtended_Read` = `0x1FD`, `_Read_Response` = `0x1FE`. Unlike classic memory, the
+  byte **count is a payload octet**, not folded into the low APCI bits.
+- **Request**: `[count(1)][address(3, big-endian)][data…(write only)]`.
+- **Response**: `[returnCode(1)][address(3)]`, then the data for a read (the count is not
+  repeated). A non-zero return code, or an echoed address that is not the one asked for, is
+  **refused**, never taken as proof.
+- `A_MemoryExtended_Write` is a **confirmed service**: every write is answered, so the return
+  code is the per-chunk write proof, the extended counterpart of the classic verify-mode
   echo.
-- **Confirmed against hardware.** The response layout was decoded byte-for-byte from a live Jung
-  400021SE on the bench: a read at `0x15000` answered `00 01 50 00 <8 data bytes>` (return code 0,
-  address `0x015000`), and a read at `0x0000` answered `fd 00 00 00` (return code `0xFD` = that
-  address is forbidden, a legitimate refusal).
+- The response layout was decoded byte for byte from a live device: a read at `0x15000`
+  answered `00 01 50 00 <data>` (return code 0, address `0x015000`), and a read at `0x0000`
+  answered `fd 00 00 00` (return code `0xFD`, that address is forbidden, a legitimate
+  refusal).
 
-`KnxDevice.memRead` / `memWrite` **auto-select**: a range whose last byte exceeds `0xFFFF` is served
-entirely by the extended path; everything at or below `0xFFFF` stays on the classic path,
-byte-identical (so every device proven so far is unaffected). This is what let Busforge commission
-the Jung 400021SE **from factory**: full download `verified=true`, all four load states LOADED after
-the closing `A_Restart` (the 10361-byte image, parameter segment included, read back byte-matched).
+`memRead` / `memWrite` **auto-select**: a range whose last byte exceeds `0xFFFF` is served
+entirely by the extended path, everything at or below stays on the classic path, byte
+identical.
 
-## Read-back corpus (kept out of git)
+**Chunk sizes differ by direction**, and the reason is the transport, not the service. Over
+a KNX-USB HID interface a request is a single report with no fragmentation. A read request
+is tiny (the data comes back in the reassembled response), so it can ask for many bytes; a
+write request **carries** its data, so a large write overflows the single report and the send
+is dropped. The limits are measured on hardware and split into `EXT_READ_CHUNK = 48` and
+`EXT_WRITE_CHUNK = 32` (override with `KNX_EXT_{READ,WRITE}_CHUNK`). At the classic 12-byte
+default a 10 KB segment costs roughly 850 round trips per pass.
 
-To develop against ground truth, every reachable device was read back from the bus
-(read-only). The raw dumps live under `apps/server/data/readback/` and are
-**gitignored on purpose**: they are the real installation's memory, including its
-group addresses, the same class of personal data as a project's instance file. They
-are not committed.
+## What is not modelled
 
-> **Incomplete data warning.** The first LSM1/2/3 table capture was **capped at 512
-> bytes per table**, so larger tables are **truncated**. It is a first corpus, not a
-> source of truth for full table contents. A full, count-based (uncapped) read is
-> pending before that data is used as a reference.
+"How many models are there" is two independent questions, and they have to be kept apart.
 
-What it established: of the parameter images, exactly **one** device (the MEAN WELL
-PSU, 1.1.x) byte-matches fully today; the DALI gateway differs in its DCA-managed
-bytes; the module devices differ in exactly their module-instance parameters; and the
-two KNX Secure interfaces could not be read at all then. (The latter is now solved:
-they are read and written over the Data Secure channel; see
-[knx-secure-design.md](knx-secure-design.md).)
+**Axis A, parameter memory layout.** A small finite set: relative segment, absolute segment,
+module placement as a per-instance offset modifier on either, and the genuine
+property/interface-object model.
+
+**Axis B, load procedure**, orthogonal to the layout. Modern devices ship the procedure as
+data in the product XML (`LdCtrl…` load controls, selected by mask version); legacy BCU1/BCU2
+masks have it hardcoded per mask. See [load-procedures.md](load-procedures.md).
+
+A device is end-to-end programmable only when both axes are handled.
+
+| Gap | What it is | Status |
+| --- | --- | --- |
+| **True property-based loading** | parameters loaded via interface-object property writes instead of a memory image (IP interfaces, routers, cEMI servers). Needs a generic `A_PropertyValue_Write` download path | not implemented |
+| **Legacy System 1 / BCU1** | MV-001x, hardcoded `DefaultProcedure`, different memory map | config shown, flash refused |
+| **Application code (LSM5)** | a separate application-program download | not implemented as its own capability. A System 7 full download does write the static code segments the load procedure declares, straight from their `<Data>` (see [load-procedures.md](load-procedures.md)); OpenKNX does not need it at all (firmware ships as a USB `.uf2`) |
+| **KNX IP Secure** | encrypted tunnelling/routing | out of scope. KNX **Data** Secure is implemented, see [knx-secure.md](knx-secure.md) |
+| **Non-TP media (RF, PL, IP)** | different addressing and services than TP | code-shared, never exercised on the wire. The PL/RF/IP masks run the same codec and load procedure as their TP siblings, so they are implemented but unproven; see [status.md](status.md) |
+
+None of these needs a hand-written per-device recipe. They are selected by mask version and,
+for modern devices, described by the product XML, exactly the model ETS uses.
+
+## The read-back corpus
+
+To develop against ground truth, every reachable device of a reference installation was read
+back from the bus (read-only). The raw dumps live under `apps/server/data/readback/` and are
+**gitignored on purpose**: they are a real installation's memory, including its group
+addresses, the same class of personal data as a project's instance file. They are not
+committed, and no tool in this repository requires them.

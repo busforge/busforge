@@ -9,7 +9,7 @@ import { secureEncode, secureDecode, SCF, SCF_TOOL_DATA } from "./secure.ts";
 //
 // This module is pure protocol logic (no transport). It is unit-verified by a
 // two-party round-trip and the Calimero Sync vector; the bus wiring + a real secure
-// read-back of a device is the end-to-end proof. See docs/knx-secure-design.md.
+// read-back of a device is the end-to-end proof. See docs/knx-secure.md.
 
 const APCI_LO = 0xf1; // SecureService & 0xFF
 const SERIAL_LEN = 6; // bytes of device serial carried in clear on a Sync.req

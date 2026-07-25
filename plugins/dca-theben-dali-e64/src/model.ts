@@ -2,7 +2,7 @@
 // logical DALI configuration. The gateway's ETS DCA persists this as UTF-16 XML
 // in the project's BinaryData; we parse it directly instead of running the DCA.
 // Field meanings recovered from the decompiled DCA (Dalie64.DcaApp.*); see
-// docs/dca-plugin-architecture.md.
+// docs/plugins.md.
 
 // DALI lamp/control-gear type (DcaApp LampType).
 export type LampType = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 129;

@@ -3,7 +3,7 @@ import type { DeviceSpec } from "../spec.ts";
 // MDT BE-02001.02 Universal Interface 2-fold (M-0083, app 00B6, MV-0705, System 7 property-mapped).
 // A MODULE device: its com-object table is materialized from module instances, and full download for
 // this mask (authoring L3 into the <ComObjectTable CodeSegment>) is the capability MV-0705 unlocked
-// (docs/mv0705-full-download.md). This spec drives it through the SMOKE framework, including the
+// (docs/commissioning.md). This spec drives it through the SMOKE framework, including the
 // full download over the UI (FlashDialog needs-download), which was the one bonus left open after the
 // production-endpoint certification. Refs pinned verbatim from GET .../config and GET /api/catalog/products.
 //

@@ -264,7 +264,7 @@ const MIGRATIONS: string[] = [
   // secrets.ts); the DB file alone never reveals a key. serial_number is the 6-byte
   // device serial (for the Sync request); seq_group is the project's group/data
   // sequence counter (tool-access programming syncs its own). source records how the
-  // entry was populated (import | manual | provisioned). See docs/knx-secure-design.md.
+  // entry was populated (import | manual | provisioned). See docs/knx-secure.md.
   `
   CREATE TABLE device_security (
     project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

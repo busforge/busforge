@@ -4,7 +4,7 @@ import type { DeviceSpec } from "../spec.ts";
 // download taken end-to-end through the production endpoints on 2026-07-17. It matters more than a
 // manufacturer device: OpenKNX cannot ship a signed .knxprod, so an ETS-free commission is the
 // product's whole reason to exist. Refs pinned verbatim from GET .../config and GET /api/catalog/products.
-// Background and every trap behind it: docs/openknx.md.
+// Background and every trap behind it: docs/commissioning.md.
 export const openknxRaumController: DeviceSpec = {
   id: "openknx-raumcontroller",
   device: {
@@ -38,10 +38,10 @@ export const openknxRaumController: DeviceSpec = {
   ],
   // System B claims flashParams/flashLinks, but on THIS device a surgical re-flash is the documented
   // death-loop risk: the closing A_Restart restores poisoned module state and deadlocks until the
-  // firmware auto-erases (docs/openknx.md). The device is programmed only by the full download, so
+  // firmware auto-erases (docs/commissioning.md). The device is programmed only by the full download, so
   // these two are declared unsafe and reported as such — proven by nothing, never faked as green.
   unsafe: [
-    { capability: "flashParams", reason: "surgical param re-flash of a configured OpenKNX device is the death-loop risk (docs/openknx.md); it is programmed only by a full download" },
+    { capability: "flashParams", reason: "surgical param re-flash of a configured OpenKNX device is the death-loop risk (docs/commissioning.md); it is programmed only by a full download" },
     { capability: "flashLinks", reason: "surgical GA re-flash restarts into the same poisoned-restore boot; OpenKNX links are committed by the full download" },
   ],
   // No fuzz: the seeded param sweep is exactly the unsafe surgical path above, so there is nothing to

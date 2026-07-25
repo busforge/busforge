@@ -122,8 +122,7 @@ export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: strin
 // Securely identify a KNX Data Secure device: open the secure session (T_Connect + Sync)
 // with the device\'s tool key and read its real device descriptor and serial. This is
 // what makes a secure device (opaque MV-FFFF to plain reads) recognisable. Read-only; no
-// mask gate (identification is what learns the mask). Hardware-verified on an MDT IP
-// interface. See docs/knx-secure-design.md.
+// mask gate (identification is what learns the mask). Hardware-verified on an MDT IP interface. See docs/knx-secure.md.
 export function secureIdentify(
   connection: Connection, ia: string, toolKey: Buffer, serial: Buffer,
   onProgress?: ProgressFn,
@@ -139,8 +138,8 @@ export function secureIdentify(
 // usable address yet, so there is no address to open a session to and no mask gate to pass.
 // It therefore drives the raw transport. All the safety lives in assignIndividualAddress
 // (@busforge/knx): exactly one device in programming mode, the target address must be free,
-// and the result is proven by talking to the device on its new address. NOT YET VERIFIED ON
-// REAL HARDWARE.
+// and the result is proven by talking to the device on its new address. Hardware-verified on a
+// virgin device through this endpoint (docs/status.md).
 export async function assignDeviceAddress(
   connection: Connection, ia: string, onProgress?: ProgressFn,
 ): Promise<AssignIaResult> {

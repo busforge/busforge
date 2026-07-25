@@ -33,7 +33,7 @@ export interface AppSnapshot {
   // Absolute-segment (MV-0705) sections, present iff the app declares AbsoluteSegments.
   // Like `lsms`, these are stability locks, not correctness proofs: the hashes pin
   // "the default build/masks/plan have not changed", correctness is pinned separately
-  // by the hardware byte-matches (docs/mv0705-spike-findings.md).
+  // by the hardware byte-matches (docs/device-memory-model.md).
   // `absolute`: per TARGETED segment (a declared segment no parameter points at builds
   // no image and is deliberately absent) the default-image byte hash plus the
   // owned/verify byte-mask hashes from buildAbsoluteSegmentTargets.

@@ -3,7 +3,7 @@
 // human actually clicks — is what the regression proves, with its own failure modes (dynamic
 // parameter visibility, the param editors, the flash/commission dialogs). Assertions still go
 // through the API (the single source of truth the UI renders); the browser is DRIVEN, never asked
-// to confirm itself. See docs/e2e-smoke-framework.md §5.
+// to confirm itself. See docs/testing.md.
 //
 // The web app is already instrumented for this: config rows carry `data-testid="param-<refId>"`
 // and the GA picker `data-testid="link-<comObjNumber>"`, the commission dialog carries

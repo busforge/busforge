@@ -1,22 +1,21 @@
 # Load procedures: how Busforge programs a device
 
-Flashing a KNX device is not "write these bytes". The device declares a **load
-procedure**: which memory segments to load, under which Load State Machine (LSM), in
-what order, and how to finalize so the device validates and activates the change. ETS
-follows it; Busforge follows it. Verified on real MV-0705 hardware (a parameter change
-applied and reverted on an Auro M-0081 motion detector, LSM3 reaching LOADED).
+Flashing a KNX device is not "write these bytes". The device declares a **load procedure**:
+which memory segments to load, under which Load State Machine (LSM), in what order, and how
+to finalize so the device validates and activates the change. ETS follows it; Busforge
+follows it.
 
-This is the generic, catalogue-driven model: the procedure is **data in the app program
-XML**, not per-device code. See also [device-memory-model.md](device-memory-model.md)
-for the memory layout side and [verification.md](verification.md) for how correctness is
-proven.
+This is a generic, catalogue-driven model: the procedure is **data in the application
+program XML**, not per-device code. See [device-memory-model.md](device-memory-model.md) for
+the memory layout side, [verification.md](verification.md) for how correctness is proven,
+and [status.md](status.md) for what has been driven on real hardware.
 
 ## The two axes
 
 | Axis | What it is | Where it comes from |
 | --- | --- | --- |
 | **Memory layout** | how parameter bytes are arranged (relative vs absolute segment) | app XML `<Code>` segments |
-| **Load procedure** | how the transfer is driven and activated | app XML `<LoadProcedures>` (or the model, for legacy) |
+| **Load procedure** | how the transfer is driven and activated | app XML `<LoadProcedures>`, or the mask model for legacy devices |
 
 A device is flashable only when both are handled.
 
@@ -24,160 +23,244 @@ A device is flashable only when both are handled.
 
 | Style | Structure | Busforge |
 | --- | --- | --- |
-| **ProductProcedure** | one self-contained `<LoadProcedure>`, every `LdCtrl` step inline | **executed directly** from the XML (absolute-segment / MV-0705 devices) |
-| **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`) | base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
-| **DefaultProcedure** | nothing in the XML; hardcoded by mask version (legacy BCU1/2) | **explicit gap** (refused, not crashed) |
+| **ProductProcedure** | one self-contained `<LoadProcedure>`, every `LdCtrl` step inline | **executed directly** from the XML (absolute-segment devices) |
+| **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`) | the base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
+| **DefaultProcedure** | nothing in the XML, hardcoded by mask version (legacy BCU1/2) | **explicit gap**: refused, not crashed |
 
 ## What the engine does
 
 A generic step executor (`packages/knx/src/loadrunner.ts`, `runLoadPlan`) drives a typed
 `LoadPlan` (connect / unload / load / alloc / writeMem / writeSegment / writeProp /
-stampAppId / loadCompleted / assertLoaded / restart / disconnect) for BOTH memory models
-and BOTH download kinds (parameters and group tables). It asserts the LSM state after
-every `load`/`loadCompleted`, so a refused or desynced transition stops before the next
-write. Memory writes verify by read-back; `writeSegment` resolves the segment address at
-execution time (a relative segment's address is only assigned by the alloc step).
+stampAppId / loadCompleted / assertLoaded / restart / disconnect) for both memory models and
+both download kinds (parameters and group tables). It asserts the LSM state after every
+`load`/`loadCompleted`, so a refused or desynced transition stops before the next write.
+Memory writes verify by read-back, unless a step opts into the device's verify-mode echo
+instead (only the System B full download does). `writeSegment` resolves the segment address at execution
+time, because a relative segment's address is only assigned by the alloc step.
 
-An opt-out lets the engine reproduce a legacy bracket exactly rather than silently
-tightening a hardware-verified path: `load`/`loadCompleted` take `assert:false` (skip the
-inline state read). The System B group-table download uses it plus a final batch of
-`assertLoaded` steps, because that is byte-for-byte what its proven executor did (which
-asserted completion only in a batch, not inline). Its writes still read-back verify like
-every other bracket; every other bracket also keeps the asserting default.
+Two transports drive the same events:
 
-The planner (`packages/product/src/deviceflash.ts`, `planAbsoluteParFlash`) turns a parsed
-procedure plus the built segment images plus a **live device read** into that plan. It
-delegates byte selection to `planAbsoluteSegmentFlash` (one owned-byte authority, no
-duplicate run logic) and is **target-driven and surgical**: only owned bytes that
-actually differ from the device are written, so the same call both applies and reverts a
-change, and group tables are never touched by a parameter flash. It derives the
-LSM-per-segment structure from the procedure and emits the minimal proven bracket per
-changed LSM. A changed segment the procedure does not declare is returned as
-`unplaceable` (never silently dropped); the server then refuses the flash
-(`FLASH_SEGMENT_UNPLACEABLE`).
+- **Property-mapped LSMs** (System B, MV-0705): the load event is an `A_PropertyWrite` to
+  (objIdx = LSM index, PID 5 = `PID_LOAD_STATE_CONTROL`), and the state is read back from
+  the same property.
+- **Memory-mapped LSMs** (BIM M112 masks MV-0700/0701): the load control is an
+  `A_Memory_Write` to StandardMemory `0x0104` with the LSM index in the high nibble of
+  byte 0, and the load status is an `A_Memory_Read` from `46825 + LsmIdx`. The event and
+  state values are identical, only the transport differs. This is carried as
+  `MaskInfo.propertyMappedLsms` and threaded into `runLoadPlan({ memMappedLsms })`. A
+  surgical parameter flash on such a device needs the same transport as its full download,
+  or it talks to a dead property interface.
 
-> A flash diffs against the **device**, not the stored project values. (A target-vs-DB
-> diff once silently swallowed a revert: the DB held the default while the device held
-> the changed byte.)
+An opt-out lets the engine reproduce a legacy bracket exactly rather than silently tightening
+a hardware-verified path: `load`/`loadCompleted` take `assert:false` (skip the inline state
+read). The System B group-table download and the System B full download both use it, each
+followed by a final batch of `assertLoaded` steps, because that is byte for byte what their
+proven executors did. Every other bracket keeps the asserting default.
+
+## The planners
+
+| Planner | Emits |
+| --- | --- |
+| `planRelativeParFlash` | the System B parameter bracket: unload, load, alloc, write the segment, stamp the app id, load-completed, restart |
+| `planAbsoluteParFlash` | the surgical absolute-segment bracket: per LSM that owns a changed segment, load, write the changed owned runs, load-completed, then restart |
+| `planSystemBGaFlash` | the three group tables (com-object, address, association) rewritten in one bracket |
+| `planMv0705GaFlash` | the two fixed System 7 group tables |
+| `planSystemBFullDownload` | first-time commissioning of a System B device |
+| `planAbsoluteFullDownload` | first-time commissioning of an absolute-segment device, walking the declared procedure in order |
+
+The parameter planners are **target-driven and surgical**: only owned bytes that actually
+differ from the device are written, so the same call both applies and reverts a change, and
+group tables are never touched by a parameter flash. A changed segment the procedure does not
+declare (or declares but never loads) is returned as `unplaceable` and never silently
+dropped; the server then refuses the flash (`FLASH_SEGMENT_UNPLACEABLE`).
+
+> A flash diffs against the **device**, not the stored project values. A target-vs-database
+> diff once silently swallowed a revert: the database held the default while the device held
+> the changed byte.
+
+The connection lifecycle stays with the caller. A second `T_Connect` inside a plan would
+reset the local sequence counter while the device keeps counting, after which the device
+stops answering.
 
 ## Par-download step policy (the coverage guard)
 
-A par download deliberately does not execute every declared step: a surgical write into
-loaded segments must not erase them, and full-download bookkeeping does not apply. That
-is only honest if every par-applicable step has an **explicit disposition**
-(`assessParCoverage`, enforced at runtime by both flash profiles). A step without one
-**blocks the flash** with `LOAD_STEP_UNSUPPORTED`: the flash never runs a partial recipe
-and reports success.
+A parameter download deliberately does not execute every declared step: a surgical write into
+loaded segments must not erase them, and full-download bookkeeping does not apply. That is
+only honest if every par-applicable step has an **explicit disposition** (`assessParStep` /
+`assessParCoverage`, enforced at runtime by both flash profiles). A step without one
+**blocks the flash** with `LOAD_STEP_UNSUPPORTED`: the flash never runs a partial recipe and
+reports success.
 
 | Disposition | Steps (par) | Why |
 | --- | --- | --- |
-| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`/`RelSegment` (mode 0, **any fill value**), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
-| **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (e.g. hardware type, PID 78) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED` (the check ETS runs, previously skipped silently) |
-| **caller** | `Connect`, `Disconnect` | a second T_Connect would desync the sequence counter; the session owns the lifecycle |
-| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation; hw-evidenced M-0081 1.1.x). relative: `WriteProp`/`LoadImageProp` **to PID 27 only** (MCB stamp; hw-evidenced M-0162 1.1.x + Theben 493B 1.1.x) | deliberately not executed, with hardware evidence |
-| **blocked → refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices (M-0008), `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp` | unmodeled; refusing beats a silent partial recipe |
+| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
+| **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`. This is a check ETS runs that was previously skipped silently |
+| **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
+| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `WriteProp`/`LoadImageProp` **to PID 27 only** (the memory-control-block stamp) | deliberately not executed, each with hardware evidence |
+| **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices, `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
 
-The `RelSegment` **fill byte** (the value the device pre-fills the freshly allocated segment with,
-before the sparse image write) is honored, not hardcoded. Most System B devices declare `Fill=0`
-(zero the segment); some declare `Fill=255` (`0xFF`, the erased-flash state, e.g. the GVS AMMA). The
-full download reads it (`relParamFillByte`) and threads it into both the allocation and `sparseRuns`
+PID 27 is the memory-control-block table (per-segment CRC bookkeeping ETS stamps on a full
+download). System B parameter flashes are hardware-verified without rewriting it, which is
+why the skip is justified there; no such evidence exists for absolute devices, so the same
+verb blocks on them.
+
+A `CompareProp` honours its `Mask`, so a manufacturer that masks out its own manufacturer id
+and version and checks only the application number is compared the way it asks to be.
+Malformed inline data throws rather than silently truncating to a shorter (and possibly
+passing) expected value.
+
+The `RelSegment` **fill byte** (what the device pre-fills a freshly allocated segment with,
+before the sparse image write) is honoured, not hardcoded. Most System B devices declare
+`Fill=0`; some declare `Fill=255` (the erased-flash state). The full download reads it
+(`relParamFillByte`) and threads it into both the allocation and the sparse run selection
 (which skips runs equal to the fill), so the un-written regions read back as the fill and the
-device's own segment CRC still proves the whole image. Only a non-default allocation **mode** stays
-unmodeled.
+device's own segment CRC still proves the whole image. Only a non-default allocation **mode**
+stays unmodeled.
 
-## Coverage across the project's app programs
-
-Surveyed from the full real catalogue (`parseLoadProcedures` + the coverage test
-`packages/product/test/loadproc.test.ts`, which asserts no unknown `LdCtrl` verb slips
-through).
-
-| App program (devices) | Style | Model | Status |
-| --- | --- | --- | --- |
-| M-0081 (11) Auro detector | Product | absolute | **flashed + verified on hardware** |
-| M-0008 (9) | Product | absolute (+ LoadImageProp, LSM5) | **par refused by the current engine**: the procedure declares three `LdCtrlLoadImageProp` MCB/load-image stamps we cannot compute, so `assertParCoverage` throws `LOAD_STEP_UNSUPPORTED` rather than run a partial recipe (M-0008 has no full-download path; par is its only writable operation). The build still **read-back byte-matches** the device, and a param change + restore **was byte-checked on 1.1.x** (see next-steps.md) before this coverage gate (`5fe16d9`) existed; the engine now declines to reproduce that pre-gate flash rather than guess the stamps. |
-| M-008E (2) Steinel | Product | absolute (data-less) | engine-supported; data-less caveat |
-| M-0048 A-107E, A-140C (2) | Product | absolute | engine-supported |
-| M-0083 A-00B4, A-00B6 (2) | Product | absolute (+ CompareProp) | engine-supported; CompareProp executed as pre-flight |
-| M-0162 (1) MEAN WELL PSU | Merged | relative | **flashed + verified** (existing relative path) |
-| M-0048 A-493B (5) Theben HMG | Merged | relative (+ WriteProp) | **flashed + verified on hardware** (1.1.x, module per-instance offsets; PID-27 WriteProp is a documented skip) |
-| M-0048 A-9071 (1) DALI | Merged | relative (+ CompareProp) | relative path; CompareProp executed as pre-flight; DCA config out of scope |
-| M-0083 A-0137 (1) | Merged | relative | relative path |
-| M-0083 A-0138 (1) Gira | **Default** | (none in XML) | **gap: legacy, refused** |
-
-The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by
-the coverage test, so a new device introducing an unknown verb fails the build instead of
+The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by a
+coverage test, so a new device introducing an unknown verb fails the build instead of
 flashing blind.
 
-## What is implemented now
+## Coverage across the catalogue
 
-- **Parser** for all three styles + operation selection (`flattenSteps` by `par`/`full`).
-- **Engine** (`runLoadPlan`) with per-step LSM-state assertions and read-back-verified writes.
-- **Absolute (MV-0705) parameter flash**, wired into the server flash route, surgical
-  `par` mode. Replaces the previous "refused" state for these 6 app programs.
-- **Group-address flash through the engine (both models): DONE.** The last two
-  hand-rolled executors are gone. `planSystemBGaFlash` (relative, three count-prefixed
-  tables) and `planMv0705GaFlash` (absolute, two fixed tables) emit `LoadPlan`s that
-  `runLoadPlan` executes, so no flash path bypasses the verified engine anymore. Both
-  planners are locked shape-and-execution in `flash-exec.test.ts`. The System 7 GA path
-  maps to the asserting engine bracket with NO wire delta (it already asserted and wrote
-  verified). The System B GA path is preserved byte-for-byte via the `assert:false` opt-out
-  + batch `assertLoaded` (its loads/completions were never asserted inline); its writes
-  stay read-back verified as before, so it too carries no new wire behavior.
+Surveyed from the real catalogue (`parseLoadProcedures` plus the coverage test in
+`packages/product/test/loadproc.test.ts`). The step policy above dispositions every
+ProductProcedure and MergedProcedure in the corpus except two classes, both refused:
 
-### The pre-unload backup is opt-in (`backupBeforeUnload`, default OFF)
+- **Devices whose procedure declares uncomputable load-image stamps.** One absolute-segment
+  sensor family (`M-0008`) declares three `LdCtrlLoadImageProp` load-image/MCB stamps the engine
+  cannot compute, so the coverage guard throws `LOAD_STEP_UNSUPPORTED` rather than run a partial
+  recipe. That family has no full-download path either, so `par` would have been its only
+  writable operation.
+- **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
+  gap named in the styles table above.
 
-A full download UNLOADs every segment before it rewrites them, so whatever the device held is gone the
-moment it starts. `downloadFull` can first read the device's current memory back and persist it to
-`.bin` files, a recovery copy for the one case where it matters: a device holding a configuration
-Busforge cannot reproduce (programmed by ETS, never imported). That read is expensive: the parameter
-segment alone is ~1800 twelve-byte TP round trips, minutes of bus traffic, on a device whose every byte
-the download is about to derive from the project and replace.
+Being dispositioned is not a hardware claim: which application programs have actually been
+flashed, and how far, is in [status.md](status.md).
 
-So it is gated behind `FullDownloadCtx.backupBeforeUnload`, **default `false`**. The whole backup path
-(size the segments from the device's own MCB / table headers, refuse rather than guess a length, persist
-before any unload) stays implemented and tested (`packages/product/test/download-full.test.ts`), it just
-does not run unless asked. No server route sets the flag today, so production full downloads skip it and
-finish minutes sooner. A future UI can offer "back up before commissioning" for the ETS-migration case;
-until then the recovery path for a botched download is to re-run it from the project (the device is left
-`LOADING`, recoverable, never restarted on a failed write).
+## The flash bracket, and why it is tight
 
-## Deferred (named, not silent)
+Three device behaviours shape every bracket. They are not visible in the code, so they are
+pinned by tests.
 
-- **Full download / first-time commissioning: DONE for System B.** `downloadFull`
-  (`packages/product/src/profiles.ts`, wired at `apps/server/src/routes/deviceops.ts`)
-  builds and writes the application id, parameter image, com-object table (LSM3) and
-  group tables in one bracket, and it is hardware-proven: a virgin GVS AMMA (M-0085)
-  came up byte-identical and survived a power cycle, and the OpenKNX AB-PRE (MV-07B0)
-  was commissioned from factory state, verified byte-for-byte at the KNX layer, and
-  booted its application on the bus. For OpenKNX the app-code segments are not needed,
-  because the firmware ships as a separate USB `.uf2`.
-- **Full download / first-time commissioning: DONE for memory-mapped System 7 (MV-0700/0701)**
-  too, hardware-verified on the ABB US/U 4.2. `System7Profile.downloadFull` walks the
-  device's declared load procedure in order, writing EVERY declared segment — address + association
-  tables from the links, parameter-bearing segments from `buildAbsoluteSegmentTargets`, and the
-  static com-object-table + code segments straight from their `<Data>` (these devices, unlike
-  OpenKNX, ship the whole application image in the product XML). The catch was the transport: these
-  BIM M112 masks drive their LSMs through the deprecated MEMORY-MAPPED interface (load control to
-  StandardMemory `0x0104`, status from `46825+LsmIdx`), NOT the PID-5 properties the MV-0705 path
-  uses (`MaskInfo.propertyMappedLsms`). The `LdCtrlAbsSegment`/`LdCtrlTaskSegment` byte layouts were
-  confirmed empirically on the device (LSM state after each control write). **The property-mapped
-  System 7 variants (MV-0705/2705/5705) still keep their com-object table from the device** —
-  `downloadFull` refuses them (`FULL_DOWNLOAD_UNSUPPORTED`); a surgical `par` flash is their only
-  write path.
-- **Relative path through the engine: DONE, and hardware-smoked.** `planRelativeParFlash`
-  emits the hardware-proven System B bracket as a `LoadPlan` and `runLoadPlan` executes it
-  (the hardcoded `flashParameters` executor is deleted); the planned step stream is locked
-  call-for-call against the retired executor's order in `flash-exec.test.ts` /
-  `loadplan.test.ts`. The ONE deliberate delta, the engine asserting LOADING after Load
-  (as the absolute path always did), is now exercised on hardware: a module-instance
-  parameter change was flashed and restored, byte-checked, on the Theben HMG 1.1.x
-  (a System B / relative device) through this exact engine bracket.
-- **Property-object verbs**: `CompareProp` is executed (pre-flight check).
-  `LoadImageProp`/`WriteProp` to PID 27 (MCB) are a documented, hardware-evidenced skip
-  on relative devices and **block** the flash on absolute devices (M-0008) until a
-  device that needs them can be hardware-tested. Any other target PID blocks everywhere.
-- **DefaultProcedure (legacy)** remains a gap (the one Gira M-0083 A-0138 device is
-  refused, not crashed), tracked in [device-memory-model.md](device-memory-model.md).
-  **True property-based loading** (parameters loaded via interface-object property writes
-  rather than a memory image) is also not implemented; MV-0705 turned out not to be it,
-  but real property-loaders (IP interfaces/routers, cEMI servers) exist.
+### The closing restart can be the persistence boundary
+
+On the thelsing/knx stack (System B, OpenKNX), `LdCtrlLoadCompleted` persists nothing: it
+only flushes a buffer. The flash metadata (the four load states, the table addresses, the
+individual address, everything the device validates on the next boot) is written from
+exactly one place reachable over the bus, on receiving **`A_Restart`**. Before that restart
+every available check reads RAM, so a device can report all four load states LOADED and every
+table byte-identical while having written nothing to flash.
+
+So `KnxDevice.restart()` proves the reboot instead of assuming it: after the restart the
+device must have **stopped answering** on the connection it just acknowledged on. A device
+that keeps answering did not reboot and did not save, and that is a `RESTART_IGNORED`
+failure. The acknowledgement cannot be the proof, because such a device reboots too promptly
+to get one out.
+
+Not every firmware works that way. Some persist at `LoadCompleted` and never go silent on
+`A_Restart`, so requiring a reboot would reject a flash that actually landed. That relaxation
+is opt-in per manufacturer and only for firmware where it was hardware-verified
+(`PERSIST_ON_LOAD_COMPLETED` in `profiles.ts`, proven by a power-cycle test). The default
+stays strict.
+
+### The deferred save is armed by the unload and refreshed by writes
+
+On the same stack the load states are written by a deferred save from the device's main
+loop, roughly five seconds after its memory was last touched. The timer is **armed only when
+memory is freed** (the unloads) and merely **refreshed** by writes. So if it expires in the
+middle of a download, the save fires with every load state still LOADING and then never fires
+again: the download is thrown away while every single check still passes.
+
+Therefore the bracket stays tight, with exactly one deliberate pause, at the end, before the
+restart. And the link is re-opened between that settle and the restart (a connection-oriented
+KNX link dies after 6 seconds of silence, so an `A_Restart` sent after an 8-second settle
+lands on a connection the device has already torn down). Nothing may touch the device's
+memory in that gap: a memory write refreshes the deferred-save timer and would push the save
+back out past the restart.
+
+### Unloading a table can invalidate the running application
+
+A group-address flash unloads and rewrites the three tables the running application
+references. On some System B stacks that invalidates the application object itself: the
+tables read back LOADED and byte-perfect while the application program object drops to
+ERROR, the device keeps answering management (so every table verifies green), and every link
+is dead. No cheap recovery exists; a bare LoadCompleted, a LOAD plus LoadCompleted and a
+restart all leave it in ERROR, only a full download brings it back. Hardware-proven on a Jung
+universal interface (Insta stack).
+
+Two consequences, both in the code:
+
+1. **`planSystemBGaFlash` brackets the application object.** It opens object 4's own load
+   bracket before the unloads and closes it once the tables are in place, so its
+   LoadCompleted revalidates against them. It touches none of the application's memory: no
+   unload (that is what frees the parameter image), no alloc, no write, and deliberately
+   **no program-id re-stamp**, because nothing here changes the application's identity and
+   writing the project's stamp would overwrite the evidence a later parameter flash's
+   declared app-id check relies on. The bracket costs two load events and rewrites nothing.
+   It is applied only to a device whose application is actually LOADED **and** whose
+   manufacturer is on the hardware-proven allowlist (`HOLD_APPLICATION_ON_GA_FLASH`, Jung
+   today): the extra LoadCompleted is not free on a persist-at-LoadCompleted device, where it
+   triggers another flash persist. On any other device the plan stays byte for byte the old
+   table-only bracket, and the `GA_FLASH_BROKE_APPLICATION` guard below is what keeps that
+   from failing silently.
+2. **The flash records the application object's load state before the write and re-checks it
+   after.** A device whose application was LOADED and no longer is fails with
+   `GA_FLASH_BROKE_APPLICATION`, naming the recovery (run a full download), instead of
+   reporting `verified: true`. Only a degradation is an error, so a device whose application
+   object was already not LOADED gains no new refusal. The re-check goes through the same
+   settle-and-retry the table comparison uses, so a device still recovering from the closing
+   restart cannot produce a false alarm.
+
+## The pre-unload backup is opt-in (`backupBeforeUnload`, default off)
+
+A full download UNLOADs every segment before it rewrites them, so whatever the device held is
+gone the moment it starts. `downloadFull` can first read the device's current memory back and
+persist it to `.bin` files, a recovery copy for the one case where it matters: a device
+holding a configuration Busforge cannot reproduce (programmed by ETS, never imported).
+
+That read is expensive. A large parameter segment is well over a thousand twelve-byte round
+trips, minutes of bus traffic, on a device whose every byte the download is about to derive
+from the project and replace. So it is gated behind `FullDownloadCtx.backupBeforeUnload`,
+**default `false`**. The whole backup path stays implemented and tested: it sizes each
+segment from the device's own memory-control block or table header and **refuses rather than
+guessing a length**, because a backup sized from the image about to be written would silently
+omit the tail of a larger loaded segment and could not restore what it replaced. No server
+route sets the flag today, so production full downloads skip it. Until a UI offers it, the
+recovery path for a failed download is to re-run it from the project: the device is left
+`LOADING`, recoverable, and is never restarted after a failed write.
+
+## Full download coverage
+
+`downloadFull` writes the application id, the parameter image, the com-object table and the
+group tables in one bracket.
+
+- **System B** (`planSystemBFullDownload`): implemented. The parameter segment is written
+  sparsely against the allocation's fill byte, and verified by the device's own segment CRC
+  (`PID_MCB_TABLE`) rather than by reading thousands of bytes back. Two CRC-16 conventions
+  are accepted, because firmware differs: the thelsing/knx variant augments the CCITT CRC
+  with 16 zero bits, other System B firmware uses CCITT-FALSE. A CRC matching neither is not
+  a failure verdict, it falls back to a full byte-for-byte read-back.
+- **Memory-mapped System 7** (MV-0700/0701): implemented. The procedure is walked in order
+  and every declared segment written: address and association tables from the links,
+  parameter-bearing segments from the built image, and the static com-object table and code
+  segments straight from their `<Data>` (these devices, unlike OpenKNX, ship the whole
+  application image in the product XML).
+- **Property-mapped System 7** (MV-0705): implemented, and it **authors L3** into the
+  application's `<ComObjectTable CodeSegment>`. It is offered exactly when the application
+  declares that segment; without it the download refuses (`FULL_DOWNLOAD_UNSUPPORTED`)
+  rather than writing a manufacturer-default com-object table. A segment the application
+  declares with **no `<Data>`** is declared in the LSM bracket but not written and not read
+  back: it is a computed/RAM segment the firmware fills during LoadCompleted, and ETS writes
+  nothing to it either.
+- **Legacy `DefaultProcedure`** and true property-based loading remain gaps, refused rather
+  than approximated.
+
+A full download is virgin-aware: the declared app-id `CompareProp` is sourced from the
+download's own `full` steps (a check declared `AppliesTo="full"` would otherwise be missed).
+A match means the device already holds this application, an all-zero read means a virgin
+device, and a **different** non-zero application is refused, so a full download never lands
+the wrong application's image on a device.
+
+Commissioning (address assignment, what a first-time download has to get right, and the
+device-specific traps) is in [commissioning.md](commissioning.md).

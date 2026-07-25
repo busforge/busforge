@@ -1,70 +1,22 @@
 # tools
 
-Operator / development tooling that talks to a live KNX bus. Not part of the app.
+Operator and development CLIs that talk to a live KNX bus, or to data dumped from one. Not part of
+the app, not part of `bun run check`. Read-only unless noted.
 
-## readback.ts
+Full usage, flags and the reasoning behind each tool: [`docs/development.md`](../docs/development.md).
+The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md`](../docs/testing.md).
 
-Dump a real device's commissioned memory over the bus and compare it against what
-Busforge builds, to develop and regression-test the flash paths against ground truth.
-Read-only and safe: it never writes to a device.
+| Tool | One line |
+|---|---|
+| `readback.ts` | Dump a real device's commissioned memory and byte-compare it against what busforge builds. The ground truth the flash paths are developed against |
+| `dump-param-memory.ts` | Dump every reachable device's parameter memory into a corpus (database-sourced, no project password) |
+| `verify-images.ts` | Offline: byte-verify the image build against that corpus, owned-scoped |
+| `paramtest.ts` | One device, one memory read: build the parameter image from files and compare it against the device |
+| `etsdiff.ts` | Diff busforge's built image against what ETS actually wrote, from a captured programming transaction |
+| `flashtest.ts` | **Writes to a real device.** Live group-address flash harness with revert |
+| `udp-ssh-relay.ts` | Carry KNXnet/IP over an SSH TCP forward when the direct UDP route is broken |
+| `smoke/runner.ts` | The hardware smoke framework: capabilities and behaviours on real devices, in the `api` and `ui` channels |
 
-```
-bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> [--mode=all|params|tables]
-```
-
-- `params` — for every device with an LSM4 parameter image: build our image from the
-  project, read the device, and byte-compare. Writes `<ia>__<app>.built.bin`,
-  `<ia>__<app>.device.bin`, and `params.json`.
-- `tables` — read every device's LSM1/2/3 group tables with a **full, count-based
-  read** (no cap, not truncated). Writes `tables.json`.
-- `all` (default) — both.
-
-KNX Secure devices (descriptor `MV-FFFF`) are skipped (no plain access).
-
-Example:
-
-```
-bun run tools/readback.ts ~/house.knxproj '<password>' 198.51.100.10 ./apps/server/data/readback
-```
-
-> **The output is real device memory** (parameter images, and group-address tables
-> that contain your installation's group addresses). It is the same class of personal
-> data as a project's instance file. Write it to a **gitignored** location and never
-> commit it. The tool drops a `DO_NOT_COMMIT_device_memory.txt` marker in the output
-> directory as a reminder.
-
-## dump-param-memory.ts
-
-Dump every reachable device's parameter memory into a ground-truth corpus, for both
-the LSM4 (RelativeSegment) and MV-0705 (AbsoluteSegment) models. Read-only. Unlike
-`readback.ts` it is **DB-sourced** (no `.knxproj` password): app programs and values
-come from `apps/server/data/busforge.db`.
-
-```
-bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
-```
-
-For each device it locates the parameter segments (RelativeSegment via the device
-allocator, AbsoluteSegment at its fixed XML address), reads them, and writes one
-`<ia>__<seg>.device.bin` per segment plus `manifest.json`. Default out-dir
-`apps/server/data/readback/parammem` (gitignored, real device memory).
-
-## verify-images.ts
-
-Byte-verify the image build against the corpus produced by `dump-param-memory.ts`.
-**Offline** (no bus): it reads the dumped `.bin` files and compares them against what
-Busforge builds. This is the honest correctness check, against the real device rather
-than our own frozen golden snapshot.
-
-```
-bun run tools/verify-images.ts [corpus-dir]
-```
-
-Reports per-device byte-match, and for context the union-parameter count (the known
-residual until union placement lands). MV-0705 devices build via
-`buildAbsoluteSegmentImages`; LSM4 devices via `buildParameterImage`.
-
-For the verification model and the per-device support matrix this feeds, see
-[`docs/verification.md`](../docs/verification.md),
-[`docs/device-memory-model.md`](../docs/device-memory-model.md), and
-[`docs/mv0705-spike-findings.md`](../docs/mv0705-spike-findings.md).
+Output written by the read-back tools is **real device memory**, including group addresses from a
+real installation. Keep it in a git-ignored location; it is the same class of data as a project's
+instance file.

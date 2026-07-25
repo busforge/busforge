@@ -1,6 +1,6 @@
 # Busforge Design System
 
-The single source of truth for Busforge's brand and visual language: logo, color, typography, iconography, and the rules that keep new surfaces consistent. It also doubles as the **style handoff** for tooling that needs design input (e.g. the `diagram-design` skill, see the last section).
+The single source of truth for Busforge's brand and visual language: logo, color, typography, iconography, and the rules that keep new surfaces consistent. The last section is the **style handoff** for anything that renders diagrams or other assets in the Busforge skin.
 
 Busforge is an open, cross-platform replacement for ETS, the tool that commissions KNX building-automation systems. The visual language is a **dark, precision-instrument** aesthetic: deep slate surfaces, a single forged-amber accent, monospace for all bus data.
 
@@ -109,9 +109,11 @@ Two families, loaded from Google Fonts in `index.html`.
 
 ---
 
-## Handoff for `diagram-design`
+## Diagram handoff
 
-Paste this into the diagram skill's style guide (the "Brand handoff" option) to render diagrams in the Busforge skin. Mapped to the skill's semantic roles, **dark** variant (Busforge is dark-first).
+The palette to hand to a diagramming tool so its output matches the product. Mapped to the semantic
+roles such tools usually expose, **dark** variant (Busforge is dark-first). The docs' SVG diagrams
+use it.
 
 | Role | Value | From |
 |---|---|---|
@@ -126,6 +128,6 @@ Paste this into the diagram skill's style guide (the "Brand handoff" option) to 
 | `accent-tint` | `rgba(243,164,74,0.10)` | `primary @ 10%` |
 | `link` | `#57b5d8` | secondary status hue |
 
-**Typography mapping:** `node-name` → Archivo 600; `sublabel`/`eyebrow`/`arrow-label` → JetBrains Mono. The skill keeps a serif (Instrument Serif) for `title`/`callout` by its own rule, since Busforge ships no serif; that contrast is acceptable for diagrams even though the product UI is sans + mono only.
+**Typography mapping:** node names → Archivo 600; sublabels, eyebrows and arrow labels → JetBrains Mono. Busforge ships no serif, so a diagram tool that reserves a serif for titles and callouts may keep its own; that contrast is acceptable in a diagram even though the product UI is sans plus mono only.
 
-**Constraints honored:** one accent (amber), no rainbow palette, `ink` hits AA on `paper`. Note the skill's default *light* skin wants warm-neutral paper, Busforge overrides to the dark slate above.
+**Constraints:** one accent (amber), no rainbow palette, `ink` hits AA on `paper`. Diagrams are dark-first like the product, not light with a dark variant bolted on.

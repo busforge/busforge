@@ -3,7 +3,7 @@
 // (config.capabilities, i.e. classify().capabilities()), and the runner exercises exactly those.
 // The spec supplies only what the product cannot know: the bench identity, how to provision it, the
 // baseline configuration that brings it to a linkable state, the bus-observable behaviours to prove,
-// and the fuzz policy the Layer-1 generator draws from. See docs/smoke-framework-redesign.md and
+// and the fuzz policy the Layer-1 generator draws from. See docs/testing.md and
 // /CONTEXT.md (Capability / Behaviour / Channel).
 
 // The path a capability is driven through over the same hardware. `api` hits the production
@@ -100,6 +100,6 @@ export interface DeviceSpec {
   // hardware reason. This is the one honest exception to "exercise every claimed capability": it is
   // not a silent skip (it is declared here and reported as `unsafe`, proven by nothing), and it is
   // not a fake pass. Example: OpenKNX flashParams/flashLinks — a surgical re-flash of a device that
-  // is only ever programmed by a full download is the documented death-loop risk (docs/openknx.md).
+  // is only ever programmed by a full download is the documented death-loop risk (docs/commissioning.md).
   unsafe?: { capability: string; reason: string }[];
 }

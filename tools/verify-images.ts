@@ -15,7 +15,7 @@
 // Unowned bytes (manufacturer defaults, erased gaps, inactive-branch parameters) are
 // reported as "+Nu" for context but never fail a device: we do not write them, and a
 // mismatch there is not config drift (it may even be device-internal runtime state).
-// See docs/mv0705-visibility-model.md. Also reports the union-parameter count.
+// See docs/device-memory-model.md. Also reports the union-parameter count.
 import { Database } from "bun:sqlite";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";

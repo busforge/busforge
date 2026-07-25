@@ -1,112 +1,139 @@
-# Deployment & CI/CD
+# Deployment
 
-Busforge ships as a **single Docker container** and deploys to the home **NAS**
-on every push to `main`, driven by a Forgejo Actions pipeline. The container
-image is published as a **package** in the Forgejo container registry.
+Busforge ships as a **single Docker container**: the Bun server serves both the API and the built
+web app. There is no separate frontend service, no database server, no message broker. State is one
+SQLite file plus the uploaded project files, in one directory.
 
-## Pipeline overview
-
-```
-push / PR to main
-      │
-      ▼
-┌──────────────┐   PR + push     runner: hetzner
-│    check     │  typecheck + bun test + web build  (bun run check)
-└──────┬───────┘
-       │ push to main only
-       ▼
-┌──────────────┐   build the image, push to the Forgejo registry
-│    build     │  ghcr.io/busforge/busforge:main-<sha> + :latest
-└──────┬───────┘  link the package to the repo
-       │
-       ▼
-┌──────────────┐   runner: nas (runs docker locally on the NAS)
-│   deploy     │  ship docker-compose.yml → /srv/busforge
-└──────┬───────┘  docker compose pull && up -d, wait for healthy, prune
-       │
-       ▼
-┌──────────────┐   semver bump from commit messages
-│   version    │  git tag v<x.y.z>, re-tag image :v<x.y.z>, Forgejo Release
-└──────────────┘  runner: hetzner
-```
-
-The workflow lives in [`.forgejo/workflows/ci.yml`](../.forgejo/workflows/ci.yml).
-
-### Jobs
-
-| Job | Runner | When | Does |
-|-----|--------|------|------|
-| `check` | `hetzner` | every PR and push | `bun install --frozen-lockfile` then `bun run check` (typecheck, tests, web build). This is the gate. |
-| `build` | `hetzner` | push to `main` | Builds the image from the root `Dockerfile`, pushes `:main-<sha>` and `:latest`, links the package to the repo. |
-| `deploy` | `nas` | push to `main`, after `build` | Runs `docker compose` from the checked-out workspace (project `busforge`), pulls `:latest`, restarts, waits for the healthcheck, prunes old images. The NAS runner executes Docker locally, so there is no SSH hop. |
-| `version` | `hetzner` | push to `main`, after a successful deploy | Computes the next semver from commit messages, tags `v<x.y.z>`, re-tags the image `:v<x.y.z>`, and creates a Forgejo Release with the changelog. Skips if nothing changed since the last tag. |
-
-### Versioning
-
-The bump is derived from commit subjects since the last `v*` tag:
-
-- `feat: ...` → **minor**
-- `feat!: ...`, `fix!: ...` (any `type!:`) or a body containing `BREAKING CHANGE` → **major**
-- anything else (`fix`, `chore`, `docs`, ...) → **patch**
-
-The first release is `v0.1.0`.
-
-## Runtime model on the NAS
-
-Busforge runs as a **self-contained compose stack** (project name `busforge`),
-separate from the Ansible-managed `nas-apps` stack. Its
-[`docker-compose.yml`](../docker-compose.yml) attaches to the existing external
-`traefik` network, so the shared Traefik reverse proxy routes to it:
-
-- **HTTP**: `http://busforge.internal`
-- **HTTPS**: `https://busforge.lan.example.org` (shared `*.lan.example.org`
-  wildcard cert; plain HTTP on that name redirects to HTTPS)
-
-Both hostnames resolve to the NAS through the OPNsense split-horizon
-`*.lan.example.org` wildcard, so no DNS change is needed.
-
-### State
-
-The SQLite database and uploaded `.knxproj` / `.knxkeys` files live under
-`/app/apps/server/data` inside the container, bind-mounted to
-`/srv/busforge/data` on the NAS. That keeps the data on the
-backed-up data array alongside the other apps (rather than in Docker's internal
-volume store), and it survives image updates and restarts. The Docker daemon
-(root) creates that directory on first run, so the NAS runner does not need write
-access under `/srv`. **Nothing proprietary is baked into the image**
-(see `.dockerignore`); user data only ever lands on the host at runtime.
-
-### Bus access (KNXnet/IP)
-
-The container runs on Docker **bridge** networking. The KNX tunnel still reaches
-the KNXnet/IP interface on the LAN because the connection advertises a `0.0.0.0`
-HPAI (NAT mode), so the gateway replies to the packet source rather than to the
-container's internal address. If a particular gateway ignores NAT mode and the
-bus monitor stays empty, switch the service to `network_mode: host` in
-`docker-compose.yml` (this drops it off the Traefik network, so it would then be
-reachable only on a host port).
-
-## Required secrets
-
-Org-level Forgejo secrets reused from the sibling repos:
-
-| Secret | Used for |
-|--------|----------|
-| `REGISTRY_USER` / `REGISTRY_TOKEN` | Push to and pull from the container registry; link the package. |
-| `CI_RUNNER_TOKEN` | Create the Forgejo Release via the API. |
-
-Pushing the version tag uses the automatic Actions token from `actions/checkout`.
-
-## Manual operations
+## Build
 
 ```bash
-# Trigger the whole pipeline by hand: Forgejo UI → Actions → Run workflow.
-
-# Inspect the running container on the NAS (the deploy uses project `busforge`):
-docker compose -p busforge ps
-docker logs -f busforge
-
-# Roll back to a specific version: pin the tag in docker-compose.yml, then from
-# a checkout of the repo on the NAS:
-#   docker compose -p busforge -f docker-compose.yml up -d
+docker build -t busforge .
 ```
+
+The build stage installs dependencies and runs `bun run build` (which builds the web app); the
+runtime stage carries the result. Three optional build arguments bake the build identity into the
+image, read back through `/api/version` and shown in the UI footer:
+
+| Build arg | Meaning |
+|---|---|
+| `BUSFORGE_VERSION` | Version string, e.g. `v0.4.0` |
+| `BUSFORGE_COMMIT` | Commit hash |
+| `BUSFORGE_BUILT_AT` | Build timestamp |
+
+They default to `unknown`, which keeps a local `docker build` honest rather than claiming a version
+it does not have. The build context excludes `.git`, so the server cannot read this from git at
+runtime.
+
+## Run
+
+```bash
+docker run -d --name busforge \
+  -p 3000:3000 \
+  -v /srv/busforge/data:/app/apps/server/data \
+  -e BUSFORGE_MASTER_KEY=<32 random bytes, hex or base64> \
+  busforge
+```
+
+Or with the `docker-compose.yml` in the repository, which runs as-is and takes every
+site-specific value from the environment:
+
+```bash
+BUSFORGE_IMAGE=busforge:latest \
+BUSFORGE_DATA=/srv/busforge/data \
+BUSFORGE_MASTER_KEY=<32 random bytes> \
+  docker compose up -d
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BUSFORGE_IMAGE` | `busforge:latest` | Image to run, including a registry prefix if it is not local |
+| `BUSFORGE_DATA` | named volume `busforge-data` | Host path for the data directory, if you want it on a specific (backed-up) filesystem |
+| `BUSFORGE_MASTER_KEY` | unset | Passed through only when set, so an empty value can never look like a configured key |
+
+**No host port is published.** Compose can add published ports but never withdraw them, so a
+port in the shared file would be forced on every deployment that fronts the container with a
+proxy. Publish it, together with reverse-proxy labels, an external proxy network and any other
+site-specific wiring, in a second file that stays out of the repository
+(`docker-compose.deploy.yml` is gitignored for exactly this):
+
+```yaml
+# docker-compose.deploy.yml
+services:
+  busforge:
+    ports: ["127.0.0.1:3000:3000"]
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+```
+
+The image declares a healthcheck that polls the SPA root, so `docker compose ps` and a deploy gate
+can wait for readiness.
+
+### Ports
+
+| Port | Purpose |
+|---|---|
+| `3000` (`PORT`) | HTTP: the API, the web app, and the bus-monitor WebSocket on the same port |
+
+Nothing else is exposed. Outbound, the container reaches a KNXnet/IP interface on the network
+(UDP/TCP 3671 by default).
+
+### Environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PORT` | `3000` | HTTP listen port |
+| `BUSFORGE_MASTER_KEY` | unset | The instance master key: **32 random bytes** as hex or base64. Not a passphrase, no key derivation is applied |
+| `TZ` | container default | Timestamps in the UI and logs |
+
+### State and the master key
+
+Everything persistent lives under `/app/apps/server/data` inside the container: the SQLite
+database (which is where an imported `.knxproj` or `.knxprod` ends up; the uploaded file itself is
+not kept), the per-project flash backups, and `master.key` if no `BUSFORGE_MASTER_KEY` is set. Bind-mount that path to a backed-up host directory. Nothing
+proprietary is baked into the image (see `.dockerignore`); user data only ever lands on the host at
+runtime.
+
+The master key seals KNX tool keys in the database. It is **unrecoverable**: restoring the database
+onto a host without its key makes every sealed tool key permanently unopenable. Either pin
+`BUSFORGE_MASTER_KEY` from your own secret store, or back up `master.key` **together with** the
+database. The server refuses to start if sealed keys exist but no master key is available, rather
+than silently generating a new one that cannot open them.
+
+### Bus access from a container
+
+The container runs fine on bridge networking. A KNXnet/IP tunnel still reaches an interface on the
+LAN because busforge advertises a `0.0.0.0` HPAI (NAT mode), so the gateway replies to the observed
+packet source rather than to the container's internal address.
+
+If a particular gateway ignores NAT mode (the bus monitor stays empty, a tunnel never connects),
+switch the service to `network_mode: host`. That drops it off any user-defined Docker network, so it
+is then reachable only on a host port.
+
+A directly attached KNX-USB interface is not reachable from the container. Run
+[`busforge-bridge`](development.md#busforge-bridge) on the machine holding the stick and connect to
+it over KNXnet/IP.
+
+### Behind a reverse proxy
+
+Route a single upstream to port 3000. The bus monitor uses a standard HTTP upgrade, so any proxy
+that passes WebSockets through needs no extra configuration beyond its usual upgrade handling.
+
+Busforge has **no authentication of its own**. It can program devices in a real installation, so do
+not expose it to the internet: keep it on a trusted network, or put authentication in front of it at
+the proxy.
+
+## Continuous integration
+
+The pipeline in `.forgejo/workflows/ci.yml` runs `bun run check` (typecheck, lint, tests, web
+build) on every push and pull request. That job is the gate; nothing downstream runs if it fails.
+
+On `main`, CI then computes the next version from the commit subjects since the last `v*` tag
+(`feat:` → minor, any `type!:` or a `BREAKING CHANGE` body → major, everything else → patch), builds
+the image with that version baked in, publishes it to the project's container registry tagged by
+version and by commit, and creates a release with the changelog. It skips when nothing changed since
+the last tag.
+
+The hardware smoke framework is never part of CI. It needs a real bus and a real device; see
+[testing.md](testing.md).

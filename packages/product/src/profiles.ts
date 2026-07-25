@@ -259,7 +259,7 @@ export interface FullDownloadCtx {
   // narrow, while reading the whole parameter segment back (~1800 TP round trips, minutes) dominates the
   // wall-clock. The backup PATH stays fully implemented and tested; this only gates whether it runs, so
   // a future UI can offer "back up before commissioning" for the ETS-migration case. See
-  // docs/load-procedures.md and docs/next-steps.md.
+  // docs/load-procedures.md and docs/roadmap.md.
   backupBeforeUnload?: boolean;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
@@ -677,8 +677,8 @@ export class System7Profile extends DeviceProfile {
     // do NOT ship a configured com-object table; downloadFull authors L3 into the <ComObjectTable
     // CodeSegment>, so a full download is possible exactly when the app declares that segment
     // (buildComObjectTableMv0705). Byte-verified against two ETS captures of the MDT BE-02001.02 and
-    // live-hardware certified on it (1.1.56): full download verified=true, and the device answers
-    // group communication on a flashed link, unchanged across a bus power-cycle (docs/mv0705-full-download.md).
+    // live-hardware certified on it: full download verified=true, and the device answers
+    // group communication on a flashed link, unchanged across a bus power-cycle (docs/commissioning.md).
     const canFull = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
       this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
       (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
@@ -837,7 +837,7 @@ export class System7Profile extends DeviceProfile {
     // difference is whether `comObjectTable` is supplied (see deviceflash.ts). ETS puts these devices
     // into verify mode (DeviceControl obj0/PID14 |= VERIFY_MODE) so the device echoes each write; we do
     // not need it — planAbsoluteFullDownload's writeMem reads every write back instead, the mechanism
-    // the MV-0705 par flash is hardware-proven on for this device family (docs/mv0705-full-download.md).
+    // the MV-0705 par flash is hardware-proven on for this device family (docs/commissioning.md).
     const propertyMapped = !isMemoryMappedLsm(mask);
     if (propertyMapped && !cfg.groupTables.comObjectSegment) {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",

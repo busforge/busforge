@@ -6,7 +6,7 @@ import { ApiError } from "./errors.ts";
 // At-rest sealing of Busforge secrets (currently KNX Data Secure tool keys). A
 // secret is sealed with a single instance MASTER KEY held OUTSIDE the database, so
 // the busforge.db file alone never reveals a key. The sealed blob is what lands in
-// the device_security table. See docs/knx-secure-design.md.
+// the device_security table. See docs/knx-secure.md.
 //
 // Seal format: iv(12) | tag(16) | ciphertext, AES-256-GCM. GCM authenticates, so a
 // wrong master key or any tampering fails open() loudly instead of returning garbage.

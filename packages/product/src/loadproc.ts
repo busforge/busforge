@@ -151,7 +151,7 @@ export type ParDisposition =
 
 // PID 27 is the memory-control-block table (per-segment CRC bookkeeping ETS stamps on a
 // full download). System B par flashes are hardware-verified WITHOUT rewriting it
-// (M-0162 and Theben 493B, both flash + read-back verified), so MCB writes
+// (on two products, both flash + read-back verified), so MCB writes
 // are a justified skip there. No such evidence exists for absolute devices, so on them
 // the same verb blocks.
 const MCB_PID = 27;
@@ -224,7 +224,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
       case "LdCtrlWriteProp":
       case "LdCtrlLoadImageProp":
         if (Number(step.attrs.PropId) === MCB_PID) {
-          return { kind: "skipped", reason: "MCB stamp (PID 27); System B par flashes are hardware-verified without it (M-0162, Theben 493B)" };
+          return { kind: "skipped", reason: "MCB stamp (PID 27); System B par flashes are hardware-verified without it on two products" };
         }
         return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
     }

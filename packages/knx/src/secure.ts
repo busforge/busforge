@@ -5,7 +5,7 @@ import { createCipheriv } from "node:crypto";
 // flags octet, the length in a fixed position), so a generic CCM library is the
 // wrong tool. We assemble it from AES-CBC (the MAC) and AES-CTR (encryption), which
 // is exactly what the reference stacks (Calimero, thelsing/knx) do. Byte layout and
-// construction are documented in docs/knx-secure-design.md, cross-checked against
+// construction are documented in docs/knx-secure.md, cross-checked against
 // those two interoperating implementations.
 //
 // This module is pure protocol math (no bus, no keys-at-rest); it is verified by

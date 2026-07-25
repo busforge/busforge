@@ -15,7 +15,7 @@ import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 // The visible set and each parameter's effective value come from buildDeviceConfig
 // (the same resolver the UI uses); the byte placement reuses the proven encode
 // codec. This is hardware byte-verified on the M-0081 devices (see
-// docs/mv0705-spike-findings.md). Union members and module-instance parameters ARE
+// docs/device-memory-model.md). Union members and module-instance parameters ARE
 // placed: per-instance offsets are resolved and a union byte is owned only for the
 // actively-placed branch. Both are hardware byte-verified (docs/device-memory-model.md).
 
@@ -35,7 +35,7 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // Data-less segment's parameter regions, or erased-EEPROM gaps) so the whole image
 // can be COMPARED against a device read-back, but the model is not authoritative for
 // them: a Data-less segment cannot reconstruct ETS's precomputed non-zero defaults
-// (see the M-008E 4-byte residual in docs/mv0705-spike-findings.md). The flash path
+// (see the M-008E 4-byte residual in docs/device-memory-model.md). The flash path
 // must only WRITE owned bytes; see planAbsoluteSegmentFlash.
 //
 // `verify` is the subset of owned bytes a post-flash read-back may assert. It EXCLUDES

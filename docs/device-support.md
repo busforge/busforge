@@ -6,7 +6,12 @@ The guiding principle is honesty over coverage: a device whose memory model we h
 implemented is **explicitly refused**, never silently routed into a path that fabricates a
 result. Whenever you see a ❌ below, the corresponding operation throws a coded error
 (`DEVICE_FAMILY_UNSUPPORTED`, `DEVICE_READBACK_UNSUPPORTED`, `GROUP_TABLE_UNREADABLE`) instead
-of pretending to succeed.
+of pretending to succeed. (`GROUP_TABLE_UNREADABLE` is a different case: it is raised when a
+readable device's group-table header is implausible, not when a family is unsupported.)
+
+This page answers "how is a device classified, and is its memory model implemented". It does
+**not** carry verification claims. How far each capability and each real product is actually
+proven on hardware is in [status.md](status.md).
 
 ## How a device is classified
 
@@ -14,11 +19,11 @@ Every KNX device carries a **mask version** (read off the bus via the device des
 present in the product XML as `MaskVersion`). The mask version is the single identity stamp,
 and it projects onto three derived properties:
 
-- **Medium** — twisted pair (TP), powerline (PL), radio frequency (RF), or IP. This only
+- **Medium**: twisted pair (TP), powerline (PL), radio frequency (RF), or IP. This only
   changes the transport.
-- **System family** — System 1/2/300/7/B, or a non-application device (coupler, interface, IR
+- **System family**: System 1/2/300/7/B, or a non-application device (coupler, interface, IR
   decoder, media coupler, RF-only).
-- **Memory model** — how parameters and group tables are laid out in the device, and therefore
+- **Memory model**: how parameters and group tables are laid out in the device, and therefore
   how we read and program it. The family fixes this essentially 1:1.
 
 The two axes are **not** a free cross-product: the mask version is the primary key, and family
@@ -34,20 +39,19 @@ Association "Mask Versions" article and the Calimero `DeviceDescriptor` DD0 enum
 
 Busforge implements two memory models:
 
-| Memory model | Family | Profile | Status |
+| Memory model | Family | Profile | Implemented |
 |---|---|---|---|
-| `relative` | System B | `SystemBProfile` | Read + flash (params and group addresses). Hardware-proven on TP. |
-| `absolute` | System 7 (BIM M112) | `System7Profile` | Read + flash (params and group addresses). Hardware-proven on TP (M-0081, 1.1.x): GA flash verified **end-to-end through the production server endpoint** (`POST /api/projects/:id/devices/:deviceId/flash-ga`, IP connection): dry-run identity (0 diff), real **add-link (table growth 24→28 B)** with the endpoint's own read-back `verified:true`, an independent bus read confirming the new GA, then revert, with the device byte-identical to the start. Growth is bounded by the device's declared `<AddressTable>`/`<AssociationTable>` `MaxEntries`; beyond capacity is refused. **Param flash** likewise verified e2e through the production endpoint (`POST .../flash`, LoadProcedure with restart) on M-0081 1.1.x: dry-run identity (0 diff), real 1-byte change with `verified:true`, an independent dry-run proving the device held the changed byte, then revert to a 0-diff state. **Full download (first-time commissioning)** is now implemented for the MEMORY-MAPPED System 7 masks (MV-0700/0701) and hardware byte-verified on the ABB US/U 4.2 (`M-0002_A-A001`, MV-0701): full `download` through the endpoint returned `verified:true`, all three LSMs read back `LOADED`, the address table came up holding the device's own IA. These masks drive their LSMs over the deprecated memory-mapped interface (`0x0104` / `46825+LsmIdx`), not PID-5 properties (`isMemoryMappedLsm`). **Full download for the property-mapped variants (MV-0705) is now implemented too and live-hardware certified on the MDT BE-02001.02** (`M-0083_A-00B6`, MV-0705): `downloadFull` authors the com-object table (L3) into the app's `<ComObjectTable CodeSegment>` (`buildComObjectTableMv0705`), and the endpoint download returned `verified:true` with the device answering group communication on a flashed link, unchanged across a bus power-cycle. `capabilities().fullDownload` is enabled for any property-mapped app that declares that segment (the sibling MV-2705/5705 masks share the path, individually unproven). |
+| `relative` | System B | `SystemBProfile` | Read-back, parameter flash, group-address flash, full download. Proof state: [status.md](status.md). |
+| `absolute` | System 7 (BIM M112) | `System7Profile` | Read-back, parameter flash, group-address flash, full download. Two LSM styles: the memory-mapped masks (MV-0700/0701) drive their load state machines over the deprecated memory interface, the property-mapped ones (MV-0705 and siblings) over PID-5 properties; a full download authors the com-object table for the property-mapped variants. Proof state: [status.md](status.md). |
 
 Everything else resolves to `UnsupportedProfile`: the family is recognised (so we can name it
 and say "not yet"), but every operation throws.
 
-A ✅ means the memory model is implemented. **The ✅ does not by itself mean "verified on that
-medium."** Hardware verification to date is on **twisted-pair (TP)** only, for System B and
-System 7. The PL, RF (`MV-2705`, `MV-27B0`, `MV-17B0`) and IP (`MV-5705`, `MV-57B0`) rows share
-the exact same codec and load procedure, so they read ✅, but they have **not** been exercised on
-that medium. Treat a non-TP ✅ as "should work, code-shared, unproven on the wire" and read one
-back before trusting it. (This is the same convention parameter flash already used.)
+A ✅ means the memory model is implemented, and nothing more. The PL (`MV-17B0`), RF (`MV-2705`,
+`MV-27B0`) and IP (`MV-5705`, `MV-57B0`) rows read ✅ because they share the exact same codec and
+load procedure as their TP siblings, not because a device on that medium was ever driven. Which
+masks and media carry a hardware proof is in [status.md](status.md); read a device back before
+trusting a row that does not.
 
 ## The full matrix
 
@@ -99,49 +103,50 @@ back before trusting it. (This is the same convention parameter flash already us
 | `MV-5705` | IP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-57B0` | IP | System B | relative | ✅ params + links | ✅ | ✅ |
 
-## Known gaps to close next
+## The com-object table: three paths, and the difference matters
 
-- **Com-object table (L3): two paths, and the difference matters.**
-  - The **full download** (first-time commissioning, System B) **AUTHORS** the com-object table
-    from the application model, so a virgin device can be brought up with no ETS. The layout was
-    read out of the firmware that consumes it (thelsing/knx) and cross-checked against Kaenx; it is
-    byte-verified on real hardware against the OpenKNX AB-PRE (the device reads L3 back
-    byte-identical to what Busforge built). See [`comobjbuild.ts`](../packages/product/src/comobjbuild.ts)
-    and [openknx.md](openknx.md). **The device then boots its application and sends its heartbeat on
-    the bus**, so this is proven end to end and not only at the KNX layer. What makes it stick is the
-    closing `A_Restart`: it is the only bus-side trigger for the device writing its flash metadata,
-    and without it every check passes against RAM while the flash holds nothing (see
-    [verification.md](verification.md)). Still open: a device that is RUNNING its application stops
-    answering point-to-point management on this hardware, so it can be commissioned but not yet
-    re-programmed over the bus. **The cause is not yet established.** It was earlier attributed to the
-    device's own main loop (the OpenKNX-wiki L2-ACK-deadline story), but that attribution is now in
-    doubt: when it was last tested the bench USB interface was reporting a negative `L_Data.con` for
-    every frame, i.e. nothing Busforge sent was reaching the bus at all. That has to be cleared (a
-    bench bus carrying frames, positive `L_Data.con`) before the device is blamed. See the open item
-    in [next-steps.md](next-steps.md).
-  - The **surgical parameter flash** (re-configuring an already-programmed device) still KEEPS the
-    device's L3 unchanged: it re-points parameters and group addresses, not the object set. A
-    parameter change that, in ETS, would change a com-object's flags or the *set* of active
-    com-objects (e.g. enabling a channel that adds/removes objects) therefore cannot be expressed
-    by re-pointing alone. **Both** the parameter flash and the group-address flash **refuse** such
-    a change with `COM_OBJECT_TABLE_STALE` and name the objects that would have gone stale, rather
-    than write parameters over an L3 that no longer matches them. (To make that change, do a full
-    download, which rewrites L3.) The GA flash is gated for a second reason: its association table
-    numbers com-objects from the live configuration, so an association onto an object the device's
-    table does not configure would be a link to nothing, and the verify (which only re-reads the
-    tables we wrote) would still report success. See [`comobjtable.ts`](../packages/product/src/comobjtable.ts).
-  - The staleness gate compares the com-object table implied by the **programmed baseline**
-    (`device_param_base`, i.e. the configuration the device was last programmed with, hence the
-    one its L3 was compiled for) against the one implied by the configuration being flashed. It
-    deliberately does NOT compare against the device's own parameter image: the parameters that
-    decide a channel's existence frequently have no memory offset at all (the Theben 493B's
-    channel-active parameter is one), so they are unobservable on the bus and a device-image
-    detector would be blind to exactly the change that matters.
-  - The read-back keeps the baseline honest from the other side: it re-baselines only refs the
-    device's image actually encodes, so an unflashed edit to an unobservable parameter cannot
-    launder itself into the "programmed" baseline.
-- **System 1 / System 2 (BCU1/BCU2)** appear in real projects (e.g. an `MV-0012` device in the
-  house project). They are recognised and refused; implementing them means the classic
-  fixed-EEPROM address/association/com-object/parameter model, which is a separate effort.
-- Non-application devices (couplers, interfaces, media couplers) are out of scope for parameter
-  commissioning by design.
+- The **full download** (first-time commissioning) **AUTHORS** the com-object table from the
+  application model, so a virgin device can be brought up with no ETS. The System B layout was
+  read out of the firmware that consumes it and cross-checked against an independent
+  implementation; the property-mapped System 7 layout was reconstructed from ETS captures (the
+  memory-mapped MV-0700/0701 masks write the manufacturer's static table instead). See
+  [`comobjbuild.ts`](../packages/product/src/comobjbuild.ts) and
+  [commissioning.md](commissioning.md).
+- The **surgical group-address flash** rebuilds the com-object table on **System B** and writes it
+  alongside the address and association tables, because a table kept from the device leaves a
+  freshly linked object with its Communication flag cleared, which reads back byte-perfect and is
+  functionally dead. It stays surgical: the three tables are small and the parameter image is never
+  touched. On System 7 the table is kept from the device (see [status.md](status.md)). Rebuilding
+  is not the same as changing the object *set*: that is still refused, see below.
+- The **surgical parameter flash** (re-configuring an already-programmed device) KEEPS the
+  device's com-object table: it re-points parameters and group addresses, not the object set. A
+  parameter change that, in ETS, would change a com-object's flags or the *set* of active
+  com-objects (e.g. enabling a channel that adds objects) therefore cannot be expressed by
+  re-pointing alone. **Both** the parameter flash and the group-address flash **refuse** such a
+  change with `COM_OBJECT_TABLE_STALE` (as `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where the family
+  can commission from scratch), naming the objects that would have gone stale, and the route
+  promotes it to a full download, which rewrites the table. The group-address flash is
+  gated for a second reason: its association table numbers com-objects from the live
+  configuration, so an association onto an object the device's table does not configure would be
+  a link to nothing, and the verify (which only re-reads the tables we wrote) would still report
+  success. See [`comobjtable.ts`](../packages/product/src/comobjtable.ts).
+- The staleness gate compares the com-object table implied by the **programmed baseline** (the
+  configuration the device was last programmed with, hence the one its table was compiled for)
+  against the one implied by the configuration being flashed. It deliberately does NOT compare
+  against the device's own parameter image: the parameters that decide a channel's existence
+  frequently have no memory offset at all, so they are unobservable on the bus and a
+  device-image detector would be blind to exactly the change that matters.
+- The read-back keeps the baseline honest from the other side: it re-baselines only refs the
+  device's image actually encodes, so an unflashed edit to an unobservable parameter cannot
+  launder itself into the "programmed" baseline.
+
+## Known gaps
+
+- **System 1 / System 2 (BCU1/BCU2)** appear in real projects. They are recognised and refused;
+  implementing them means the classic fixed-EEPROM address/association/com-object/parameter
+  model, which is a separate effort. See [roadmap.md](roadmap.md).
+- **Non-application devices** (couplers, interfaces, media couplers) are out of scope for
+  parameter commissioning by design.
+- **Devices that expose an object model instead of a memory image** (some IP interfaces answer an
+  opaque device descriptor and offer no readable parameter model) have no read or program path
+  yet.
