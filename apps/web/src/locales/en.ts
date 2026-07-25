@@ -166,6 +166,7 @@ const en = {
     COM_OBJECT_PRIORITY_UNKNOWN: "A communication object declares a priority the ETS schema does not define. Busforge refuses to guess what to write into the device rather than silently demote it.",
     COM_OBJECT_NUMBER_INVALID: "A communication object resolves to number 0, which cannot exist in a device\u0027s com-object table. Refusing to program it.",
     LINK_COM_OBJECT_INACTIVE: "Some group-address links point at communication objects this configuration does not activate. The device would ignore them, so Busforge refuses rather than report them as programmed.",
+    GA_FLASH_BROKE_APPLICATION: "The group-address flash wrote the tables, but the device stopped running its application program, so the links would not actually work. Busforge reports this as a failure instead of success. This device family needs its links written by a full download; run one to recover the device.",
     DEVICE_CONTROL_UNREADABLE: "The device would not report or take its verify mode, in which it confirms every write. Without it a download writes blind, so Busforge refuses.",
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",

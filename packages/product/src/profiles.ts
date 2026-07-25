@@ -1,4 +1,4 @@
-import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ } from "@busforge/knx";
+import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -129,6 +129,22 @@ const appManufacturer = (app: AppConfig): number => Number.parseInt(String(app.i
 // hardware-verified allowlist must return false, or an OpenKNX device that failed to restart would
 // be reported as programmed while it comes back factory-fresh.
 export const persistsOnLoadCompleted = (app: AppConfig): boolean => PERSIST_ON_LOAD_COMPLETED.has(appManufacturer(app));
+
+// Firmware families hardware-verified to INVALIDATE their running application when a table it
+// references is unloaded underneath it, so a group-address flash must hold the application program
+// object in its own load bracket across the rewrite (planSystemBGaFlash holdApplication).
+//   0x0004 Jung (Insta stack): a table-only GA flash left all three tables LOADED and byte-perfect while
+//   object 4 dropped to ERROR — the device answered management but ran no application, so every link was
+//   dead, and only a full download recovered it. With the bracket the same flash keeps object 4 LOADED
+//   and the re-pointed link answers on the bus (2026-07-24).
+// Everything NOT listed keeps the proven table-only bracket, because the extra LoadCompleted is not
+// free: on a persist-at-LoadCompleted device (GVS) it triggers an additional flash persist, and the GVS
+// smoke failed its very next parameter flash with DEVICE_NOT_ANSWERING when the bracket was applied
+// universally. The safety net for an unlisted family is the guard in flashGroupTables: if a GA flash
+// does break the application, the flash FAILS loudly (GA_FLASH_BROKE_APPLICATION) instead of reporting
+// verified, and the fix is to add that family here once it is proven on hardware.
+const HOLD_APPLICATION_ON_GA_FLASH = new Set<number>([0x0004]);
+export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLICATION_ON_GA_FLASH.has(appManufacturer(app));
 
 // Guard a par download against its own declared load procedure: every par-applicable
 // step must have an explicit disposition (executed / caller / documented skip). A step
@@ -632,6 +648,16 @@ export class SystemBProfile extends DeviceProfile {
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
     const cur = await readGroupTables(dev, undefined, false);
+    // The application program object's load state BEFORE the flash. A GA flash unloads and rewrites the
+    // three tables the running application references, and on some System B stacks that invalidates the
+    // application itself: hardware-proven on the Jung 400021SE (Insta), where the flash leaves all three
+    // tables LOADED and byte-perfect while object 4 drops to ERROR — the device keeps answering
+    // management (so every table verified green) but its application no longer runs, so the freshly
+    // linked object is functionally dead and no cheap recovery exists (a bare LoadCompleted, a
+    // LOAD+LoadCompleted and a restart all leave it ERROR; only a full download brings it back).
+    // Reporting `verified: true` for that is exactly the fake-green this codebase refuses, so the state
+    // is captured here and re-checked after the write.
+    const appBefore = await lsmState(dev, OBJ.APP_PROGRAM);
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + comObj.length,
@@ -644,10 +670,34 @@ export class SystemBProfile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg))); // rebuilt L3 carries the correct comm flags for the new link set
+        // The application object is held in its own load bracket across the table rewrite (see
+        // planSystemBGaFlash): unloading a table underneath a running application invalidates it on some
+        // System B stacks, and the tables then read back byte-perfect while the device communicates on
+        // nothing. Hardware-proven on the Jung 400021SE, where this is the difference between a link that
+        // works and one that is silently dead.
+        // Hold the application object open across the rewrite, but ONLY for a family hardware-proven to
+        // need it (see HOLD_APPLICATION_ON_GA_FLASH: the extra LoadCompleted is not free on a
+        // persist-at-LoadCompleted device) and only when its application is actually LOADED (driving
+        // LOAD/LoadCompleted on an object holding no application is a transition this flash has no
+        // business making, and its assertLoaded would then fail AFTER the tables were written). Any
+        // family that needs it but is not listed still cannot fail silently: the guard below refuses.
+        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg))); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
+        // The application must still be loaded. Checking the tables alone cannot see that the device
+        // stopped running its application (see appBefore above): the tables read back byte-perfect
+        // either way. Only a DEGRADATION is an error — a device whose application object was already
+        // not LOADED before the flash is left to the table check, so this never invents a new refusal
+        // for a device that was in that state to begin with.
+        // Read it the same way the table check is read: through verifySettled, so a device still
+        // settling after the closing restart is given the same second chance and cannot produce a false
+        // "your application is broken, run a full download" (an expensive lie in the other direction).
+        const { ok: appOk } = await verifySettled(() => lsmState(dev, OBJ.APP_PROGRAM), (s) => appBefore !== STATE.LOADED || s === STATE.LOADED);
+        if (!appOk) {
+          throw new ProductError("GA_FLASH_BROKE_APPLICATION",
+            "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
+        }
         const { ok } = await verifySettled(
           () => readGroupTables(dev),
           (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj),

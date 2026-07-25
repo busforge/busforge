@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { persistsOnLoadCompleted } from "../src/index.ts";
+import { persistsOnLoadCompleted, holdsApplicationOnGaFlash } from "../src/index.ts";
 import type { AppConfig } from "../src/appconfig.ts";
 
 // The full download's closing A_Restart must, by default, prove the device rebooted (thelsing/knx
@@ -15,6 +15,20 @@ test("only the hardware-verified GVS family relaxes the restart-reboot requireme
   expect(persistsOnLoadCompleted(app("M-00FA_A-A012-55-0000"))).toBe(false); // OpenKNX (persists on restart)
   expect(persistsOnLoadCompleted(app("M-0081_A-FE01-11-75D9"))).toBe(false); // Auro
   expect(persistsOnLoadCompleted(app("M-0083_A-00B4-32-3919"))).toBe(false); // MDT
+});
+
+// The GA flash holds the application program object open across the table rewrite ONLY for a family
+// hardware-proven to need it. It is not free: on a persist-at-LoadCompleted device the extra
+// LoadCompleted triggers another flash persist, and applying it universally made the GVS fail its very
+// next parameter flash with DEVICE_NOT_ANSWERING. An unlisted family that DOES need it cannot fail
+// silently — the flashGroupTables guard refuses (GA_FLASH_BROKE_APPLICATION) instead of reporting green.
+test("only the hardware-verified Jung/Insta family holds the application object across a GA flash", () => {
+  expect(holdsApplicationOnGaFlash(app("M-0004_A-7072-21-99A7-O000A"))).toBe(true); // Jung 400021SE, bus-verified
+  // Everything else keeps the proven table-only bracket.
+  expect(holdsApplicationOnGaFlash(app("M-0085_A-0072-30-69AA"))).toBe(false); // GVS AMMA
+  expect(holdsApplicationOnGaFlash(app("M-00FA_A-A012-55-0000"))).toBe(false); // OpenKNX
+  expect(holdsApplicationOnGaFlash(app("M-0083_A-00B4-32-3919"))).toBe(false); // MDT
+  for (const id of ["", "garbage", "m-0004_lower", "M-0104_A-1"]) expect(holdsApplicationOnGaFlash(app(id))).toBe(false);
 });
 
 test("a non-numeric or non-GVS application id fails safe (strict)", () => {

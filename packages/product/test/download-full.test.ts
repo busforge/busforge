@@ -67,7 +67,7 @@ class MockDevice {
   events: string[] = [];
   private addrs: Record<number, number>;
   private mcb: "actual" | { size: number; crc: number } | null;
-  private onRestart?: (mem: Map<number, number>) => void;
+  onRestart?: (mem: Map<number, number>) => void; // settable after construction too (a test can break the device only on a LATER restart)
   constructor(opts: MockOpts = {}) {
     this.addrs = opts.addrs ?? A;
     this.mcb = opts.mcb === undefined ? "actual" : opts.mcb; // an explicit null means "device declines"
@@ -349,6 +349,29 @@ describe("SystemB flashGroupTables rewrites the com-object table for a newly-lin
     const expected = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set([obj]));
     const back = await dev.memRead(A[OBJ.COMOBJ], expected.length);
     expect(back.equals(expected)).toBe(true);
+  }, 20_000);
+
+  // Writing the tables is not the same as leaving the device working. On the Jung 400021SE (Insta,
+  // System B) a table-only GA flash left all three tables LOADED and byte-perfect while the APPLICATION
+  // PROGRAM object dropped to ERROR: the device still answered management, so every byte verified green,
+  // but it ran no application and every link was dead. The flash now brackets the application object
+  // across the rewrite (planSystemBGaFlash holdApplication) AND re-checks its state afterwards, so this
+  // failure can never be reported as `verified` again.
+  test("an application that stops being LOADED across the flash fails loudly instead of reporting verified", async () => {
+    const dev = new MockDevice();
+    await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
+    // The closing restart leaves the application broken (what the unfixed path did on real hardware).
+    dev.onRestart = () => { dev.state.set(OBJ.LSM, STATE.ERROR); };
+    const flash = profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
+    expect(flash).rejects.toThrow(/no longer running its application/);
+  }, 20_000);
+
+  test("a device whose application was ALREADY not LOADED gains no new refusal (only a degradation is an error)", async () => {
+    const dev = new MockDevice();
+    await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
+    dev.state.set(OBJ.LSM, STATE.UNLOADED); // e.g. a device with no application loaded at all
+    const res = await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
+    expect(res.kind).toBe("flashed"); // the tables are still written and checked; the guard stays silent
   }, 20_000);
 
   test("the parameter segment (L4) is left untouched: this is a surgical link flash, not a full download", async () => {

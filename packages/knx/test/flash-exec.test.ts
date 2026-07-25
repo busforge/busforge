@@ -148,6 +148,28 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
     ]);
   });
 
+  test("holdApplication brackets the application object around the table rewrite, touching none of its memory", () => {
+    // Unloading a table underneath a running application invalidates it on some System B stacks: on the
+    // Jung 400021SE (Insta) a table-only GA flash leaves all three tables LOADED and byte-perfect while
+    // object 4 drops to ERROR and the device communicates on nothing. The bracket opens object 4 BEFORE
+    // the unloads and closes it AFTER the tables are in place, re-stamping the program id so its
+    // LoadCompleted revalidates; hardware-proven to keep the object LOADED and the re-pointed link live.
+    const plan = planSystemBGaFlash(tables, true, true);
+    expect(plan[0]).toEqual({ op: "load", lsm: 4, assert: false }); // opened FIRST, before any unload
+    const appCompleted = plan.findIndex((s) => s.op === "loadCompleted" && s.lsm === 4);
+    const appChecked = plan.findIndex((s) => s.op === "assertLoaded" && s.lsm === 4);
+    const lastTableComplete = plan.map((s) => s.op === "loadCompleted" && s.lsm !== 4).lastIndexOf(true);
+    // Closed only after every table bracket has closed, and checked only after it is closed.
+    expect(appCompleted).toBeGreaterThan(lastTableComplete);
+    expect(appChecked).toBeGreaterThan(appCompleted);
+    // The application's memory is never touched: no unload (that frees the parameter image), no alloc,
+    // no write, and no program-id re-stamp (the device keeps the identity it was commissioned with).
+    expect(plan.some((s) => s.op === "unload" && s.lsm === 4)).toBe(false);
+    expect(plan.some((s) => (s.op === "alloc" || s.op === "writeSegment" || s.op === "stampAppId") && s.lsm === 4)).toBe(false);
+    // Not held: byte-for-byte the table-only bracket, no application steps at all.
+    expect(planSystemBGaFlash(tables).some((s) => s.lsm === 4)).toBe(false);
+  });
+
   test("requireReboot=false opts the closing restart out of the reboot proof (persist-at-LoadCompleted device, e.g. GVS AMMA)", () => {
     // Only the restart step changes; a device that persists its tables at LoadCompleted and does
     // not reboot in answer to A_Restart must not be rejected as RESTART_IGNORED. The caller passes

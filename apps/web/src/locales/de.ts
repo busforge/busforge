@@ -166,6 +166,7 @@ const de: Messages = {
     COM_OBJECT_PRIORITY_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Priorität an, die das ETS-Schema nicht kennt. Busforge rät nicht, was ins Gerät geschrieben werden soll, statt sie stillschweigend herabzustufen.",
     COM_OBJECT_NUMBER_INVALID: "Ein Kommunikationsobjekt löst auf Nummer 0 auf, die es in der Com-Objekt-Tabelle eines Geräts nicht geben kann. Programmieren abgelehnt.",
     LINK_COM_OBJECT_INACTIVE: "Einige Gruppenadress-Verknüpfungen zeigen auf Kommunikationsobjekte, die diese Konfiguration gar nicht aktiviert. Das Gerät würde sie ignorieren, deshalb lehnt Busforge ab, statt sie als programmiert zu melden.",
+    GA_FLASH_BROKE_APPLICATION: "Der Gruppenadress-Flash hat die Tabellen geschrieben, aber das Gerät führt sein Applikationsprogramm nicht mehr aus, die Verknüpfungen würden also nicht funktionieren. Busforge meldet das als Fehler statt als Erfolg. Diese Gerätefamilie braucht ihre Verknüpfungen per vollständigem Download; führe einen aus, um das Gerät wiederherzustellen.",
     DEVICE_CONTROL_UNREADABLE: "Das Gerät meldet oder übernimmt seinen Verify-Modus nicht, in dem es jeden Schreibvorgang bestätigt. Ohne ihn schreibt ein Download blind, deshalb lehnt Busforge ab.",
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",

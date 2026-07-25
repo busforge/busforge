@@ -95,9 +95,21 @@ export function appId(manufacturer: number, appNumber: number, version: number):
 // read-back verified, like every memory write (the old memWrite call verified by default).
 // Load+alloc run in the coded order com-obj, addr, assoc; write/complete/check run com-obj,
 // assoc, addr.
-export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true): LoadPlan {
-  const C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
+// `holdApplication`: keep the APPLICATION PROGRAM object (LSM 4) in its own open load bracket while the
+// three tables it references are unloaded and rewritten, then close it again so its LoadCompleted
+// revalidates against them. Some System B stacks invalidate the running application when a table it
+// points at is unloaded underneath it: hardware-proven on the Jung
+// 400021SE (Insta), where a table-only GA flash leaves all three tables LOADED and byte-perfect while
+// object 4 drops to ERROR and the device communicates on nothing — and no cheap recovery exists (a bare
+// LoadCompleted, a LOAD+LoadCompleted and a restart all leave it ERROR; only a full download returns it).
+// With the bracket the same flash keeps object 4 LOADED and the re-pointed link answers on the bus
+// (proven: new GA answers 0x00, old GA silent, diff 1 byte). LOAD does not free the parameter image (only
+// UNLOAD does), so the bracket costs two events and no rewrite. Omitting it reproduces the old table-only
+// wire order, which the plan tests pin.
+export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true, holdApplication = false): LoadPlan {
+  const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
+    ...(holdApplication ? [{ op: "load", lsm: P, assert: false } as LoadStep] : []),
     { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
@@ -108,7 +120,14 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
     { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false },
     { op: "loadCompleted", lsm: D, assert: false },
+    // Close the application bracket last, so it revalidates against the tables that are now in place.
+    // No program-id re-stamp: nothing in this flash touches the application's identity, the device still
+    // holds the stamp it was commissioned with, and writing the PROJECT's stamp here would overwrite the
+    // one piece of evidence a later parameter flash's declared app-id check relies on (and could make a
+    // validating stack reject the LoadCompleted). Hardware-confirmed unnecessary on the Jung 400021SE.
+    ...(holdApplication ? [{ op: "loadCompleted", lsm: P, assert: false } as LoadStep] : []),
     { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
+    ...(holdApplication ? [{ op: "assertLoaded", lsm: P } as LoadStep] : []),
     // A device that persists at LoadCompleted (e.g. GVS AMMA) writes its tables to flash before the
     // A_Restart and does not reboot in answer to it; requiring a reboot would reject that as
     // RESTART_IGNORED even though the flash succeeded. The caller passes requireReboot=false for those
