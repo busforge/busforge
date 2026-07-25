@@ -1,46 +1,35 @@
-# Busforge on the NAS. Self-contained stack (project name: busforge), separate
-# from the Ansible-managed nas-apps stack. CI ships this file to
-# /srv/busforge/ and runs `docker compose pull && up -d`.
+# Busforge as a single self-hosted container.
+#
+# Everything site-specific is an environment variable, so this file runs as-is
+# and a deployment overlays its own file for image registry, storage path and
+# reverse-proxy wiring:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# No host port is published here on purpose. Busforge has no authentication of
+# its own, and compose can only add published ports, never withdraw them, so a
+# port in this file would be forced on every deployment that fronts the
+# container with a proxy. Publish it in your own overlay:
+#
+#   services:
+#     busforge:
+#       ports: ["127.0.0.1:3000:3000"]
 services:
   busforge:
-    image: ghcr.io/busforge/busforge:latest
+    image: ${BUSFORGE_IMAGE:-busforge:latest}
     container_name: busforge
     restart: unless-stopped
     environment:
       - PORT=3000
-      - TZ=Europe/Berlin
+      - TZ=${TZ:-UTC}
+      # Encrypts KNX Data Secure tool keys at rest. Losing it makes every stored
+      # key unrecoverable, so set it explicitly and back it up. Passed through
+      # only when it is set: an empty value would look like a configured key.
+      - BUSFORGE_MASTER_KEY
     volumes:
-      # SQLite DB + uploaded .knxproj/.knxkeys. Bind-mounted under the appdata
-      # base dir (like the other NAS apps) so it lands on the backed-up data
-      # array, not Docker's internal volume store.
-      - /srv/busforge/data:/app/apps/server/data
-    networks:
-      - traefik
-    labels:
-      - "traefik.enable=true"
-      # Primary LAN endpoint: plain HTTP on the .lan name.
-      - "traefik.http.routers.busforge.rule=Host(`busforge.internal`)"
-      - "traefik.http.routers.busforge.entrypoints=web"
-      - "traefik.http.routers.busforge.service=busforge"
-      # HTTPS on the .example.org name, served by the shared *.lan wildcard cert.
-      - "traefik.http.routers.busforge-secure.rule=Host(`busforge.lan.example.org`)"
-      - "traefik.http.routers.busforge-secure.entrypoints=websecure"
-      - "traefik.http.routers.busforge-secure.service=busforge"
-      - "traefik.http.routers.busforge-secure.tls=true"
-      - "traefik.http.routers.busforge-secure.tls.certresolver=hetznerdns"
-      - "traefik.http.routers.busforge-secure.tls.domains[0].main=*.lan.example.org"
-      # Redirect plain HTTP on the .example.org name to HTTPS.
-      - "traefik.http.routers.busforge-redirect.rule=Host(`busforge.lan.example.org`)"
-      - "traefik.http.routers.busforge-redirect.entrypoints=web"
-      - "traefik.http.routers.busforge-redirect.service=busforge"
-      - "traefik.http.routers.busforge-redirect.middlewares=busforge-redirect-https"
-      - "traefik.http.middlewares.busforge-redirect-https.redirectscheme.scheme=https"
-      - "traefik.http.middlewares.busforge-redirect-https.redirectscheme.permanent=true"
-      # WebSocket bus monitor uses the standard HTTP upgrade, no extra config.
-      - "traefik.http.services.busforge.loadbalancer.server.port=3000"
+      # SQLite database, device backups and snapshots: all persistent state.
+      # A named volume by default, or set BUSFORGE_DATA to a host path.
+      - ${BUSFORGE_DATA:-busforge-data}:/app/apps/server/data
 
-networks:
-  # Provided by the Ansible-managed nas-apps stack (Traefik reverse proxy).
-  traefik:
-    name: traefik
-    external: true
+volumes:
+  busforge-data:

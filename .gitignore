@@ -31,6 +31,8 @@ reference/
 
 # playwright-cli artifacts (snapshots, console logs, screenshots)
 **/.playwright-cli/
+# deployment overlay: image registry, storage path and proxy wiring of one site
+docker-compose.deploy.yml
 # local git worktrees
 .worktrees/
 # hardware smoke-run report artifacts (evidence, regenerated per run)
