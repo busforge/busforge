@@ -7,6 +7,10 @@ COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY plugins ./plugins
+# tools/ is a workspace too, so a frozen-lockfile install needs its manifest to
+# resolve. Only the manifest: the tools are development CLIs that write to a real
+# KNX bus and have no business in a runtime image.
+COPY tools/package.json ./tools/package.json
 RUN bun install --frozen-lockfile
 RUN bun run build
 
