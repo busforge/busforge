@@ -167,7 +167,7 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
     expect(plan.some((s) => s.op === "unload" && s.lsm === 4)).toBe(false);
     expect(plan.some((s) => (s.op === "alloc" || s.op === "writeSegment" || s.op === "stampAppId") && s.lsm === 4)).toBe(false);
     // Not held: byte-for-byte the table-only bracket, no application steps at all.
-    expect(planSystemBGaFlash(tables).some((s) => s.lsm === 4)).toBe(false);
+    expect(planSystemBGaFlash(tables).some((s) => "lsm" in s && s.lsm === 4)).toBe(false);
   });
 
   test("requireReboot=false opts the closing restart out of the reboot proof (persist-at-LoadCompleted device, e.g. GVS AMMA)", () => {
