@@ -35,7 +35,7 @@ All hardware verification to date is on **twisted pair**.
 | Capability | Implemented | Proven | Note |
 |---|---|---|---|
 | Import a `.knxproj` (ETS 5/6, AES) and a manufacturer `.knxprod` catalog | yes | real input files | Own ZIP + WinZip-AES + XML implementation. Nothing that cannot be rendered is dropped silently; it is surfaced as a visible "not supported" marker. |
-| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on three products (see the device table). |
+| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical, owned bytes only) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. |
@@ -131,15 +131,17 @@ is not done, and neither is a device that byte-verifies without ever acting on t
 | `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | hardware | hardware | **met** |
 | `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | **met** |
 | `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | **met**, to the byte only |
-| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | not proven | **not met** |
+| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | **met** |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | **not met** |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
   stops at the bytes and the table says so rather than implying a bus-observable one.
-- **Jung 400021SE**: every capability it claims, its `output` behaviour and provisioning from
-  factory are green in the `api` channel. The `ui` channel has never been run, so the bar is not
-  met; it is the open item in [roadmap.md](roadmap.md).
+- **Jung 400021SE**: every capability it claims, its `output` behaviour and the click-through are
+  green in both channels. The from-factory provisioning proof is the `api` channel's: the device is
+  kept addressed between runs, so the `ui` channel reaches the full download through the
+  FlashDialog needs-download route (a parameter change that rewrites the com-object table) rather
+  than through the from-factory CommissionDialog.
 - **OpenKNX RaumController**: the spec exists but has never been run in either channel. The
   device's commissioning is hardware-proven (see the device table), driven through the production
   endpoints before the framework existed, and the device is no longer available to run against.
@@ -177,8 +179,6 @@ report a device family as working on the strength of a passing test suite.
 - **The OpenKNX RaumController has not been re-driven** since the System B group-address flash
   started bracketing the application object. It shares that path and is currently unproven against
   it.
-- **The Jung 400021SE has not been driven through the UI channel** (click-through and editing from
-  the browser); its proofs come from the production API endpoints.
 - **KNXnet/IP connection-state heartbeat and closure** are verified against Busforge's own server,
   not against a third-party gateway's real timing.
 - **The USB transport is proven on one interface model.** Its single-report HID limits (read and

@@ -46,8 +46,6 @@ started until the capability it depends on is hardware-proven.
 - **Prove a non-TP device.** Powerline, RF and IP masks share the codec and load procedure but
   have never been exercised on that medium. One read-back on real hardware promotes the whole
   row from extrapolation to proof.
-- **Drive the Jung 400021SE through the UI channel** to close its end-to-end bar (click-through
-  and editing from the browser; the API path is proven).
 - **Re-drive the OpenKNX RaumController**, which shares the group-address flash path that now
   brackets the application object and has not been on a bus since.
 - **Re-programming a device that is running its application.** An OpenKNX device was once observed
