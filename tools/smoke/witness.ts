@@ -6,10 +6,14 @@
 // bus op is in flight.
 import { KnxIpTunnel, cemiLDataGroup, groupValueRead, decodeGroupApdu, gaToNum } from "../../packages/knx/src/index.ts";
 
+// The host is injected, never defaulted: a hard-coded address would silently point a hardware
+// test at whatever answers on it, and a run against the wrong bus is worse than no run at all.
+// The runner refuses in preflight when BUSFORGE_BENCH_HOST is unset.
 export class Witness {
   private tun: KnxIpTunnel | null = null;
-  // The bench bridge listens on 3681 (apps/bridge --port 3681); override with BUSFORGE_BENCH_PORT.
-  constructor(private readonly host = process.env.BUSFORGE_BENCH_HOST ?? "198.51.100.231", private readonly port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681)) {}
+  // The bridge listens on 3681 by default (apps/bridge --port 3681); override with
+  // BUSFORGE_BENCH_PORT. A standard KNXnet/IP gateway uses 3671.
+  constructor(private readonly host: string, private readonly port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681)) {}
 
   async connect(): Promise<void> {
     const tun = KnxIpTunnel.tcp(this.host, this.port);

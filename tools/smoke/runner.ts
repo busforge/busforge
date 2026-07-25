@@ -3,7 +3,7 @@
 // (config.capabilities), and the runner exercises exactly those capabilities in the requested
 // channel, then proves the device's declared behaviours on the bus. A capability the product claims
 // but the run never exercises is a HARD failure, never a skip. Everything device-specific lives in a
-// DeviceSpec (specs/). See docs/smoke-framework-redesign.md and /CONTEXT.md.
+// DeviceSpec (specs/). See docs/testing.md and /CONTEXT.md.
 //
 // One channel per invocation (--channel=api|ui, default api); the bench done-bar wants BOTH green, so
 // a device is run once per channel and each report recorded. Assertions always read the API; in the
@@ -49,7 +49,8 @@ const REFUSAL_PROBES: { key: keyof DeviceCapabilities; probe: (c: Client, pid: s
 
 async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promise<RunResult> {
   const client = new Client();
-  const witness = new Witness();
+  const host = process.env.BUSFORGE_BENCH_HOST ?? "";
+  const witness = new Witness(host);
   const ui = channel === "ui" ? new UiDriver() : null;
   const startedAt = Date.now();
   const log = (m: string) => process.stdout.write(`    …${m}\n`);
@@ -67,15 +68,15 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
   try {
     // ── preflight ──────────────────────────────────────────────────────────
     if (process.env.BUSFORGE_BENCH !== "1") throw new Stop("preflight", "refused: no bench (set BUSFORGE_BENCH=1)");
+    if (!host) throw new Stop("preflight", "refused: BUSFORGE_BENCH_HOST is not set; it must name the KNX interface this run drives");
     const products = await client.catalogProducts().catch((e) => { throw new Stop("preflight", `server unreachable: ${e instanceof Error ? e.message : String(e)}`); });
     if (!products.some((p) => p.appRef === spec.device.appRef && p.productRef === spec.device.productRef)) throw new Stop("preflight", `product not in catalog (${spec.device.appRef}); import the .knxprod first`);
     try { await witness.connect(); await witness.close(); } catch (e) { throw new Stop("preflight", `bench bridge unreachable: ${e instanceof Error ? e.message : String(e)}`); }
 
     // ── setup + place (API plumbing) ─────────────────────────────────────────
     const conns = await client.connections();
-    const benchHost = process.env.BUSFORGE_BENCH_HOST ?? "198.51.100.231";
-    const conn = conns.find((c) => c.type === "ip" && c.host === benchHost);
-    if (!conn) throw new Stop("setup", `no saved IP connection for the bench host ${benchHost}`);
+    const conn = conns.find((c) => c.type === "ip" && c.host === host);
+    if (!conn) throw new Stop("setup", `no saved IP connection for the interface ${host}`);
     const proj = await client.createProject(`smoke-${spec.id}-${channel}-${startedAt}`);
     pid = proj.id;
     await client.attachConnection(pid, conn.id);
