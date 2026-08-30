@@ -76,7 +76,7 @@ value.
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory | hardware: a surgically flashed link answers a read |
-| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | unsafe (see below) | unsafe (see below) | hardware, from factory, application runs and survives a bus power cycle | hardware: heartbeat and presence objects answer |
+| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | unsafe (see below) | unsafe (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
@@ -144,9 +144,9 @@ is not done, and neither is a device that byte-verifies without ever acting on t
   than through the from-factory CommissionDialog.
 - **OpenKNX RaumController**: the spec exists but has never been run in either channel. The
   device's commissioning is hardware-proven (see the device table), driven through the production
-  endpoints before the framework existed, and the device is no longer available to run against.
-  Its two surgical capabilities are declared `unsafe`, so even a green run could not clear the bar
-  for them.
+  endpoints before the framework existed. The device now runs in a live installation rather than on
+  the bench, so the spec stays unrun: driving it would program a device somebody depends on. Its two
+  surgical capabilities are declared `unsafe`, so even a green run could not clear the bar for them.
 
 ## What green tests prove, and what they do not
 
@@ -176,9 +176,10 @@ report a device family as working on the strength of a passing test suite.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.
-- **The OpenKNX RaumController has not been re-driven** since the System B group-address flash
-  started bracketing the application object. It shares that path and is currently unproven against
-  it.
+- **The OpenKNX RaumController has never been driven through the bracketed System B group-address
+  flash.** The device itself was re-driven on 2026-08-30 (three full downloads, each `verified`, one
+  of them onto the device in service), but a surgical group-address flash is declared `unsafe` on
+  this firmware, so that path stays unproven here and will not be proven on this product.
 - **KNXnet/IP connection-state heartbeat and closure** are verified against Busforge's own server,
   not against a third-party gateway's real timing.
 - **The USB transport is proven on one interface model.** Its single-report HID limits (read and

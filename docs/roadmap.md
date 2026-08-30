@@ -22,6 +22,16 @@ started until the capability it depends on is hardware-proven.
 - **Property-based loading** for devices that expose an object model instead of a memory image,
   and the classic fixed-EEPROM models of **System 1 / System 2**. Both are recognised and refused
   today. Each is a generic, mask-keyed capability, not per-device code.
+- **The UDP tunnel dies mid-download against Busforge's own bridge.** A full download over a
+  saved connection whose `ipTransport` is `udp` fails after a few seconds with `null is not an
+  object (evaluating 'kStateSymbol')`, node's dgram internals reached through a handle that is
+  already gone; the bridge sees the client stop acknowledging and drops the channel. Reproduced
+  twice on 2026-08-30 from the containerised server against `apps/bridge`, where the same download
+  over `tcp` completes and verifies. **It is not a general UDP fault**: the same server downloaded
+  over UDP to a real MDT KNX-IP interface the same evening without trouble, and that gateway
+  refuses `tcp` outright (`TUNNEL_ACK_TIMEOUT`), so transport cannot simply be pinned. Suspect the
+  client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
+  disconnect race but not this path.
 
 ## Verification
 
@@ -46,14 +56,13 @@ started until the capability it depends on is hardware-proven.
 - **Prove a non-TP device.** Powerline, RF and IP masks share the codec and load procedure but
   have never been exercised on that medium. One read-back on real hardware promotes the whole
   row from extrapolation to proof.
-- **Re-drive the OpenKNX RaumController**, which shares the group-address flash path that now
-  brackets the application object and has not been on a bus since.
-- **Re-programming a device that is running its application.** An OpenKNX device was once observed
-  to stop answering point-to-point management in that state, and the cause is still unexplained: a
-  large part of the original evidence turned out to be a gateway addressing limitation, and the
-  rest fits the firmware's module-state deadlock rather than a general property of a running
-  device ([commissioning.md](commissioning.md)). Re-test it cleanly, on an interface without that
-  limitation, before the device is blamed for anything.
+- **Re-programming a device that is running its application: answered, and it works.** On
+  the OpenKNX RaumController took three full downloads, each reporting `verified`, two on
+  the bench and one onto the device in service in a house. It answered point-to-point management
+  throughout. The old sighting of a running device going silent is therefore not a property of a
+  running device; it was the gateway addressing limitation plus the firmware's module-state
+  deadlock ([commissioning.md](commissioning.md)). What stays unproven is the **bracketed
+  group-address flash** on this product, because a surgical flash is `unsafe` on this firmware.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
 
