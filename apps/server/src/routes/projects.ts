@@ -13,7 +13,7 @@ import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
 import { putDeviceSecurity } from "../db/deviceSecurity.ts";
 import { resolveAppXml, importGaps } from "../deviceservice.ts";
-import { json, err } from "../httputil.ts";
+import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // Project lifecycle: list/create, .knxproj and .busforge import (+ analyze
@@ -27,8 +27,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
 
   // /api/projects  (POST: create a blank project, no import)
   if (seg.length === 2 && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { name?: string };
-    const name = (body.name ?? "").trim();
+    const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+    const name = text(body.name);
     if (!name) return err("PROJECT_NAME_REQUIRED", "project name required");
     const id = randomUUID();
     createProject(db, id, name, state.now());
@@ -40,7 +40,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
-    const password = (form.get("password") as string)?.trim() || undefined; // trim to match /analyze, else a previewed file fails on import
+    const password = text(form.get("password")) || undefined; // trim to match /analyze, else a previewed file fails on import
     const name = (file instanceof File ? file.name : "project").replace(/\.knxproj$/i, "");
     const bytes = Buffer.from(await file.arrayBuffer());
     const project = loadKnxproj(bytes, password, name);
@@ -98,7 +98,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
-    const password = (form.get("password") as string)?.trim() || undefined;
+    const password = text(form.get("password")) || undefined;
     const bytes = Buffer.from(await file.arrayBuffer());
     const isZip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
     if (isZip) {
@@ -121,7 +121,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
-    const password = (form.get("password") as string)?.trim() || undefined;
+    const password = text(form.get("password")) || undefined;
     const bytes = Buffer.from(await file.arrayBuffer());
     const data = await unpackBusforge(bytes, password); // sniffs gzip/encrypted/legacy; throws a coded ApiError
     validateExport(data); // throws a coded ImportError on a bad shape/version
@@ -140,8 +140,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return p ? json(p) : err("PROJECT_NOT_FOUND", "project not found", 404);
   }
   if (seg.length === 3 && req.method === "PATCH") {
-    const body = (await req.json().catch(() => ({}))) as { name?: string };
-    const name = (body.name ?? "").trim();
+    const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+    const name = text(body.name);
     if (!name) return err("PROJECT_NAME_REQUIRED", "a project name is required");
     if (!renameProject(db, id, name)) return err("PROJECT_NOT_FOUND", "project not found", 404);
     return json({ id, name });
@@ -176,7 +176,14 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // export JSON, AES-256-GCM sealed when a password is given. POST (not GET) so
   // the password rides in the body, never the URL/history. See busforgeArtifact.ts.
   if (seg.length === 4 && seg[3] === "export" && req.method === "POST") {
-    const body = (await req.json().catch(() => ({}))) as { password?: string };
+    const body = (await req.json().catch(() => ({}))) as { password?: unknown };
+    // A password that is neither absent nor a string is refused, not read as absent. Everywhere
+    // else a malformed text field can safely mean "not given"; here it would hand back a plain
+    // gzip artifact carrying the project's KNX Data Secure tool keys in clear, to a caller who
+    // asked for it sealed.
+    if (body.password !== undefined && body.password !== null && typeof body.password !== "string") {
+      return err("EXPORT_PASSWORD_INVALID", "password must be a string");
+    }
     // Backfill every referenced app program into the catalog (a legacy project resolves
     // its from the file) so the export carries what it can. A husk device (or a legacy
     // project whose source file is gone) still exports WITHOUT its program; that loss is
@@ -185,7 +192,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const data = exportProject(db, id, state.now(), state.masterKey);
     if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
     const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";
-    const artifact = await packBusforge(data, body.password?.trim() || undefined);
+    const artifact = await packBusforge(data, text(body.password) || undefined);
     return new Response(artifact, {
       headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${safe}.busforge"` },
     });
@@ -196,8 +203,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (req.method === "GET") return json(listSnapshots(db, id));
     if (req.method === "POST") {
       if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-      const body = (await req.json().catch(() => ({}))) as { label?: string };
-      const snap = createSnapshot(db, id, { label: (body.label ?? "").trim(), kind: "manual", reason: "manual" }, state.now());
+      const body = (await req.json().catch(() => ({}))) as { label?: unknown };
+      const snap = createSnapshot(db, id, { label: text(body.label), kind: "manual", reason: "manual" }, state.now());
       return json(snap, 201);
     }
   }

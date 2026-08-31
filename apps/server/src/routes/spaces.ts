@@ -1,7 +1,7 @@
 import { createSpace, renameSpace, deleteSpace, spaceDeviceImpact, assignDeviceSpace, spaceExists } from "../db/spaceedit.ts";
 import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
-import { json, err } from "../httputil.ts";
+import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // --- building structure (spaces). Edits are pure project organisation, never
@@ -15,10 +15,10 @@ export async function handle(req: Request, _url: URL, seg: string[], state: AppS
   // /api/projects/:id/spaces  -> create a building/floor/room under a parent (null = root)
   if (seg.length === 4 && seg[3] === "spaces" && req.method === "POST") {
     if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-    const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; type?: string; name?: string };
-    const type = (body.type ?? "").trim();
+    const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; type?: unknown; name?: unknown };
+    const type = text(body.type);
     if (!type) return err("SPACE_FIELDS_REQUIRED", "space type required");
-    createSpace(db, id, body.parentId ?? null, type, (body.name ?? "").trim());
+    createSpace(db, id, body.parentId ?? null, type, text(body.name));
     return json(getProject(db, id), 201);
   }
   // /api/projects/:id/spaces/:spaceId/impact  -> devices unassigned if deleted
@@ -30,8 +30,8 @@ export async function handle(req: Request, _url: URL, seg: string[], state: AppS
   if (seg.length === 5 && seg[3] === "spaces") {
     const spaceId = Number(decodeURIComponent(seg[4]));
     if (req.method === "PATCH") {
-      const body = (await req.json().catch(() => ({}))) as { name?: string };
-      if (!renameSpace(db, id, spaceId, (body.name ?? "").trim())) return err("SPACE_NOT_FOUND", "space not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+      if (!renameSpace(db, id, spaceId, text(body.name))) return err("SPACE_NOT_FOUND", "space not found", 404);
       return json(getProject(db, id));
     }
     if (req.method === "DELETE") {

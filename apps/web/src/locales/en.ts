@@ -119,6 +119,7 @@ const en = {
     APP_PROGRAM_MISSING: "The application program is missing from the project.",
     PROJECT_NAME_REQUIRED: "A project name is required.",
     DEVICE_NAME_REQUIRED: "A device name is required.",
+    EXPORT_PASSWORD_INVALID: "The export password must be text. Busforge refuses rather than hand back an unencrypted export.",
     DEVICE_FIELDS_REQUIRED: "Select a product to add.",
     CATALOG_PRODUCT_NOT_FOUND: "That product is not in the catalog.",
     CATALOG_IMPORT_EMPTY: "No manufacturer products found in that file. Is it a .knxprod product database?",

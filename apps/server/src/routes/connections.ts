@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { searchInterfaces, listUsbInterfaces } from "@busforge/knx";
 import { listConnections, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../db/connections.ts";
-import { json, err } from "../httputil.ts";
+import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // Validate a saved-connection payload for the connection library. Returns the
 // normalized fields, or an English error string on invalid input.
 function parseConnInput(raw: unknown): ConnectionInput | string {
   const b = (raw ?? {}) as Record<string, unknown>;
-  const name = typeof b.name === "string" ? b.name.trim() : "";
+  const name = text(b.name);
   // type defaults to 'ip', inferring 'usb' when a usb identity is supplied.
   const type = b.type === "usb" ? "usb" : b.type === "ip" ? "ip" : (b.usbVendorId != null ? "usb" : "ip");
   // The IP transport defaults to 'auto' so an old client that omits it keeps working. Only the
@@ -16,7 +16,7 @@ function parseConnInput(raw: unknown): ConnectionInput | string {
   const ipTransport = b.ipTransport === undefined ? "auto" : b.ipTransport;
   if (ipTransport !== "auto" && ipTransport !== "tcp" && ipTransport !== "udp") return "ipTransport must be one of auto, tcp, udp";
   if (type === "ip") {
-    const host = (typeof b.host === "string" ? b.host : "").trim();
+    const host = text(b.host);
     if (!host) return "host (IP address) required for an IP connection";
     const port = Number(b.port) || 3671;
     return { name: name || host, type, host, port, ipTransport, usbVendorId: null, usbProductId: null, usbSerial: null };

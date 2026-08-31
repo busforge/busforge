@@ -2,7 +2,7 @@ import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddres
 import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
 import { buildGaDevicesView } from "../deviceservice.ts";
-import { json, err } from "../httputil.ts";
+import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // Group-address structure editing (ranges + addresses) and the GA devices overlay.
@@ -21,9 +21,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/group-ranges  -> create a main/middle range
   if (seg.length === 4 && seg[3] === "group-ranges" && req.method === "POST") {
     if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-    const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; name?: string; number?: number };
+    const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; name?: unknown; number?: number };
     if (typeof body.number !== "number") return err("GA_NUMBER_INVALID", "number required");
-    createGroupRange(db, id, body.parentId ?? null, (body.name ?? "").trim(), body.number);
+    createGroupRange(db, id, body.parentId ?? null, text(body.name), body.number);
     return json(getProject(db, id), 201);
   }
   // /api/projects/:id/group-ranges/:rangeId/impact  -> live links lost if deleted
@@ -35,8 +35,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   if (seg.length === 5 && seg[3] === "group-ranges") {
     const rangeId = Number(decodeURIComponent(seg[4]));
     if (req.method === "PATCH") {
-      const body = (await req.json().catch(() => ({}))) as { name?: string };
-      if (!renameGroupRange(db, id, rangeId, (body.name ?? "").trim())) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+      if (!renameGroupRange(db, id, rangeId, text(body.name))) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
       return json(getProject(db, id));
     }
     if (req.method === "DELETE") {
@@ -49,9 +49,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/group-addresses  -> create a group address in a range
   if (seg.length === 4 && seg[3] === "group-addresses" && req.method === "POST") {
     if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-    const body = (await req.json().catch(() => ({}))) as { rangeId?: number; sub?: number; name?: string; dpt?: string };
+    const body = (await req.json().catch(() => ({}))) as { rangeId?: number; sub?: number; name?: unknown; dpt?: unknown };
     if (typeof body.rangeId !== "number" || typeof body.sub !== "number") return err("GA_FIELDS_REQUIRED", "rangeId and sub required");
-    createGroupAddress(db, id, body.rangeId, body.sub, (body.name ?? "").trim(), (body.dpt ?? "").trim());
+    createGroupAddress(db, id, body.rangeId, body.sub, text(body.name), text(body.dpt));
     return json(getProject(db, id), 201);
   }
   // /api/projects/:id/group-addresses/:raw/impact  -> live links lost if deleted
@@ -63,8 +63,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   if (seg.length === 5 && seg[3] === "group-addresses") {
     const raw = Number(decodeURIComponent(seg[4]));
     if (req.method === "PATCH") {
-      const body = (await req.json().catch(() => ({}))) as { name?: string; dpt?: string };
-      if (!updateGroupAddress(db, id, raw, (body.name ?? "").trim(), (body.dpt ?? "").trim())) return err("GA_NOT_FOUND", "group address not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { name?: unknown; dpt?: unknown };
+      if (!updateGroupAddress(db, id, raw, text(body.name), text(body.dpt))) return err("GA_NOT_FOUND", "group address not found", 404);
       return json(getProject(db, id));
     }
     if (req.method === "DELETE") {

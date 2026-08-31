@@ -338,6 +338,62 @@ describe("device link + revert routes", () => {
   });
 });
 
+describe("non-string text fields", () => {
+  // Every route that reads a name/label/type/password used to call String.trim on whatever the
+  // client sent. A number or an object threw, and the catch-all turned that into a 500 whose
+  // message echoed handler source back to the caller. httputil's text() now reads a non-string
+  // as absent, so these routes answer with their own contract instead.
+  test("a number, an object or an array never reaches String.trim", async () => {
+    const { state, projectId, deviceId, rangeId } = await importConfig();
+    const space = await j(await handleApi(jreq(`/api/projects/${projectId}/spaces`, "POST", { parentId: null, type: "Building", name: "Haus" }), state));
+    const spaceId = Number(space.locations[0].id);
+
+    // Listing the catalog is what backfills it from the imported devices; without this call the
+    // placement below answers CATALOG_PRODUCT_NOT_FOUND and never reaches the name.
+    await handleApi(req("/api/catalog/products"), state);
+    const product = (await getProj(state, projectId)).devices[0];
+
+    const calls: [string, string, unknown][] = [
+      ["/api/projects", "POST", { name: 42 }],
+      [`/api/projects/${projectId}`, "PATCH", { name: {} }],
+      [`/api/projects/${projectId}/snapshots`, "POST", { label: 42 }],
+      [`/api/projects/${projectId}/export`, "POST", { password: 42 }],
+      [`/api/projects/${projectId}/group-ranges`, "POST", { parentId: null, name: 42, number: 1 }],
+      [`/api/projects/${projectId}/group-ranges/${rangeId}`, "PATCH", { name: ["x"] }],
+      [`/api/projects/${projectId}/group-addresses`, "POST", { rangeId, sub: 5, name: 42, dpt: {} }],
+      [`/api/projects/${projectId}/group-addresses/1`, "PATCH", { name: 42, dpt: true }],
+      [`/api/projects/${projectId}/spaces`, "POST", { parentId: null, type: 42 }],
+      // A valid type, so text(body.name) is actually reached.
+      [`/api/projects/${projectId}/spaces`, "POST", { parentId: null, type: "Room", name: 42 }],
+      [`/api/projects/${projectId}/spaces/${spaceId}`, "PATCH", { name: 42 }],
+      // Real refs, else the handler answers CATALOG_PRODUCT_NOT_FOUND before it reads the name.
+      [`/api/projects/${projectId}/devices`, "POST", { appRef: product.appRef, productRef: product.productRef, name: 42 }],
+      [`/api/projects/${projectId}/devices/${deviceId}`, "PATCH", { name: 42 }],
+    ];
+    for (const [path, method, body] of calls) {
+      const res = (await handleApi(jreq(path, method, body), state))!;
+      // Reported as a pair so a failure names the offending route.
+      expect({ path, serverError: res.status >= 500 }).toEqual({ path, serverError: false });
+    }
+  });
+
+  test("where a text field is mandatory, a non-string is refused like a missing one", async () => {
+    const { state, projectId } = await importConfig();
+    const cases: [string, string, unknown, string][] = [
+      ["/api/projects", "POST", { name: 42 }, "PROJECT_NAME_REQUIRED"],
+      [`/api/projects/${projectId}`, "PATCH", { name: {} }, "PROJECT_NAME_REQUIRED"],
+      [`/api/projects/${projectId}/spaces`, "POST", { parentId: null, type: 42 }, "SPACE_FIELDS_REQUIRED"],
+      // Not "treated as absent": an unreadable password must never yield an unencrypted export.
+      [`/api/projects/${projectId}/export`, "POST", { password: 42 }, "EXPORT_PASSWORD_INVALID"],
+    ];
+    for (const [path, method, body, code] of cases) {
+      const res = (await handleApi(jreq(path, method, body), state))!;
+      expect({ path, status: res.status }).toEqual({ path, status: 400 });
+      expect(((await res.json()) as any).error.code).toBe(code);
+    }
+  });
+});
+
 describe("task cancel route", () => {
   test("cancelling an unknown task -> 409 TASK_NOT_CANCELLABLE", async () => {
     const { state, projectId } = await importConfig();

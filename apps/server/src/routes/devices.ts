@@ -8,7 +8,7 @@ import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, s
 import { appProgramId } from "@busforge/project";
 import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
-import { json, err } from "../httputil.ts";
+import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
 // Device placement + configuration editing: config view, DCA baggage, parameter
@@ -20,12 +20,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/devices  (POST: place a catalog product as a new device)
   if (seg.length === 4 && seg[3] === "devices" && req.method === "POST") {
     if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-    const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: string };
+    const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: unknown };
     if (!body.appRef || !body.productRef) return err("DEVICE_FIELDS_REQUIRED", "appRef and productRef required");
     const product = getCatalogProduct(db, body.appRef, body.productRef);
     if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
     if (!getAppProgram(db, product.appProgramId)) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
-    const device = addDevice(db, id, product, (body.name ?? "").trim());
+    const device = addDevice(db, id, product, text(body.name));
     return json(device, 201);
   }
 
@@ -40,7 +40,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const body = (await req.json().catch(() => ({}))) as { name?: unknown };
     // Anything that is not a string is a missing name, not a crash: trimming a number here
     // would surface as a 500 carrying handler source text.
-    const name = typeof body.name === "string" ? body.name.trim() : "";
+    const name = text(body.name);
     if (!name) return err("DEVICE_NAME_REQUIRED", "a device name is required");
     return json(renameDevice(db, id, decodeURIComponent(seg[4]), name));
   }
