@@ -222,6 +222,57 @@ describe("space routes", () => {
   });
 });
 
+describe("device rename route", () => {
+  const rename = (state: AppState, projectId: string, deviceId: string, name: unknown) =>
+    handleApi(jreq(`/api/projects/${projectId}/devices/${deviceId}`, "PATCH", { name }), state);
+
+  test("PATCH renames the device and persists it", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    const res = (await rename(state, projectId, deviceId, "  Bathroom controller  "))!;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: deviceId, name: "Bathroom controller" }); // trimmed
+    expect((await getProj(state, projectId)).devices[0].name).toBe("Bathroom controller");
+  });
+
+  test("a blank name -> 400 DEVICE_NAME_REQUIRED, the old name stands", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    const before = (await getProj(state, projectId)).devices[0].name;
+    const res = (await rename(state, projectId, deviceId, "   "))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("DEVICE_NAME_REQUIRED");
+    expect((await getProj(state, projectId)).devices[0].name).toBe(before);
+  });
+
+  test("a non-string name -> 400 DEVICE_NAME_REQUIRED, not a 500", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    for (const bogus of [42, true, ["x"], {}, null]) {
+      const res = (await rename(state, projectId, deviceId, bogus))!;
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error.code).toBe("DEVICE_NAME_REQUIRED");
+    }
+  });
+
+  test("an unknown device -> 404 DEVICE_NOT_FOUND", async () => {
+    const { state, projectId } = await importConfig();
+    const res = (await rename(state, projectId, "ghost", "Anything"))!;
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as any).error.code).toBe("DEVICE_NOT_FOUND");
+  });
+
+  test("an unknown project -> 404 PROJECT_NOT_FOUND, not DEVICE_NOT_FOUND", async () => {
+    const { state, deviceId } = await importConfig();
+    const res = (await rename(state, "nosuch", deviceId, "Anything"))!;
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as any).error.code).toBe("PROJECT_NOT_FOUND");
+  });
+
+  test("renaming leaves the configuration alone: no drift, no baseline move", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    await rename(state, projectId, deviceId, "Renamed");
+    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 0, links: 0 });
+  });
+});
+
 describe("device link + revert routes", () => {
   test("PUT links re-points the com-object and shows as drift", async () => {
     const { state, projectId, deviceId } = await importConfig();

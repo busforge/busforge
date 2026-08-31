@@ -118,6 +118,7 @@ const en = {
     COMOBJ_NOT_FOUND: "That communication object does not exist on this device (in its current configuration).",
     APP_PROGRAM_MISSING: "The application program is missing from the project.",
     PROJECT_NAME_REQUIRED: "A project name is required.",
+    DEVICE_NAME_REQUIRED: "A device name is required.",
     DEVICE_FIELDS_REQUIRED: "Select a product to add.",
     CATALOG_PRODUCT_NOT_FOUND: "That product is not in the catalog.",
     CATALOG_IMPORT_EMPTY: "No manufacturer products found in that file. Is it a .knxprod product database?",

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { buildDeviceConfig } from "@busforge/product";
-import { addDevice, setDeviceAddress, projectExists } from "../db/projects.ts";
+import { addDevice, setDeviceAddress, renameDevice, projectExists } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
@@ -29,10 +29,22 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(device, 201);
   }
 
+  // /api/projects/:id/devices/:deviceId         -> rename the device row.
   // /api/projects/:id/devices/:deviceId/config?lang=
-  // /api/projects/:id/devices/:deviceId/address -> set the address this device SHOULD hold.
-  // Writing it into the physical device is a separate, explicit step (POST .../assign-ia), so
-  // this never silently moves anything on the bus.
+  // /api/projects/:id/devices/:deviceId/address  -> set the address this device SHOULD hold.
+  // The name and the address are model state only. Writing the address into the physical device
+  // is a separate, explicit step (POST .../assign-ia); the name is never written at all, because
+  // a KNX device carries none. Neither route touches the bus or a programmed baseline.
+  if (seg.length === 5 && seg[3] === "devices" && req.method === "PATCH") {
+    if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
+    const body = (await req.json().catch(() => ({}))) as { name?: unknown };
+    // Anything that is not a string is a missing name, not a crash: trimming a number here
+    // would surface as a 500 carrying handler source text.
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) return err("DEVICE_NAME_REQUIRED", "a device name is required");
+    return json(renameDevice(db, id, decodeURIComponent(seg[4]), name));
+  }
+
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "address" && req.method === "PUT") {
     const body = (await req.json().catch(() => ({}))) as { ia?: string };
     if (!body.ia) return err("IA_REQUIRED", "an individual address is required");

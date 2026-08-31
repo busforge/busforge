@@ -290,3 +290,15 @@ export function setDeviceAddress(db: Database, projectId: string, deviceId: stri
   db.prepare("UPDATE devices SET ia = ? WHERE project_id = ? AND instance_id = ?").run(ia, projectId, deviceId);
   return { id: deviceId, ia };
 }
+
+// Rename a device row. The name is project bookkeeping and never reaches the hardware: a KNX
+// device carries no name, only its individual address, so this touches nothing on the bus and
+// nothing that was programmed. It matters after a device is replaced by different hardware,
+// where the row keeps the old product's name (see replaceDeviceProduct) and would otherwise
+// keep describing a device that is no longer there.
+export function renameDevice(db: Database, projectId: string, deviceId: string, name: string): { id: string; name: string } {
+  const changed = db.prepare("UPDATE devices SET name = ? WHERE project_id = ? AND instance_id = ?")
+    .run(name, projectId, deviceId).changes;
+  if (!changed) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+  return { id: deviceId, name };
+}

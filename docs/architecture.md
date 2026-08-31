@@ -76,7 +76,7 @@ rather than generating a fresh key that cannot open them.
 | Projects | `GET/POST /api/projects`, `POST /api/projects/import`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/telegrams` |
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
-| Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |
+| Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |
 | Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful) |
 | Bus and tasks | `GET/POST /api/projects/:id/bus/{status,connect,disconnect}`, `GET /api/projects/:id/tasks`, `POST .../tasks/:taskId/cancel`, `WS /api/projects/:id/bus/monitor` |
 

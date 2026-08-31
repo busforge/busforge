@@ -118,6 +118,7 @@ const de: Messages = {
     COMOBJ_NOT_FOUND: "Dieses Kommunikationsobjekt existiert auf diesem Gerät (in seiner aktuellen Konfiguration) nicht.",
     APP_PROGRAM_MISSING: "Das Applikationsprogramm fehlt im Projekt.",
     PROJECT_NAME_REQUIRED: "Ein Projektname ist erforderlich.",
+    DEVICE_NAME_REQUIRED: "Ein Gerätename ist erforderlich.",
     DEVICE_FIELDS_REQUIRED: "Ein Produkt zum Hinzufügen auswählen.",
     CATALOG_PRODUCT_NOT_FOUND: "Dieses Produkt ist nicht im Katalog.",
     CATALOG_IMPORT_EMPTY: "Keine Herstellerprodukte in der Datei gefunden. Ist es eine .knxprod-Produktdatenbank?",
