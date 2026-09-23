@@ -59,7 +59,7 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
     throw new Error("device_security holds sealed tool keys but no master key is available; set BUSFORGE_MASTER_KEY or restore the master.key file, refusing to auto-generate a key that cannot open them");
   }
   const masterKey = getMasterKey(dataDir);
-  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue: new TaskQueue(now) };
+  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue: new TaskQueue(now, (run) => bus.withExclusiveOperation(run)) };
 }
 
 // The /api/projects/* route modules, dispatched in order. Their route patterns are

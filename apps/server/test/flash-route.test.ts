@@ -3,7 +3,7 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { setDeviceParam, setDeviceLink, getDeviceChangedKeys } from "../src/db/deviceparams.ts";
+import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
 import type { FlashResult } from "../src/deviceprofile.ts";
 
@@ -19,15 +19,18 @@ import type { FlashResult } from "../src/deviceprofile.ts";
 const real = await import("../src/deviceprofile.ts");
 const realParamFlash = real.flashDeviceParameters;
 const realGaFlash = real.flashDeviceGroupAddresses;
+const realDownload = real.downloadDeviceFull;
 
 // Mutable delegation targets. Default = the real implementations, and afterAll restores
 // them, so if the module mock leaks into later test files (bun does not auto-unmock),
 // behavior there is indistinguishable from the unmocked module.
 let paramFlashImpl: typeof realParamFlash = realParamFlash;
 let gaFlashImpl: typeof realGaFlash = realGaFlash;
+let downloadImpl: typeof realDownload = realDownload;
 
 await mock.module("../src/deviceprofile.ts", () => ({
   ...real, // classify, readDeviceState, secureIdentify, profiles, ... stay real
+  downloadDeviceFull: (opts: Parameters<typeof realDownload>[0]) => downloadImpl(opts),
   flashDeviceParameters: (opts: Parameters<typeof realParamFlash>[0]) => paramFlashImpl(opts),
   flashDeviceGroupAddresses: (opts: Parameters<typeof realGaFlash>[0]) => gaFlashImpl(opts),
 }));
@@ -36,7 +39,7 @@ await mock.module("../src/deviceprofile.ts", () => ({
 const { handleApi, createState } = await import("../src/app.ts");
 type AppState = ReturnType<typeof createState>;
 
-afterAll(() => { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; });
+afterAll(() => { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; downloadImpl = realDownload; });
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
@@ -114,6 +117,21 @@ describe("POST /flash: baseline adoption is gated on verified", () => {
     expect(((await res.json()) as any).verified).toBe(true);
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(false);
+  });
+
+  test("an edit during parameter programming remains drift against the submitted value", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
+    paramFlashImpl = async (opts) => {
+      expect(opts.params.get(PARAM_REF)).toBe("1");
+      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "2");
+      return flashed(true);
+    };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(200);
+    expect(getDeviceParamBase(state.db, projectId, deviceId).get(PARAM_REF)).toBe("1");
+    expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
   });
 
   test("dryRun (?dry=1) -> baseline untouched", async () => {
@@ -313,4 +331,135 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     expect(res.status).toBe(200);
     expect(reached).toBe(true);
   });
+});
+
+
+const programmingRoutes = ["flash", "flash-ga", "download"] as const;
+function setProgrammingResult(run: () => Promise<FlashResult>) {
+  paramFlashImpl = run;
+  gaFlashImpl = run;
+  downloadImpl = run;
+}
+function linkBaseline(state: AppState, projectId: string, deviceId: string): number[] {
+  return (state.db.query("SELECT ga_raw AS raw FROM device_link_base WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ? ORDER BY slot")
+    .all(projectId, deviceId, LINK_KEY) as { raw: number }[]).map((r) => r.raw);
+}
+
+for (const route of programmingRoutes) {
+  for (const timing of ["queued", "running"] as const) {
+    test(`${route}: edits while ${timing} retain submitted baselines`, async () => {
+      const state = freshState();
+      const { projectId, deviceId } = await m0081Project(state);
+      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "2");
+      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040b]);
+      const gate = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      const blocker = timing === "queued" ? state.queue.enqueue(
+        { projectId, deviceId, deviceName: "blocker", ia: "1.2.10", kind: "read" }, () => gate.promise,
+      ) : Promise.resolve();
+      setProgrammingResult(async () => { started.resolve(); if (timing === "running") await gate.promise; return flashed(true); });
+      const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+      if (timing === "running") await started.promise;
+      else {
+        for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
+        expect(state.queue.list(projectId)).toHaveLength(2);
+      }
+      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
+      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040c]);
+      gate.resolve();
+      await blocker;
+      expect((await response)!.status).toBe(200);
+      if (route !== "flash-ga") expect(getDeviceParamBase(state.db, projectId, deviceId).get(PARAM_REF)).toBe("2");
+      if (route !== "flash") expect(linkBaseline(state, projectId, deviceId)).toEqual([0x040b]);
+      const drift = getDeviceChangedKeys(state.db, projectId, deviceId);
+      expect(drift.params.has(PARAM_REF)).toBe(true);
+      expect(drift.links.has(LINK_KEY)).toBe(true);
+    });
+  }
+  for (const outcome of ["unverified", "failed", "dry"] as const) {
+    test(`${route}: ${outcome} cannot adopt submitted values`, async () => {
+      const state = freshState();
+      const { projectId, deviceId } = await m0081Project(state);
+      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
+      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040b]);
+      const beforeParams = getDeviceParamBase(state.db, projectId, deviceId);
+      const beforeLinks = linkBaseline(state, projectId, deviceId);
+      setProgrammingResult(async () => {
+        if (outcome === "failed") throw new Error("injected failure");
+        // Even a misreported verified result must not adopt a dry request.
+        return flashed(outcome === "dry");
+      });
+      const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}${outcome === "dry" ? "?dry=1" : ""}`, { method: "POST" }), state))!;
+      expect(res.status).toBe(outcome === "failed" ? 500 : 200);
+      expect(getDeviceParamBase(state.db, projectId, deviceId)).toEqual(beforeParams);
+      expect(linkBaseline(state, projectId, deviceId)).toEqual(beforeLinks);
+    });
+  }
+  for (const mutation of ["replace", "readdress", "recreate"] as const) {
+    test(`${route}: ${mutation} while queued refuses before programming`, async () => {
+      const state = freshState();
+      const { projectId, deviceId } = await m0081Project(state);
+      const gate = Promise.withResolvers<void>();
+      const blocker = state.queue.enqueue({ projectId, deviceId, deviceName: "blocker", ia: "1.2.10", kind: "read" }, () => gate.promise);
+      let wrote = false;
+      setProgrammingResult(async () => { wrote = true; return flashed(true); });
+      const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+      for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
+      expect(state.queue.list(projectId)).toHaveLength(2);
+      if (mutation === "replace") state.db.run("UPDATE devices SET product_ref = product_ref WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+      if (mutation === "readdress") state.db.run("UPDATE devices SET ia = '1.1.99' WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+      if (mutation === "recreate") {
+        state.db.exec("CREATE TEMP TABLE saved_devices AS SELECT * FROM devices; DELETE FROM devices; INSERT INTO devices SELECT * FROM saved_devices;");
+      }
+      gate.resolve();
+      await blocker;
+      const res = (await response)!;
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: { code: "DEVICE_TARGET_CHANGED" } });
+      expect(wrote).toBe(false);
+    });
+  }
+  test(`${route}: deletion during execution refuses adoption and reports task failure`, async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    const before = getDeviceParamBase(state.db, projectId, deviceId);
+    setProgrammingResult(async () => {
+      state.db.run("DELETE FROM devices WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+      return flashed(true);
+    });
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state))!;
+    expect(res.status).toBe(409);
+    expect(state.queue.list(projectId)[0].errorCode).toBe("DEVICE_TARGET_CHANGED");
+    expect(getDeviceParamBase(state.db, projectId, deviceId)).toEqual(before);
+  });
+}
+
+test("a removed hidden override retains its unobservable baseline", async () => {
+  const state = freshState();
+  const { projectId, deviceId } = await m0081Project(state);
+  const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
+  replaceParamBase(state.db, projectId, deviceId, new Map([[hidden, "1"]]));
+  setProgrammingResult(async () => flashed(true));
+  const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+  expect(res.status).toBe(200);
+  expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
+});
+
+test("a baseline learned by an earlier queued job survives a later unwritten submission", async () => {
+  const state = freshState();
+  const { projectId, deviceId } = await m0081Project(state);
+  const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
+  const gate = Promise.withResolvers<void>();
+  const earlier = state.queue.enqueue({ projectId, deviceId, deviceName: "earlier read", ia: "1.2.10", kind: "read" }, async () => {
+    await gate.promise;
+    replaceParamBase(state.db, projectId, deviceId, new Map([[hidden, "1"]]));
+  });
+  setProgrammingResult(async () => flashed(true));
+  const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
+  for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
+  expect(state.queue.list(projectId)).toHaveLength(2);
+  gate.resolve();
+  await earlier;
+  expect((await response)!.status).toBe(200);
+  expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
 });

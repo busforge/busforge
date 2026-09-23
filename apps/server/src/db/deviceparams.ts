@@ -123,9 +123,9 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
   })();
 }
 
-export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string } | null {
-  const r = db.query("SELECT ia, app_ref AS appRef, name FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { ia: string; appRef: string; name: string } | null;
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string } | null;
   return r ?? null;
 }
 
@@ -290,32 +290,30 @@ export function revertDeviceLink(db: Database, projectId: string, deviceId: stri
   })();
 }
 
-// Mark a device's parameters as programmed (baseline := current live values).
-// `keepDrift` refs are exempt: their old baseline rows survive untouched. Used for
-// params the flash can never write (memory-backed text/colour): adopting their live
-// value into the baseline would clear a "changed" chip for a value that never reached
-// the device.
-export function resetParamBase(db: Database, projectId: string, deviceId: string, keepDrift?: Set<string>): void {
-  const keep = [...(keepDrift ?? [])];
-  const notIn = keep.length ? ` AND param_ref_id NOT IN (${keep.map(() => "?").join(",")})` : "";
+// Adopt the verified submission, never the desired values edited while a job was running.
+// Unwritten refs retain their previous baseline, including when the submitted map is sparse.
+export function resetParamBase(db: Database, projectId: string, deviceId: string, submitted: Map<string, string>, keepDrift = new Set<string>()): void {
   db.transaction(() => {
-    db.prepare(`DELETE FROM device_param_base WHERE project_id = ? AND device_id = ?${notIn}`).run(projectId, deviceId, ...keep);
-    db.prepare(`INSERT INTO device_param_base (project_id, device_id, param_ref_id, value)
-      SELECT project_id, device_id, param_ref_id, value FROM device_parameters WHERE project_id = ? AND device_id = ?${notIn}`)
-      .run(projectId, deviceId, ...keep);
+    const base = getDeviceParamBase(db, projectId, deviceId);
+    const next = new Map(submitted);
+    for (const ref of keepDrift) {
+      const old = base.get(ref);
+      if (old === undefined) next.delete(ref);
+      else next.set(ref, old);
+    }
+    replaceParamBase(db, projectId, deviceId, next);
   })();
 }
 
-// Mark a device's GA links as programmed (baseline := current live links).
-// Re-baseline ONLY the com-object refs whose links were actually flashed to the device.
-// A GA flash skips links whose com-object is not in the active view (hidden, or a module
-// synthetic ref the flat tables cannot resolve); those were NOT written, so they must stay
-// as drift rather than be adopted into the baseline (which would falsely report them in sync).
-export function resetLinkBase(db: Database, projectId: string, deviceId: string, comObjRefIds: string[]): void {
+// Only adopted refs were represented in the written group tables. Hidden or unresolved
+// links keep their previous baseline; absent submitted links clear the written ref.
+export function resetLinkBase(db: Database, projectId: string, deviceId: string, comObjRefIds: string[], submitted: Map<string, number[]>): void {
   db.transaction(() => {
     const del = db.prepare("DELETE FROM device_link_base WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?");
-    const ins = db.prepare(`INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw)
-      SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_links WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?`);
-    for (const ref of comObjRefIds) { del.run(projectId, deviceId, ref); ins.run(projectId, deviceId, ref); }
+    const ins = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
+    for (const ref of comObjRefIds) {
+      del.run(projectId, deviceId, ref);
+      (submitted.get(ref) ?? []).forEach((raw, slot) => ins.run(projectId, deviceId, ref, slot, raw));
+    }
   })();
 }

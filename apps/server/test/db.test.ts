@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
-import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
+import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
@@ -58,16 +58,16 @@ describe("schema/migrations", () => {
     // raw CREATE UNIQUE INDEX over them would throw and brick startup; the migration must
     // first collapse the duplicate group to one row.
     const old = new Database(path, { create: true });
-    // A minimal connections table is present so the trailing ip_transport ALTER (last migration)
+    // A minimal connections table is present so the trailing ip_transport ALTER
     // applies; production has it from the transport-aware migration long before this point.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
-      PRAGMA user_version = ${SCHEMA_VERSION - 3};`);
+      PRAGMA user_version = 16;`);
     old.close();
-    // Runs the pending tail: the instance-id dedup+unique-index migration (third-to-last), the
+    // Runs the pending tail: the instance-id dedup+unique-index migration (version 17), the
     // ga_levels column add, and the ip_transport column add. The ALTERs adjust the minimal
     // projects/connections tables harmlessly; the dedup is what this test asserts.
     const db = openDb(path);
@@ -236,7 +236,7 @@ describe("projects", () => {
 
     // Flashing (baseline := current) clears the marker.
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "60");
-    resetParamBase(db, "p1", dev);
+    resetParamBase(db, "p1", dev, getDeviceParams(db, "p1", dev));
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
 
     // A param edited from its DEFAULT (never seeded into the baseline, since
@@ -248,7 +248,7 @@ describe("projects", () => {
     // "changed" marker survives the reset, while everything else is adopted.
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-1_R-1", "61");
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 2 });
-    resetParamBase(db, "p1", dev, new Set(["M-X_A-1_P-9_R-1"]));
+    resetParamBase(db, "p1", dev, getDeviceParams(db, "p1", dev), new Set(["M-X_A-1_P-9_R-1"]));
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ params: 1 }); // only the kept-drift ref remains changed
   });
 
@@ -261,7 +261,7 @@ describe("projects", () => {
     setDeviceLink(db, "p1", dev, "O-1_R-1", [9]);
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 1 });
 
-    resetLinkBase(db, "p1", dev, ["O-1_R-1"]);
+    resetLinkBase(db, "p1", dev, ["O-1_R-1"], getDeviceLinks(db, "p1", dev));
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
   });
 
@@ -273,7 +273,7 @@ describe("projects", () => {
     setDeviceLink(db, "p1", dev, "O-2_R-2", [5]); // this one was skipped at flash (e.g. hidden com-object)
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 2 });
 
-    resetLinkBase(db, "p1", dev, ["O-1_R-1"]); // only the flashed ref is baselined
+    resetLinkBase(db, "p1", dev, ["O-1_R-1"], getDeviceLinks(db, "p1", dev)); // only the flashed ref is baselined
     // The skipped link must NOT be adopted into the baseline (no fake "in sync"): drift remains.
     expect(getProjectChanges(db, "p1").get(dev)).toMatchObject({ links: 1 });
     expect(getDeviceChangedKeys(db, "p1", dev).links.has("O-2_R-2")).toBe(true);
@@ -407,7 +407,7 @@ describe("project export", () => {
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
     const dev = "P-TEST-0_DI-1";
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
-    resetParamBase(db, "p1", dev); // adopt as baseline so the export carries baselines too
+    resetParamBase(db, "p1", dev, getDeviceParams(db, "p1", dev)); // adopt as baseline so the export carries baselines too
     putBaggage(db, "p1", `${dev}_x.bin`, Buffer.from("zz"));
     const appRefs = (db.query("SELECT DISTINCT app_ref AS a FROM devices WHERE project_id = 'p1'").all() as { a: string }[]).map((r) => r.a);
     for (const ar of appRefs) putAppProgram(db, appProgramId(ar), `<ApplicationProgram id="${appProgramId(ar)}"/>`);
@@ -730,7 +730,7 @@ describe("snapshots", () => {
     const clean = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
     // Program a value: baseline := edited. Then restore the clean snapshot.
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
-    resetParamBase(db, "p1", dev);
+    resetParamBase(db, "p1", dev, getDeviceParams(db, "p1", dev));
     restoreSnapshot(db, "p1", clean.id, 2000);
     // Live is back to clean, but the baseline still says "7", so it shows as drift.
     expect(getDeviceParams(db, "p1", dev).has("M-X_A-1_P-9_R-1")).toBe(false);
@@ -881,9 +881,10 @@ describe("connections", () => {
     // A connections table one version BEFORE the ip_transport column, holding a saved IP
     // connection. Opening it must add the column and backfill the legacy row to 'auto'.
     const old = new Database(path, { create: true });
-    old.exec(`CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+    old.exec(`CREATE TABLE devices (project_id TEXT, instance_id TEXT, ia TEXT, app_ref TEXT, product_ref TEXT);
+      CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       INSERT INTO connections (id,name,type,host,port,created_at) VALUES ('c1','GW','ip','1.2.3.4',3671,1000);
-      PRAGMA user_version = ${SCHEMA_VERSION - 1};`);
+      PRAGMA user_version = 18;`);
     old.close();
     const db = openDb(path);
     expect(getConnection(db, "c1")!.ipTransport).toBe("auto");

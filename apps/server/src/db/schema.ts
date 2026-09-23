@@ -309,6 +309,20 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE connections ADD COLUMN ip_transport TEXT NOT NULL DEFAULT 'auto';
   `,
+  // Identity changes invalidate queued programming even for a same-product replacement or
+  // delete/recreate with the same instance id. Tokens stay local and are not imported.
+  `
+  ALTER TABLE devices ADD COLUMN programming_token TEXT NOT NULL DEFAULT '';
+  UPDATE devices SET programming_token = lower(hex(randomblob(16)));
+  CREATE TRIGGER device_programming_insert AFTER INSERT ON devices BEGIN
+    UPDATE devices SET programming_token = lower(hex(randomblob(16)))
+    WHERE project_id = NEW.project_id AND instance_id = NEW.instance_id;
+  END;
+  CREATE TRIGGER device_programming_target AFTER UPDATE OF ia, app_ref, product_ref ON devices BEGIN
+    UPDATE devices SET programming_token = lower(hex(randomblob(16)))
+    WHERE project_id = NEW.project_id AND instance_id = NEW.instance_id;
+  END;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

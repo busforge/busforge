@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createState, handleApi, type AppState } from "../src/app.ts";
-import { setDeviceLink, setDeviceParam, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { getDeviceParams, getDeviceLinks, setDeviceLink, setDeviceParam, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { putBaggage } from "../src/db/baggage.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
@@ -169,8 +169,8 @@ async function setup(): Promise<{ state: AppState; projectId: string; deviceId: 
 
   // Old-app state that must NOT survive the replacement.
   setDeviceParam(state.db, proj.id, dev.id, `${OLD_APP}_P-1_R-1`, "1");
-  resetParamBase(state.db, proj.id, dev.id);
-  resetLinkBase(state.db, proj.id, dev.id, ["O-1_R-1"]);
+  resetParamBase(state.db, proj.id, dev.id, getDeviceParams(state.db, proj.id, dev.id));
+  resetLinkBase(state.db, proj.id, dev.id, ["O-1_R-1"], getDeviceLinks(state.db, proj.id, dev.id));
   state.db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES (?, ?, '[]')").run(proj.id, dev.id);
   putDeviceSecurity(state.db, proj.id, [{ deviceId: dev.id, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "0", source: "manual" }], state.masterKey);
   putBaggage(state.db, proj.id, `${dev.id}_dca.bin`, Buffer.from("old"));

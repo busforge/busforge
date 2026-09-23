@@ -40,7 +40,22 @@ A parameter edit and a flash take the same road:
    a task on the serial bus queue.
 6. The task opens a transport, connects to the device, checks its mask, backs up, writes, restarts,
    and reads the segment back.
-7. The device's own read-back decides whether the programmed baseline is adopted.
+7. The device's own read-back decides whether the submitted configuration becomes the
+   programmed baseline. Adoption happens inside the queued job, before its completion is reported;
+   edits made while waiting or programming remain drift. Unwritten fields retain their old baseline.
+
+A local device-generation token changes on insertion, replacement (including the same product),
+or address/application changes. A programming job checks its captured token before accessing the
+bus and before adopting its result. A stale target fails with `DEVICE_TARGET_CHANGED`; it cannot
+transfer a previous device's verified state to a replacement. This is project identity protection,
+not physical serial-number verification.
+
+The bus owns both monitor transitions and exclusive queued operations. A job waits for a pending
+monitor connection to settle and close before opening its management transport. Monitor connect
+requests during exclusive work receive `BUS_BUSY` (HTTP 409), including requests from another
+project or client. After success or failure the monitor remains **disconnected**; the user reconnects
+it explicitly. Monitor connect/disconnect transitions serialize, and failed cleanup must finish
+before a new owner can open a transport.
 
 ## The server
 

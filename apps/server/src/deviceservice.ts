@@ -192,9 +192,13 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
 export function unwrittenParamRefs(state: AppState, projectId: string, deviceId: string, params?: StoredParams, modules?: StoredModules): Set<string> {
   const stored = params ?? getDeviceParams(state.db, projectId, deviceId);
   const mods = modules ?? getDeviceModules(state.db, projectId, deviceId);
-  const keep = unflashableParamRefs(state, projectId, deviceId, stored);
+  // Evaluate at adoption: earlier queued jobs may have learned new baseline refs since
+  // submission. Visibility still comes from the submitted values, never concurrent edits.
+  // Sparse submissions may remove an override without making its device field observable.
+  const candidates = new Map([...getDeviceParamBase(state.db, projectId, deviceId), ...stored]);
+  const keep = unflashableParamRefs(state, projectId, deviceId, candidates);
   const active = deviceParamRefs(state, projectId, deviceId, stored, mods);
-  for (const refId of stored.keys()) {
+  for (const refId of candidates.keys()) {
     if (!active.has(refId)) keep.add(refId);
   }
   return keep;

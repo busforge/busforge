@@ -3,9 +3,9 @@ import { getProjectConnection } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot } from "../db/snapshots.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { json, err } from "../httputil.ts";
@@ -16,7 +16,7 @@ import type { AppState } from "../app.ts";
 // application XML. Codes, messages, statuses and their precedence are the
 // routes' locked contract; the per-route capability guard stays in each route
 // because the checked capability and the refusal code differ.
-function busOpPreamble(state: AppState, projectId: string, deviceId: string): { dev: { ia: string; appRef: string; name: string }; conn: Connection; appXml: string } {
+function busOpPreamble(state: AppState, projectId: string, deviceId: string): { dev: NonNullable<ReturnType<typeof getDeviceForFlash>>; conn: Connection; appXml: string } {
   const dev = getDeviceForFlash(state.db, projectId, deviceId);
   if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const conn = getProjectConnection(state.db, projectId);
@@ -24,6 +24,24 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
   const appXml = resolveAppXml(state, projectId, dev.appRef);
   if (!appXml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
   return { dev, conn, appXml };
+}
+
+// Adoption belongs inside the queued job: a following job must see the committed baseline,
+// and a replaced/deleted target must never inherit success from its predecessor.
+async function programSubmission(
+  state: AppState, projectId: string, deviceId: string, programmingToken: string, dry: boolean,
+  run: () => Promise<FlashResult>, adopt: () => void,
+): Promise<FlashResult> {
+  const assertTarget = () => {
+    if (getDeviceForFlash(state.db, projectId, deviceId)?.programmingToken !== programmingToken) {
+      throw new ApiError("DEVICE_TARGET_CHANGED", "device was replaced, removed or readdressed after submission; review it before programming again", 409);
+    }
+  };
+  assertTarget();
+  const result = await run();
+  assertTarget();
+  if (!dry && result.kind === "flashed" && result.verified) state.db.transaction(adopt)();
+  return result;
 }
 
 // A parameter or link change that would alter the device's com-object table (L3) cannot be a
@@ -64,7 +82,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const devices = await state.queue.enqueue(
       { projectId: id, deviceId: "-", deviceName: "programming mode", ia: "-", kind: "read" },
       async () => {
-        if (bus.activeProjectId) await bus.disconnect(); // free the bus for the probe
         return readDevicesInProgMode(conn);
       },
     );
@@ -88,7 +105,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia" },
       async (progress) => {
-        if (bus.activeProjectId) await bus.disconnect();
         return assignDeviceAddress(conn, dev.ia, progress);
       },
     );
@@ -116,8 +132,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const rb = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
       async (progress, signal) => {
-        // Free the bus so the read holds the only connection-oriented link.
-        if (bus.activeProjectId) await bus.disconnect();
         return readDeviceState({
           ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
@@ -156,7 +170,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
       async (progress) => {
-        if (bus.activeProjectId) await bus.disconnect();
         return secureIdentify(conn, dev.ia, sec.toolKey, sec.serialNumber, progress);
       },
     );
@@ -168,6 +181,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const resolved = resolveDeviceLinks(state, id, deviceId);
+    const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
     // Each memory model knows whether its group tables can be WRITTEN today: System B and
     // System 7 (MV-0705) yes (both hardware-verified), recognised-but-unsupported families no.
@@ -181,6 +195,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
+    const secure = secureCredsFor(state, id, deviceId);
     // The links carry the LIVE configuration's com-object numbers, so the profile checks them
     // against the com-object table the device was last programmed with (same gate as the
     // parameter flash). Read at the same pre-enqueue point, for the same TOCTOU reason.
@@ -195,20 +210,15 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" },
-      async (progress) => {
-        if (bus.activeProjectId) await bus.disconnect();
-        return flashDeviceGroupAddresses({
+      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
-          connection: conn, secure: secureCredsFor(state, id, deviceId), dataDir: state.dataDir,
+          connection: conn, secure, dataDir: state.dataDir,
           dryRun: dryGa, onProgress: progress,
-        });
-      },
+        }), () => {
+        resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
+      }),
     );
-    // The device's group tables now match our links: clear the marker for ONLY the links we
-    // actually flashed (skipped links stay as drift; see resetLinkBase / resolveDeviceLinks).
-    // An unverified flash keeps the old baseline: nothing was confirmed on the device.
-    if (result.kind === "flashed" && result.verified) resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
     return json(result);
   }
 
@@ -226,31 +236,25 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
     }
     const resolved = resolveDeviceLinks(state, id, deviceId);
+    const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
     const dlParams = getDeviceParams(db, id, deviceId);
     const dlModules = getDeviceModules(db, id, deviceId);
-    const keepDrift = unwrittenParamRefs(state, id, deviceId, dlParams, dlModules);
     const dryDl = url.searchParams.get("dry") === "1";
+    const secure = secureCredsFor(state, id, deviceId);
     if (!dryDl) createSnapshot(db, id, { kind: "auto", reason: "before-download" }, state.now());
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" },
-      async (progress) => {
-        if (bus.activeProjectId) await bus.disconnect();
-        return downloadDeviceFull({
+      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
-          connection: conn, secure: secureCredsFor(state, id, deviceId), dataDir: state.dataDir,
+          connection: conn, secure, dataDir: state.dataDir,
           params: dlParams, links: resolved.links, moduleInstances: dlModules,
           dryRun: dryDl, onProgress: progress,
-        });
-      },
+        }), () => {
+        resetParamBase(db, id, deviceId, dlParams, unwrittenParamRefs(state, id, deviceId, dlParams, dlModules));
+        resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
+      }),
     );
-    // The device now holds this configuration, parameters AND links: baseline both, but only on a
-    // verified download. An unverified one leaves every baseline alone, so the UI keeps showing the
-    // configuration as unprogrammed, which is the truth.
-    if (result.kind === "flashed" && result.verified) {
-      resetParamBase(db, id, deviceId, keepDrift);
-      resetLinkBase(db, id, deviceId, resolved.flashedRefIds);
-    }
     return json(result);
   }
 
@@ -265,8 +269,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
     }
     const dryParams = url.searchParams.get("dry") === "1";
+    const secure = secureCredsFor(state, id, deviceId);
     // Snapshot the stored config ONCE, before the (long, bus-bound) flash is queued, and use
-    // the same snapshot for both the image and the post-flash baseline decision. A param edit
+    // the same values for the image and the post-flash baseline decision. A param edit
     // that lands while the flash runs must not change which refs count as "written" (the GA
     // path resolves flashedRefIds pre-enqueue for exactly this reason).
     const flashParams = getDeviceParams(db, id, deviceId);
@@ -280,28 +285,19 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
     const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules);
     if (flStale) return flStale;
-    const keepDrift = unwrittenParamRefs(state, id, deviceId, flashParams, flashModules);
     // Auto restore point of the about-to-be-programmed config (real flash only).
     if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" },
-      async (progress) => {
-        // Free the bus so the flash holds the only connection-oriented link.
-        if (bus.activeProjectId) await bus.disconnect();
-        return flashDeviceParameters({
+      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => flashDeviceParameters({
           projectId: id, deviceId, ia: dev.ia, appXml,
-          connection: conn, secure: secureCredsFor(state, id, deviceId),
+          connection: conn, secure,
           params: flashParams, baseParams: flashBase, moduleInstances: flashModules, dataDir: state.dataDir,
           dryRun: dryParams, onProgress: progress,
-        });
-      },
+        }), () => {
+        resetParamBase(db, id, deviceId, flashParams, unwrittenParamRefs(state, id, deviceId, flashParams, flashModules));
+      }),
     );
-    // The device's parameter segment now matches our values: clear the marker, EXCEPT for
-    // params the flash did NOT write (keepDrift): memory-backed text/colour the codec refuses,
-    // AND currently-hidden overrides the image builder skipped. Their rows were not programmed,
-    // so adopting them into the baseline would clear a "changed" chip for a value that never
-    // reached the device.
-    if (result.kind === "flashed" && result.verified) resetParamBase(db, id, deviceId, keepDrift);
     return json(result);
   }
 
@@ -326,7 +322,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (seg[4] === "connect" && req.method === "POST") {
       const conn = getProjectConnection(db, id);
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
-      if (bus.activeProjectId && bus.activeProjectId !== id) await bus.disconnect();
       await bus.connect(id, conn);
       return json({ status: bus.status, projectId: id });
     }

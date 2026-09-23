@@ -93,7 +93,16 @@ and writes no programmed baseline.
 **Live versus baseline is the whole drift model.** `device_parameters` and `device_links` are what
 the project says; `device_param_base` and `device_link_base` are what the device was last observed
 or programmed to hold. The change indicator is the difference. Read-back rewrites only the baseline;
-flashing rewrites the baseline only when the device verified what was written.
+flashing rewrites the baseline only when the device verified what was written. It adopts the
+submission captured before queueing, not desired rows at completion. A concurrent edit, removed
+link or newly added override remains distinguishable from the programmed snapshot. Hidden or
+otherwise unwritten fields retain their previous baseline, even when absent from a sparse submission.
+Full-download adoption of parameters and links is atomic. Dry-run requests never adopt a baseline.
+
+Each device also carries a local `programming_token`, regenerated on insertion and address/product/
+application updates. It is not part of the portable device identity. Queued programming refuses a
+changed token before executing or adopting results, including same-product replacement and
+recreation with the same instance id.
 
 ### Migrations
 

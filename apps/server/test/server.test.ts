@@ -1,4 +1,4 @@
-import { test, expect, describe, afterAll } from "bun:test";
+import { test, expect, describe, afterAll, spyOn } from "bun:test";
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,7 @@ import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, importGaps, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
-import { readGroupTables } from "@busforge/knx";
+import { readGroupTables, KnxIpTunnel, KnxError } from "@busforge/knx";
 import { classify } from "../src/deviceprofile.ts";
 import { parseAppConfig } from "@busforge/product";
 import { loadKnxproj, appProgramId } from "@busforge/project";
@@ -858,28 +858,29 @@ describe("device configuration", () => {
   async function mv0705Device(state: AppState) {
     const { projectId, deviceId } = await importConfig(state);
     state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-00B4-32-3919.xml.gz"), "M-TEST_A-1"]);
-    // A local port with nothing listening: the flash attempt reaches it and fails FAST and
-    // deterministically (connection refused), never on the network. A real LAN IP assumed "dead"
-    // is not dead-forever: a host appearing there makes the KNXnet/IP connect burn its full 5 s
-    // timeout and race Bun's per-test timeout (seen 2026-07-19 when 198.51.100.10 came alive).
+    // The route test injects failure at tunnel connect; this address is never contacted.
     const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "127.0.0.1", port: 3671 }) }), state))!.json()) as any;
     await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
     return { projectId, deviceId };
   }
 
   test("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
-    // GA flash is hardware-verified for MV-0705 now (identity + re-point + revert),
-    // so the capability guard must NOT refuse it: the request gets past GA_FLASH_UNSUPPORTED
-    // and only fails later on the closed-port test connection (see mv0705Device).
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-    const code = ((await res.json()) as any).error?.code;
-    // Positively confirm the request got past every pre-flash guard (capability, app program,
-    // connection) and reached the actual flash attempt, which then fails only on the closed-port
-    // test gateway. A regression that re-gated or broke an earlier guard would surface as one of
-    // these codes and fail the test, rather than silently passing a weaker negative assertion.
-    expect(["GA_FLASH_UNSUPPORTED", "APP_PROGRAM_MISSING", "INTERFACE_NOT_SET", "DEVICE_NOT_FOUND"]).not.toContain(code);
+    // Keep routing, capability checks and session setup real; stop at the network boundary.
+    // A closed TCP port is insufficient: auto transport falls back to UDP and its timeout.
+    const connect = spyOn(KnxIpTunnel.prototype, "connect").mockRejectedValue(
+      new KnxError("TEST_TRANSPORT_FAILURE", "injected tunnel connection failure"),
+    );
+    try {
+      const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: { code: "TEST_TRANSPORT_FAILURE", message: "injected tunnel connection failure" },
+      });
+    } finally {
+      connect.mockRestore();
+    }
   });
 
   test("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {

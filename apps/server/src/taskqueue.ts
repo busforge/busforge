@@ -71,7 +71,10 @@ export class TaskQueue {
   private tasks: Task[] = [];
   private controllers = new Map<string, AbortController>();
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(private now: () => number = () => Date.now()) {}
+  constructor(
+    private now: () => number = () => Date.now(),
+    private exclusive: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
+  ) {}
 
   // Append a job; it starts once all earlier jobs have finished. The returned
   // promise resolves/rejects with the job's own result, independent of siblings.
@@ -97,7 +100,10 @@ export class TaskQueue {
       task.startedAt = this.now();
       const progress: ProgressFn = (phase, done = 0, total = 0) => { task.phase = phase; task.done = done; task.total = total; };
       try {
-        const r = await run(progress, controller.signal);
+        const r = await this.exclusive(() => {
+          if (controller.signal.aborted) throw new CancelledError();
+          return run(progress, controller.signal);
+        });
         task.outcome = outcomeOf(r);
         // A write the device did not confirm is not a success. The routes already refuse to adopt
         // the programmed baseline in that case, but the TASK said "done" regardless, so a caller
