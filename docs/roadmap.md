@@ -49,6 +49,10 @@ started until the capability it depends on is hardware-proven.
   whether a write path restarted the device and the device proved the reboot. A dedicated step
   (restart or bus power cycle, then a read-back or behaviour check) has to write that axis before
   owned Products can meet the acceptance in [evidence-contract.md](evidence-contract.md).
+- **`tools/readback.ts` cannot read MV-0705 devices.** On 2026-09-24 every MV-0705 device of the
+  reference installation refused the tool's parameter read (`device refused byte @0x41e4`), so its
+  evidence covers System B devices only. The server's read-back reads them; the tool should use the
+  same absolute-segment path.
 - **Turn the ETS-capture diff into a live read-back gate.** Today `our image == ETS` can only be
   checked where a captured ETS download exists. Diffing our built image against the device itself,
   resolving the device-assigned segment base from the device, would catch that class of bug
