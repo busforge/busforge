@@ -94,7 +94,8 @@ describe("cellState", () => {
   });
 
   test("an axis nobody assessed stays not-assessed, and undated records never outrank dated ones", async () => {
-    const dump = parseEvidenceRecord(await example("self-written-dump.json"));
+    const raw = await example("self-written-dump.json");
+    const dump = parseEvidenceRecord({ ...raw, subject: { ...raw.subject, productRef: "M-0162_H-EXAMPLE_P-EXAMPLE" } });
     expect(cellState([dump], "reference")).toEqual({ state: "not-assessed", basis: [] });
     const dated = { ...dump, id: "dated", recordedAt: "2026-06-01T00:00:00.000Z", results: { ...dump.results, transfer: { state: "fail" as const } } };
     expect(cellState([dump, dated], "transfer").basis[0]).toBe("dated");
@@ -167,11 +168,17 @@ describe("cellState: review edge cases", () => {
     expect(code(() => cellState([a, b], "transfer"))).toBe("EVIDENCE_CELL_MIXED");
   });
 
-  test("behaviour and persistence belong to one product; transfer spans the application", async () => {
+  test("evidence from another Product never raises a cell, even on the same KNX Hardware", async () => {
     const [pass, fail] = await pair();
-    const sibling = { ...fail, subject: { ...fail.subject, productRef: "M-0085_H-OTHER_P-OTHER" } };
-    expect(code(() => cellState([pass, sibling], "behaviour"))).toBe("EVIDENCE_CELL_MIXED");
-    expect(cellState([pass, sibling], "transfer").state).toBe("conflict");
+    const variant = { ...fail, subject: { ...fail.subject, productRef: "M-0085_H-AM22AA-16_P-OTHER.20VARIANT" } };
+    for (const axis of ["transfer", "reference", "behaviour", "persistence"] as const) {
+      expect(code(() => cellState([pass, variant], axis))).toBe("EVIDENCE_CELL_MIXED");
+    }
+  });
+
+  test("a record that names no Product cannot back a cell", async () => {
+    const dump = parseEvidenceRecord(await example("self-written-dump.json"));
+    expect(code(() => cellState([dump], "transfer"))).toBe("EVIDENCE_PRODUCT_UNKNOWN");
   });
 
   test("a superseding record removes others only on the axes it assessed itself", async () => {

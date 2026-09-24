@@ -25,8 +25,7 @@ export interface EvidenceRecord {
   subject: {
     manufacturer: string;
     productRef: string | null;
-    // The application program id carries its version (M-0085_A-0072-30-69AA: version 0x30). It is
-    // the unit evidence transfers across, so a record without it cannot back any matrix cell.
+    // Carries its version (M-0085_A-0072-30-69AA: version 0x30).
     appProgramId: string;
     mask: string;
     firmware: Firmware;
@@ -174,13 +173,14 @@ const time = (r: EvidenceRecord) => (r.recordedAt === null ? -Infinity : Date.pa
 
 const mixed = (why: string): never => { throw new ProductError("EVIDENCE_CELL_MIXED", why); };
 
-// The state of one matrix cell on one axis. A cell is one application program, operation and
-// channel; behaviour and persistence depend on hardware and firmware, so on those axes it is also
-// one product. `basis` lists the deciding records, newest first. Records that do not form one cell,
+// The state of one matrix cell on one axis. A cell is one Product running one application program,
+// for one operation and channel: evidence from another Product, even on the same KNX Hardware, never
+// raises it. `basis` lists the deciding records, newest first. Records that do not form one cell,
 // or whose supersessions do not resolve inside it, are refused rather than half-counted.
 export function cellState(records: EvidenceRecord[], axis: EvidenceAxis): { state: AxisState | "conflict"; basis: string[] } {
-  const key = (r: EvidenceRecord) => [r.subject.appProgramId, r.scope.operation, r.scope.channel,
-    ...(axis === "behaviour" || axis === "persistence" ? [r.subject.productRef] : [])].join("|");
+  const unattributed = records.find((r) => r.subject.productRef === null);
+  if (unattributed) throw new ProductError("EVIDENCE_PRODUCT_UNKNOWN", `${unattributed.id} names no Product, so it cannot back a matrix cell`);
+  const key = (r: EvidenceRecord) => [r.subject.productRef, r.subject.appProgramId, r.scope.operation, r.scope.channel].join("|");
   if (new Set(records.map(key)).size > 1) mixed(`records of different cells for ${axis}: ${[...new Set(records.map(key))].join(", ")}`);
   const ids = new Set(records.map((r) => r.id));
   if (ids.size !== records.length) mixed("duplicate record ids");

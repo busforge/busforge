@@ -66,49 +66,63 @@ The validator refuses unknown fields, missing fields, a foreign schema version, 
 method, an observed firmware without its source and a superseding record without a reason. It
 never fills a gap with a default.
 
-## How far evidence reaches: compatibility classes
+## How far evidence reaches
 
-The mechanisms that decide whether a product is programmed correctly sit at different levels. The
-level at which a mechanism is fixed is the level at which evidence about it may be shared.
+The KNX product catalog groups a manufacturer's devices as **Hardware** (one physical device
+design, with a version number), its **Products** (the order-number variants of that hardware,
+for example two designs of the same push button) and **Hardware2Program** entries (the
+application programs that hardware can run). A product in a project is one Product running one
+application program.
 
 ```mermaid
 flowchart TD
-  M["Mask / memory model<br/>(e.g. MV-07B0, relative segments)"] --> A1["Application program + version<br/>M-0085_A-0072-30-69AA"]
-  M --> A2["Another application program<br/>on the same mask"]
-  A1 --> P1["Product A<br/>(tested unit)"]
-  A1 --> P2["Product B<br/>(same application, other hardware)"]
-  F["Firmware / runtime behaviour<br/>(per manufacturer, per unit)"] -.-> P1
-  F -.-> P2
+  MAN["Manufacturer"] --> HW1["Hardware H-A (version)"]
+  MAN --> HW2["Hardware H-B"]
+  HW1 --> P1["Product P-1<br/>(tested)"]
+  HW1 --> P2["Product P-2<br/>(same Hardware, other order number)"]
+  HW2 --> P3["Product P-3"]
+  AP["Application program + version<br/>M-0085_A-0072-30-69AA"] -.->|Hardware2Program| HW1
+  AP -.->|Hardware2Program| HW2
 ```
 
-| Mechanism | Fixed by | Shared with |
-|---|---|---|
-| Memory model, segment layout, fill bytes | application program (`<Static>`) | every product running that application program and version |
-| Load procedure steps and their LSM transport | application program `<LoadProcedures>`, LSM transport per mask | same |
-| Image construction: unions, `Assign`, codecs, bit fields, float width, modules | application program | same |
-| Com-object table layout and sizing | memory model family, declared object count from the application | same |
-| Segment base (System B), load state, whether the device holds this application | the device at runtime | nothing: read on every operation |
-| Persistence and restart behaviour, application hold during a table rewrite | firmware, currently keyed by manufacturer id (`PERSIST_ON_LOAD_COMPLETED`, `HOLD_APPLICATION_ON_GA_FLASH` in `profiles.ts`) | nothing automatically: see exceptions |
-| Firmware version | the unit | nothing |
+The mechanisms that decide whether a product is programmed correctly are fixed at different
+levels:
 
-This gives three reach levels for a product without its own record:
+| Mechanism | Fixed by |
+|---|---|
+| Memory model, segment layout, fill bytes | application program (`<Static>`) |
+| Load procedure steps and their LSM transport | application program `<LoadProcedures>`, LSM transport per mask |
+| Image construction: unions, `Assign`, codecs, bit fields, float width, modules | application program |
+| Com-object table layout and sizing | memory model family, declared object count from the application |
+| Segment base (System B), load state, whether the device holds this application | the device at runtime |
+| Persistence and restart behaviour, application hold during a table rewrite | firmware, currently keyed by manufacturer id (`PERSIST_ON_LOAD_COMPLETED`, `HOLD_APPLICATION_ON_GA_FLASH` in `profiles.ts`) |
+| Firmware version | the unit |
 
-1. **Same application program and version, other product.** Transfer and reference evidence
-   carries over, because the image and load procedure are identical. The matrix shows it as
-   *hardware-tested on a sibling product* and names that product. Behaviour and persistence do not
-   carry over as tested: they depend on hardware and firmware.
-2. **Same application family, other version** (`A-0072-30` vs `A-0072-31`). Nothing carries over.
-   The product is technically eligible at most.
-3. **Same mask, other application program.** Nothing carries over. The product is technically
-   eligible if `capabilities()` says so, and may be programmed after an explicit notice that it is
-   untested. A mask or a manufacturer never promotes hardware evidence.
+**Evidence belongs to the Product it was taken on.** A matrix cell is never raised by evidence
+from another Product, not even one on the same Hardware: whether an order-number variant or a
+different Hardware running the same application program behaves the same is not established, and
+firmware can differ between them. For a Product without its own evidence the matrix may add a
+factual hint, never a test state:
 
-A record whose `appProgramId` is unknown cannot back any cell, which is why the field is required.
+| Relation to a tested Product | Shown as |
+|---|---|
+| same Hardware and same application program version | "same KNX Hardware and application program as P-1, which was tested"; technically eligible, untested |
+| other Hardware, same application program version | "same application program as P-1, which was tested"; technically eligible, untested |
+| same application program, other version (`A-0072-30` vs `A-0072-31`) | no hint; technically eligible at most |
+| same mask or manufacturer only | no hint; technically eligible if `capabilities()` says so |
+
+Technically eligible Products may be programmed after an explicit notice that they are untested.
+Whether the first relation may ever count as tested is an open decision, recorded on the
+[roadmap](roadmap.md); until it is made, it does not.
+
+A record whose `appProgramId` or `productRef` is unknown cannot back any cell. Historical records
+without a Product stay readable, but they raise nothing.
 
 ### Exceptions that always need their own evidence
 
 These are known places where equal application-level mechanisms do not guarantee equal outcomes,
-or where the engine refuses. They are listed so a class is never widened across them.
+or where the engine refuses. They stay listed even though evidence is per Product, because they also bound the shared
+mechanism cases below.
 
 | Exception | Where it is recorded |
 |---|---|
@@ -127,9 +141,8 @@ diagnostic option, not an untested-compatible notice.
 
 ## Reading a matrix cell
 
-A cell is one application program, one operation, one channel and one axis. On the behaviour and
-persistence axes it is also one product, because those depend on hardware and firmware.
-`cellState()` computes it from the records of that cell, and refuses records that belong to other
+A cell is one Product, running one application program, for one operation, one channel and one
+axis. `cellState()` computes it from the records of that cell, and refuses records that belong to other
 cells, repeat an id or supersede a record outside the cell:
 
 1. Drop every record another record `supersedes` on this axis. Superseding requires a written
@@ -149,14 +162,14 @@ and the matrix shows the contradiction instead of choosing the better outcome.
 ## Representative acceptance
 
 The alpha qualifies the owned product types, not every product or every configuration. Shared
-mechanisms are validated once, by representative cases, and trusted where the class table above
-says they are shared.
+mechanisms are validated once, by representative cases, and trusted for every application program
+that uses the same mechanism. Test states themselves stay per Product.
 
 **Per mechanism** (memory model, load-procedure style, com-object table authorship): at least one
 reference `pass` from an independent source for the full image, plus codec and layout tests. The
 reference case must exercise the mechanism, for example a module device for per-instance offsets.
 
-**Per owned application program**, for each operation `capabilities()` claims:
+**Per owned Product**, for each operation `capabilities()` claims:
 
 | Axis | Required |
 |---|---|

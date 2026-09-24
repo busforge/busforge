@@ -40,6 +40,11 @@ started until the capability it depends on is hardware-proven.
 
 ## Verification
 
+- **Decide whether a Product may inherit evidence from its KNX Hardware.** Evidence is per Product
+  today. An order-number variant of a tested Hardware running the same application program gets
+  only a hint in the compatibility matrix ([evidence-contract.md](evidence-contract.md)). Counting
+  it as tested needs a reason to believe the variants share electronics and firmware, which the
+  catalog alone does not give.
 - **Let every run record its conditions as evidence records.** No smoke report, read-back or
   ETS diff states the server build, the runner and spec revision, the transport or the firmware,
   so evidence from before and after a fix cannot be told apart and the historical GVS cells read
