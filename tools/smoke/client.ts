@@ -52,7 +52,8 @@ export class Client {
   catalogProducts() { return this.call<CatalogProduct[]>("GET", "/api/catalog/products"); }
   createProject(name: string) { return this.call<{ id: string }>("POST", "/api/projects", { name }); }
   deleteProject(id: string) { return this.call<unknown>("DELETE", `/api/projects/${id}`); }
-  connections() { return this.call<{ id: string; type: string; host: string; port: number }[]>("GET", "/api/connections"); }
+  version() { return this.call<{ version: string; commit: string; builtAt: string | null }>("GET", "/api/version"); }
+  connections() { return this.call<{ id: string; type: string; host: string; port: number; ipTransport?: string }[]>("GET", "/api/connections"); }
   attachConnection(pid: string, connectionId: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/connection`, { connectionId }); }
   placeDevice(pid: string, appRef: string, productRef: string, name: string) { return this.call<{ id: string; ia: string }>("POST", `/api/projects/${pid}/devices`, { appRef, productRef, name }); }
   setAddress(pid: string, did: string, ia: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/devices/${did}/address`, { ia }); }

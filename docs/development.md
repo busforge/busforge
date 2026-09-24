@@ -79,7 +79,8 @@ the project. This is the ground truth the flash paths are developed against. Rea
 writes to a device.
 
 ```bash
-bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> [--mode=all|params|tables]
+bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> [--mode=all|params|tables] \
+  [--configured-by=ets|busforge|unknown] [--prior-busforge-writes=none|some|unknown] [--via=busforge-bridge|direct]
 ```
 
 - `params`: for every device with an LSM4 parameter image, build our image, read the device, and
@@ -87,6 +88,11 @@ bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> 
 - `tables`: read every device's LSM1/2/3 group tables with a full, count-based read (no cap, not
   truncated). Writes `tables.json`.
 - `all` (default): both.
+
+Every parameter comparison is also written to `evidence.json` as an [evidence record](evidence-contract.md),
+with the device's firmware revision where it reports one. What a match proves depends on who wrote
+the device, which only you know: `--configured-by=ets --prior-busforge-writes=none` makes it
+reference evidence, `--configured-by=busforge` transfer evidence, and the default (`unknown`) neither.
 
 KNX Secure devices (descriptor `MV-FFFF`) are skipped, there is no plain access to them.
 
@@ -139,8 +145,11 @@ Holds busforge's built parameter image against what **ETS** actually wrote to a 
 for byte.
 
 ```bash
-bun run tools/etsdiff.ts <project.knxproj> <ets-capture.log> [--device=<index>] [--base=<n>]
+bun run tools/etsdiff.ts <project.knxproj> <ets-capture.log> [--device=<index>] [--base=<n>] [--evidence=<out.json>]
 ```
+
+`--evidence` writes the result as a reference [evidence record](evidence-contract.md) that points at
+the capture by path and SHA-256. Keep the capture: a comparison nobody can repeat does not count.
 
 This closes a gap nothing else can: busforge's own flash verifies that the device holds what we
 sent, which can never prove that what we sent is what ETS would have sent. For a union-heavy

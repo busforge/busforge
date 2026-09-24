@@ -57,7 +57,23 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(tun.sent.length).toBe(3);
   });
 
-  test("retransmission: an unACKed request is resent byte-identically (same seq) after the ACK timeout", async () => {
+  test("an optional property the device does not implement (count 0) reads as absent, not as a value", async () => {
+    for (const [answer, expected] of [[[0x43, 0xd6, 0x00, 0x09, 0x00, 0x01, 0x07], null], [[0x43, 0xd6, 0x00, 0x09, 0x10, 0x01, 0x12], "12"]] as const) {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.2.11");
+      tun.handler = (tpdu) => {
+        if (ignorable(tpdu)) return;
+        const p = parseApdu(tpdu);
+        if (p.apci !== APCI.PROPERTY_READ) return;
+        tun.reply([0xc2 | (p.seq << 2)]);
+        tun.reply([...answer]); // PROPERTY_RESPONSE seq 0: obj 00, pid 09, count<<4 in octet 4, then data
+      };
+      const v = await dev.propReadIfPresent(0, 9);
+      expect(v === null ? null : v.toString("hex")).toBe(expected);
+    }
+  });
+
+    test("retransmission: an unACKed request is resent byte-identically (same seq) after the ACK timeout", async () => {
     const tun = new FakeTransport();
     const dev = new KnxDevice(tun, "1.2.11");
     let reads = 0;

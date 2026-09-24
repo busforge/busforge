@@ -2,7 +2,10 @@
 // ETS byte-diff GATE: hold Busforge's built parameter image against what ETS actually wrote to a
 // real device, byte for byte.
 //
-//   bun run tools/etsdiff.ts <project.knxproj> <ets-capture.log> [--device=<index>] [--base=<n>]
+//   bun run tools/etsdiff.ts <project.knxproj> <ets-capture.log> [--device=<index>] [--base=<n>] [--evidence=<out.json>]
+//
+// --evidence writes the result as an evidence record pointing at the capture by path and hash; the
+// capture must be kept for the record to stay checkable (docs/evidence-contract.md).
 //
 // WHY THIS EXISTS. Busforge's own flash CRC-verifies device == our-image. That proves the device
 // faithfully holds what we sent; it can NEVER prove our-image == what ETS would have sent. For a
@@ -36,6 +39,7 @@
 import { loadKnxproj, readAppProgram, deviceParamValues } from "../packages/project/src/index.ts";
 import { readZip } from "../packages/project/src/zip.ts";
 import { parseAppConfig, resolveModuleInstances, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
+import { etsdiffEvidence, gitRevision, sha256 } from "./evidence.ts";
 
 const LSM_PARAM = 4;
 const args = process.argv.slice(2);
@@ -65,7 +69,8 @@ console.log(`  config: ${[...values].map(([k, v]) => k.split("_").slice(-2).join
 console.log(`  busforge target: ${target.bytes.length}B, ${target.owned.filter(Boolean).length} owned bytes, hasModules=${(cfg as { hasModules?: boolean }).hasModules} instances=${instances.length}`);
 
 // ---- ETS's captured extended-memory writes ----
-const text = await Bun.file(capturePath).text();
+const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());
+const text = new TextDecoder().decode(captureBytes);
 const writes: { addr: number; data: Buffer }[] = [];
 for (const line of text.split("\n")) {
   if (!line.includes("ETS->BRIDGE") || !line.includes("TUNNELLING_REQ")) continue;
@@ -121,6 +126,15 @@ for (const w of paramWrites) {
 console.log(`\n=== ${divs.length} of ${paramWrites.length} param-segment writes DIVERGE (busforge ≠ ETS) ===`);
 for (const v of divs) console.log(`  @0x${(v.addr + base).toString(16).padStart(4, "0")} (seg 0x${v.addr.toString(16)})  busforge=${v.bf}  ets=${v.ets}`);
 console.log(`\nsummary: ${divs.length} divergences / ${paramWrites.length} ETS param writes (base 0x${base.toString(16)}).`);
+const evidencePath = args.find((a) => a.startsWith("--evidence="))?.split("=")[1];
+if (evidencePath) {
+  const record = etsdiffEvidence(
+    { ia: d.ia, productRef: d.productRef, hardware2Program: d.appRef, mask: cfg.mask, divergent: divs.length, compared: paramWrites.length, outside: tableWrites.length, base, basePinned: !!baseArg },
+    { recordedAt: new Date().toISOString(), runnerRevision: gitRevision(), artifact: capturePath, sha256: sha256(captureBytes) },
+  );
+  await Bun.write(evidencePath, JSON.stringify([record], null, 2) + "\n");
+  console.log(`evidence: ${evidencePath}`);
+}
 console.log(divs.length === 0
   ? "PASS — busforge's image matches ETS at every configured byte."
   : "FAIL — busforge's image disagrees with ETS (see docs/verification.md). CRC-verify cannot catch this.");

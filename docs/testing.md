@@ -188,7 +188,18 @@ BUSFORGE_BENCH=1 bun run smoke <spec-id> --channel=api|ui [--seed=N]
 Omitting the spec id runs every spec. `--channel` selects one channel per invocation; a device
 counts as done only with both green, so it is run once per channel. `bun run smoke` implies
 `--report`, writing one JSON artifact per run under `tools/smoke/reports/` (git-ignored) with the
-spec, channel, seed, every verdict and the raw `FlashResult`s.
+spec, channel, seed, every verdict and the raw `FlashResult`s. Next to each report the run writes
+`<report>.evidence.json`: one [evidence record](evidence-contract.md) per observed capability,
+click-through and behaviour, naming the server build (read from `/api/version` before the first
+run), the runner revision, the spec revision (a hash of the spec), the transport and the device's
+firmware revision where it reports one (device object PID 9, read over the bench interface after
+the run). A run that stops before it reaches the device writes no device record, and the runner
+refuses to start when it cannot read the server's version. A failure inside a driver is recorded as
+a failure even when the harness caused it; a later record that supersedes it must say so.
+
+| Variable | Meaning |
+|---|---|
+| `BUSFORGE_BENCH_VIA` | `busforge-bridge` or `direct`: how the bench interface reaches the bus. Not detectable on the wire (the bridge's name is configurable), so without it records say `unknown` |
 
 The witness opens its own tunnel for group traffic only. An interface with a single tunnel channel
 (a typical KNX-USB stick behind the bridge) can serve it only between the server's bus operations,

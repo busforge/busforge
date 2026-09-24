@@ -22,6 +22,10 @@ import { verifyBehaviour, type BehaviourResult, type BehaviourCtx } from "./beha
 import { linkChan, type ChanCtx } from "./channel.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
+import { runEvidence } from "./evidence.ts";
+import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
+import { KnxIpTunnel, KnxDevice } from "../../packages/knx/src/index.ts";
+import type { Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
 // silently dropped. click-through is UI-only; provision is a lifecycle capability run every channel.
@@ -34,6 +38,19 @@ interface RunResult {
   behaviours: BehaviourResult[];
   refusals: { capability: string; state: "pass" | "fail"; detail: string }[];
   pid: string | null;
+  // The saved connection's KNXnet/IP transport ("udp", "tcp", "auto"), once the run found it.
+  ipTransport: string | null;
+  firmware: Firmware;
+}
+
+// Read the device's firmware revision over the bench interface, like the witness: only while the
+// server holds no bus operation, because the bench bridge has one tunnel channel.
+async function readBenchFirmware(host: string, ia: string): Promise<Firmware> {
+  const tun = KnxIpTunnel.tcp(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681));
+  await tun.connect();
+  const dev = new KnxDevice(tun, ia);
+  try { await dev.connect(); return await readFirmwareRevision(dev); }
+  finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
 }
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
@@ -63,6 +80,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
   let clickThrough: RunResult["clickThrough"] = { state: "not-applicable", detail: channel === "ui" ? "not run" : "no UI surface in the api channel" };
   let pid: string | null = null;
   let did: string | null = null;
+  let ipTransport: string | null = null;
+  let firmware: Firmware = { state: "unknown" };
   let ok = true;
 
   try {
@@ -77,6 +96,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     const conns = await client.connections();
     const conn = conns.find((c) => c.type === "ip" && c.host === host);
     if (!conn) throw new Stop("setup", `no saved IP connection for the interface ${host}`);
+    ipTransport = conn.ipTransport ?? null;
     const proj = await client.createProject(`smoke-${spec.id}-${channel}-${startedAt}`);
     pid = proj.id;
     await client.attachConnection(pid, conn.id);
@@ -160,6 +180,10 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       catch (e) { refusals.push({ capability: key, state: e instanceof ApiError ? "pass" : "fail", detail: e instanceof ApiError ? `refused: ${e.code}` : `unexpected error: ${e instanceof Error ? e.message : String(e)}` }); if (!(e instanceof ApiError)) ok = false; }
     }
 
+    // ── firmware: recorded when the device reports it, unknown otherwise ────────
+    firmware = await readBenchFirmware(host, spec.device.ia).catch((e): Firmware => { log(`firmware revision not read: ${e instanceof Error ? e.message : String(e)}`); return { state: "unknown" }; });
+    process.stdout.write(`  · firmware revision: ${firmware.state === "observed" ? firmware.value : "unknown"}\n`);
+
     // ── teardown (only a clean run tidies up; a failure keeps the project) ─────
     if (ok) { await client.deleteProject(pid); pid = null; }
   } catch (e) {
@@ -170,7 +194,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     await witness.close().catch(() => undefined);
     if (ui) await ui.close().catch(() => undefined);
   }
-  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid };
+  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid, ipTransport, firmware };
 }
 
 function report(r: RunResult): void {
@@ -191,6 +215,20 @@ function writeReport(r: RunResult, dir: string): string {
   return path;
 }
 
+// The evidence records of a run (docs/evidence-contract.md), next to its report and pointing at it
+// by path and hash.
+async function writeEvidence(r: RunResult, spec: DeviceSpec, reportPath: string, server: { version: string; commit: string }): Promise<string> {
+  const records = runEvidence(r, spec, {
+    server, runnerRevision: gitRevision(),
+    transport: transportOf(r.ipTransport ?? undefined, process.env.BUSFORGE_BENCH_VIA),
+    firmware: r.firmware,
+    source: { artifact: reportPath, sha256: sha256(new Uint8Array(await Bun.file(reportPath).arrayBuffer())) },
+  });
+  const path = reportPath.replace(/\.json$/, ".evidence.json");
+  writeFileSync(path, JSON.stringify(records, null, 2) + "\n");
+  return path;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const channelArg = args.find((a) => a.startsWith("--channel="))?.split("=")[1];
@@ -203,11 +241,21 @@ async function main() {
   const chosen = ids.length ? SPECS.filter((s) => ids.includes(s.id)) : SPECS;
   if (!chosen.length) { console.error(`no spec matched ${ids.join(",")}; known: ${SPECS.map((s) => s.id).join(", ")}`); process.exit(2); }
   let allOk = true;
+  // Read before any run: the build that executes the runs, not whatever is up once they are over.
+  // Without it no run's evidence could name its build, so the bench is not touched at all.
+  const server = reportDir ? await new Client().version().catch(() => null) : null;
+  if (reportDir && !server) { console.error("refused: the server's /api/version is not readable, so the run's evidence could not name the build"); process.exit(2); }
   for (const spec of chosen) {
     if (spec.channels && !spec.channels.includes(channel)) { console.log(`\n=== smoke: ${spec.id} [${channel}] — SKIP (spec channels: ${spec.channels.join(",")}) ===`); continue; }
     const r = await runSpec(spec, channel, seed);
     report(r);
-    if (reportDir) { try { console.log(`  report: ${writeReport(r, reportDir)}`); } catch (e) { console.error(`  report: could not be written (${e instanceof Error ? e.message : String(e)})`); } }
+    if (reportDir) {
+      try {
+        const reportPath = writeReport(r, reportDir);
+        console.log(`  report: ${reportPath}`);
+        console.log(`  evidence: ${await writeEvidence(r, spec, reportPath, server!)}`);
+      } catch (e) { console.error(`  report/evidence: could not be written (${e instanceof Error ? e.message : String(e)})`); allOk = false; }
+    }
     allOk &&= r.ok;
   }
   process.exit(allOk ? 0 : 1);

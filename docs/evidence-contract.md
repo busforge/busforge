@@ -232,4 +232,19 @@ the fixes carry no build, so they look like the same conditions and nine of its 
 read `conflict`; one Jung behaviour cell does too. One Jung capability changed from `pass` to
 `unsafe` and back because the spec itself was edited, which only a spec revision can distinguish
 from a device outcome. Historical records stay what they are.
-New runs have to record their conditions, which is tracked on the [roadmap](roadmap.md).
+New runs record them: the smoke runner writes `<report>.evidence.json`, `tools/readback.ts` writes
+`evidence.json` and `tools/etsdiff.ts` takes `--evidence` ([testing.md](testing.md),
+[development.md](development.md)).
+
+Smoke records claim transfer and behaviour only. Persistence is not claimed from a smoke run:
+whether a write path restarts the device, and whether the device must prove the reboot, depends on
+its declared load procedure and firmware. A behaviour observed on addresses a full download
+committed counts only when that download ran in the same run.
+
+### Firmware
+
+Firmware is read from the device object's `PID_FIRMWARE_REVISION` (object 0, PID 9), a single byte
+that is optional. On 2026-09-24 an MDT BE-06001 answered `0` and a MEAN WELL power supply did not
+implement it (it answered PID 25, `PID_VERSION`, which versions the interface object and is not read
+as firmware). A device without PID 9 keeps `firmware: unknown`. A revision of `0` is recorded as observed, but
+may be a placeholder the manufacturer never maintains; it tells two units apart only when it differs.

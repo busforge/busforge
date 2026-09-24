@@ -45,12 +45,10 @@ started until the capability it depends on is hardware-proven.
   only a hint in the compatibility matrix ([evidence-contract.md](evidence-contract.md)). Counting
   it as tested needs a reason to believe the variants share electronics and firmware, which the
   catalog alone does not give.
-- **Let every run record its conditions as evidence records.** No smoke report, read-back or
-  ETS diff states the server build, the runner and spec revision, the transport or the firmware,
-  so evidence from before and after a fix cannot be told apart and the historical GVS cells read
-  `conflict` ([evidence-contract.md](evidence-contract.md)). The smoke runner, `tools/readback.ts`
-  and `tools/etsdiff.ts` should emit `busforge.evidence/1` records with those fields, and read the
-  firmware revision where a device exposes one.
+- **Record persistence evidence.** No run claims persistence yet: the smoke runner cannot tell
+  whether a write path restarted the device and the device proved the reboot. A dedicated step
+  (restart or bus power cycle, then a read-back or behaviour check) has to write that axis before
+  owned Products can meet the acceptance in [evidence-contract.md](evidence-contract.md).
 - **Turn the ETS-capture diff into a live read-back gate.** Today `our image == ETS` can only be
   checked where a captured ETS download exists. Diffing our built image against the device itself,
   resolving the device-assigned segment base from the device, would catch that class of bug

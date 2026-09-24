@@ -4,6 +4,7 @@
 // develop and regression-test the flash paths against ground truth.
 //
 //   bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> [--mode=all|params|tables]
+//        [--configured-by=ets|busforge|unknown] [--prior-busforge-writes=none|some|unknown] [--via=busforge-bridge|direct]
 //
 //   bun run tools/readback.ts ~/house.knxproj '<password>' 198.51.100.10 ./out
 //   bun run tools/readback.ts ~/house.knxproj '' 198.51.100.10 ./out --mode=tables
@@ -11,15 +12,38 @@
 // WARNING: the OUTPUT is real device memory (parameter images and group-address
 // tables, i.e. your installation). Write it to a gitignored location and never
 // commit it. The tool drops a DO-NOT-COMMIT marker in the output directory.
+//
+// Each parameter comparison is also written as an evidence record (evidence.json). Who wrote the
+// devices decides what a match proves, and only the operator knows it: without --configured-by and
+// --prior-busforge-writes the records claim neither transfer nor reference.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../packages/project/src/zip.ts";
 import { loadKnxproj, readAppProgram, deriveWinzipPassword, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
 import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
+import type { EvidenceRecord, Firmware } from "../packages/product/src/index.ts";
+import { readbackEvidence, readFirmwareRevision, gitRevision, sha256, transportOf, type DeclaredOrigin, type ImageComparison } from "./evidence.ts";
 
 const [projPath, password, ip, outDir] = process.argv.slice(2);
 const mode = (process.argv.find((a) => a.startsWith("--mode=")) ?? "--mode=all").split("=")[1];
+const flag = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
+const oneOf = <T extends string>(name: string, allowed: readonly T[]): T => {
+  const v = flag(name) ?? "unknown";
+  if (!allowed.includes(v as T)) { console.error(`--${name} must be one of ${allowed.join(", ")}`); process.exit(2); }
+  return v as T;
+};
+const origin: DeclaredOrigin = {
+  configuredBy: oneOf("configured-by", ["ets", "busforge", "unknown"] as const),
+  priorBusforgeWrites: oneOf("prior-busforge-writes", ["none", "some", "unknown"] as const),
+};
+if (origin.configuredBy === "busforge" && origin.priorBusforgeWrites === "none") {
+  console.error("--configured-by=busforge contradicts --prior-busforge-writes=none"); process.exit(2);
+}
+let transport: ReturnType<typeof transportOf>;
+try { transport = transportOf("udp", flag("via")); } // KnxIpTunnel below is a UDP tunnel
+catch { console.error("--via must be busforge-bridge or direct"); process.exit(2); }
+const runnerRevision = gitRevision();
 const PER_DEVICE_TIMEOUT_MS = 180_000;
 const LSM_PARAM = 4;
 if (!projPath || ip === undefined || !outDir) {
@@ -71,6 +95,7 @@ const tun = new KnxIpTunnel(ip);
 await tun.connect();
 console.log(`tunnel ${ip} up; ${proj.devices.length} devices, mode=${mode}`);
 const params: any[] = [], tables: any[] = [];
+const evidence: EvidenceRecord[] = [];
 
 for (const d of proj.devices) {
   const app = appProgramId(d.appRef);
@@ -79,6 +104,7 @@ for (const d of proj.devices) {
     await withTimeout((async () => {
       await dev.connect();
       const mask = await dev.deviceDescriptor();
+      let comparison: (Omit<ImageComparison, "firmware"> & { artifact: string; sha256: string }) | null = null;
       if (mask === "MV-FFFF") { console.log(`${d.ia} ${mask} SECURE (skipped)`); return; }
 
       if (mode === "params" || mode === "all") {
@@ -92,6 +118,7 @@ for (const d of proj.devices) {
           writeFileSync(join(outDir, `${slug}.built.bin`), built);
           writeFileSync(join(outDir, `${slug}.device.bin`), onDevice);
           let diff = 0; for (let i = 0; i < Math.min(built.length, onDevice.length); i++) if (built[i] !== onDevice[i]) diff++;
+          comparison = { ia: d.ia, productRef: d.productRef, hardware2Program: d.appRef, mask, match: built.equals(onDevice), diffBytes: diff, length: built.length, artifact: join(outDir, `${slug}.device.bin`), sha256: sha256(onDevice) };
           const unmapped = [...values.keys()].filter((k) => !model.refs.has(k)).length;
           params.push({ ia: d.ia, app, len: built.length, deviceLen: onDevice.length, match: built.equals(onDevice), diffBytes: diff, unmappedRefs: unmapped });
           console.log(`${d.ia} ${mask} param ${built.equals(onDevice) ? "BYTE-MATCH" : `diff ${diff}/${built.length}`}${unmapped ? ` (module +${unmapped})` : ""}`);
@@ -101,6 +128,13 @@ for (const d of proj.devices) {
         const t = await readTablesFull(dev);
         tables.push({ ia: d.ia, app, mask, ...t });
         console.log(`${d.ia} ${mask} tables L1/L2/L3 read (full)`);
+      }
+      // Last on the link: a property the device does not answer times out without advancing the
+      // transport sequence, and nothing may follow it on the same connection.
+      if (comparison) {
+        const { artifact, sha256: hash, ...c } = comparison;
+        const firmware = await readFirmwareRevision(dev).catch((e): Firmware => { console.log(`${d.ia} firmware revision not read: ${(e as Error).message}`); return { state: "unknown" }; });
+        evidence.push(readbackEvidence({ ...c, firmware }, origin, { recordedAt: new Date().toISOString(), runnerRevision, transport, artifact, sha256: hash }));
       }
     })());
   } catch (e) {
@@ -113,6 +147,7 @@ for (const d of proj.devices) {
 await tun.disconnect();
 
 if (params.length) writeFileSync(join(outDir, "params.json"), JSON.stringify(params, null, 2));
+if (evidence.length) writeFileSync(join(outDir, "evidence.json"), JSON.stringify(evidence, null, 2) + "\n");
 if (tables.length) writeFileSync(join(outDir, "tables.json"), JSON.stringify({ note: "full count-based read, not truncated", capturedAt: new Date().toISOString().slice(0, 10), devices: tables }, null, 2));
 console.log(`done. params: ${params.length}, tables: ${tables.length}. output in ${outDir} (do not commit).`);
 process.exit(0);

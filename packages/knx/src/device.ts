@@ -193,6 +193,13 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
+  // An optional property: the device answers a property it does not implement with element count 0
+  // (and possibly an error byte), which propRead would return as if it were a value. Null here.
+  async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {
+    const tail = Buffer.from([obj, pid, 1 << 4, 1]);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
+    return r!.data.length < 4 || r!.data[2] >> 4 === 0 ? null : r!.data.subarray(4);
+  }
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended (a device that
     // allocates a segment there answers only that service). Classic path stays byte-identical below.
