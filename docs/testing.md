@@ -27,7 +27,7 @@ bun run check      # typecheck + lint + tests + build, across every workspace
 ```
 
 The MV-0705 group-address route guard test injects a coded failure at tunnel connection
-and asserts that exact API error. It opens no network connection: a closed local TCP port
+and asserts that exact error on the submitted task. It opens no network connection: a closed local TCP port
 is not a deterministic failure because automatic transport selection falls back to UDP.
 
 The hardware smoke framework is deliberately **not** part of `bun run check`. It needs a KNX

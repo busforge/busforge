@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, Rocket, Tag, Usb, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Ban, CheckCircle2, Clock, Cpu, Download, Loader2, Network, Plug, PlugZap, Rocket, Tag, Usb, X } from "lucide-react";
 import { toast } from "sonner";
 import type { BusStatus, ConnectionType, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
@@ -39,6 +39,8 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   const active = tasks.filter((x) => x.state === "running" || x.state === "queued");
   const running = tasks.find((x) => x.state === "running");
   const queued = active.filter((x) => x.state === "queued").length;
+  // A write the server was stopped in: the device's state is unknown, which must not hide in a popover.
+  const interruptedWrite = tasks.some((x) => x.state === "interrupted" && x.writes);
 
   return (
     <Popover>
@@ -61,6 +63,7 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
             <>
               <StatusDot status={status} />
               <span className="font-mono uppercase tracking-wider">{t(`status.${status}`)}</span>
+              {interruptedWrite && <AlertTriangle className="size-3.5 shrink-0 text-destructive" aria-label={t("task.interruptedWrite")} data-testid="task-interrupted-write" />}
             </>
           )}
           {queued > 0 && <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">+{queued}</span>}
@@ -198,8 +201,9 @@ function TaskRow({ task, t, onCancel, canceling }: { task: Task; t: (k: string, 
           {task.state === "done" && <CheckCircle2 className="size-3.5 text-ok" />}
           {task.state === "error" && <AlertCircle className="size-3.5 text-destructive" />}
           {task.state === "cancelled" && <Ban className="size-3.5 text-muted-foreground" />}
+          {task.state === "interrupted" && <AlertTriangle className={cn("size-3.5", task.writes ? "text-destructive" : "text-muted-foreground")} />}
           {onCancel && (
-            <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" title={t("task.cancel")} disabled={canceling} onClick={onCancel}>
+            <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" title={t(task.state === "running" ? "task.cancelRead" : "task.cancel")} disabled={canceling} onClick={onCancel}>
               <X className="size-3.5" />
             </Button>
           )}
@@ -214,11 +218,12 @@ function TaskRow({ task, t, onCancel, canceling }: { task: Task; t: (k: string, 
             <span>{phaseLabel}</span>
             {p !== null && <span className="tabular-nums">{task.done}/{task.total}</span>}
           </div>
+          {task.writes && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.writeNotCancellable")}</div>}
         </div>
       )}
       {task.state === "queued" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.queued")}</div>}
-      {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.cancelled")}</div>}
-      {task.state === "error" && (() => { const msg = localizeError(t, task.errorCode, task.error); return <div className="mt-0.5 truncate text-[10px] text-destructive" title={msg}>{msg}</div>; })()}
+      {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{task.errorCode ? localizeError(t, task.errorCode, task.error) : t("task.cancelled")}</div>}
+      {(task.state === "error" || task.state === "interrupted") && (() => { const msg = localizeError(t, task.errorCode, task.error); return <div className="mt-0.5 truncate text-[10px] text-destructive" title={msg}>{msg}</div>; })()}
     </div>
   );
 }

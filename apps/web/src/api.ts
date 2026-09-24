@@ -69,12 +69,15 @@ export interface GaComObj {
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
 
 export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
-export type TaskState = "queued" | "running" | "done" | "error" | "cancelled";
+export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;
-  kind: TaskKind; state: TaskState; phase: string | null; done: number; total: number;
-  error: string | null; errorCode: string | null; queuedAt: number; startedAt: number | null; finishedAt: number | null;
+  // writes: the task changes the device (a real flash, download or address assignment).
+  kind: TaskKind; writes: boolean; snapshotId: string | null; state: TaskState; phase: string | null; done: number; total: number;
+  error: string | null; errorCode: string | null; result: unknown; baselineCommitted: boolean;
+  queuedAt: number; startedAt: number | null; finishedAt: number | null;
 }
+export const taskActive = (t: Task) => t.state === "queued" || t.state === "running";
 
 export type SnapshotKind = "manual" | "auto";
 export type SnapshotReason = "manual" | "before-flash" | "before-flash-ga" | "before-download" | "before-restore" | "before-ga-edit" | "before-space-edit";
@@ -95,6 +98,32 @@ export class ApiError extends Error {
   }
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// A real write is answered with its queued task (202), not its result: the job runs on in the
+// server whether or not this page is still open. Poll the task until it finishes and hand back the
+// operation's result. An unverified write is a result too (the caller shows it as the failure it
+// is); every other unsuccessful end is thrown with its code.
+export async function awaitTask<T>(projectId: string, submitted: Promise<Task>, onTask?: (t: Task) => void, pollMs = 1000): Promise<T> {
+  let task = await submitted;
+  onTask?.(task);
+  let misses = 0;
+  while (taskActive(task)) {
+    await sleep(pollMs);
+    try {
+      task = await jsonOrThrow<Task>(await fetch(`/api/projects/${projectId}/tasks/${encodeURIComponent(task.id)}`));
+      misses = 0;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "TASK_NOT_FOUND") throw e;
+      // The server is unreachable or failing (a proxy's 502 during a restart), which says nothing
+      // about the job: it may still be running.
+      if (++misses >= 60) throw new ApiError("lost contact with the server; the operation may still be running, see the bus queue", "TASK_CONTACT_LOST");
+    }
+  }
+  if (task.state === "done" || (task.errorCode === "FLASH_UNVERIFIED" && task.result)) return task.result as T;
+  throw new ApiError(task.error ?? `task ${task.state}`, task.errorCode ?? `TASK_${task.state.toUpperCase()}`);
+}
+
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -106,6 +135,13 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
     throw new ApiError(typeof e === "string" ? e : `HTTP ${res.status}`);
   }
   return body as T;
+}
+
+// A dry run answers with its preview directly; a real write answers with its task, awaited here.
+// `onTask` learns the submitted write's task, so a caller can tell its own job from someone else's.
+function programDevice(id: string, deviceId: string, route: "flash" | "flash-ga" | "download", dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> {
+  const res = fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/${route}${dry ? "?dry=1" : ""}`, { method: "POST" });
+  return dry ? res.then((r) => jsonOrThrow<FlashResult>(r)) : awaitTask<FlashResult>(id, res.then((r) => jsonOrThrow<Task>(r)), onTask);
 }
 
 export const api = {
@@ -241,11 +277,10 @@ export const api = {
     fetch(`/api/projects/${id}/prog-mode`).then((r) => jsonOrThrow<{ devices: string[] }>(r)).then((r) => r.devices),
   // Write the device's project address into the physical device in programming mode.
   assignIa: (id: string, deviceId: string): Promise<AssignIaResult> =>
-    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/assign-ia`, { method: "POST" }).then((r) => jsonOrThrow<AssignIaResult>(r)),
+    awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/assign-ia`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r))),
   // Commission the device from nothing: application id + parameter image +
   // com-object table + group tables in one bracket (dry=true only previews).
-  downloadDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
-    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/download${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
+  downloadDevice: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "download", dry, onTask),
   // The COMPLETE com-object universe of a catalog application program.
   appComObjects: (appProgramId: string, lang?: string): Promise<AppComObject[]> =>
     fetch(`/api/catalog/apps/${encodeURIComponent(appProgramId)}/comobjects${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<AppComObject[]>(r)),
@@ -257,10 +292,8 @@ export const api = {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, mapping, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
-  flashDevice: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
-    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
-  flashDeviceGa: (id: string, deviceId: string, dry: boolean): Promise<FlashResult> =>
-    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/flash-ga${dry ? "?dry=1" : ""}`, { method: "POST" }).then((r) => jsonOrThrow<FlashResult>(r)),
+  flashDevice: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "flash", dry, onTask),
+  flashDeviceGa: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "flash-ga", dry, onTask),
   setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[], lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/links`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang }),

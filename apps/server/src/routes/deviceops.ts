@@ -2,12 +2,13 @@ import { parseAppConfig, comObjectTableChanges, type AppConfig, type ModuleInsta
 import { getProjectConnection } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
-import { createSnapshot } from "../db/snapshots.ts";
+import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
+import type { CommitFn, ProgressFn, TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -30,7 +31,7 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // and a replaced/deleted target must never inherit success from its predecessor.
 async function programSubmission(
   state: AppState, projectId: string, deviceId: string, programmingToken: string, dry: boolean,
-  run: () => Promise<FlashResult>, adopt: () => void,
+  run: () => Promise<FlashResult>, commit: CommitFn, adopt: () => void,
 ): Promise<FlashResult> {
   const assertTarget = () => {
     if (getDeviceForFlash(state.db, projectId, deviceId)?.programmingToken !== programmingToken) {
@@ -40,8 +41,27 @@ async function programSubmission(
   assertTarget();
   const result = await run();
   assertTarget();
-  if (!dry && result.kind === "flashed" && result.verified) state.db.transaction(adopt)();
+  // The commit is the job's last step: a restart that finds it recorded closes the task as done.
+  if (!dry && result.kind === "flashed" && result.verified) commit(result, adopt);
   return result;
+}
+
+// A real write answers 202 with its task as soon as it is queued: a download runs for minutes,
+// longer than an HTTP request can be trusted to stay open, and its outcome must not depend on the
+// client still listening. The client polls GET .../tasks/:taskId for the result. A dry run is a
+// read-only preview the dialog waits for, so it stays a plain request.
+async function programOrPreview(
+  state: AppState, meta: Omit<TaskMeta, "writes">, dry: boolean, reason: "before-flash" | "before-flash-ga" | "before-download",
+  run: (progress: ProgressFn, commit: CommitFn) => Promise<FlashResult>,
+): Promise<Response> {
+  if (dry) return json(await state.queue.enqueue({ ...meta, writes: false }, (progress, _signal, commit) => run(progress, commit)));
+  state.queue.refuseConcurrentWrite(meta.projectId, meta.deviceId);
+  // Auto restore point of the about-to-be-programmed config. When it would duplicate the latest
+  // snapshot none is stored, and that latest one holds exactly the submitted configuration.
+  const snapshot = createSnapshot(state.db, meta.projectId, { kind: "auto", reason }, state.now())
+    ?? listSnapshots(state.db, meta.projectId)[0] ?? null;
+  const task = state.queue.submit({ ...meta, writes: true, snapshotId: snapshot?.id ?? null }, (progress, _signal, commit) => run(progress, commit));
+  return json(task, 202);
 }
 
 // A parameter or link change that would alter the device's com-object table (L3) cannot be a
@@ -80,7 +100,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const devices = await state.queue.enqueue(
-      { projectId: id, deviceId: "-", deviceName: "programming mode", ia: "-", kind: "read" },
+      { projectId: id, deviceId: "-", deviceName: "programming mode", ia: "-", kind: "read", writes: false },
       async () => {
         return readDevicesInProgMode(conn);
       },
@@ -102,13 +122,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
-    const result = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia" },
+    const task = state.queue.submit(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
         return assignDeviceAddress(conn, dev.ia, progress);
       },
     );
-    return json(result);
+    return json(task, 202);
   }
 
   // /api/projects/:id/devices/:deviceId/read-back  -> read the device's current
@@ -130,7 +150,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // what the UI shows; keeps module devices from flagging flat-model refs).
     const relevantRefs = deviceParamRefs(state, id, deviceId);
     const rb = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress, signal) => {
         return readDeviceState({
           ia: dev.ia, appXml,
@@ -168,7 +188,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const result = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read" },
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress) => {
         return secureIdentify(conn, dev.ia, sec.toolKey, sec.serialNumber, progress);
       },
@@ -206,20 +226,17 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // a surgical GA flash cannot fix it: promote to a full download (or refuse). Pre-enqueue.
     const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules);
     if (gaStale) return gaStale;
-    // Auto restore point of the about-to-be-programmed config (real flash only).
-    if (!dryGa) createSnapshot(db, id, { kind: "auto", reason: "before-flash-ga" }, state.now());
-    const result = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" },
-      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => flashDeviceGroupAddresses({
+    return programOrPreview(state,
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" }, dryGa, "before-flash-ga",
+      (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
           connection: conn, secure, dataDir: state.dataDir,
           dryRun: dryGa, onProgress: progress,
-        }), () => {
+        }), commit, () => {
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
       }),
     );
-    return json(result);
   }
 
   // /api/projects/:id/devices/:deviceId/download  -> COMMISSION the device from nothing:
@@ -242,20 +259,18 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const dlModules = getDeviceModules(db, id, deviceId);
     const dryDl = url.searchParams.get("dry") === "1";
     const secure = secureCredsFor(state, id, deviceId);
-    if (!dryDl) createSnapshot(db, id, { kind: "auto", reason: "before-download" }, state.now());
-    const result = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" },
-      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
+    return programOrPreview(state,
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" }, dryDl, "before-download",
+      (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, secure, dataDir: state.dataDir,
           params: dlParams, links: resolved.links, moduleInstances: dlModules,
           dryRun: dryDl, onProgress: progress,
-        }), () => {
+        }), commit, () => {
         resetParamBase(db, id, deviceId, dlParams, unwrittenParamRefs(state, id, deviceId, dlParams, dlModules));
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
       }),
     );
-    return json(result);
   }
 
   // /api/projects/:id/devices/:deviceId/flash?dry=1  -> program the parameter segment
@@ -285,20 +300,17 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
     const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules);
     if (flStale) return flStale;
-    // Auto restore point of the about-to-be-programmed config (real flash only).
-    if (!dryParams) createSnapshot(db, id, { kind: "auto", reason: "before-flash" }, state.now());
-    const result = await state.queue.enqueue(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" },
-      (progress) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => flashDeviceParameters({
+    return programOrPreview(state,
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" }, dryParams, "before-flash",
+      (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => flashDeviceParameters({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, secure,
           params: flashParams, baseParams: flashBase, moduleInstances: flashModules, dataDir: state.dataDir,
           dryRun: dryParams, onProgress: progress,
-        }), () => {
+        }), commit, () => {
         resetParamBase(db, id, deviceId, flashParams, unwrittenParamRefs(state, id, deviceId, flashParams, flashModules));
       }),
     );
-    return json(result);
   }
 
   // /api/projects/:id/tasks  -> the device's queued/running/recent bus operations
@@ -306,11 +318,25 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(state.queue.list(id));
   }
 
+  // /api/projects/:id/tasks/:taskId  -> one task, however long ago it finished: how a client
+  // that submitted a write collects its outcome, including after a reload or a server restart
+  if (seg.length === 5 && seg[3] === "tasks" && req.method === "GET") {
+    const task = state.queue.get(decodeURIComponent(seg[4]));
+    if (!task || task.projectId !== id) return err("TASK_NOT_FOUND", "task not found", 404);
+    return json(task);
+  }
+
   // /api/projects/:id/tasks/:taskId/cancel  -> cancel a queued (or running read) task
   if (seg.length === 6 && seg[3] === "tasks" && seg[5] === "cancel" && req.method === "POST") {
-    const cancelled = state.queue.cancel(decodeURIComponent(seg[4]));
-    if (!cancelled) return err("TASK_NOT_CANCELLABLE", "task cannot be cancelled", 409);
-    return json({ cancelled });
+    const task = state.queue.get(decodeURIComponent(seg[4]));
+    if (!task || task.projectId !== id) return err("TASK_NOT_FOUND", "task not found", 404);
+    const cancelled = state.queue.cancel(task.id);
+    if (cancelled) return json({ cancelled });
+    if (task.state === "running" && task.writes) {
+      return err("TASK_WRITE_NOT_CANCELLABLE", "a running write cannot be cancelled: stopping it mid-write can leave the device reset; wait for its result", 409);
+    }
+    if (task.state === "running") return err("TASK_NOT_CANCELLABLE", "this running task cannot be interrupted; it writes nothing, wait for its result", 409);
+    return err("TASK_ALREADY_FINISHED", "task has already finished", 409);
   }
 
   // /api/projects/:id/bus/{connect,disconnect,status}

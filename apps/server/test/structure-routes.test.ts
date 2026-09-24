@@ -395,10 +395,10 @@ describe("non-string text fields", () => {
 });
 
 describe("task cancel route", () => {
-  test("cancelling an unknown task -> 409 TASK_NOT_CANCELLABLE", async () => {
+  test("cancelling an unknown task -> 404 TASK_NOT_FOUND", async () => {
     const { state, projectId } = await importConfig();
     const res = (await handleApi(req(`/api/projects/${projectId}/tasks/ghost/cancel`, { method: "POST" }), state))!;
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as any).error.code).toBe("TASK_NOT_CANCELLABLE");
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as any).error.code).toBe("TASK_NOT_FOUND");
   });
 });

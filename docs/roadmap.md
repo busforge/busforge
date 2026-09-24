@@ -32,6 +32,11 @@ started until the capability it depends on is hardware-proven.
   refuses `tcp` outright (`TUNNEL_ACK_TIMEOUT`), so transport cannot simply be pinned. Suspect the
   client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
   disconnect race but not this path.
+- **Drain an active write before a normal shutdown.** A signal ends the server at once, so a
+  container replacement mid-download leaves the device in an unknown state (the task is reported
+  `interrupted` on the next start, never replayed). Stop admission, cancel waiting jobs, finish the
+  active write and its baseline commit, then close transports, with a container stop grace period
+  that covers a full download.
 
 ## Verification
 

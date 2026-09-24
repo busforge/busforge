@@ -9,6 +9,7 @@ import { countSealedToolKeys } from "./db/deviceSecurity.ts";
 import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
+import { SqliteTaskStore, closeUnfinishedTasks } from "./db/tasks.ts";
 import { getMasterKey } from "./secrets.ts";
 import { json, err } from "./httputil.ts";
 import * as catalogRoutes from "./routes/catalog.ts";
@@ -59,7 +60,9 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
     throw new Error("device_security holds sealed tool keys but no master key is available; set BUSFORGE_MASTER_KEY or restore the master.key file, refusing to auto-generate a key that cannot open them");
   }
   const masterKey = getMasterKey(dataDir);
-  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue: new TaskQueue(now, (run) => bus.withExclusiveOperation(run)) };
+  closeUnfinishedTasks(db, now());
+  const queue = new TaskQueue(now, (run) => bus.withExclusiveOperation(run), new SqliteTaskStore(db));
+  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue };
 }
 
 // The /api/projects/* route modules, dispatched in order. Their route patterns are

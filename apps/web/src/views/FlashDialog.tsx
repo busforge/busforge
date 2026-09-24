@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, type Device, type FlashResult } from "../api.ts";
+import { api, ApiError, taskActive, type Device, type FlashResult, type Task } from "../api.ts";
+import { useTasks } from "../queries.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -12,8 +13,8 @@ import { errMsg } from "../lib/apiError.ts";
 export type FlashTarget = "params" | "ga";
 const runDry = (t: FlashTarget, projectId: string, deviceId: string) =>
   (t === "ga" ? api.flashDeviceGa : api.flashDevice)(projectId, deviceId, true);
-const runFlash = (t: FlashTarget, projectId: string, deviceId: string) =>
-  (t === "ga" ? api.flashDeviceGa : api.flashDevice)(projectId, deviceId, false);
+const runFlash = (t: FlashTarget, projectId: string, deviceId: string, onTask: (task: Task) => void) =>
+  (t === "ga" ? api.flashDeviceGa : api.flashDevice)(projectId, deviceId, false, onTask);
 
 // One preview/write status, reused for each flash target and for the full-download sub-flow
 // (same states: checking a dry-run, previewed, writing, done, or errored).
@@ -40,6 +41,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // unlike CommissionDialog), because the device is already commissioned. null until the CTA is taken.
   const [dl, setDl] = useState<Part | null>(null);
   const busyRef = useRef(false); // guards against a same-tick double click
+  // The writes this dialog submitted, to tell them apart from a write someone else is running.
+  const ownTasks = useRef(new Set<string>());
+  const own = (task: Task) => { ownTasks.current.add(task.id); };
   const deviceLabel = device.name || device.ia;
   const setPart = (target: FlashTarget, patch: Partial<Part>) =>
     setParts((p) => ({ ...p, [target]: { ...(p[target] ?? freshPart()), ...patch } }));
@@ -64,11 +68,25 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, device.id, targets.join(",")]);
 
-  useEffect(() => { if (open) check(); }, [open, check]);
-
   const list = targets.map((tg) => ({ tg, p: parts[tg] ?? freshPart() }));
   const anyChecking = list.some((x) => x.p.checking);
   const anyFlashing = list.some((x) => x.p.flashing);
+  const dlBusy = !!dl && (dl.checking || dl.flashing);
+
+  // A write to this device that this dialog did not start (a reload lost track of it, or another
+  // client runs it). The server refuses a second write meanwhile; the preview waits until it has
+  // finished, because only then does it describe the device as it will be.
+  const { data: tasks } = useTasks(projectId);
+  const foreignWrite = open && !anyFlashing && !dlBusy
+    ? tasks?.find((x) => x.deviceId === device.id && x.writes && taskActive(x) && !ownTasks.current.has(x.id))
+    : undefined;
+  const tasksLoaded = tasks !== undefined;
+  const blocked = !!foreignWrite;
+  // A result already on screen stays there: a later foreign write must not replace it with a preview.
+  const hasResult = useRef(false);
+  hasResult.current = list.some((x) => x.p.done) || !!dl?.done;
+  useEffect(() => { if (open && tasksLoaded && !blocked && !hasResult.current) check(); }, [open, check, tasksLoaded, blocked]);
+
   const anyDone = list.some((x) => x.p.done);
   // Only targets that actually differ get written; an in-sync target is skipped.
   const toFlash = list.filter((x) => x.p.dry?.kind === "dryRun" && !x.p.done);
@@ -80,7 +98,6 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // A surgical flash refused because the change rewrites the com-object table: the backend says a
   // full download is the way to apply it (only offered where the family can commission).
   const needsDownload = list.some((x) => x.p.error instanceof ApiError && x.p.error.code === "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
-  const dlBusy = !!dl && (dl.checking || dl.flashing);
 
   async function flash() {
     if (busyRef.current) return;
@@ -89,7 +106,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     try {
       for (const { tg } of toFlash) {
         setPart(tg, { flashing: true, error: null });
-        try { const r = await runFlash(tg, projectId, device.id); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; }
+        try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; }
         catch (e) { setPart(tg, { error: e, flashing: false }); }
       }
     } finally {
@@ -113,7 +130,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (busyRef.current) return;
     busyRef.current = true;
     setDl((d) => ({ ...(d ?? freshPart()), flashing: true, error: null }));
-    api.downloadDevice(projectId, device.id, false)
+    api.downloadDevice(projectId, device.id, false, own)
       .then((done) => { setDl((d) => ({ ...(d ?? freshPart()), flashing: false, done })); if (done.kind === "flashed" && done.verified) onFlashed?.(); })
       .catch((e) => setDl((d) => ({ ...(d ?? freshPart()), flashing: false, error: e })))
       .finally(() => { busyRef.current = false; });
@@ -168,6 +185,12 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
         {/* One consistent layout for any scope: a labelled row per target it covers, whether
             that is configuration, group addresses, or both. */}
         <div className="space-y-2 rounded-md border border-border bg-secondary/30 px-3 py-2 text-sm">
+          {foreignWrite && (
+            <p className="flex items-center gap-2 text-primary" data-testid="flash-foreign-write">
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              {t("flash.foreignWrite", { kind: t(`task.kind.${foreignWrite.kind}`), phase: foreignWrite.phase ? t(`task.phase.${foreignWrite.phase}`) : t("task.queued") })}
+            </p>
+          )}
           {list.map(({ tg, p }) => (
             <div key={tg} className="flex flex-col gap-0.5">
               <span className="text-xs font-medium text-muted-foreground">{partName(tg)}</span>

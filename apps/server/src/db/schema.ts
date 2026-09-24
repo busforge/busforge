@@ -323,6 +323,33 @@ const MIGRATIONS: string[] = [
     WHERE project_id = NEW.project_id AND instance_id = NEW.instance_id;
   END;
   `,
+  // Bus-operation tasks, so a submitted job's outcome outlives the request that submitted it and
+  // the process that ran it. Deliberately no foreign keys: the record of what was written to a
+  // device outlives the device's (or the project's) deletion, for the task retention period.
+  `
+  CREATE TABLE tasks (
+    id                 TEXT PRIMARY KEY,
+    project_id         TEXT NOT NULL,
+    device_id          TEXT NOT NULL,
+    device_name        TEXT NOT NULL,
+    ia                 TEXT NOT NULL,
+    kind               TEXT NOT NULL,
+    writes             INTEGER NOT NULL,
+    snapshot_id        TEXT,
+    state              TEXT NOT NULL,
+    phase              TEXT,
+    done               INTEGER NOT NULL,
+    total              INTEGER NOT NULL,
+    error              TEXT,
+    error_code         TEXT,
+    result             TEXT,
+    baseline_committed INTEGER NOT NULL,
+    queued_at          INTEGER NOT NULL,
+    started_at         INTEGER,
+    finished_at        INTEGER
+  );
+  CREATE INDEX idx_tasks_project ON tasks(project_id, finished_at);
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { inspect } from "node:util";
 import { createState, handleApi } from "./app.ts";
 import { pruneTelegrams } from "./db/telegrams.ts";
+import { pruneTasks } from "./db/tasks.ts";
 import type { ServerWebSocket } from "bun";
 
 // A process that drives real hardware must never disappear without saying why. A download that
@@ -82,8 +83,8 @@ const server = Bun.serve<WsData>({
   },
 });
 
-// Telegram retention: prune on startup and hourly.
-const prune = () => pruneTelegrams(state.db, Date.now() - RETENTION_MS);
+// Telegram and task retention: prune on startup and hourly.
+const prune = () => { pruneTelegrams(state.db, Date.now() - RETENTION_MS); pruneTasks(state.db, Date.now() - RETENTION_MS); };
 prune();
 setInterval(prune, 60 * 60 * 1000);
 

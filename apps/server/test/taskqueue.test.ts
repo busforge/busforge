@@ -1,8 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { TaskQueue } from "../src/taskqueue.ts";
+import { MemoryTaskStore, TaskQueue } from "../src/taskqueue.ts";
 import { ApiError } from "../src/errors.ts";
+import { openDb } from "../src/db/schema.ts";
+import { SqliteTaskStore, closeUnfinishedTasks } from "../src/db/tasks.ts";
 
-const meta = (deviceId: string) => ({ projectId: "p1", deviceId, deviceName: deviceId, ia: "1.1.1", kind: "read" as const });
+const meta = (deviceId: string) => ({ projectId: "p1", deviceId, deviceName: deviceId, ia: "1.1.1", kind: "read" as const, writes: false });
 const defer = () => { let resolve!: () => void; const p = new Promise<void>((r) => (resolve = r)); return { p, resolve }; };
 
 describe("TaskQueue", () => {
@@ -58,17 +60,18 @@ describe("TaskQueue", () => {
     await job;
   });
 
-  test("prunes finished tasks past the retention window, keeps active ones", async () => {
+  test("lists finished tasks for a day, and keeps them retrievable by id after that", async () => {
     let clock = 1000;
     const q = new TaskQueue(() => clock);
     await q.enqueue(meta("old"), async () => undefined);
-    expect(q.list("p1").length).toBe(1);
+    const id = q.list("p1")[0].id;
     // A finished task must outlive the operation that produced it: a full download is minutes of
-    // bus traffic, and at the old 20s window its result was gone before anyone could read it.
-    clock += 5 * 60_000;
+    // bus traffic, and someone coming back after an interruption still has to find its result.
+    clock += 23 * 60 * 60_000;
     expect(q.list("p1").length).toBe(1);
-    clock += 6 * 60_000; // now past the 10min retention
+    clock += 2 * 60 * 60_000;
     expect(q.list("p1").length).toBe(0);
+    expect(q.get(id)?.state).toBe("done");
   });
 
   test("a write the device did not verify is not reported as done", async () => {
@@ -122,12 +125,153 @@ describe("TaskQueue", () => {
   test("refuses to cancel a running flash (would corrupt the device)", async () => {
     const q = new TaskQueue(() => 0);
     const gate = defer();
-    const job = q.enqueue({ ...meta("d1"), kind: "flash-params" }, async () => { await gate.p; return "ok"; });
+    const job = q.enqueue({ ...meta("d1"), kind: "flash-params", writes: true }, async () => { await gate.p; return "ok"; });
     await Promise.resolve();
     const id = q.list("p1")[0].id;
     expect(q.cancel(id)).toBeNull();
     expect(q.list("p1")[0].state).toBe("running");
     gate.resolve();
     expect(await job).toBe("ok");
+  });
+
+  test("submit returns the queued task at once; wait collects its outcome", async () => {
+    const q = new TaskQueue(() => 0);
+    const gate = defer();
+    const task = q.submit({ ...meta("d1"), kind: "download", writes: true }, async () => { await gate.p; return { kind: "flashed", verified: true }; });
+    expect(task).toMatchObject({ state: "queued", writes: true, result: null });
+    gate.resolve();
+    expect(await q.wait(task.id)).toMatchObject({ state: "done", result: { kind: "flashed", verified: true } });
+  });
+
+  test("a submitted job's failure stays in its task", async () => {
+    const q = new TaskQueue(() => 0);
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async () => { throw new ApiError("MASK_MISMATCH", "wrong mask"); });
+    expect(await q.wait(task.id)).toMatchObject({ state: "error", errorCode: "MASK_MISMATCH" });
+  });
+
+  test("refuses a second write to the same device while one is queued or running", async () => {
+    const q = new TaskQueue(() => 0);
+    const gate = defer();
+    const first = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async () => { await gate.p; });
+    expect(() => q.submit({ ...meta("d1"), kind: "download", writes: true }, async () => undefined)).toThrow("already");
+    // Reads and other devices are not writes to this device.
+    q.submit(meta("d1"), async () => undefined);
+    q.submit({ ...meta("d2"), kind: "flash-params", writes: true }, async () => undefined);
+    gate.resolve();
+    await q.wait(first.id);
+    expect(() => q.refuseConcurrentWrite("p1", "d1")).not.toThrow();
+  });
+
+  test("commit records the baseline adoption with the adoption itself", async () => {
+    const q = new TaskQueue(() => 0);
+    let adopted = false;
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async (_p, _s, commit) => {
+      const r = { kind: "flashed", verified: true };
+      commit(r, () => { adopted = true; });
+      return r;
+    });
+    expect(await q.wait(task.id)).toMatchObject({ state: "done", baselineCommitted: true });
+    expect(adopted).toBe(true);
+  });
+
+  test("an adoption that throws leaves the baseline uncommitted and the task failed", async () => {
+    const q = new TaskQueue(() => 0);
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async (_p, _s, commit) => {
+      commit({ kind: "flashed", verified: true }, () => { throw new Error("db locked"); });
+      return { kind: "flashed", verified: true };
+    });
+    expect(await q.wait(task.id)).toMatchObject({ state: "error", error: "db locked", baselineCommitted: false });
+  });
+});
+
+test("a task whose end the store cannot record is still reported finished, and releases its device", async () => {
+  const store = new MemoryTaskStore();
+  const q = new TaskQueue(() => 0, undefined, {
+    save: (t) => { if (t.finishedAt !== null) throw new Error("disk full"); store.save(t); },
+    commit: (t, adopt) => store.commit(t, adopt), get: (id) => store.get(id), recent: (p, since) => store.recent(p, since),
+  });
+  const task = q.submit({ ...meta("d1"), kind: "download", writes: true }, async () => ({ kind: "flashed", verified: true }));
+  expect(await q.wait(task.id)).toMatchObject({ state: "done" });
+  expect(q.list("p1")[0].state).toBe("done");
+  expect(() => q.refuseConcurrentWrite("p1", "d1")).not.toThrow();
+});
+
+test("a job whose start the store cannot record never runs, fails, and releases its device", async () => {
+  const store = new MemoryTaskStore();
+  let failStart = true, ran = false;
+  const q = new TaskQueue(() => 0, undefined, {
+    save: (t) => { if (t.state === "running" && failStart) throw new Error("database is locked"); store.save(t); },
+    commit: (t, adopt) => store.commit(t, adopt), get: (id) => store.get(id), recent: (p, since) => store.recent(p, since),
+  });
+  const task = q.submit({ ...meta("d1"), kind: "download", writes: true }, async () => { ran = true; });
+  expect(await q.wait(task.id)).toMatchObject({ state: "error", error: "database is locked" });
+  expect(ran).toBe(false);
+  failStart = false;
+  expect(() => q.refuseConcurrentWrite("p1", "d1")).not.toThrow();
+});
+
+test("a phase the store cannot record does not abort the write", async () => {
+  const store = new MemoryTaskStore();
+  const q = new TaskQueue(() => 0, undefined, {
+    save: (t) => { if (t.phase === "write" && t.finishedAt === null) throw new Error("disk full"); store.save(t); },
+    commit: (t, adopt) => store.commit(t, adopt), get: (id) => store.get(id), recent: (p, since) => store.recent(p, since),
+  });
+  const task = q.submit({ ...meta("d1"), kind: "download", writes: true }, async (progress) => { progress("write", 1, 2); return { kind: "flashed", verified: true }; });
+  expect(await q.wait(task.id)).toMatchObject({ state: "done" });
+});
+
+test("a job the store cannot even queue is refused and leaves nothing behind", () => {
+  const q = new TaskQueue(() => 0, undefined, {
+    save: () => { throw new Error("read-only database"); },
+    commit: () => {}, get: () => null, recent: () => [],
+  });
+  expect(() => q.submit({ ...meta("d1"), kind: "download", writes: true }, async () => undefined)).toThrow("read-only database");
+  expect(() => q.refuseConcurrentWrite("p1", "d1")).not.toThrow();
+});
+
+describe("SqliteTaskStore", () => {
+  const store = () => { const db = openDb(":memory:"); return { db, store: new SqliteTaskStore(db) }; };
+
+  test("persists every transition, result included", async () => {
+    const { store: s } = store();
+    const q = new TaskQueue(() => 5, undefined, s);
+    const gate = defer();
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true, snapshotId: "snap" }, async (progress) => {
+      progress("write", 1, 4);
+      await gate.p;
+      return { kind: "flashed", verified: true, diffBytes: 3 };
+    });
+    await Promise.resolve();
+    expect(s.get(task.id)).toMatchObject({ state: "running", phase: "write", snapshotId: "snap", writes: true });
+    gate.resolve();
+    await q.wait(task.id);
+    expect(s.get(task.id)).toMatchObject({ state: "done", result: { diffBytes: 3 }, outcome: { kind: "flashed", verified: true }, finishedAt: 5 });
+  });
+
+  test("a failed adoption rolls back with the task record", async () => {
+    const { db, store: s } = store();
+    db.run("CREATE TABLE marker (v TEXT)");
+    const q = new TaskQueue(() => 0, undefined, s);
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async (_p, _s, commit) => {
+      commit({ kind: "flashed", verified: true }, () => { db.run("INSERT INTO marker VALUES ('half')"); throw new Error("adopt failed"); });
+    });
+    expect(await q.wait(task.id)).toMatchObject({ state: "error", baselineCommitted: false });
+    expect(db.query("SELECT count(*) AS n FROM marker").get()).toEqual({ n: 0 });
+  });
+
+  test("closes unfinished tasks at startup with what is known about each", () => {
+    const { db, store: s } = store();
+    const base = { projectId: "p1", deviceName: "x", ia: "1.1.1", snapshotId: null, phase: null, done: 0, total: 0, error: null, errorCode: null, outcome: null, result: null, queuedAt: 1, startedAt: 1, finishedAt: null };
+    s.save({ ...base, id: "queued", deviceId: "a", kind: "download", writes: true, state: "queued", baselineCommitted: false });
+    s.save({ ...base, id: "writing", deviceId: "b", kind: "download", writes: true, state: "running", baselineCommitted: false });
+    s.save({ ...base, id: "committed", deviceId: "c", kind: "flash-params", writes: true, state: "running", baselineCommitted: true, result: { kind: "flashed", verified: true } });
+    s.save({ ...base, id: "reading", deviceId: "d", kind: "read", writes: false, state: "running", baselineCommitted: false });
+    s.save({ ...base, id: "finished", deviceId: "e", kind: "read", writes: false, state: "done", baselineCommitted: false, finishedAt: 1 });
+    closeUnfinishedTasks(db, 9);
+    expect(s.get("queued")).toMatchObject({ state: "cancelled", errorCode: "TASK_NOT_STARTED", finishedAt: 9 });
+    expect(s.get("writing")).toMatchObject({ state: "interrupted", errorCode: "TASK_WRITE_INTERRUPTED", finishedAt: 9 });
+    expect(s.get("committed")).toMatchObject({ state: "done", errorCode: null, baselineCommitted: true });
+    expect(s.get("reading")).toMatchObject({ state: "interrupted", errorCode: "TASK_READ_INTERRUPTED" });
+    expect(s.get("finished")).toMatchObject({ state: "done", finishedAt: 1 });
   });
 });

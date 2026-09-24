@@ -36,8 +36,9 @@ A parameter edit and a flash take the same road:
 4. The configuration view is rebuilt from the application program plus the stored values
    (`buildDeviceView` in `apps/server/src/deviceservice.ts`), so conditional visibility, module
    expansion and localisation are always recomputed, never cached as state.
-5. A flash is not executed inline. The route validates it, takes a restore point, and **enqueues**
-   a task on the serial bus queue.
+5. A flash is not executed inline. The route validates it, takes a restore point, **enqueues**
+   a task on the serial bus queue, and answers `202` with that task. The client polls the task
+   for the outcome; the job does not depend on the client still listening.
 6. The task opens a transport, connects to the device, checks its mask, backs up, writes, restarts,
    and reads the segment back.
 7. The device's own read-back decides whether the submitted configuration becomes the
@@ -92,8 +93,8 @@ rather than generating a fresh key that cannot open them.
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
 | Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |
-| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful) |
-| Bus and tasks | `GET/POST /api/projects/:id/bus/{status,connect,disconnect}`, `GET /api/projects/:id/tasks`, `POST .../tasks/:taskId/cancel`, `WS /api/projects/:id/bus/monitor` |
+| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful). A real `assign-ia`, `flash`, `flash-ga` or `download` answers `202` with its task; the dry runs, reads and identify answer with their result |
+| Bus and tasks | `GET/POST /api/projects/:id/bus/{status,connect,disconnect}`, `GET /api/projects/:id/tasks`, `GET .../tasks/:taskId`, `POST .../tasks/:taskId/cancel`, `WS /api/projects/:id/bus/monitor` |
 
 Three more groups are documented where the feature they belong to is: restore points and the
 product catalog in [storage-and-snapshots.md](storage-and-snapshots.md), saved connections and
@@ -124,10 +125,53 @@ concurrent request, the server queues it (`apps/server/src/taskqueue.ts`):
 - Each job reports a phase and chunk-level progress (`connect`, `backup`, `params`, `links`,
   `write`, `verify`, and the address-assignment phases), which the header indicator shows live.
 - **Cancelling a queued task is always allowed.** Cancelling a *running* task is allowed only for
-  a read, which is read-only and aborts cleanly between memory chunks. Any other running kind is
-  refused with `TASK_NOT_CANCELLABLE`: aborting mid-write would leave the device corrupted.
+  a read, which is read-only and aborts cleanly between memory chunks. A running write is refused
+  with `TASK_WRITE_NOT_CANCELLABLE`: aborting mid-bracket can leave the device reset. A running
+  dry run is refused with `TASK_NOT_CANCELLABLE` (it writes nothing, but does not stop early).
 - The queue is also an honesty rail. When a finished flash reports `verified: false`, the task is
   forced into the error state with `FLASH_UNVERIFIED` instead of being reported as done.
+
+### Programming jobs outlive the request
+
+A download runs for minutes, longer than an HTTP request can be trusted to stay open. So a real
+write (`assign-ia`, `flash`, `flash-ga`, `download`) is a **job**: the route answers `202` with the
+task as soon as it is queued, and the client polls `GET .../tasks/:taskId` until the task is
+finished. The task carries the operation's full `result`, the `snapshotId` of the restore point
+taken of the submitted configuration, and `baselineCommitted`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> queued: POST (202)
+  queued --> running
+  queued --> cancelled: cancel, or restart (TASK_NOT_STARTED)
+  running --> done: verified, baselineCommitted
+  running --> error: failed, or FLASH_UNVERIFIED
+  running --> interrupted: restart mid-job
+  done --> [*]
+  error --> [*]
+  cancelled --> [*]
+  interrupted --> [*]
+```
+
+- **Tasks are persisted** in the `tasks` table on every state change and phase change. The header
+  list shows active tasks and up to 50 finished within the last day; any task stays retrievable
+  by id for 30 days.
+- **One write per device at a time.** A second write to a device whose write is still queued or
+  running is refused with `DEVICE_WRITE_ACTIVE` (HTTP 409). A client that lost the response to its
+  first submission and retries therefore cannot program the device twice. The flash dialog
+  recognises a write it did not start and waits for it before previewing.
+- **The baseline commit is atomic with its record.** Adopting the verified submission and setting
+  `baselineCommitted` happen in one transaction.
+- **Nothing is replayed after a restart.** At startup, a queued task becomes `cancelled`
+  (`TASK_NOT_STARTED`, nothing was sent). A running write becomes `interrupted`
+  (`TASK_WRITE_INTERRUPTED`): the device's state is unknown until it is read back, and the header
+  indicator warns about it. A running read becomes `interrupted` (`TASK_READ_INTERRUPTED`), with
+  nothing written. A running write whose baseline was already committed was verified, so it is
+  closed as `done`.
+
+Dry runs, read-back and identify stay plain requests: they write nothing, so losing the response
+loses nothing. Draining an active write on a normal shutdown is not implemented yet; a signal
+still ends the process at once, which is exactly the `interrupted` case above.
 
 Starting a bus task disconnects the monitor tunnel first, because the interface is the same one.
 

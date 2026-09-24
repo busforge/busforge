@@ -99,7 +99,7 @@ for (const type of ["usb", "ip"] as const) {
       createProject(state.db, "p", "Test", 0);
       createConnection(state.db, "c", { ...conn, type, usbVendorId: 1, usbProductId: 2 }, 0);
       setProjectConnection(state.db, "p", "c");
-      const job = state.queue.enqueue({ projectId: "p", deviceId: "d", deviceName: "test", ia: "1.1.1", kind: "flash-params" }, async () => {
+      const job = state.queue.enqueue({ projectId: "p", deviceId: "d", deviceName: "test", ia: "1.1.1", kind: "flash-params", writes: true }, async () => {
         entered.resolve();
         await release.promise;
       });

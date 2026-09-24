@@ -86,6 +86,16 @@ async function projectWithApp(state: AppState, xml: string): Promise<{ projectId
 // The real M-0081 (MV-0705, flashParams+flashLinks capable) is the default device for these tests.
 const m0081Project = (state: AppState) => projectWithApp(state, realAppXml);
 
+// A real write answers 202 with its queued task; its outcome is collected from the task.
+async function programmed(state: AppState, response: Promise<Response | null> | Response | null) {
+  const res = (await response)!;
+  expect(res.status).toBe(202);
+  const submitted = (await res.json()) as { id: string; state: string; writes: boolean };
+  expect(submitted.writes).toBe(true);
+  return (await state.queue.wait(submitted.id))!;
+}
+const post = (state: AppState, path: string) => handleApi(req(path, { method: "POST" }), state);
+
 const flashed = (verified: boolean): FlashResult =>
   ({ kind: "flashed", mask: "MV-0705", imageBytes: 1, diffBytes: 1, verified, backup: "x" });
 
@@ -97,9 +107,9 @@ describe("POST /flash: baseline adoption is gated on verified", () => {
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
 
     paramFlashImpl = async (opts) => { expect(opts.dryRun).toBe(false); return flashed(false); }; // a real flash must not arrive as dry
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).kind).toBe("flashed"); // the mock was reached, not a guard
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect((task.result as FlashResult).kind).toBe("flashed"); // the mock was reached, not a guard
+    expect(task).toMatchObject({ state: "error", errorCode: "FLASH_UNVERIFIED", baselineCommitted: false });
 
     // The fake-green lock: nothing was confirmed on the device, so the change marker survives.
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
@@ -112,9 +122,8 @@ describe("POST /flash: baseline adoption is gated on verified", () => {
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
 
     paramFlashImpl = async () => flashed(true);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).verified).toBe(true);
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(task).toMatchObject({ state: "done", result: { verified: true }, baselineCommitted: true });
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(false);
   });
@@ -128,8 +137,7 @@ describe("POST /flash: baseline adoption is gated on verified", () => {
       setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "2");
       return flashed(true);
     };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
     expect(getDeviceParamBase(state.db, projectId, deviceId).get(PARAM_REF)).toBe("1");
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
   });
@@ -183,8 +191,7 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
     expect(before.has(VALUE_REF)).toBe(true);
 
     paramFlashImpl = async () => flashed(true);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
 
     const after = getDeviceChangedKeys(state.db, projectId, deviceId).params;
     expect(after.has(VALUE_REF)).toBe(false); // written and verified -> adopted
@@ -214,8 +221,7 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
     expect(before.has(HIDDEN_REF)).toBe(true);
 
     paramFlashImpl = async () => flashed(true);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
 
     const after = getDeviceChangedKeys(state.db, projectId, deviceId).params;
     expect(after.has(PARAM_REF)).toBe(false);  // visible + written -> adopted
@@ -231,9 +237,8 @@ describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(true);
 
     gaFlashImpl = async () => flashed(false);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).kind).toBe("flashed");
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+    expect(task).toMatchObject({ state: "error", errorCode: "FLASH_UNVERIFIED", result: { kind: "flashed" } });
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(true);
   });
@@ -245,9 +250,8 @@ describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(true);
 
     gaFlashImpl = async () => flashed(true);
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).verified).toBe(true);
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+    expect(task).toMatchObject({ state: "done", result: { verified: true }, baselineCommitted: true });
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(false);
   });
@@ -327,8 +331,7 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     const { projectId, deviceId } = await projectWithApp(state, m0162);
     let reached = false;
     paramFlashImpl = async () => { reached = true; return flashed(true); };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
     expect(reached).toBe(true);
   });
 });
@@ -355,10 +358,10 @@ for (const route of programmingRoutes) {
       const gate = Promise.withResolvers<void>();
       const started = Promise.withResolvers<void>();
       const blocker = timing === "queued" ? state.queue.enqueue(
-        { projectId, deviceId, deviceName: "blocker", ia: "1.2.10", kind: "read" }, () => gate.promise,
+        { projectId, deviceId, deviceName: "blocker", ia: "1.1.10", kind: "read", writes: false }, () => gate.promise,
       ) : Promise.resolve();
       setProgrammingResult(async () => { started.resolve(); if (timing === "running") await gate.promise; return flashed(true); });
-      const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+      const submitted = programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
       if (timing === "running") await started.promise;
       else {
         for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
@@ -368,7 +371,7 @@ for (const route of programmingRoutes) {
       setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040c]);
       gate.resolve();
       await blocker;
-      expect((await response)!.status).toBe(200);
+      expect((await submitted).state).toBe("done");
       if (route !== "flash-ga") expect(getDeviceParamBase(state.db, projectId, deviceId).get(PARAM_REF)).toBe("2");
       if (route !== "flash") expect(linkBaseline(state, projectId, deviceId)).toEqual([0x040b]);
       const drift = getDeviceChangedKeys(state.db, projectId, deviceId);
@@ -389,8 +392,13 @@ for (const route of programmingRoutes) {
         // Even a misreported verified result must not adopt a dry request.
         return flashed(outcome === "dry");
       });
-      const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}${outcome === "dry" ? "?dry=1" : ""}`, { method: "POST" }), state))!;
-      expect(res.status).toBe(outcome === "failed" ? 500 : 200);
+      if (outcome === "dry") {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`))!;
+        expect(res.status).toBe(200);
+      } else {
+        const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
+        expect(task).toMatchObject({ state: "error", baselineCommitted: false });
+      }
       expect(getDeviceParamBase(state.db, projectId, deviceId)).toEqual(beforeParams);
       expect(linkBaseline(state, projectId, deviceId)).toEqual(beforeLinks);
     });
@@ -400,10 +408,10 @@ for (const route of programmingRoutes) {
       const state = freshState();
       const { projectId, deviceId } = await m0081Project(state);
       const gate = Promise.withResolvers<void>();
-      const blocker = state.queue.enqueue({ projectId, deviceId, deviceName: "blocker", ia: "1.2.10", kind: "read" }, () => gate.promise);
+      const blocker = state.queue.enqueue({ projectId, deviceId, deviceName: "blocker", ia: "1.1.10", kind: "read", writes: false }, () => gate.promise);
       let wrote = false;
       setProgrammingResult(async () => { wrote = true; return flashed(true); });
-      const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+      const submitted = programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
       for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
       expect(state.queue.list(projectId)).toHaveLength(2);
       if (mutation === "replace") state.db.run("UPDATE devices SET product_ref = product_ref WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
@@ -413,9 +421,7 @@ for (const route of programmingRoutes) {
       }
       gate.resolve();
       await blocker;
-      const res = (await response)!;
-      expect(res.status).toBe(409);
-      expect(await res.json()).toMatchObject({ error: { code: "DEVICE_TARGET_CHANGED" } });
+      expect(await submitted).toMatchObject({ state: "error", errorCode: "DEVICE_TARGET_CHANGED" });
       expect(wrote).toBe(false);
     });
   }
@@ -427,9 +433,8 @@ for (const route of programmingRoutes) {
       state.db.run("DELETE FROM devices WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
       return flashed(true);
     });
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state))!;
-    expect(res.status).toBe(409);
-    expect(state.queue.list(projectId)[0].errorCode).toBe("DEVICE_TARGET_CHANGED");
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
+    expect(task).toMatchObject({ state: "error", errorCode: "DEVICE_TARGET_CHANGED", baselineCommitted: false });
     expect(getDeviceParamBase(state.db, projectId, deviceId)).toEqual(before);
   });
 }
@@ -440,8 +445,7 @@ test("a removed hidden override retains its unobservable baseline", async () => 
   const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
   replaceParamBase(state.db, projectId, deviceId, new Map([[hidden, "1"]]));
   setProgrammingResult(async () => flashed(true));
-  const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-  expect(res.status).toBe(200);
+  await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
   expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
 });
 
@@ -450,16 +454,127 @@ test("a baseline learned by an earlier queued job survives a later unwritten sub
   const { projectId, deviceId } = await m0081Project(state);
   const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
   const gate = Promise.withResolvers<void>();
-  const earlier = state.queue.enqueue({ projectId, deviceId, deviceName: "earlier read", ia: "1.2.10", kind: "read" }, async () => {
+  const earlier = state.queue.enqueue({ projectId, deviceId, deviceName: "earlier read", ia: "1.1.10", kind: "read", writes: false }, async () => {
     await gate.promise;
     replaceParamBase(state.db, projectId, deviceId, new Map([[hidden, "1"]]));
   });
   setProgrammingResult(async () => flashed(true));
-  const response = handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state);
+  const submitted = programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
   for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
   expect(state.queue.list(projectId)).toHaveLength(2);
   gate.resolve();
   await earlier;
-  expect((await response)!.status).toBe(200);
+  expect((await submitted).state).toBe("done");
   expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
+});
+
+describe("programming jobs outlive the request that submitted them", () => {
+  test("a write answers 202 with its task before the device is touched, and the task carries the outcome", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
+    const gate = Promise.withResolvers<void>();
+    paramFlashImpl = async () => { await gate.promise; return flashed(true); };
+    const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
+    expect(res.status).toBe(202);
+    const submitted = (await res.json()) as any;
+    expect(submitted).toMatchObject({ kind: "flash-params", writes: true, state: "queued", deviceId });
+    expect(submitted.snapshotId).toBe((state.db.query("SELECT id FROM snapshots WHERE project_id = ? AND reason = 'before-flash'").get(projectId) as { id: string }).id);
+
+    // The client is gone; the job is not.
+    gate.resolve();
+    await state.queue.wait(submitted.id);
+    const polled = (await (await handleApi(req(`/api/projects/${projectId}/tasks/${submitted.id}`), state))!.json()) as any;
+    expect(polled).toMatchObject({ state: "done", result: { kind: "flashed", verified: true }, baselineCommitted: true });
+    expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(false);
+  });
+
+  test("a task is only visible within its own project", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    paramFlashImpl = async () => flashed(true);
+    const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect((await handleApi(req(`/api/projects/other/tasks/${task.id}`), state))!.status).toBe(404);
+    expect((await post(state, `/api/projects/other/tasks/${task.id}/cancel`))!.status).toBe(404);
+  });
+
+  for (const route of programmingRoutes) {
+    test(`${route}: a second write to the same device is refused while the first is in flight`, async () => {
+      const state = freshState();
+      const { projectId, deviceId } = await m0081Project(state);
+      const gate = Promise.withResolvers<void>();
+      let writes = 0;
+      setProgrammingResult(async () => { writes++; await gate.promise; return flashed(true); });
+      const first = programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
+      for (const other of programmingRoutes) {
+        const retry = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${other}`))!;
+        expect(retry.status).toBe(409);
+        expect(await retry.json()).toMatchObject({ error: { code: "DEVICE_WRITE_ACTIVE" } });
+      }
+      gate.resolve();
+      expect((await first).state).toBe("done");
+      expect(writes).toBe(1);
+      // Finished, so the next submission is accepted again.
+      expect((await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))).state).toBe("done");
+    });
+  }
+
+  test("a dry run is still answered directly and does not block a write", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    paramFlashImpl = async (opts) => (opts.dryRun ? { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" } : flashed(true));
+    const dry = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
+    expect(dry.status).toBe(200);
+    expect(((await dry.json()) as any).kind).toBe("dryRun");
+    expect(state.queue.list(projectId)[0]).toMatchObject({ writes: false, snapshotId: null });
+    expect((await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))).state).toBe("done");
+  });
+
+  test("a running write refuses cancellation and says why; a queued one is cancelled before it runs", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    paramFlashImpl = async () => { started.resolve(); await gate.promise; return flashed(true); };
+    const running = (await (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!.json()) as any;
+    await started.promise;
+    const refused = (await post(state, `/api/projects/${projectId}/tasks/${running.id}/cancel`))!;
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: { code: "TASK_WRITE_NOT_CANCELLABLE" } });
+
+    // A write to another device waits behind it and can still be withdrawn.
+    let reached = false;
+    const queued = state.queue.submit({ projectId, deviceId: "other", deviceName: "other", ia: "1.1.11", kind: "flash-ga", writes: true }, async () => { reached = true; });
+    expect(queued.state).toBe("queued");
+    expect(await (await post(state, `/api/projects/${projectId}/tasks/${queued.id}/cancel`))!.json()).toEqual({ cancelled: "queued" });
+    gate.resolve();
+    expect((await state.queue.wait(queued.id))!.state).toBe("cancelled");
+    expect(reached).toBe(false);
+    expect((await state.queue.wait(running.id))!.state).toBe("done");
+    const finished = (await post(state, `/api/projects/${projectId}/tasks/${running.id}/cancel`))!;
+    expect(await finished.json()).toMatchObject({ error: { code: "TASK_ALREADY_FINISHED" } });
+  });
+
+  test("a restart reports unfinished work as interrupted or not started, and replays none of it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-restart-"));
+    tmps.push(dir);
+    const dbPath = join(dir, "busforge.db");
+    const before = createState({ dbPath, dataDir: dir, now: () => 1000 });
+    const { projectId, deviceId } = await m0081Project(before);
+    const started = Promise.withResolvers<void>();
+    let writes = 0;
+    // Never settles: the process "dies" mid-write.
+    setProgrammingResult(async () => { writes++; started.resolve(); return new Promise<FlashResult>(() => {}); });
+    const running = (await (await post(before, `/api/projects/${projectId}/devices/${deviceId}/download`))!.json()) as any;
+    await started.promise;
+    const queuedRead = before.queue.submit({ projectId, deviceId: "-", deviceName: "scan", ia: "-", kind: "read", writes: false }, async () => { writes++; });
+
+    const after = createState({ dbPath, dataDir: dir, now: () => 2000 });
+    const tasks = after.queue.list(projectId);
+    expect(tasks.find((t) => t.id === running.id)).toMatchObject({ state: "interrupted", errorCode: "TASK_WRITE_INTERRUPTED", finishedAt: 2000, baselineCommitted: false });
+    expect(tasks.find((t) => t.id === queuedRead.id)).toMatchObject({ state: "cancelled", errorCode: "TASK_NOT_STARTED" });
+    // Interrupted is final: the new process accepts a fresh write and never re-runs the old one.
+    expect(() => after.queue.refuseConcurrentWrite(projectId, deviceId)).not.toThrow();
+    expect(writes).toBe(1);
+  });
 });

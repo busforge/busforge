@@ -874,10 +874,9 @@ describe("device configuration", () => {
     );
     try {
       const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-      expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({
-        error: { code: "TEST_TRANSPORT_FAILURE", message: "injected tunnel connection failure" },
-      });
+      expect(res.status).toBe(202); // past every guard: queued as a write
+      const task = await state.queue.wait(((await res.json()) as any).id);
+      expect(task).toMatchObject({ state: "error", errorCode: "TEST_TRANSPORT_FAILURE", error: "injected tunnel connection failure" });
     } finally {
       connect.mockRestore();
     }

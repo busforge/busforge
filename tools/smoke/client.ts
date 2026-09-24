@@ -23,7 +23,7 @@ export interface FlashResult {
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }
 interface ProjectView { groupRanges: GaRange[] }
-export interface Task { id: string; deviceId: string; kind: string; state: string; phase: string; error: string | null; errorCode: string | null; outcome: FlashResult | null; startedAt?: number; queuedAt?: number }
+export interface Task { id: string; deviceId: string; kind: string; state: string; phase: string; error: string | null; errorCode: string | null; outcome: FlashResult | null; result: unknown; startedAt?: number; queuedAt?: number }
 
 export class Client {
   constructor(private readonly base = process.env.BUSFORGE_API ?? "http://localhost:3000") {}
@@ -60,7 +60,7 @@ export class Client {
   setParam(pid: string, did: string, paramRefId: string, value: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/params`, { paramRefId, value, lang: "de" }); }
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
-  assignIa(pid: string, did: string) { return this.call<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>("POST", `/api/projects/${pid}/devices/${did}/assign-ia`, undefined, 90_000); }
+  assignIa(pid: string, did: string) { return this.submitAndWait<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>(pid, `/api/projects/${pid}/devices/${did}/assign-ia`, "assign-ia"); }
   // The read-back triggers a server-side device read enqueued as a "read" task. On a large device
   // that read outlasts any single HTTP socket on the single-channel bench: the OpenKNX RaumController
   // reads back in ~4 min, past the old 180 s client timeout, so the POST aborted while the server read
@@ -87,7 +87,7 @@ export class Client {
         if (t) {
           if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
           if (t.state === "done") return;
-          if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "read failed");
+          if (t.state !== "queued" && t.state !== "running") throw new ApiError(0, t.errorCode ?? `TASK_${t.state.toUpperCase()}`, t.error ?? `read ${t.state}`);
         }
       }
       throw new ApiError(0, "OP_TIMED_OUT", "read-back did not complete within the poll window");
@@ -126,65 +126,36 @@ export class Client {
   downloadDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/download?dry=1`, undefined, 180_000); }
   flashDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash?dry=1`, undefined, 180_000); }
   flashGaDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash-ga?dry=1`, undefined, 180_000); }
-  async flashGaReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/flash-ga`, "flash-ga", onPhase);
+  // A real write answers 202 with its queued task; the outcome is polled from that task.
+  flashGaReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
+    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/flash-ga`, "flash-ga", onPhase);
+  }
+  downloadReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
+    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/download`, "download", onPhase);
+  }
+  flashReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
+    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/flash`, "flash", onPhase);
   }
 
-  // A real download can take minutes and the HTTP response is not always delivered before the
-  // socket idles; fire it and POLL the task queue for the authoritative outcome instead of
-  // trusting the response. Returns the FlashResult the server recorded.
-  async downloadReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/download`, "download", onPhase);
-  }
-  async flashReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    // The kind MUST match the queue's task kind (deviceops.ts enqueues the param flash as
-    // "flash-params"), or the poll would never find its own task and (now that a socket death
-    // defers to the poll as the sole truth) a real refusal would be masked as OP_TIMED_OUT.
-    return this.fireAndPoll(pid, did, `/api/projects/${pid}/devices/${did}/flash`, "flash-params", onPhase);
-  }
-
-  private async fireAndPoll(pid: string, did: string, path: string, kind: string, onPhase?: (p: string) => void): Promise<FlashResult> {
-    // The POST may RESOLVE (a fast flash — even an `unchanged`), REJECT (a coded refusal like
-    // FLASH_UNVERIFIED or LOAD_PROC_CHECK_FAILED), or HANG (a long download whose HTTP response
-    // never arrives before the socket idles). Race the fetch against a task-queue poll and use the
-    // FIRST real answer: the fetch's result/refusal is authoritative when it comes, the poll covers
-    // the hang. Crucially the fetch's error is NOT swallowed — masking a refusal as a timeout would
-    // hide the very regression the harness exists to catch.
-    const firedAt = Date.now();
-    // The POST may RESOLVE (a fast flash), REJECT WITH A CODED REFUSAL (an ApiError from a non-ok
-    // response, e.g. FLASH_UNVERIFIED or LOAD_PROC_CHECK_FAILED), or its socket may DIE mid-download (a
-    // transport reset/abort while the download runs on for minutes server-side). Only the first two
-    // are answers. A transport death is NOT: the task keeps running server-side, so letting that
-    // rejection win the race would fire a SPURIOUS retry (a second full download of a device that is
-    // already being programmed). So swallow transport errors here and defer to the authoritative
-    // task-queue poll; keep propagating a coded ApiError refusal, which is a real outcome.
-    const fetchP = this.call<FlashResult>("POST", path, undefined, 600_000).catch((e) => {
-      if (e instanceof ApiError) throw e;
-      // A dropped socket / aborted read mid-download is expected on the single-channel bench tunnel;
-      // it is NOT the outcome. Say so once, then let the poll report what the device actually did.
-      process.stderr.write(`    …${kind}: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
-      return new Promise<FlashResult>(() => {}); // never settles; the poll is the source of truth
-    });
+  // Submit a write and poll ITS task (by id) to the end. A coded refusal before queueing (a guard,
+  // DEVICE_WRITE_ACTIVE) throws from the POST. The device's own "not verified" verdict is returned
+  // as the result it is, so the caller asserts on it; any other unsuccessful end throws its code.
+  // A failed poll is retried: it says nothing about the job, which runs on in the server.
+  private async submitAndWait<T>(pid: string, path: string, label: string, onPhase?: (p: string) => void): Promise<T> {
+    const submitted = await this.call<Task>("POST", path, undefined, 60_000);
     let lastPhase = "";
-    const pollP = (async (): Promise<FlashResult> => {
-      for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s, for a download whose response never arrives
-        await new Promise((r) => setTimeout(r, 5_000));
-        const tasks = await this.tasks(pid).catch(() => [] as Task[]);
-        // The NEWEST matching real task — a prior (retried) attempt's stale errored task must not be
-        // picked, or a retry would report the old failure instead of waiting for this attempt.
-        const t = tasks
-          .filter((x) => x.deviceId === did && x.kind === kind && x.outcome?.kind !== "dryRun" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
-          .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
-        if (t) {
-          if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
-          if (t.state === "done" && t.outcome) return t.outcome;
-          if (t.state === "error") throw new ApiError(0, t.errorCode ?? "TASK_ERROR", t.error ?? "task failed");
-        }
-      }
-      throw new ApiError(0, "OP_TIMED_OUT", `${kind} did not complete within the poll window`);
-    })();
-    try { return await Promise.race([fetchP, pollP]); }
-    finally { fetchP.catch(() => undefined); } // a late fetch rejection (after the poll won) must not go unhandled
+    for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s
+      await new Promise((r) => setTimeout(r, 5_000));
+      const t = await this.call<Task>("GET", `/api/projects/${pid}/tasks/${submitted.id}`).catch((e) => {
+        if (e instanceof ApiError && e.code === "TASK_NOT_FOUND") throw e;
+        return null;
+      });
+      if (!t) continue;
+      if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
+      if (t.state === "done" || (t.errorCode === "FLASH_UNVERIFIED" && t.result)) return t.result as T;
+      if (t.state !== "queued" && t.state !== "running") throw new ApiError(0, t.errorCode ?? `TASK_${t.state.toUpperCase()}`, t.error ?? `${label} ${t.state}`);
+    }
+    throw new ApiError(0, "OP_TIMED_OUT", `${label} did not complete within the poll window`);
   }
 }
 
