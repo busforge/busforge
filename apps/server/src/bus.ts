@@ -17,6 +17,7 @@ export class Bus {
   private listeners = new Set<(t: Telegram) => void>();
   private now: () => number;
   private managementActive = false;
+  private closed = false;
   private transition: Promise<unknown> = Promise.resolve();
 
   constructor(now: () => number = () => Date.now()) { this.now = now; }
@@ -50,6 +51,9 @@ export class Bus {
   connect(projectId: string, connection: Connection): Promise<void> {
     if (this.managementActive) return Promise.reject(new ApiError("BUS_BUSY", "a bus operation owns the interface", 409));
     return this.transitionTo(async () => {
+      // Checked inside the transition: a connect queued before close() would otherwise open a
+      // tunnel after it, and the process would exit without releasing the gateway's channel.
+      if (this.closed) throw new ApiError("SERVER_SHUTTING_DOWN", "the server is shutting down and opens no bus connection", 503);
       if (this.activeProjectId !== projectId) await this.closeMonitor();
       await this.openMonitor(projectId, connection);
     });
@@ -97,6 +101,12 @@ export class Bus {
 
   disconnect(): Promise<void> {
     return this.transitionTo(() => this.closeMonitor());
+  }
+
+  // Close the monitor tunnel for good, after every connect already under way.
+  close(): Promise<void> {
+    this.closed = true;
+    return this.disconnect();
   }
 
   private async closeMonitor(): Promise<void> {

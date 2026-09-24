@@ -170,8 +170,14 @@ stateDiagram-v2
   closed as `done`.
 
 Dry runs, read-back and identify stay plain requests: they write nothing, so losing the response
-loses nothing. Draining an active write on a normal shutdown is not implemented yet; a signal
-still ends the process at once, which is exactly the `interrupted` case above.
+loses nothing.
+
+- **A normal shutdown drains the running write.** On `SIGTERM`/`SIGINT`/`SIGHUP` the queue refuses
+  new work (`SERVER_SHUTTING_DOWN`, HTTP 503), cancels queued tasks as `TASK_NOT_STARTED`, aborts a
+  running read, does not wait for a dry run, and waits for the running write to end, read-back and baseline commit included.
+  Then the monitor tunnel closes, a new monitor connection is refused, and the process exits. A repeated signal does not skip the wait;
+  only `SIGKILL` does, and that is the `interrupted` case above. The container's stop grace period
+  that makes this hold under `docker stop` is in [deployment.md](deployment.md#stopping-and-updating).
 
 Starting a bus task disconnects the monitor tunnel first, because the interface is the same one.
 

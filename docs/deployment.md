@@ -28,6 +28,7 @@ runtime.
 
 ```bash
 docker run -d --name busforge \
+  --stop-timeout 1800 \
   -p 3000:3000 \
   -v /srv/busforge/data:/app/apps/server/data \
   -e BUSFORGE_MASTER_KEY=<32 random bytes, hex or base64> \
@@ -69,6 +70,56 @@ docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
 
 The image declares a healthcheck that polls the SPA root, so `docker compose ps` and a deploy gate
 can wait for readiness.
+
+### Stopping and updating
+
+A stop must not cut a device write short. A download interrupted mid-transfer can leave the device
+reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the server:
+
+1. refuses new bus operations (`503 SERVER_SHUTTING_DOWN`),
+2. cancels every queued task without running it (`TASK_NOT_STARTED`), aborts a running read and
+   does not wait for a running dry run (neither writes anything),
+3. waits for the running write to finish, its read-back and baseline commit included,
+4. closes the monitor tunnel, refusing any new monitor connection, and exits.
+
+With no write running it exits at once. A second signal does not skip the wait; the log names the
+write it is still finishing. The HTTP API stays up meanwhile, so an open client keeps seeing the
+write's progress.
+
+```mermaid
+sequenceDiagram
+  participant D as docker stop
+  participant S as Busforge
+  participant Dev as Device
+  D->>S: SIGTERM
+  S->>S: refuse new work, cancel queued tasks
+  S->>Dev: running download continues
+  Dev-->>S: read-back verified
+  S->>S: commit baseline, close tunnel
+  S-->>D: exit 0
+  Note over D,S: grace period exceeded: SIGKILL,<br/>write reported interrupted on next start
+```
+
+Docker's default grace period is 10 seconds, far shorter than a download, after which it sends
+`SIGKILL`. The shipped `docker-compose.yml` sets `stop_grace_period: 30m` (use
+`--stop-timeout 1800` with `docker run`). A `SIGKILL`, whether from an exhausted grace period or
+`docker kill`, still ends the process mid-write. The next start then reports that write as
+`interrupted` with the device state unknown, and replays nothing.
+
+**Why 30 minutes.** The longest timed download is 71 s, for a 21.9 KB OpenKNX image on the bench
+(smoke report of 2026-07-20). A device written with `A_Memory_Write` takes 12 bytes per frame, so
+an image of that size is roughly 1,800 writes plus the read-back, each a confirmed round trip on
+TP, with a per-frame retry budget of a few seconds. That is estimated at minutes, not
+measured; 30 minutes leaves room for a slow line and retries. The grace period only costs time when
+a write is actually running. Every write's start and end are recorded in the `tasks` table, so the
+bound can be checked against real downloads. A deploy pipeline that replaces the container must wait
+at least as long; the NAS deploy job allows 45 minutes.
+
+The grace period covers `docker stop` and container replacement. A **host** shutdown or a restart of
+the Docker daemon is also bounded by the daemon's and the init system's own timeouts (dockerd's
+`shutdown-timeout`, the service manager's stop timeout for dockerd), which this file does not set
+and which can end a running write earlier. Do not reboot the host while a device
+is being programmed; the next start reports such a write as interrupted.
 
 ### Ports
 

@@ -147,6 +147,7 @@ const de: Messages = {
     TASK_CANCELLED: "Der Vorgang wurde abgebrochen.",
     TASK_CONTACT_LOST: "Verbindung zum Server verloren. Der Vorgang läuft eventuell noch; siehe Buswarteschlange.",
     DEVICE_WRITE_ACTIVE: "Dieses Gerät wird bereits programmiert. Warte auf dieses Ergebnis, bevor du es erneut programmierst.",
+    SERVER_SHUTTING_DOWN: "Der Server wird beendet und nimmt keine neuen Busvorgänge an. Versuche es erneut, sobald er wieder läuft.",
     SNAPSHOT_NOT_FOUND: "Wiederherstellungspunkt nicht gefunden.",
     GA_NOT_FOUND: "Gruppenadresse nicht gefunden.",
     GA_RANGE_NOT_FOUND: "Bereich nicht gefunden.",

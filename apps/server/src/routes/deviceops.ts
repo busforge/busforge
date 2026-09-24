@@ -55,6 +55,7 @@ async function programOrPreview(
   run: (progress: ProgressFn, commit: CommitFn) => Promise<FlashResult>,
 ): Promise<Response> {
   if (dry) return json(await state.queue.enqueue({ ...meta, writes: false }, (progress, _signal, commit) => run(progress, commit)));
+  state.queue.refuseAdmission();
   state.queue.refuseConcurrentWrite(meta.projectId, meta.deviceId);
   // Auto restore point of the about-to-be-programmed config. When it would duplicate the latest
   // snapshot none is stored, and that latest one holds exactly the submitted configuration.

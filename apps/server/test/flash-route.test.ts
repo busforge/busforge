@@ -519,6 +519,22 @@ describe("programming jobs outlive the request that submitted them", () => {
     });
   }
 
+  test("a shutting-down server refuses a write before taking its restore point", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    setProgrammingResult(async () => flashed(true));
+    const snapshots = () => (state.db.query("SELECT count(*) AS n FROM snapshots WHERE project_id = ?").get(projectId) as { n: number }).n;
+    const before = snapshots();
+    await state.queue.shutdown();
+    for (const route of programmingRoutes) {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "SERVER_SHUTTING_DOWN" } });
+    }
+    expect(snapshots()).toBe(before);
+    expect(state.queue.list(projectId)).toHaveLength(0);
+  });
+
   test("a dry run is still answered directly and does not block a write", async () => {
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);

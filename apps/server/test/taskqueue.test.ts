@@ -275,3 +275,94 @@ describe("SqliteTaskStore", () => {
     expect(s.get("finished")).toMatchObject({ state: "done", finishedAt: 1 });
   });
 });
+
+describe("TaskQueue.shutdown", () => {
+  const write = (deviceId: string) => ({ ...meta(deviceId), kind: "download" as const, writes: true });
+
+  test("finishes the running write, verification and baseline commit included, before it resolves", async () => {
+    const q = new TaskQueue(() => 0);
+    const gate = defer();
+    let adopted = false;
+    const task = q.submit(write("d1"), async (_p, _s, commit) => {
+      await gate.p;
+      const r = { kind: "flashed", verified: true };
+      commit(r, () => { adopted = true; });
+      return r;
+    });
+    await Promise.resolve();
+    let drained = false;
+    const shutdown = q.shutdown().then(() => { drained = true; });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(drained).toBe(false); // the write is still in its bracket
+    gate.resolve();
+    await shutdown;
+    expect(q.get(task.id)).toMatchObject({ state: "done", baselineCommitted: true });
+    expect(adopted).toBe(true);
+  });
+
+  test("refuses new work as soon as it starts, before the running write has finished", async () => {
+    const q = new TaskQueue(() => 0);
+    const gate = defer();
+    q.submit(write("d1"), async () => { await gate.p; });
+    await Promise.resolve();
+    const shutdown = q.shutdown();
+    expect(() => q.submit(write("d2"), async () => undefined)).toThrow(expect.objectContaining({ code: "SERVER_SHUTTING_DOWN", status: 503 }));
+    expect(() => q.enqueue(meta("d3"), async () => undefined)).toThrow(expect.objectContaining({ code: "SERVER_SHUTTING_DOWN" }));
+    gate.resolve();
+    await shutdown;
+  });
+
+  test("cancels queued work instead of running it, so it cannot extend the shutdown", async () => {
+    const q = new TaskQueue(() => 0);
+    const gate = defer();
+    let ranQueued = false;
+    const running = q.submit(write("d1"), async () => { await gate.p; });
+    const queuedWrite = q.submit(write("d2"), async () => { ranQueued = true; });
+    const queuedRead = q.submit(meta("d3"), async () => { ranQueued = true; });
+    await Promise.resolve();
+    const shutdown = q.shutdown();
+    for (const id of [queuedWrite.id, queuedRead.id]) {
+      expect(q.get(id)).toMatchObject({ state: "cancelled", errorCode: "TASK_NOT_STARTED" });
+    }
+    gate.resolve();
+    await shutdown;
+    expect(ranQueued).toBe(false);
+    expect(q.get(running.id)?.state).toBe("done");
+  });
+
+  test("aborts a running read and does not wait for a task that writes nothing", async () => {
+    const q = new TaskQueue(() => 0);
+    const read = q.submit(meta("d1"), (_p, signal) =>
+      new Promise<void>((_res, rej) => signal.addEventListener("abort", () => rej(new Error("read aborted")))));
+    await Promise.resolve();
+    await q.shutdown();
+    expect((await q.wait(read.id))?.state).toBe("cancelled");
+
+    // A dry run may not honor the signal; it wrote nothing, so the shutdown does not wait for it.
+    const q2 = new TaskQueue(() => 0);
+    q2.submit({ ...meta("d1"), kind: "flash-params", writes: false }, () => new Promise<void>(() => {}));
+    await Promise.resolve();
+    await q2.shutdown();
+  });
+
+  test("resolves at once when nothing is running, and a second call waits for the same drain", async () => {
+    const q = new TaskQueue(() => 0);
+    await q.shutdown();
+    const gate = defer();
+    const q2 = new TaskQueue(() => 0);
+    q2.submit(write("d1"), async () => { await gate.p; });
+    await Promise.resolve();
+    const first = q2.shutdown();
+    expect(q2.shutdown()).toBe(first);
+    gate.resolve();
+    await first;
+  });
+
+  test("a running write that fails still ends the drain, with its failure recorded", async () => {
+    const q = new TaskQueue(() => 0);
+    const task = q.submit(write("d1"), async () => { throw new ApiError("TUNNEL_ACK_TIMEOUT", "no ack"); });
+    await Promise.resolve();
+    await q.shutdown();
+    expect(q.get(task.id)).toMatchObject({ state: "error", errorCode: "TUNNEL_ACK_TIMEOUT" });
+  });
+});

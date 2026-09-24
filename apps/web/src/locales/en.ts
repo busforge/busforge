@@ -147,6 +147,7 @@ const en = {
     TASK_CANCELLED: "The operation was cancelled.",
     TASK_CONTACT_LOST: "Lost contact with the server. The operation may still be running; see the bus queue.",
     DEVICE_WRITE_ACTIVE: "This device is already being programmed. Wait for that result before programming it again.",
+    SERVER_SHUTTING_DOWN: "The server is shutting down and accepts no new bus operations. Try again once it is back.",
     SNAPSHOT_NOT_FOUND: "Restore point not found.",
     GA_NOT_FOUND: "Group address not found.",
     GA_RANGE_NOT_FOUND: "Group range not found.",

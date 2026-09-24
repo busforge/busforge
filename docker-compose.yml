@@ -19,6 +19,11 @@ services:
     image: ${BUSFORGE_IMAGE:-busforge:latest}
     container_name: busforge
     restart: unless-stopped
+    # `docker stop` sends SIGTERM, and the server then finishes a running device write (read-back
+    # and baseline commit included) before it exits; with nothing running it exits at once. Only
+    # when this period runs out does Docker send SIGKILL, which leaves that device's state unknown.
+    # It must outlast the longest download, see docs/deployment.md.
+    stop_grace_period: 30m
     environment:
       - PORT=3000
       - TZ=${TZ:-UTC}

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { outcomeOf, type Task, type TaskKind, type TaskState, type TaskStore } from "../taskqueue.ts";
+import { NOT_STARTED_REASON, outcomeOf, type Task, type TaskKind, type TaskState, type TaskStore } from "../taskqueue.ts";
 
 interface TaskRow {
   id: string; project_id: string; device_id: string; device_name: string; ia: string; kind: string;
@@ -56,9 +56,8 @@ export class SqliteTaskStore implements TaskStore {
 // stopped mid-bracket, and the device's state is unknown until it is read back.
 export function closeUnfinishedTasks(db: Database, now: number): void {
   db.transaction(() => {
-    db.run(`UPDATE tasks SET state = 'cancelled', finished_at = ?, error_code = 'TASK_NOT_STARTED',
-        error = 'the server stopped before this task started; nothing was sent to the device'
-      WHERE state = 'queued'`, [now]);
+    db.run(`UPDATE tasks SET state = 'cancelled', finished_at = ?, error_code = 'TASK_NOT_STARTED', error = ?
+      WHERE state = 'queued'`, [now, NOT_STARTED_REASON]);
     // Adoption and baseline_committed are one transaction, so a write whose baseline was committed
     // was verified on the device: only closing the task record was lost.
     db.run("UPDATE tasks SET state = 'done', finished_at = ? WHERE state = 'running' AND baseline_committed = 1", [now]);

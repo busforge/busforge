@@ -32,11 +32,11 @@ started until the capability it depends on is hardware-proven.
   refuses `tcp` outright (`TUNNEL_ACK_TIMEOUT`), so transport cannot simply be pinned. Suspect the
   client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
   disconnect race but not this path.
-- **Drain an active write before a normal shutdown.** A signal ends the server at once, so a
-  container replacement mid-download leaves the device in an unknown state (the task is reported
-  `interrupted` on the next start, never replayed). Stop admission, cancel waiting jobs, finish the
-  active write and its baseline commit, then close transports, with a container stop grace period
-  that covers a full download.
+- **Measure the longest download to confirm the stop grace period.** A normal shutdown waits for
+  a running write, bounded by the container's `stop_grace_period: 30m`. That figure rests on one
+  measurement (71 s for a 21.9 KB OpenKNX image) and an estimate for 12-byte `A_Memory_Write`
+  frames; no large MV-0705 download has been timed. Read the durations of real writes from
+  the `tasks` table (`finished_at - started_at`) and tighten or raise the period.
 
 ## Verification
 

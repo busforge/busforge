@@ -217,3 +217,26 @@ test("failed monitor connection and cleanup retain the handle until it can be cl
     await bus.disconnect();
   }
 });
+
+test("close releases the tunnel and refuses every connect that had not opened yet", async () => {
+  const bus = new Bus();
+  const gate = Promise.withResolvers<void>();
+  const tunnel = new FakeTransport();
+  tunnel.connectResult = gate.promise;
+  const factory = makeTransportImpl;
+  makeTransportImpl = () => tunnel;
+  try {
+    const opening = bus.connect("p", conn);
+    for (let i = 0; i < 10 && tunnel.connectCalls === 0; i++) await Promise.resolve();
+    expect(tunnel.connectCalls).toBe(1); // already opening when the shutdown starts
+    const queued = bus.connect("other", conn).catch((error: unknown) => error);
+    const closing = bus.close();
+    gate.resolve();
+    await opening;
+    expect(await queued).toMatchObject({ code: "SERVER_SHUTTING_DOWN" });
+    await closing;
+    expect(tunnel.disconnectCalls).toBe(1);
+    expect(bus.status).toBe("disconnected");
+    expect(await bus.connect("p", conn).catch((error: unknown) => error)).toMatchObject({ code: "SERVER_SHUTTING_DOWN" });
+  } finally { gate.resolve(); makeTransportImpl = factory; }
+});

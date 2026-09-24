@@ -4,6 +4,7 @@ import { inspect } from "node:util";
 import { createState, handleApi } from "./app.ts";
 import { pruneTelegrams } from "./db/telegrams.ts";
 import { pruneTasks } from "./db/tasks.ts";
+import { installShutdown } from "./shutdown.ts";
 import type { ServerWebSocket } from "bun";
 
 // A process that drives real hardware must never disappear without saying why. A download that
@@ -22,12 +23,10 @@ const say = (why: string, e?: unknown) => {
 };
 process.on("uncaughtException", (e) => say("UNCAUGHT EXCEPTION (server stays up)", e));
 process.on("unhandledRejection", (e) => say("UNHANDLED REJECTION (server stays up)", e));
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(sig, () => { say(`received ${sig}, exiting`); process.exit(0); });
-}
 process.on("exit", (code) => say(`process exit (code ${code})`));
 
 const state = createState();
+installShutdown(state, say);
 const PORT = Number(process.env.PORT ?? 3000);
 const DIST = join(import.meta.dir, "..", "..", "web", "dist");
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days

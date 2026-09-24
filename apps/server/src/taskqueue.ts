@@ -108,6 +108,8 @@ export class MemoryTaskStore implements TaskStore {
 const LIST_WINDOW_MS = 24 * 60 * 60_000;
 const LIST_FINISHED_MAX = 50;
 
+export const NOT_STARTED_REASON = "the server stopped before this task started; nothing was sent to the device";
+
 const isActive = (t: Task) => t.state === "queued" || t.state === "running";
 
 export class TaskQueue {
@@ -116,6 +118,7 @@ export class TaskQueue {
   private settled = new Map<string, Promise<unknown>>();
   private controllers = new Map<string, AbortController>();
   private tail: Promise<unknown> = Promise.resolve();
+  private draining: Promise<void> | null = null;
   constructor(
     private now: () => number = () => Date.now(),
     private exclusive: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
@@ -138,6 +141,10 @@ export class TaskQueue {
     return { ...task };
   }
 
+  refuseAdmission(): void {
+    if (this.draining) throw new ApiError("SERVER_SHUTTING_DOWN", "the server is shutting down and accepts no new bus operations", 503);
+  }
+
   // Two writes to the same device must never be in flight together: a client that lost the
   // response to its first submission and retries would otherwise program the device twice.
   refuseConcurrentWrite(projectId: string, deviceId: string): void {
@@ -148,6 +155,7 @@ export class TaskQueue {
   }
 
   private start<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal, commit: CommitFn) => Promise<T>): { task: Task; result: Promise<T> } {
+    this.refuseAdmission();
     if (meta.writes) this.refuseConcurrentWrite(meta.projectId, meta.deviceId);
     const task: Task = {
       id: randomUUID(), ...meta, snapshotId: meta.snapshotId ?? null, state: "queued", phase: null, done: 0, total: 0,
@@ -238,10 +246,7 @@ export class TaskQueue {
     if (!task) return null;
     const controller = this.controllers.get(taskId);
     if (task.state === "queued") {
-      task.state = "cancelled";
-      task.finishedAt = this.now();
-      this.close(task);
-      controller?.abort();
+      this.cancelQueued(task);
       return "queued";
     }
     if (task.state === "running" && task.kind === "read") {
@@ -249,6 +254,41 @@ export class TaskQueue {
       return "running";
     }
     return null;
+  }
+
+  private cancelQueued(task: Task, code: string | null = null, why: string | null = null): void {
+    task.state = "cancelled";
+    task.errorCode = code;
+    task.error = why;
+    task.finishedAt = this.now();
+    this.close(task);
+    this.controllers.get(task.id)?.abort();
+  }
+
+  // Resolves once every running write has ended, read-back and baseline commit included: an
+  // interrupted download can leave the device reset. Nothing else is waited for.
+  shutdown(): Promise<void> {
+    if (this.draining) return this.draining;
+    const writes: Promise<unknown>[] = [];
+    for (const task of [...this.live.values()]) {
+      if (task.state === "queued") {
+        this.cancelQueued(task, "TASK_NOT_STARTED", NOT_STARTED_REASON);
+      } else if (task.state === "running") {
+        if (task.writes) {
+          const settled = this.settled.get(task.id);
+          if (!settled) throw new Error(`running write ${task.id} has no completion to wait for`);
+          writes.push(settled);
+        }
+        else this.controllers.get(task.id)?.abort();
+      }
+    }
+    this.draining = Promise.all(writes).then(() => {});
+    return this.draining;
+  }
+
+  // The running writes a shutdown is waiting for, for the log.
+  activeWrites(): Task[] {
+    return [...this.live.values()].filter((t) => t.writes && t.state === "running");
   }
 
   // Record a finished task and stop holding it in memory. If the store cannot record it, the task
