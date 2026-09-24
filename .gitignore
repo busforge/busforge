@@ -37,3 +37,6 @@ docker-compose.deploy.yml
 .worktrees/
 # hardware smoke-run report artifacts (evidence, regenerated per run)
 tools/smoke/reports/
+
+# Local engineering tickets, specs and investigation notes
+/.scratch/
