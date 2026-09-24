@@ -40,6 +40,12 @@ started until the capability it depends on is hardware-proven.
 
 ## Verification
 
+- **Let every run record its conditions as evidence records.** No smoke report, read-back or
+  ETS diff states the server build, the runner and spec revision, the transport or the firmware,
+  so evidence from before and after a fix cannot be told apart and the historical GVS cells read
+  `conflict` ([evidence-contract.md](evidence-contract.md)). The smoke runner, `tools/readback.ts`
+  and `tools/etsdiff.ts` should emit `busforge.evidence/1` records with those fields, and read the
+  firmware revision where a device exposes one.
 - **Turn the ETS-capture diff into a live read-back gate.** Today `our image == ETS` can only be
   checked where a captured ETS download exists. Diffing our built image against the device itself,
   resolving the device-assigned segment base from the device, would catch that class of bug

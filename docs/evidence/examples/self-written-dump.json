@@ -1,0 +1,61 @@
+{
+  "schema": "busforge.evidence/1",
+  "id": "house-readback-results-m0162",
+  "recordedAt": null,
+  "subject": {
+    "manufacturer": "M-0162",
+    "productRef": null,
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+      "state": "unknown"
+    }
+  },
+  "medium": "TP",
+  "transport": {
+    "kind": "unknown",
+    "via": "direct"
+  },
+  "build": {
+    "server": null,
+    "runner": {
+      "name": "tools/readback.ts",
+      "revision": null
+    },
+    "spec": null
+  },
+  "scope": {
+    "operation": "readParams",
+    "channel": "tool",
+    "configuration": "installed configuration",
+    "configurationFingerprint": null
+  },
+  "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+  },
+  "results": {
+    "transfer": {
+      "state": "pass",
+      "method": "device parameter memory equal to the image built from the project"
+    },
+    "reference": {
+      "state": "not-assessed",
+      "detail": "Busforge wrote these bytes earlier; equality only shows the device kept them"
+    },
+    "behaviour": {
+      "state": "not-assessed"
+    },
+    "persistence": {
+      "state": "not-assessed"
+    }
+  },
+  "supersedes": [],
+  "supersedeReason": null,
+  "source": {
+    "kind": "readback-tool",
+    "artifact": "apps/server/data/readback/results.json",
+    "sha256": "80e21113f19a954b312b7d4079df28fa9ebf578222fd8377b34a1481d69cd8ad"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "schema": "busforge.evidence/1",
+  "id": "mdt-be02001-api-2026-07-24T06-41-11Z-flashLinks",
+  "recordedAt": "2026-07-24T06:41:11.728Z",
+  "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+      "state": "unknown"
+    }
+  },
+  "medium": "TP",
+  "transport": {
+    "kind": "unknown",
+    "via": "unknown"
+  },
+  "build": {
+    "server": null,
+    "runner": {
+      "name": "tools/smoke",
+      "revision": null
+    },
+    "spec": {
+      "name": "mdt-be02001",
+      "revision": null
+    }
+  },
+  "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "one read-capable object linked to a random group address",
+    "configurationFingerprint": null
+  },
+  "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+  },
+  "results": {
+    "transfer": {
+      "state": "pass",
+      "method": "link tables read back after the flash"
+    },
+    "reference": {
+      "state": "not-assessed"
+    },
+    "behaviour": {
+      "state": "pass",
+      "method": "independent witness connection read group address 1/3/2 and the device answered 0x01"
+    },
+    "persistence": {
+      "state": "not-assessed",
+      "detail": "no restart or power cycle after the flash"
+    }
+  },
+  "supersedes": [],
+  "supersedeReason": null,
+  "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-07-24T06-41-11-728Z.json",
+    "sha256": "f03e84840b9bb3ca60a167bb210421f7e87eb9cebc89a4c4d96148e89f676d73"
+  }
+}

@@ -3,9 +3,11 @@
 The single place where Busforge states what it can do and how far each claim is proven. Every
 other document links here instead of repeating a verification claim.
 
-The bar, and it is not negotiable: **"supported" means byte-matched or behaviour-proven against a
-real device**, not "the tests are green". A capability that only builds plausible bytes is listed
-as unproven, and an unimplemented path refuses with a coded error rather than guessing.
+The bar, and it is not negotiable: a claim says **what was shown on a real device**, on the axes of
+the [evidence contract](evidence-contract.md): transfer, reference, behaviour, persistence. "The
+tests are green" is none of them, and a read-back of our own bytes is transfer only. A capability
+that only builds plausible bytes is listed as unproven, and an unimplemented path refuses with a
+coded error rather than guessing.
 
 ## Proof levels
 
@@ -124,7 +126,8 @@ app in a browser).
 **The done bar** ([/CONTEXT.md](../CONTEXT.md)): a device counts as fully supported only when
 every capability its product claims, plus provisioning and the UI click-through, passes on real
 hardware in **both** channels, together with every behaviour its spec declares. One green channel
-is not done, and neither is a device that byte-verifies without ever acting on the bus.
+is not done, and neither is a device that byte-verifies without ever acting on the bus, unless its
+spec states why no behaviour is observable.
 
 | Spec | Product | Mask | `api` | `ui` | Done bar |
 |---|---|---|---|---|---|

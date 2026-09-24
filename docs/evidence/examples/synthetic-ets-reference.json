@@ -1,0 +1,64 @@
+{
+  "schema": "busforge.evidence/1",
+  "id": "synthetic-ets-reference",
+  "recordedAt": "2026-01-01T00:00:00.000Z",
+  "subject": {
+    "manufacturer": "M-00FA",
+    "productRef": "M-00FA_H-0xA012-1_P-OpenKnxRaumController",
+    "appProgramId": "M-00FA_A-A012-55-0000",
+    "mask": "MV-07B0",
+    "firmware": {
+      "state": "unknown"
+    }
+  },
+  "medium": "TP",
+  "transport": {
+    "kind": "unknown",
+    "via": "unknown"
+  },
+  "build": {
+    "server": {
+      "version": "0.0.0-example",
+      "commit": "0000000"
+    },
+    "runner": {
+      "name": "tools/etsdiff.ts",
+      "revision": "0000000"
+    },
+    "spec": null
+  },
+  "scope": {
+    "operation": "fullDownload",
+    "channel": "tool",
+    "configuration": "SYNTHETIC EXAMPLE, not an observation: a full image compared with an ETS download of the same configuration",
+    "configurationFingerprint": null
+  },
+  "origin": {
+    "configuredBy": "ets",
+    "reference": "ets-capture",
+    "priorBusforgeWrites": "none"
+  },
+  "results": {
+    "transfer": {
+      "state": "not-assessed",
+      "detail": "offline comparison; no device involved"
+    },
+    "reference": {
+      "state": "pass",
+      "method": "every parameter-segment write byte-equal to the ETS download, device segment base applied"
+    },
+    "behaviour": {
+      "state": "not-assessed"
+    },
+    "persistence": {
+      "state": "not-assessed"
+    }
+  },
+  "supersedes": [],
+  "supersedeReason": null,
+  "source": {
+    "kind": "etsdiff",
+    "artifact": "example/ets-download-capture.log",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

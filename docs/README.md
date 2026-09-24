@@ -24,6 +24,7 @@ document says so.
 | [load-procedures.md](load-procedures.md) | The load state machines, the flash bracket, and what makes a write persist. |
 | [commissioning.md](commissioning.md) | Address assignment, the full download, and bringing up a factory-fresh device without ETS. |
 | [verification.md](verification.md) | How we know the bytes are right, and how to trace a byte-level difference to its cause. |
+| [evidence-contract.md](evidence-contract.md) | The evidence axes, the versioned evidence record, how far evidence reaches across products, and when a product counts as qualified. |
 | [findings.md](findings.md) | The protocol knowledge log: wire formats, load-procedure behaviour, the gotchas that cost days. |
 | [knx-secure.md](knx-secure.md) | KNX Data Secure: design, key handling, and the honest gap. |
 
