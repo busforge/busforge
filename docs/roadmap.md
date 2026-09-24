@@ -80,7 +80,15 @@ started until the capability it depends on is hardware-proven.
   throughout. The old sighting of a running device going silent is therefore not a property of a
   running device; it was the gateway addressing limitation plus the firmware's module-state
   deadlock ([commissioning.md](commissioning.md)). What stays unproven is the **bracketed
-  group-address flash** on this product, because a surgical flash is `unsafe` on this firmware.
+  group-address flash** on this product, and the surgical parameter flash with it.
+- **Compare OpenKNX surgical and full writes on a matching unit.** Neither surgical path has ever
+  run on an OpenKNX device, and nothing observed says it fails (see [status.md](status.md)). The
+  test: one RaumController on application 0x55 with the same firmware as the house units, a
+  serial console for `erase knx` / `erase openknx`, and the configuration saved as a snapshot.
+  Change one non-structural parameter and one link, each once by surgical flash, once by full
+  download and once by ETS partial download; after each, read back, observe the linked object
+  on the bus, cut bus power, and check the device is still configured and logged no watchdog
+  restart. Revert between runs. Recovery is a full download, which is proven on this product.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
 

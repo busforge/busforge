@@ -36,14 +36,14 @@ export const openknxRaumController: DeviceSpec = {
     // presence so it is not pinned; a response is the proof.
     { kind: "output", label: "PM1 Schalten 1", comObjRefId: "M-00FA_A-A012-55-0000_O-133_R-300101301", ga: "3/3/1" },
   ],
-  // System B claims flashParams/flashLinks, but on THIS device a surgical re-flash is the documented
-  // death-loop risk: the closing A_Restart restores poisoned module state and deadlocks until the
-  // firmware auto-erases (docs/commissioning.md). The device is programmed only by the full download, so
-  // these two are declared unsafe and reported as such — proven by nothing, never faked as green.
+  // System B claims flashParams/flashLinks and the endpoints perform them. They are kept out of
+  // automated runs, not because a surgical write was seen to fail (none was ever attempted), but
+  // because a failed boot on this firmware ends in an auto-erase whose recovery needs the device's
+  // serial console. They are proven by the controlled comparison on docs/roadmap.md instead.
   unsafe: [
-    { capability: "flashParams", reason: "surgical param re-flash of a configured OpenKNX device is the death-loop risk (docs/commissioning.md); it is programmed only by a full download" },
-    { capability: "flashLinks", reason: "surgical GA re-flash restarts into the same poisoned-restore boot; OpenKNX links are committed by the full download" },
+    { capability: "flashParams", reason: "never driven on OpenKNX; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
+    { capability: "flashLinks", reason: "never driven on OpenKNX; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
   ],
-  // No fuzz: the seeded param sweep is exactly the unsafe surgical path above, so there is nothing to
+  // No fuzz: the seeded param sweep is the surgical path excluded above, so there is nothing to
   // draw from. The full download exercises the complete write path every run.
 };

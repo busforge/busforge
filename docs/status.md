@@ -78,7 +78,7 @@ value.
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory | hardware: a surgically flashed link answers a read |
-| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | unsafe (see below) | unsafe (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
+| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | not proven (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
@@ -90,12 +90,17 @@ value.
 
 Notes attached to that table:
 
-- **"Unsafe"** (OpenKNX): a surgical re-flash of a configured OpenKNX device restarts into the
-  firmware's module-state restore, which deadlocks and ends in an auto-erase to factory. The device
-  is programmed by full download only, so the two surgical capabilities are declared `unsafe` in
-  its smoke spec and reported as proven by nothing rather than green. **This is a test-harness
-  declaration, not a product refusal**: the profile still claims `flashParams` and `flashLinks` for
-  this device and the endpoints will attempt them.
+- **OpenKNX surgical flashes: never driven, no failure observed.** Earlier versions of this page
+  called them unsafe. No surgical write was ever attempted on this device; the label came from
+  two failures of the *full download*, both explained since: a module-state region poisoned by
+  earlier bench experiments (recovered by `erase openknx`) and a com-object table sized to the
+  active instead of the declared objects (fixed in `a7b179c`; the group-address flash now builds
+  the table the same way). In the firmware (thelsing/knx with OpenKNX Common) a surgical flash and
+  a full download take the same path: unloading any table makes the stack report unconfigured
+  until the restart, module state is saved before the unload and restored after the restart. The
+  profile claims both capabilities and the endpoints perform them. The smoke spec keeps them out of
+  automated runs because recovering a failed run needs the device's serial console; a controlled
+  comparison is on the [roadmap](roadmap.md).
 - **Theben DALI gateway**: earlier documents claimed a hardware read-back of its group and
   association tables, others did not, and the evidence could not be reconstructed. The claim is
   therefore withdrawn rather than carried forward on a memory of it. The DCA-replacement plugin for
@@ -149,7 +154,8 @@ spec states why no behaviour is observable.
   device's commissioning is hardware-proven (see the device table), driven through the production
   endpoints before the framework existed. The device now runs in a live installation rather than on
   the bench, so the spec stays unrun: driving it would program a device somebody depends on. Its two
-  surgical capabilities are declared `unsafe`, so even a green run could not clear the bar for them.
+  surgical capabilities are excluded from automated runs (see the device table notes), so even a
+  green run could not clear the bar for them.
 
 ## What green tests prove, and what they do not
 
@@ -181,8 +187,8 @@ report a device family as working on the strength of a passing test suite.
   on those masks has been driven.
 - **The OpenKNX RaumController has never been driven through the bracketed System B group-address
   flash.** The device itself was re-driven on 2026-08-30 (three full downloads, each `verified`, one
-  of them onto the device in service), but a surgical group-address flash is declared `unsafe` on
-  this firmware, so that path stays unproven here and will not be proven on this product.
+  of them onto the device in service), but no surgical group-address flash has been driven on it,
+  so that path stays unproven here until the controlled comparison on the roadmap runs.
 - **KNXnet/IP connection-state heartbeat and closure** are verified against Busforge's own server,
   not against a third-party gateway's real timing.
 - **The USB transport is proven on one interface model.** Its single-report HID limits (read and

@@ -134,7 +134,7 @@ mechanism cases below.
 | A segment above 64 KB (`A_MemoryExtended`) | [status.md](status.md) |
 | Module-instance placement for a device without an imported project | [device-memory-model.md](device-memory-model.md) |
 | Any Data Secure session (wired, never driven for a load) | [knx-secure.md](knx-secure.md) |
-| A surgical re-flash declared `unsafe` for a device (OpenKNX) | [status.md](status.md), the device's smoke spec |
+| A surgical flash never driven on a product whose full download once failed for other reasons (OpenKNX) | [status.md](status.md), the device's smoke spec |
 
 An unknown requirement, one the engine cannot evaluate, is a refusal with a coded error and a
 diagnostic option, not an untested-compatible notice.
