@@ -40,8 +40,26 @@ describe("smoke evidence records", () => {
     }
   });
 
-  test("no record claims persistence: whether a write restarted the device is not known here", () => {
+  test("no record claims persistence when the run did not check it", () => {
     for (const r of runEvidence(run, gvsAmma, cond)) expect(r.results.persistence.state).toBe("not-assessed");
+  });
+
+  test("an observed reboot with a matching read-back is persistence for this run's passed writes", () => {
+    const withLinks = { ...run, capabilities: [run.capabilities[0], { capability: "flashLinks", channel: "api" as const, state: "pass" as const, detail: "linked" }, run.capabilities[2]], behaviours: [] };
+    const persisted = { ...withLinks, persistence: { state: "pass" as const, detail: "silent 140 ms after A_Restart, answering again after 5900 ms; equal" } };
+    const records = runEvidence(persisted, gvsAmma, cond);
+    expect(records.map((r) => [r.scope.operation, r.results.persistence.state])).toEqual([
+      ["fullDownload", "pass"],
+      ["flashLinks", "pass"],
+      // a failed write left nothing of its own to persist
+      ["flashParams", "not-assessed"],
+    ]);
+    expect(records[0].results.persistence).toMatchObject({ method: expect.stringContaining("A_Restart") });
+  });
+
+  test("a failed persistence check is recorded as a fail, not dropped", () => {
+    const failed = { ...run, behaviours: [], persistence: { state: "fail" as const, detail: "the device never went silent" } };
+    expect(runEvidence(failed, gvsAmma, cond).find((r) => r.scope.operation === "fullDownload")!.results.persistence).toEqual({ state: "fail", detail: "the device never went silent" });
   });
 
   test("a read says it was decoded, not compared", () => {

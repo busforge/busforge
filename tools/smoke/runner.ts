@@ -23,8 +23,9 @@ import { linkChan, type ChanCtx } from "./channel.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
 import { runEvidence } from "./evidence.ts";
+import { observeReboot, judgeRestoredConfig, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
-import { KnxIpTunnel, KnxDevice } from "../../packages/knx/src/index.ts";
+import { KnxIpTunnel, KnxDevice, KnxError } from "../../packages/knx/src/index.ts";
 import type { Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
@@ -41,6 +42,7 @@ interface RunResult {
   // The saved connection's KNXnet/IP transport ("udp", "tcp", "auto"), once the run found it.
   ipTransport: string | null;
   firmware: Firmware;
+  persistence?: { state: "pass" | "fail"; detail: string };
 }
 
 // Read the device's firmware revision over the bench interface, like the witness: only while the
@@ -51,6 +53,24 @@ async function readBenchFirmware(host: string, ia: string): Promise<Firmware> {
   const dev = new KnxDevice(tun, ia);
   try { await dev.connect(); return await readFirmwareRevision(dev); }
   finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
+}
+
+// Restart the device over the bench interface and observe the reboot (persistence.ts). Like the
+// firmware read, only while the server holds no bus operation.
+async function rebootOnBench(host: string, ia: string): Promise<RebootObservation> {
+  const tun = KnxIpTunnel.tcp(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681));
+  await tun.connect();
+  try {
+    const restart = async () => { const dev = new KnxDevice(tun, ia); await dev.connect(); await dev.sendRestart(); await dev.disconnect(); };
+    // Only the device's own silence is "silent"; an interface or tunnel error is thrown.
+    const probe = async (): Promise<ProbeOutcome> => {
+      const dev = new KnxDevice(tun, ia);
+      try { await dev.connect(); await dev.deviceDescriptor(); return "answered"; }
+      catch (e) { if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return "silent"; throw e; }
+      finally { await dev.disconnect(); }
+    };
+    return await observeReboot(restart, probe);
+  } finally { await tun.disconnect(); }
 }
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
@@ -82,6 +102,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
   let did: string | null = null;
   let ipTransport: string | null = null;
   let firmware: Firmware = { state: "unknown" };
+  let persistence: RunResult["persistence"];
   let ok = true;
 
   try {
@@ -155,6 +176,31 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       if (res.state === "fail") ok = false;
     }
 
+    // ── persistence: restart, prove the reboot, read back ─────────────────────
+    // Right after the capabilities, so the state read back is the one they left: the download's image
+    // and the link flashLinks placed, before any behaviour relinks or re-flashes. Only a write this
+    // run placed can be shown to persist (evidence.ts). The read-back goes through the API in both
+    // channels: it is the oracle here, not the surface under test.
+    // After a failed write the project and the device disagree for a reason of their own, and the
+    // read-back could not tell which write the drift belongs to, so persistence is not judged.
+    const writeFailed = capabilities.some((c) => c.state === "fail");
+    if (writeFailed) log("persistence not checked: a capability failed in this run");
+    else if (capabilities.some((c) => c.state === "pass" && (c.capability === "fullDownload" || c.capability === "flashLinks"))) {
+      process.stdout.write(`  → persistence (${channel})\n`);
+      await settle(2000);
+      const checked = await (async (): Promise<NonNullable<RunResult["persistence"]>> => {
+        const reboot = await rebootOnBench(host, spec.device.ia);
+        log(reboot.detail);
+        if (!reboot.rebooted) return { state: "fail", detail: reboot.detail };
+        await settle(3000);
+        const coverage = await client.readBack(pid!, did!, (p) => log(`read ${p}`));
+        const judged = judgeRestoredConfig(await client.getConfig(pid!, did!), coverage);
+        return { state: judged.state, detail: `${reboot.detail}; ${judged.detail}` };
+      })().catch((e): NonNullable<RunResult["persistence"]> => ({ state: "fail", detail: `persistence check aborted: ${e instanceof Error ? e.message : String(e)}` }));
+      persistence = checked;
+      if (checked.state === "fail") ok = false;
+    }
+
     // ── ui-click-through (lifecycle capability, UI surface only) ──────────────
     if (ui) {
       process.stdout.write("  → ui-click-through\n");
@@ -194,7 +240,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     await witness.close().catch(() => undefined);
     if (ui) await ui.close().catch(() => undefined);
   }
-  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid, ipTransport, firmware };
+  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid, ipTransport, firmware, persistence };
 }
 
 function report(r: RunResult): void {
@@ -203,6 +249,7 @@ function report(r: RunResult): void {
   for (const c of r.capabilities) console.log(`  ${mark(c.state)} cap ${c.capability} — ${c.detail}`);
   console.log(`  ${mark(r.clickThrough.state)} ui-click-through — ${r.clickThrough.detail}`);
   for (const b of r.behaviours) console.log(`  ${mark(b.state)} behaviour ${b.kind}:${b.label} — ${b.detail}`);
+  if (r.persistence) console.log(`  ${mark(r.persistence.state)} persistence — ${r.persistence.detail}`);
   for (const g of r.refusals) console.log(`  ${mark(g.state)} guard ${g.capability} — ${g.detail}`);
   if (!r.ok && r.pid) console.log(`  kept project ${r.pid} for post-mortem`);
 }

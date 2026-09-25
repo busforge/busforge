@@ -23,6 +23,9 @@ export interface ObservedRun {
   capabilities: CapabilityResult[];
   clickThrough: { state: "pass" | "fail" | "not-applicable"; detail: string };
   behaviours: BehaviourResult[];
+  // The persistence check (persistence.ts), when the run reached it: A_Restart, an observed reboot,
+  // then a read-back compared with the project.
+  persistence?: { state: "pass" | "fail"; detail: string };
 }
 
 // What a passing driver actually established (capabilities.ts). A write passes on the server's
@@ -35,6 +38,8 @@ const METHOD: Record<string, string> = {
   readParams: "parameter memory read and decoded completely; not compared with a built image",
   readLinks: "group tables read and decoded, every association resolved; not compared with a built image",
 };
+const PERSISTS = new Set(["fullDownload", "flashLinks"]);
+const PERSISTENCE_METHOD = "A_Restart, reboot observed (the device stopped answering, then answered again), then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back";
 const NOT_ASSESSED: AxisResult = { state: "not-assessed" };
 const detail = (d: string) => (d ? { detail: d } : {});
 
@@ -64,12 +69,19 @@ export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditi
   };
   const baseline = `spec baseline (${spec.configure.length} configure steps)`;
 
-  // Persistence is not claimed: whether a write path restarts the device, and whether the device
-  // must prove the reboot, depends on its declared load procedure and firmware (deviceflash.ts).
+  // The persistence check runs right after the capabilities (runner.ts), so it reads back the
+  // download's parameters and group tables with the link flashLinks placed on top. flashParams reverts
+  // every change it makes, so what survives the reboot is not its own write, and it gets no result.
+  const persisted = (c: CapabilityResult): AxisResult => {
+    const p = run.persistence;
+    if (!p || c.state !== "pass" || !PERSISTS.has(c.capability)) return NOT_ASSESSED;
+    return p.state === "pass" ? { state: "pass", method: PERSISTENCE_METHOD, ...detail(p.detail) } : { state: "fail", ...detail(p.detail) };
+  };
   for (const c of run.capabilities) {
     if (!(c.capability in METHOD) || (c.state !== "pass" && c.state !== "fail")) continue;
     add(c.capability, `${baseline}, then the ${c.capability} driver's own change`, {
       transfer: c.state === "pass" ? { state: "pass", method: METHOD[c.capability], ...detail(c.detail) } : { state: "fail", ...detail(c.detail) },
+      persistence: persisted(c),
     });
   }
   const downloadedHere = run.capabilities.some((c) => c.capability === "fullDownload" && c.state === "pass");

@@ -9,6 +9,7 @@
 // and the GA picker `data-testid="link-<comObjNumber>"`, the commission dialog carries
 // `commission-*`. No UI change was needed. Requires `bun run dev:web` (Vite) up.
 import { chromium, type Browser, type Page } from "playwright";
+import type { DeviceReadbackInfo } from "../../packages/product/src/index.ts";
 
 // The web app's two flash targets (see FlashDialog.tsx). Kept local so this driver stays
 // decoupled from the web bundle; a rename on either side is caught by the runner's own use.
@@ -201,8 +202,11 @@ export class UiDriver {
   // Trigger a read-back through the config page's own button (the read-back UI surface) and wait for
   // it to finish (the button spins while the read runs). The decode/drift assertion is the caller's,
   // read from the API; this only drives the button and waits out the bus read.
-  async readBack(): Promise<void> {
+  // Returns what the read covered, taken from the response the page itself received (null if none).
+  async readBack(): Promise<DeviceReadbackInfo | null> {
     const page = this.req();
+    const response = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/read-back"), { timeout: 600_000 });
+    response.catch(() => undefined);
     await page.click('[data-testid="read-back"]');
     // Wait for the read to START (the button's spinner mounts) so the finish-check below cannot see
     // the pre-spinner frame and resolve immediately; if the read is instant the appear-wait simply
@@ -214,6 +218,11 @@ export class UiDriver {
       const b = document.querySelector('[data-testid="read-back"]');
       return !!b && !b.querySelector(".animate-spin");
     }, undefined, { timeout: 600_000, polling: 500 });
+    // The spinner clears when the response arrived; if it cleared without one, do not wait out the
+    // full read budget for a response that is not coming.
+    const late = new Promise<null>((r) => setTimeout(() => r(null), 15_000));
+    const body = await Promise.race([response.then((r) => (r.ok() ? r.json() : null)).catch(() => null), late]) as { readback?: DeviceReadbackInfo } | null;
+    return body?.readback ?? null;
   }
 
   // Assert every parameter and com-object the API exposes has a rendered, visible row. The expected

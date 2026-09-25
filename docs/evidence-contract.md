@@ -236,10 +236,20 @@ New runs record them: the smoke runner writes `<report>.evidence.json`, `tools/r
 `evidence.json` and `tools/etsdiff.ts` takes `--evidence` ([testing.md](testing.md),
 [development.md](development.md)).
 
-Smoke records claim transfer and behaviour only. Persistence is not claimed from a smoke run:
-whether a write path restarts the device, and whether the device must prove the reboot, depends on
-its declared load procedure and firmware. A behaviour observed on addresses a full download
-committed counts only when that download ran in the same run.
+Smoke records claim transfer and behaviour, and persistence from a dedicated step. A write path's
+own restart proves nothing here: whether it restarts the device at all depends on its load procedure
+and firmware. So after the capabilities, and before any behaviour relinks the device, the runner
+sends A_Restart itself and requires a reboot it can see: fresh-connection probes must show the
+device answering before the restart, then not answering, then answering again. Only the device's
+own silence counts; an interface or tunnel error ends the check as a failure. Firmware differs in
+timing (the GVS actuator answers once more and drops out about 6 s later; the same device polled
+without a restart shows no gap), which is why the probes run for up to a minute rather than once.
+The runner then reads the device back through the server and requires the decoded parameters and
+group links to equal the project. The com-object table is not read back, so the record says so in
+its method. The result goes onto the `fullDownload` and `flashLinks` records of the same run,
+because their writes are what the read-back sees; `flashParams` reverts every change it makes and
+gets none. A behaviour observed on addresses a full download committed counts only when that
+download ran in the same run.
 
 ### Firmware
 

@@ -5,7 +5,7 @@
 import { gaToNum } from "../../packages/knx/src/index.ts";
 // The authoritative config-view + capability types, imported from the product so the runner reads
 // exactly the shapes the server sends (a field renamed on either side is a compile error here).
-import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities } from "../../packages/product/src/index.ts";
+import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities, DeviceReadbackInfo } from "../../packages/product/src/index.ts";
 export type { DeviceConfigView as ConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities };
 
 export class ApiError extends Error {
@@ -66,16 +66,17 @@ export class Client {
   // that read outlasts any single HTTP socket on the single-channel bench: the OpenKNX RaumController
   // reads back in ~4 min, past the old 180 s client timeout, so the POST aborted while the server read
   // ran on to completion (and every retry fired ANOTHER doomed 4 min read). So the POST is fired and
-  // the TASK is polled to completion, exactly like downloadReal. The read task carries no FlashResult
-  // (reads persist their result to the DB), and the runner ignores this return and re-reads the
-  // persisted state via getConfig, so this resolves void on the task reaching "done". A coded refusal
-  // (e.g. DEVICE_NOT_ANSWERING) still propagates as an ApiError, the same honesty contract as the flash.
-  async readBack(pid: string, did: string, onPhase?: (p: string) => void): Promise<void> {
+  // the TASK is polled to completion, exactly like downloadReal. What the read covered (parameters,
+  // links, unresolved associations) exists only in the POST's response, not in the task or in GET
+  // /config; it is returned when that response arrives, and null when the socket died, so a caller
+  // that needs the coverage fails instead of assuming it. A coded refusal (e.g. DEVICE_NOT_ANSWERING)
+  // still propagates as an ApiError, the same honesty contract as the flash.
+  async readBack(pid: string, did: string, onPhase?: (p: string) => void): Promise<DeviceReadbackInfo | null> {
     const firedAt = Date.now();
-    const fetchP = this.call<unknown>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 600_000).catch((e) => {
+    const fetchP = this.call<{ readback?: DeviceReadbackInfo }>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 600_000).catch((e) => {
       if (e instanceof ApiError) throw e; // a coded refusal is a real outcome
       process.stderr.write(`    …read: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
-      return new Promise<unknown>(() => {}); // never settles; the poll is the source of truth
+      return new Promise<{ readback?: DeviceReadbackInfo }>(() => {}); // never settles; the poll is the source of truth
     });
     let lastPhase = "";
     const pollP = (async (): Promise<void> => {
@@ -93,7 +94,13 @@ export class Client {
       }
       throw new ApiError(0, "OP_TIMED_OUT", "read-back did not complete within the poll window");
     })();
-    try { await Promise.race([fetchP, pollP]); }
+    try {
+      const first = await Promise.race([fetchP, pollP.then(() => null)]);
+      if (first) return first.readback ?? null;
+      // The poll saw the task done first; the response follows within moments unless its socket died.
+      const late = await Promise.race([fetchP, new Promise<null>((r) => setTimeout(() => r(null), 15_000))]);
+      return late?.readback ?? null;
+    }
     finally { fetchP.catch(() => undefined); } // a late fetch rejection (after the poll won) must not go unhandled
   }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }

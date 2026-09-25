@@ -123,6 +123,7 @@ preflight (product in catalog, interface reachable)
   → baseline configure
   → read capabilities from the product
   → run each claimed capability's driver, in the selected channel
+  → persistence (A_Restart, observed reboot, read-back equal to the project)
   → ui-click-through (ui channel: every parameter and com-object the API exposes must render)
   → behaviours (observe the bus)
   → refusal probes for unclaimed write capabilities
@@ -190,7 +191,7 @@ counts as done only with both green, so it is run once per channel. `bun run smo
 `--report`, writing one JSON artifact per run under `tools/smoke/reports/` (git-ignored) with the
 spec, channel, seed, every verdict and the raw `FlashResult`s. Next to each report the run writes
 `<report>.evidence.json`: one [evidence record](evidence-contract.md) per observed capability,
-click-through and behaviour, naming the server build (read from `/api/version` before the first
+click-through and behaviour, with the persistence result on the writes it covers, naming the server build (read from `/api/version` before the first
 run), the runner revision, the spec revision (a hash of the spec), the transport and the device's
 firmware revision where it reports one (device object PID 9, read over the bench interface after
 the run). A run that stops before it reaches the device writes no device record, and the runner
@@ -225,7 +226,8 @@ byte-verifies.
   unproven.
 - **The assign-address blind spot** ([commissioning.md](commissioning.md)): a silent device on the
   target address during the pre-check is invisible to KNX itself.
-- **Timing, soak and power-cycle persistence.** One lifecycle pass says nothing about days on a bus.
+- **Timing, soak and power-loss persistence.** One lifecycle pass says nothing about days on a bus,
+  and the persistence step reboots the device with A_Restart; it does not cut bus power.
 - **Firmware-side failure modes** such as a device that only tolerates full downloads: the framework
   surfaces them honestly but cannot prevent them.
 

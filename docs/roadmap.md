@@ -45,10 +45,17 @@ started until the capability it depends on is hardware-proven.
   only a hint in the compatibility matrix ([evidence-contract.md](evidence-contract.md)). Counting
   it as tested needs a reason to believe the variants share electronics and firmware, which the
   catalog alone does not give.
-- **Record persistence evidence.** No run claims persistence yet: the smoke runner cannot tell
-  whether a write path restarted the device and the device proved the reboot. A dedicated step
-  (restart or bus power cycle, then a read-back or behaviour check) has to write that axis before
-  owned Products can meet the acceptance in [evidence-contract.md](evidence-contract.md).
+- **Persistence across a bus power loss.** The smoke runner's persistence step restarts the device
+  with A_Restart and reads it back ([evidence-contract.md](evidence-contract.md)). A reboot reloads
+  the configuration from non-volatile memory, but it is not a power cut: nothing automated removes
+  bus power, and on the bench that would also take down the USB interface the bridge drives.
+- **The bridge keeps a tunnel channel whose TCP peer vanished.** A TCP channel is reaped only when
+  its socket closes. On 2026-09-25 a client gave up mid-flash and closed its socket, but the client
+  host's firewall (macOS stealth mode) dropped the bridge's packets instead of answering with a
+  reset, so the bridge kept retransmitting into a connection that no longer existed and held its
+  only channel; every connect was refused with status `0x24` until the bridge was restarted. Linux
+  gives up on such a socket only after its retransmission limit (about 15 minutes). A bound on
+  unacknowledged data (`TCP_USER_TIMEOUT`) or an application-level idle limit would free it sooner.
 - **`tools/readback.ts` cannot read MV-0705 devices.** On 2026-09-24 every MV-0705 device of the
   reference installation refused the tool's parameter read (`device refused byte @0x41e4`), so its
   evidence covers System B devices only. The server's read-back reads them; the tool should use the

@@ -42,12 +42,13 @@ export interface CapCtx extends ChanCtx {
 const config = (ctx: CapCtx) => ctx.client.getConfig(ctx.pid, ctx.did);
 
 // An independent read-back followed by a fresh config read: the L1 proof that the device holds what
-// we wrote, decoded from the device's own memory (not the value we optimistically stored).
+// we wrote, decoded from the device's own memory (not the value we optimistically stored). The
+// config carries the read's coverage, which GET /config alone never does; absent when it was not
+// reported.
 async function readBackConfig(ctx: CapCtx) {
-  if (ctx.channel === "ui") await ctx.ui!.readBack();
-  else await ctx.client.readBack(ctx.pid, ctx.did, (p) => ctx.log(`read ${p}`));
+  const readback = ctx.channel === "ui" ? await ctx.ui!.readBack() : await ctx.client.readBack(ctx.pid, ctx.did, (p) => ctx.log(`read ${p}`));
   await ctx.settle(3000);
-  return config(ctx);
+  return { ...(await config(ctx)), readback: readback ?? undefined };
 }
 
 // ── the five capability drivers ────────────────────────────────────────────
@@ -112,8 +113,10 @@ export async function capFlashLinks(ctx: CapCtx): Promise<CapabilityResult> {
   await linkChan(ctx, { refId: target.refId, number: target.number }, ga);
   await flashGaChan(ctx, "flash-ga");
   const after = await readBackConfig(ctx);
+  // gaRaw is the project's link; `changed` compares it with what the read-back found on the device.
+  if (!after.readback?.linksRead) return { ...base, state: "fail", detail: "the read-back after the link flash did not read the group tables" };
   const co = findComObject(after, target.refId);
-  if (!co || co.gaRaw !== gaToNum(ga)) return { ...base, state: "fail", detail: `read-back does not carry ${ga} on object ${target.number} (got ${co?.gaRaw ?? "none"})` };
+  if (!co || co.gaRaw !== gaToNum(ga) || co.changed) return { ...base, state: "fail", detail: `the device does not carry ${ga} on object ${target.number} (project ${co?.gaRaw ?? "none"}, differs from device: ${co?.changed ?? "?"})` };
   return { ...base, state: "pass", detail: `linked object ${target.number} → ${ga}, verified on read-back`, evidence: { object: target.number, ga } };
 }
 
@@ -145,6 +148,7 @@ export async function capFlashParams(ctx: CapCtx): Promise<CapabilityResult> {
   }
   // Zero-drift: after restoring every canonical value, an independent read-back must show no change.
   const after = await readBackConfig(ctx);
+  if (!after.readback?.paramsRead) return { ...base, state: "fail", detail: "the read-back after the sweep did not read the parameters, so drift is unknown" };
   const drift = after.blocks.flatMap((b) => b.items).flatMap((it) => (it.kind === "param" && it.param.changed ? [it.param.refId] : []));
   if (drift.length) return { ...base, state: "fail", detail: `read-back shows drift after revert: ${drift.slice(0, 5).map(short).join(", ")}` };
   return { ...base, state: "pass", detail: `${swept.length} param(s) swept, each verified + reverted, zero drift`, evidence: { seedSwept: swept } };
@@ -157,7 +161,8 @@ export async function capFlashParams(ctx: CapCtx): Promise<CapabilityResult> {
 export async function capReadParams(ctx: CapCtx): Promise<CapabilityResult> {
   const base = { capability: "readParams", channel: ctx.channel };
   const view = await readBackConfig(ctx);
-  if (view.readback && view.readback.paramsRead !== true) return { ...base, state: "fail", detail: "read-back did not decode the parameter image (paramsRead=false)" };
+  if (!view.readback) return { ...base, state: "fail", detail: "the read-back did not report what it covered" };
+  if (view.readback.paramsRead !== true) return { ...base, state: "fail", detail: "read-back did not decode the parameter image (paramsRead=false)" };
   return { ...base, state: "pass", detail: "parameter image read back and decoded" };
 }
 
@@ -166,8 +171,9 @@ export async function capReadParams(ctx: CapCtx): Promise<CapabilityResult> {
 export async function capReadLinks(ctx: CapCtx): Promise<CapabilityResult> {
   const base = { capability: "readLinks", channel: ctx.channel };
   const view = await readBackConfig(ctx);
-  if (view.readback && view.readback.linksRead !== true) return { ...base, state: "fail", detail: "read-back did not decode the group tables (linksRead=false)" };
-  if (view.readback && view.readback.linkGaps > 0) return { ...base, state: "fail", detail: `${view.readback.linkGaps} association(s) did not resolve to a group address` };
+  if (!view.readback) return { ...base, state: "fail", detail: "the read-back did not report what it covered" };
+  if (view.readback.linksRead !== true) return { ...base, state: "fail", detail: "read-back did not decode the group tables (linksRead=false)" };
+  if (view.readback.linkGaps > 0) return { ...base, state: "fail", detail: `${view.readback.linkGaps} association(s) did not resolve to a group address` };
   return { ...base, state: "pass", detail: "group tables read back and decoded, no gaps" };
 }
 
