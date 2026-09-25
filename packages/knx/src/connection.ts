@@ -12,6 +12,7 @@ import { KnxError } from "./errors.ts";
 // silently records nothing.
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const CONNECTIONSTATE_TIMEOUT_MS = 10_000;
+const TCP_ACK_TIMEOUT_MS = 10_000;
 const CONNECTIONSTATE_TRIES = 3;
 
 // Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
@@ -74,7 +75,10 @@ export class KnxIpTunnel implements KnxTransport {
   assignedIa = 0;
   private txSeq = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
-  // Per-send wait for a tunnelling ACK; an instance field so a test can shorten the 1.5 s default.
+  // Per-send wait for a tunnelling ACK; an instance field so a test can shorten it. UDP uses the
+  // spec's short wait because a lost datagram is retransmitted. TCP delivers the ACK or drops the
+  // connection, so a short wait only turns a late ACK into a failed operation: a single retransmitted
+  // TCP segment on a Wi-Fi hop takes longer than 1.5 s.
   private ackTimeoutMs = 1500;
   // Set the moment teardown begins. A datagram that lands between DISCONNECT_REQ and the socket
   // actually closing must not be answered: the ACK would be written into a socket that is gone, and
@@ -105,6 +109,7 @@ export class KnxIpTunnel implements KnxTransport {
   static tcp(ip: string, port = KNXPORT, createTcpSocket: () => TcpSocket = realTcpSocket): KnxIpTunnel {
     const t = new KnxIpTunnel(ip, port);
     t.mode = "tcp";
+    t.ackTimeoutMs = TCP_ACK_TIMEOUT_MS;
     t.createTcpSocket = createTcpSocket;
     return t;
   }

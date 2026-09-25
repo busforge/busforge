@@ -171,6 +171,13 @@ describe("KnxIpTunnel over TCP", () => {
     expect(sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_REQ).length).toBe(1);
   });
 
+  test("over TCP the tunnelling ACK wait is not the UDP 1.5 s", async () => {
+    const tcp = KnxIpTunnel.tcp("192.0.2.1");
+    const udp = new KnxIpTunnel("192.0.2.1");
+    expect(tcp["ackTimeoutMs"]).toBeGreaterThanOrEqual(10_000);
+    expect(udp["ackTimeoutMs"]).toBe(1500);
+  });
+
   test("an inbound L_Data.ind is ACKed and surfaced via onCemi", async () => {
     const { sock, tunnel } = await connectedTcp();
     const calls: { src: number; dst: number; isGroup: boolean }[] = [];

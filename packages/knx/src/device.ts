@@ -155,9 +155,14 @@ export class KnxDevice {
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
     for (let i = 0; i < tries; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 200));
-      const ackP = new Promise<boolean>((res) => { this.ackResolve = () => res(true); setTimeout(() => res(false), 1500); });
+      // The waiters are registered before the send, the device's timeouts start after it: the send
+      // resolves on the tunnelling ACK, and over TCP the device's T_ACK and response queue behind
+      // that ACK in the same stream, so a late tunnel ACK must not eat the device's time.
+      let ackTimeout = (): void => undefined;
+      let respTimeout = (): void => undefined;
+      const ackP = new Promise<boolean>((res) => { this.ackResolve = () => res(true); ackTimeout = () => res(false); });
       const respP = expectResponse
-        ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); setTimeout(() => res(null), 2000); })
+        ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
       // Plain: send the numbered APDU as-is. Secure: strip the numbering to the bare
       // service APDU (inner TPCI 0) and wrap it for this T-sequence.
@@ -173,6 +178,8 @@ export class KnxDevice {
         if (i < tries - 1) continue;
         throw e;
       }
+      setTimeout(ackTimeout, 1500);
+      setTimeout(respTimeout, 2000);
       if (!(await ackP)) continue;
       if (!expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
       const r = await respP;
@@ -379,6 +386,14 @@ export class KnxDevice {
       if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended memWrite verify mismatch @0x${addr.toString(16)}`);
     }
   }
+  // Send A_Restart and nothing else: the caller observes the reboot itself. NOT swallowed: every
+  // reboot proof reads the device's SILENCE as "it rebooted", so a frame the interface never accepted
+  // must not reach one; that silence would mean nothing at all.
+  async sendRestart(): Promise<void> {
+    await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART)));
+    this.seq = (this.seq + 1) & 0x0f;
+  }
+
   // A_Restart, acknowledged — never fired blind.
   //
   // This is the step that makes a download STICK, and it is the least obvious one in the whole
@@ -415,11 +430,7 @@ export class KnxDevice {
   // even though the device kept answering here). For those, a restart that does not reboot is not a
   // failure, so the caller passes requireReboot=false. The A_Restart is still sent either way.
   async restart(requireReboot = true): Promise<void> {
-    // NOT swallowed. The proof below reads the device's SILENCE as "it rebooted", so a frame the
-    // interface never even accepted must not reach it: that silence would then mean nothing at all,
-    // and we would report a device as saved that was never told to save.
-    await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART)));
-    this.seq = (this.seq + 1) & 0x0f;
+    await this.sendRestart();
     try {
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch {
