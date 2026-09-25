@@ -57,13 +57,14 @@ async function readBenchFirmware(host: string, ia: string): Promise<Firmware> {
 
 type LoadStates = Map<number, number | null>;
 
-// The load state of load objects 1-4, null where the device does not report one.
+// The load state of load objects 1-4, null where the device does not report one (an empty answer).
+// Any other read error is thrown: a timeout must not quietly take an object out of the check.
 async function readLoadStates(tun: KnxIpTunnel, ia: string, mask: string): Promise<LoadStates> {
   const dev = new KnxDevice(tun, ia);
   const out: LoadStates = new Map();
   try {
     await dev.connect();
-    for (const obj of [1, 2, 3, 4]) out.set(obj, await lsmState(dev, obj, isMemoryMappedLsm(mask)).catch(() => null));
+    for (const obj of [1, 2, 3, 4]) out.set(obj, (await lsmState(dev, obj, isMemoryMappedLsm(mask))) ?? null);
   } finally { await dev.disconnect(); }
   return out;
 }
