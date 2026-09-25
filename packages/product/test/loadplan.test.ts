@@ -135,3 +135,22 @@ test("planRelativeParFlash emits exactly the hardware-proven System B bracket", 
     { op: "restart", requireReboot: true },
   ]);
 });
+
+test("planRelativeParFlash writes the declared MCB entries right after the allocation", () => {
+  // The allocation resets the regions (Jung 400021SE: one region after a parameter flash without them).
+  const image = Buffer.alloc(212, 0xab);
+  const id = Buffer.from("0083123421", "hex");
+  const mcb = [{ obj: 4, element: 1, data: Buffer.from("000000D300320000", "hex") }, { obj: 4, element: 2, data: Buffer.from("0000000100320000", "hex") }];
+  expect(planRelativeParFlash(4, image, id, true, mcb)).toEqual([
+    { op: "unload", lsm: 4 },
+    { op: "load", lsm: 4 },
+    { op: "alloc", lsm: 4, size: 212 },
+    { op: "writeProp", obj: 4, pid: 27, start: 1, data: mcb[0].data },
+    { op: "writeProp", obj: 4, pid: 27, start: 2, data: mcb[1].data },
+    { op: "writeSegment", lsm: 4, bytes: image },
+    { op: "stampAppId", lsm: 4, data: id },
+    { op: "loadCompleted", lsm: 4 },
+    { op: "restart", requireReboot: true },
+  ]);
+  expect(() => planRelativeParFlash(4, image, id, true, [{ ...mcb[0], obj: 3 }])).toThrow("object 3");
+});

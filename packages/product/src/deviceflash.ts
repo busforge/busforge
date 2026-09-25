@@ -1,11 +1,11 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
-import type { LoadPlan } from "@busforge/knx";
+import type { LoadPlan, LoadStep } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
 //
@@ -114,11 +114,16 @@ export interface AbsParFlashPlan {
 // absolute planner. One DELIBERATE delta vs the retired executor: the engine asserts
 // LOADING after Load (it always did for the absolute path); standard LSM behavior, but
 // not yet hardware-smoked on a System B device (see docs/load-procedures.md).
-export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer, requireReboot = true): LoadPlan {
+// `mcb` are the memory-control-block entries the application declares (declaredMcbWrites): the
+// allocation resets the segment's regions, so they are written again right after it.
+export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer, requireReboot = true, mcb: McbWrite[] = []): LoadPlan {
+  const other = mcb.find((m) => m.obj !== lsm);
+  if (other) throw new ProductError("LOAD_STEP_UNSUPPORTED", `an MCB entry for object ${other.obj}; the parameter flash only allocates object ${lsm}`);
   return [
     { op: "unload", lsm },
     { op: "load", lsm },
     { op: "alloc", lsm, size: image.length },
+    ...mcb.map((m): LoadStep => ({ op: "writeProp", obj: lsm, pid: 27, start: m.element, data: m.data })),
     { op: "writeSegment", lsm, bytes: image },
     { op: "stampAppId", lsm, data: appIdStamp },
     { op: "loadCompleted", lsm },

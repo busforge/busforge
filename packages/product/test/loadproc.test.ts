@@ -136,10 +136,11 @@ test("par policy: documented skips and executed steps", () => {
   for (const v of ["LdCtrlUnload", "LdCtrlTaskSegment", "LdCtrlTaskCtrl1"]) {
     expect(assessParStep(step(v, { LsmIdx: "1" }), "absolute").kind).toBe("skipped");
   }
-  // relative: the par bracket is hardware-verified without the MCB regions (M-0162 + 493B); the full
-  // download writes them (declaredMcbWrites). The image CRC is never sent by ETS.
+  // relative: the declared MCB regions are written after the par allocation too (declaredMcbWrites);
+  // the image CRC is never sent by ETS
   expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27" }), "relative").kind).toBe("skipped");
-  expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000000" }), "relative").kind).toBe("skipped");
+  expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000000" }), "relative").kind).toBe("executed");
+  expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000001" }), "relative").kind).toBe("blocked");
   // the surgical write supersedes the declared bulk write
   expect(assessParStep(step("LdCtrlWriteAbsMem", { Address: "16896", Size: "4" }), "absolute").kind).toBe("executed");
   expect(assessParStep(step("LdCtrlWriteRelMem", { ObjIdx: "4", Size: "212" }), "relative").kind).toBe("executed");
@@ -181,6 +182,7 @@ test("the declared MCB entries of a System B full download, as ETS sends them", 
     { obj: 4, element: 1, data: Buffer.from("0000066A00320000", "hex") },
     { obj: 4, element: 2, data: Buffer.from("0000016900320000", "hex") },
   ]);
+  expect(declaredMcbWrites(lp, 2003, "par")).toEqual(declaredMcbWrites(lp, 2003));
   expect(declaredMcbWrites(parseLoadProcedures(readRealFixture("M-0162_A-0004-11-F245.xml.gz")), 212)).toEqual([]);
 });
 

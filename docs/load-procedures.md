@@ -93,16 +93,25 @@ reports success.
 
 | Disposition | Steps (par) | Why |
 | --- | --- | --- |
-| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write) | performed by the planner/executor or the proven base bracket |
+| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation) | performed by the planner/executor or the proven base bracket |
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`. This is a check ETS runs that was previously skipped silently |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
-| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `WriteProp`/`LoadImageProp` **to PID 27 only** (the memory-control-block stamp) | deliberately not executed, each with hardware evidence |
+| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** (ETS 6 sends nothing for it) | deliberately not executed, each with hardware or capture evidence |
 | **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices, `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
 
-PID 27 is the memory-control-block table (per-segment CRC bookkeeping ETS stamps on a full
-download). System B parameter flashes are hardware-verified without rewriting it, which is
-why the skip is justified there; no such evidence exists for absolute devices, so the same
-verb blocks on them.
+PID 27 is the memory-control-block table: per region of a segment, its size, a control byte and
+a CRC the device computes. A System B application may declare the regions of its parameter
+segment itself. The Jung 400021SE splits its 7701 bytes into 7700 plus the one byte it changes at
+run time; with a single region over the whole segment that byte breaks the CRC and the device
+comes back from its next restart with the application in ERROR. Every allocation, in a full
+download and in a parameter flash alike, resets the regions (measured on the Jung: two after a
+full download and a GA flash, one after a parameter flash without the writes). So both write the
+declared entries right after the allocation, exactly as ETS does: the first 8 bytes of the
+10-byte `InlineData`, element by element, each echoed back by the device or the download stops
+(`PROPERTY_WRITE_REFUSED`). Entries whose regions do not add up to the segment, that address
+another object or carry data beyond the entry are refused (`LOAD_STEP_UNSUPPORTED`). ETS sends no
+write for `LoadImageProp`; it reads the device's CRCs back afterwards. No evidence exists for
+absolute devices, so both verbs block on them.
 
 A `CompareProp` honours its `Mask`, so a manufacturer that masks out its own manufacturer id
 and version and checks only the application number is compared the way it asks to be.

@@ -93,12 +93,14 @@ Notes attached to that table:
 - **Jung 400021SE loses its application at the next restart.** After a Busforge full download the
   device answers with every load object LOADED and every byte read back equal. After an A_Restart
   (2026-09-25, reproduced twice) the tables are still LOADED, but the application object (object
-  4) comes back in ERROR and the device answers no group read; a full download restores it until
-  the next restart. Its load procedure declares steps the System B download does not execute: an
-  `LdCtrlWriteProp` of two memory-control-block entries (object 4, PID 27) and
-  `LdCtrlLoadImageProp` on objects 1-4, where ETS writes the segment CRC it computed from the
-  image. The exact bytes ETS sends are not known yet; an ETS capture of this device will show them.
-  The Theben MIX application (`M-0048_A-493B-21`) declares the same steps and is unproven here.
+  4) comes back in ERROR and the device answers no group read. Cause, from an ETS capture: its load
+  procedure declares two memory-control-block regions (object 4, PID 27) that ETS writes after the
+  allocation and Busforge skipped, and every allocation (full download or parameter flash) resets
+  them. Both paths now write them ([load-procedures.md](load-procedures.md)); on hardware the
+  device then keeps both regions through a GA flash and a parameter flash and its application
+  survives a restart. The Theben MIX application (`M-0048_A-493B-21`) declares the same regions:
+  parameter flashes Busforge did on such a device before this change may have left one region,
+  which shows only at the device's next restart.
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier

@@ -612,7 +612,8 @@ export class SystemBProfile extends DeviceProfile {
     // The MergedProcedure fragments parameterize the proven base bracket; every
     // par-applicable fragment step must be dispositioned (executed/skip) or the flash
     // refuses. The declared CompareProp pre-flights run below, before any bus write.
-    const coverage = assertParCoverage(parseLoadProcedures(ctx.appXml), "relative");
+    const proc = parseLoadProcedures(ctx.appXml);
+    const coverage = assertParCoverage(proc, "relative");
     // Build + safety refusals. These run AFTER the session's connect/mask-check (vs before, in
     // the original), which is harmless: no device byte is written until below, and verifying we
     // are on the right device first is if anything safer.
@@ -631,6 +632,7 @@ export class SystemBProfile extends DeviceProfile {
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+    const mcb = declaredMcbWrites(proc, target.size, "par");
 
     await runDeclaredChecks(dev, coverage);
     // A parameter (par) download rewrites an EXISTING segment; on a never-programmed device
@@ -648,7 +650,7 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg)),
+        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
       // The device restarts after load-completed; verify ONLY the owned bytes.

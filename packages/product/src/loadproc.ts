@@ -154,9 +154,10 @@ export type ParDisposition =
 // the Jung 400021SE splits its 7701-byte parameter segment into 7700 bytes plus one byte the
 // device changes at run time. Without that split the device keeps one region over the whole
 // segment, the byte it changes breaks the CRC, and the application comes back from the next
-// restart in ERROR. So the full download writes the declared entries, as ETS writes them
-// (declaredMcbWrites). The par download keeps its hardware-verified bracket without them (M-0162,
-// Theben MIX 493B); whether a par flash of the Jung needs them has not been shown. ETS 6 sends no
+// restart in ERROR. The allocation of a par download resets the regions just the same (hardware-
+// measured on the Jung: two regions after a full download and a GA flash, one after a parameter
+// flash). So both the full and the par download write the declared entries after the allocation,
+// as ETS writes them (declaredMcbWrites). ETS 6 sends no
 // property write for the declared LdCtrlLoadImageProp to PID 27 (Jung capture, 2026-09-25): the
 // device computes the CRC itself. No evidence exists for absolute devices, so on them both verbs
 // block.
@@ -183,11 +184,11 @@ function mcbWrite(step: LdStep): McbWrite | string {
   return { obj: MCB_OBJ, element, data: data.subarray(0, MCB_ENTRY_BYTES) };
 }
 
-// The MCB entries a System B application declares for its full download, in declaration order.
-// Their regions must cover the parameter segment exactly: regions that do not add up to the
-// allocation would have the device check the wrong bytes at boot.
-export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number): McbWrite[] {
-  const writes = flattenSteps(lp, "full")
+// The MCB entries a System B application declares for one download, in declaration order. Their
+// regions must cover the parameter segment exactly: regions that do not add up to the allocation
+// would have the device check the wrong bytes at boot.
+export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number, op: LoadOp = "full"): McbWrite[] {
+  const writes = flattenSteps(lp, op)
     .filter((s) => s.verb === "LdCtrlWriteProp" && Number(s.attrs.PropId) === MCB_PID)
     .map((s) => {
       const w = mcbWrite(s);
@@ -268,7 +269,8 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
       }
       case "LdCtrlWriteProp":
         if (Number(step.attrs.PropId) === MCB_PID) {
-          return { kind: "skipped", reason: "MCB regions (PID 27): the par bracket is hardware-verified without them (M-0162, Theben 493B); the full download writes them" };
+          const w = mcbWrite(step);
+          return typeof w === "string" ? { kind: "blocked", detail: `${step.verb} to PID 27: ${w}` } : { kind: "executed" };
         }
         return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
       case "LdCtrlLoadImageProp":
