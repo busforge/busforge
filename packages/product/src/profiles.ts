@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -438,7 +438,7 @@ export class SystemBProfile extends DeviceProfile {
     const requireReboot = !persistsOnLoadCompleted(cfg);
     const plan = planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot);
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {

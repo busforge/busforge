@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
-import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
+import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
 
@@ -136,7 +136,8 @@ test("par policy: documented skips and executed steps", () => {
   for (const v of ["LdCtrlUnload", "LdCtrlTaskSegment", "LdCtrlTaskCtrl1"]) {
     expect(assessParStep(step(v, { LsmIdx: "1" }), "absolute").kind).toBe("skipped");
   }
-  // relative: MCB stamp (PID 27) is a justified skip (hw-evidenced M-0162 + 493B)
+  // relative: the par bracket is hardware-verified without the MCB regions (M-0162 + 493B); the full
+  // download writes them (declaredMcbWrites). The image CRC is never sent by ETS.
   expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27" }), "relative").kind).toBe("skipped");
   expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000000" }), "relative").kind).toBe("skipped");
   // the surgical write supersedes the declared bulk write
@@ -170,4 +171,28 @@ test("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImag
     // no step may fall through without a disposition: blocked+skipped+checks+executed
     // is total by construction; this pins that the corpus stays fully assessed.
   }
+});
+
+test("the declared MCB entries of a System B full download, as ETS sends them", () => {
+  // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the
+  // 10-byte InlineData (Jung 400021SE capture, 2026-09-25).
+  const lp = parseLoadProcedures(readRealFixture("M-0048_A-493B-21-B471.xml.gz"));
+  expect(declaredMcbWrites(lp, 2003)).toEqual([
+    { obj: 4, element: 1, data: Buffer.from("0000066A00320000", "hex") },
+    { obj: 4, element: 2, data: Buffer.from("0000016900320000", "hex") },
+  ]);
+  expect(declaredMcbWrites(parseLoadProcedures(readRealFixture("M-0162_A-0004-11-F245.xml.gz")), 212)).toEqual([]);
+});
+
+test("declared MCB entries that cannot be written faithfully are refused, not adapted", () => {
+  const lp = parseLoadProcedures(readRealFixture("M-0048_A-493B-21-B471.xml.gz"));
+  // regions that do not cover the parameter segment
+  expect(() => declaredMcbWrites(lp, 2004)).toThrow("cover 2003 bytes");
+  const one = (attrs: Record<string, string>) => ({ ...lp, blocks: [{ mergeId: 1, steps: [step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000000A003200000000", ...attrs })] }] });
+  expect(declaredMcbWrites(one({}), 10)).toHaveLength(1);
+  expect(() => declaredMcbWrites(one({ InlineData: "0000000A003200000001" }), 10)).toThrow("beyond the 8-byte");
+  expect(() => declaredMcbWrites(one({ InlineData: "0000000A00" }), 10)).toThrow("shorter than");
+  expect(() => declaredMcbWrites(one({ ObjIdx: "3" }), 10)).toThrow("object 3");
+  expect(() => declaredMcbWrites(one({ StartElement: "0" }), 10)).toThrow("element index");
+  expect(() => declaredMcbWrites(one({ Count: "2" }), 10)).toThrow("more than one");
 });

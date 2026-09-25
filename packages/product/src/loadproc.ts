@@ -149,12 +149,57 @@ export type ParDisposition =
   | { kind: "skipped"; reason: string }
   | { kind: "blocked"; detail: string };
 
-// PID 27 is the memory-control-block table (per-segment CRC bookkeeping ETS stamps on a
-// full download). System B par flashes are hardware-verified WITHOUT rewriting it
-// (on two products, both flash + read-back verified), so MCB writes
-// are a justified skip there. No such evidence exists for absolute devices, so on them
-// the same verb blocks.
+// PID 27 is the memory-control-block table: per segment region, its size, a control byte and a
+// CRC. On System B an application may declare the regions itself (LdCtrlWriteProp to PID 27):
+// the Jung 400021SE splits its 7701-byte parameter segment into 7700 bytes plus one byte the
+// device changes at run time. Without that split the device keeps one region over the whole
+// segment, the byte it changes breaks the CRC, and the application comes back from the next
+// restart in ERROR. So the full download writes the declared entries, as ETS writes them
+// (declaredMcbWrites). The par download keeps its hardware-verified bracket without them (M-0162,
+// Theben MIX 493B); whether a par flash of the Jung needs them has not been shown. ETS 6 sends no
+// property write for the declared LdCtrlLoadImageProp to PID 27 (Jung capture, 2026-09-25): the
+// device computes the CRC itself. No evidence exists for absolute devices, so on them both verbs
+// block.
 const MCB_PID = 27;
+// An MCB entry is 8 bytes: region size (4), control (2), CRC (2). The InlineData of the known
+// applications is 10 bytes with two trailing zero bytes, and ETS sends the first 8.
+const MCB_ENTRY_BYTES = 8;
+const MCB_OBJ = 4;
+
+export interface McbWrite { obj: number; element: number; data: Buffer }
+
+// The MCB entry a declared LdCtrlWriteProp to PID 27 writes, or a reason it cannot be written
+// faithfully.
+function mcbWrite(step: LdStep): McbWrite | string {
+  const hex = step.attrs.InlineData ?? "";
+  if (!/^([0-9A-Fa-f]{2})+$/.test(hex)) return `InlineData "${hex}" is not hex`;
+  const data = Buffer.from(hex, "hex");
+  if (data.length < MCB_ENTRY_BYTES) return `InlineData of ${data.length} bytes is shorter than an MCB entry`;
+  if (data.subarray(MCB_ENTRY_BYTES).some((b) => b !== 0)) return `InlineData carries data beyond the ${MCB_ENTRY_BYTES}-byte MCB entry`;
+  if (Number(step.attrs.ObjIdx) !== MCB_OBJ) return `it targets object ${step.attrs.ObjIdx}; only the parameter segment (object ${MCB_OBJ}) is known to carry declared regions`;
+  const element = Number(step.attrs.StartElement ?? 1);
+  if (!Number.isInteger(element) || element < 1 || element > 4095) return `StartElement "${step.attrs.StartElement}" is not an element index`;
+  if (step.attrs.Count !== undefined && step.attrs.Count !== "1") return `Count="${step.attrs.Count}" writes more than one entry`;
+  return { obj: MCB_OBJ, element, data: data.subarray(0, MCB_ENTRY_BYTES) };
+}
+
+// The MCB entries a System B application declares for its full download, in declaration order.
+// Their regions must cover the parameter segment exactly: regions that do not add up to the
+// allocation would have the device check the wrong bytes at boot.
+export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number): McbWrite[] {
+  const writes = flattenSteps(lp, "full")
+    .filter((s) => s.verb === "LdCtrlWriteProp" && Number(s.attrs.PropId) === MCB_PID)
+    .map((s) => {
+      const w = mcbWrite(s);
+      if (typeof w === "string") throw new ProductError("LOAD_STEP_UNSUPPORTED", `the load procedure's ${s.verb} to PID 27 cannot be executed: ${w}`);
+      return w;
+    });
+  const covered = writes.reduce((sum, w) => sum + w.data.readUInt32BE(0), 0);
+  if (writes.length && covered !== segmentSize) {
+    throw new ProductError("LOAD_STEP_UNSUPPORTED", `the declared memory-control-block regions cover ${covered} bytes, the parameter segment is ${segmentSize}; refusing to program regions that do not match it`);
+  }
+  return writes;
+}
 
 export function assessParStep(step: LdStep, model: "absolute" | "relative"): ParDisposition {
   switch (step.verb) {
@@ -222,9 +267,13 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
         return { kind: "executed" }; // the read-back-verified segment write
       }
       case "LdCtrlWriteProp":
+        if (Number(step.attrs.PropId) === MCB_PID) {
+          return { kind: "skipped", reason: "MCB regions (PID 27): the par bracket is hardware-verified without them (M-0162, Theben 493B); the full download writes them" };
+        }
+        return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
       case "LdCtrlLoadImageProp":
         if (Number(step.attrs.PropId) === MCB_PID) {
-          return { kind: "skipped", reason: "MCB stamp (PID 27); System B par flashes are hardware-verified without it on two products" };
+          return { kind: "skipped", reason: "MCB CRC from the image (PID 27): ETS 6 sends no property write for it, the device computes the CRC" };
         }
         return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
     }

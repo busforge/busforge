@@ -234,8 +234,15 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer }[] = []): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
+  // The memory-control-block entries the application declares (PID 27), written right after the
+  // object's allocation as ETS does. They split a segment into regions the device checks at boot;
+  // without them the Jung 400021SE keeps one region over its whole parameter segment and refuses
+  // its application after the next restart.
+  const unplaced = mcb.find((m) => !([P, C, A, D] as number[]).includes(m.obj));
+  if (unplaced) throw new Error(`an MCB entry for object ${unplaced.obj}, which this download does not allocate`);
+  const mcbFor = (obj: number): LoadStep[] => mcb.filter((m) => m.obj === obj).map((m) => ({ op: "writeProp", obj, pid: PID.MCB_TABLE, start: m.element, data: m.data }));
   return [
     // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
     // what that means: the device answers every memory write with what actually landed. Without
@@ -249,10 +256,10 @@ export function planSystemBFullDownload(tables: {
     // mask's procedure does. The parameter segment asks for fill: a first-time download owns the
     // whole segment, so any byte the new application does not write must be the mask's declared fill
     // (`fillByte`) rather than whatever the previous one left there.
-    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true, fillByte },
-    { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
-    { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
-    { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
+    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true, fillByte }, ...mcbFor(P),
+    { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
+    { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
+    { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length }, ...mcbFor(A),
     // The THREE SMALL TABLES GO FIRST, and the 21601-byte parameter image last. Hardware-found,
     // and the reason is worth writing down because it cost a device: writing the parameter image
     // first leaves the device's flash subsystem with a full erase-block buffer sitting exactly at

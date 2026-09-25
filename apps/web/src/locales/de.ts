@@ -209,6 +209,7 @@ const de: Messages = {
     DEVICE_NOT_ANSWERING: "Das Gerät antwortet nicht auf dem Bus. Prüfe, ob es mit Strom versorgt, an der Linie und unter der erwarteten Adresse erreichbar ist.",
     DEVICE_READ_REFUSED: "Das Gerät hat einen Speicher-Lesezugriff verweigert. Es ist evtl. beschäftigt oder in einem unerwarteten Zustand; versuche es erneut.",
     FLASH_VERIFY_MISMATCH: "Das Gerät hat nicht das Geschriebene gespeichert (Rücklese-Abweichung). Das Flashen wurde gestoppt; das Gerät bleibt wiederherstellbar.",
+    PROPERTY_WRITE_REFUSED: "Das Gerät hat eine Ladesteuerungs-Eigenschaft, die der Download schreiben muss, nicht angenommen. Der Download wurde gestoppt; ein vollständiger Download stellt das Gerät wieder her.",
     FLASH_UNVERIFIED: "Das Gerät hat das Geschriebene nicht bestätigt, deshalb gilt die Programmierung als NICHT erfolgt. Es wurde nichts als programmiert markiert; führe sie erneut aus.",
     RESTART_IGNORED: "Das Gerät hat nach der Neustart-Aufforderung weiter geantwortet, es ist also nicht neu gestartet. Ein Gerät, das nicht neu startet, schreibt seine Konfiguration nie in den Flash und käme beim nächsten Stromausfall unprogrammiert zurück. Deshalb wird das als Fehler gemeldet. Versuche es erneut; wenn es bleibt, starte das Gerät von Hand neu und wiederhole.",
     LOAD_STATE_UNEXPECTED: "Das Gerät hat während der Programmierung nicht den erwarteten Ladezustand erreicht. Das Flashen wurde vor dem Abschluss gestoppt.",

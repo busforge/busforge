@@ -35,7 +35,7 @@ class RecDev {
       else if (e === 2) this.state.set(obj, STATE.LOADED);
       else if (e === 4) this.state.set(obj, STATE.UNLOADED);
     }
-    return Buffer.alloc(0);
+    return Buffer.from(data); // a device echoes the value it stored
   }
   async propRead(obj: number, pid: number) {
     this.calls.push(["propRead", obj, pid]);
@@ -677,3 +677,46 @@ describe("master reset over the bus", () => {
     expect(dev.masterReset(ERASE.FACTORY_RESET)).rejects.toThrow("interface down");
   });
 })
+
+describe("planSystemBFullDownload: the declared MCB entries", () => {
+  const tables = { params: Buffer.alloc(16, 1), comObj: Buffer.from([1, 2]), addr: Buffer.from([3, 4]), assoc: Buffer.from([5, 6]), programId: appId(0x0004, 0x7072, 0x21) };
+  const mcb = [
+    { obj: 4, element: 1, data: Buffer.from("00001e1400330000", "hex") },
+    { obj: 4, element: 2, data: Buffer.from("0000000101330000", "hex") },
+  ];
+
+  test("each entry is written right after its object's allocation, in order, as ETS does", () => {
+    const plan = planSystemBFullDownload(tables, 0, true, mcb);
+    const at = plan.findIndex((s) => s.op === "alloc" && s.lsm === 4);
+    expect(plan.slice(at + 1, at + 3)).toEqual([
+      { op: "writeProp", obj: 4, pid: 27, start: 1, data: mcb[0].data },
+      { op: "writeProp", obj: 4, pid: 27, start: 2, data: mcb[1].data },
+    ]);
+  });
+
+  test("without declared entries the plan is unchanged", () => {
+    expect(planSystemBFullDownload(tables, 0, true, [])).toEqual(planSystemBFullDownload(tables, 0, true));
+    expect(planSystemBFullDownload(tables).some((s) => s.op === "writeProp")).toBe(false);
+  });
+
+  test("an entry for an object the download does not allocate is refused", () => {
+    expect(() => planSystemBFullDownload(tables, 0, true, [{ obj: 5, element: 1, data: mcb[0].data }])).toThrow("object 5");
+  });
+});
+
+describe("runLoadPlan: a property write must be taken as written", () => {
+  const step: LoadStep = { op: "writeProp", obj: 4, pid: 27, start: 2, data: Buffer.from("0000000101330000", "hex") };
+
+  test("an echo equal to the data continues", async () => {
+    const dev = new RecDev();
+    dev.propWrite = async (_o: number, _p: number, data: Buffer) => Buffer.from(data);
+    await runLoadPlan(dev as unknown as KnxDevice, [step]);
+  });
+
+  test("a declined write (empty echo) fails the plan instead of carrying on", async () => {
+    const dev = new RecDev();
+    dev.propWrite = async () => Buffer.alloc(0); // echoes nothing, like a device that refuses the element
+    const err = await runLoadPlan(dev as unknown as KnxDevice, [step]).then(() => null, (e: unknown) => e as KnxError);
+    expect(err?.code).toBe("PROPERTY_WRITE_REFUSED");
+  });
+});

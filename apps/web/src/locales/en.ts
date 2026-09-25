@@ -209,6 +209,7 @@ const en = {
     DEVICE_NOT_ANSWERING: "The device is not answering on the bus. Check that it is powered, on the line, and at the expected address.",
     DEVICE_READ_REFUSED: "The device refused a memory read. It may be busy or in an unexpected state; try again.",
     FLASH_VERIFY_MISMATCH: "The device did not store what was written (read-back mismatch). The flash was stopped; the device is left recoverable.",
+    PROPERTY_WRITE_REFUSED: "The device did not accept a load-control property the download has to write. The download was stopped; a full download restores the device.",
     FLASH_UNVERIFIED: "The device did not confirm what was written to it, so the programming is NOT considered done. Nothing has been marked as programmed; run it again.",
     RESTART_IGNORED: "The device kept answering after it was told to restart, so it did not reboot. A device that does not reboot never writes its configuration to flash and would come back unprogrammed at the next power cut, so this is reported as a failure. Try again; if it persists, restart the device by hand and re-run.",
     LOAD_STATE_UNEXPECTED: "The device did not reach the expected load state during programming. The flash was stopped before completing.",

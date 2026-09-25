@@ -59,7 +59,7 @@ export type LoadStep =
   // their main loop rather than when they are told to; restarting one before it has had that
   // quiet moment throws the whole download away. See planSystemBFullDownload.
   | { op: "settle"; ms: number }
-  | { op: "writeProp"; obj: number; pid: number; data: Buffer }
+  | { op: "writeProp"; obj: number; pid: number; data: Buffer; start?: number }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
 
 export type LoadPlan = LoadStep[];
@@ -140,7 +140,15 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       // its table reference as 0, and writing a 21601-byte parameter image over the bottom of the
       // device's memory is not something to discover later from a failed assert.
       case "writeSegment": await dev.memWrite((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echo: step.echo, onProgress: opts.onWrite }); break;
-      case "writeProp": await dev.propWrite(step.obj, step.pid, step.data); break;
+      // The device echoes what it stored; a declined write answers with nothing (or something else),
+      // and carrying on would leave e.g. an MCB region the device never took.
+      case "writeProp": {
+        const echo = await dev.propWrite(step.obj, step.pid, step.data, step.start ?? 1);
+        if (!echo.equals(step.data)) {
+          throw new KnxError("PROPERTY_WRITE_REFUSED", `object ${step.obj} PID ${step.pid} element ${step.start ?? 1}: the device answered ${echo.toString("hex") || "nothing"} to a write of ${step.data.toString("hex")}`);
+        }
+        break;
+      }
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
