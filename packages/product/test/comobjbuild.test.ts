@@ -140,8 +140,14 @@ describe("the whole table", () => {
     expect(table.readUInt16BE(4) & ~COMM).toBe(table.readUInt16BE(2) & ~COMM); // every OTHER bit identical
   });
 
-  test("a configuration with no com-objects is refused, not written as an empty table", () => {
-    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/no communication objects/i);
+  test("a configuration that activates no object is written as a table of silent entries, as ETS does", () => {
+    // GVS AMMA at application defaults (every output disabled): ETS 6 wrote the count 532 and 532
+    // zero entries (ETS capture of 1.1.203, 2026-09-25).
+    expect(buildComObjectTable(new Map(), 532, new Set())).toEqual(Buffer.concat([Buffer.from("0214", "hex"), Buffer.alloc(1064)]));
+  });
+
+  test("an application that declares no com-object at all is refused, not written as an empty table", () => {
+    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/declares no communication objects/i);
   });
 });
 

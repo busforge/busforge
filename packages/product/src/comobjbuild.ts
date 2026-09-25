@@ -131,9 +131,12 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
     throw new ProductError("COM_OBJECT_NUMBER_INVALID",
       `communication object ${zero.refId} resolves to number ${zero.number}; com-object numbers are 1-based (entry 0 of the table is its count), so this cannot be programmed`);
   }
-  if (active.size === 0) {
+  // A configuration may activate no object at all (every channel disabled): ETS then writes the
+  // declared count with every entry 0x0000 (GVS AMMA capture, 2026-09-25), and so does this. Only an
+  // application that declares no object has no table to write.
+  if (active.size === 0 && declaredCount < 1) {
     throw new ProductError("COM_OBJECT_TABLE_EMPTY",
-      "this configuration activates no communication objects, so the device would have nothing to talk with; refusing to write an empty com-object table");
+      "this application declares no communication objects, so there is no com-object table to write; refusing to write an empty one");
   }
   const count = Math.max(declaredCount, ...active.keys()); // never shorter than the highest active entry
   const buf = Buffer.alloc(2 + count * 2); // gaps stay 0x0000: an object that does not communicate
@@ -221,4 +224,22 @@ export function programIdStamp(app: AppConfig): Buffer {
     (app.appNumber >> 8) & 0xff, app.appNumber & 0xff,
     app.appVersion & 0xff,
   ]);
+}
+
+// The com-object table of a memory-mapped System 7 device (MV-0700/0701) is the manufacturer's
+// static template, and ETS writes it with one change: the Communication flag (config bit 0x04)
+// cleared on every object without a group address (ABB US/U 4.2 capture, 2026-09-25, no links:
+// every config byte 0xdf -> 0xdb, nothing else touched). Same layout as MV-0705: [count][2 B], then
+// 4-byte entries with the config byte third. A linked object keeps the template's flag; what ETS
+// writes for a linked object, and that entry n is object n on this mask, has not been captured, so
+// a link beyond the template is refused rather than guessed.
+export function clearUnlinkedCommFlags(image: Buffer, linked: ReadonlySet<number>): Buffer {
+  if (image.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table template is ${image.length} B; too short to hold its 3-byte header`);
+  const out = Buffer.from(image);
+  const count = out[0];
+  if (3 + count * 4 > out.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table template declares ${count} entries but is only ${out.length} B`);
+  const beyond = [...linked].filter((n) => n >= count);
+  if (beyond.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyond)} is beyond the ${count}-entry com-object table; refusing to link it`);
+  for (let n = 0; n < count; n++) if (!linked.has(n)) out[3 + n * 4 + 2] &= ~0x04;
+  return out;
 }

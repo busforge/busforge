@@ -145,11 +145,15 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
 // asserting engine bracket with NO behavior delta (the retired flashGroupTablesMv0705 already
 // asserted LOADING/LOADED and wrote verified); hardware-verified on TP (M-0081). The
 // caller must already be connected (a second T_Connect resets the sequence counter).
-export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer }): LoadPlan {
-  const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE;
+// `comObj`: the com-object table of a memory-mapped device, rewritten with the links in the same
+// flash so a newly linked object gets its Communication flag. ETS writes it inside an LSM 3
+// load/completed bracket with no unload (ABB US/U 4.2 capture, 2026-09-25).
+export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer; comObj?: { address: number; bytes: Buffer } }): LoadPlan {
+  const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE, C = OBJ.COMOBJ_TABLE;
   return [
     { op: "load", lsm: D }, { op: "writeSegment", lsm: D, bytes: tables.addr }, { op: "loadCompleted", lsm: D },
     { op: "load", lsm: A }, { op: "writeSegment", lsm: A, bytes: tables.assoc }, { op: "loadCompleted", lsm: A },
+    ...(tables.comObj ? [{ op: "load", lsm: C }, { op: "writeMem", address: tables.comObj.address, bytes: tables.comObj.bytes }, { op: "loadCompleted", lsm: C }] as LoadStep[] : []),
     { op: "restart" },
   ];
 }

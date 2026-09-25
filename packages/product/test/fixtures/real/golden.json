@@ -1,4 +1,49 @@
 {
+  "M-0002_A-A001-13-63C2.xml.gz": {
+    "shape": {
+      "types": 76,
+      "params": 320,
+      "refs": 1224,
+      "comObjects": 30,
+      "segments": 0,
+      "hasModules": false
+    },
+    "modelHash": "5833eb706712426a",
+    "lsms": {},
+    "absolute": {
+      "M-0002_A-A001-13-63C2_AS-6D00": {
+        "address": 27904,
+        "size": 160,
+        "build": "71e9a174241de048",
+        "owned": "0af92c259a2aa0fd",
+        "verify": "7c07ccd10b472dd3"
+      },
+      "M-0002_A-A001-13-63C2_AS-6F00": {
+        "address": 28416,
+        "size": 8,
+        "build": "910b8032b00c35d8",
+        "owned": "2743dac64d9b769f",
+        "verify": "433a68e822f6cd46"
+      }
+    },
+    "flashPlan": {
+      "segments": 2,
+      "perSegment": {
+        "M-0002_A-A001-13-63C2_AS-6D00": {
+          "address": 27904,
+          "size": 160,
+          "ownedBytes": 7,
+          "skippedUnowned": 153
+        },
+        "M-0002_A-A001-13-63C2_AS-6F00": {
+          "address": 28416,
+          "size": 8,
+          "ownedBytes": 5,
+          "skippedUnowned": 3
+        }
+      }
+    }
+  },
   "M-0008_A-10D7-11-2783-O000A.xml.gz": {
     "shape": {
       "types": 121,

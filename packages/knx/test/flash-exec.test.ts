@@ -729,3 +729,23 @@ describe("runLoadPlan: a property write must be taken as written", () => {
     expect(err?.code).toBe("PROPERTY_WRITE_REFUSED");
   });
 });
+
+describe("planMv0705GaFlash: the memory-mapped com-object table", () => {
+  test("without a com-object table the plan is the proven two-table bracket", () => {
+    const addr = Buffer.from([1, 0x11, 0xc9]), assoc = Buffer.from([0]);
+    expect(planMv0705GaFlash({ addr, assoc })).toEqual([
+      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, bytes: addr }, { op: "loadCompleted", lsm: 1 },
+      { op: "load", lsm: 2 }, { op: "writeSegment", lsm: 2, bytes: assoc }, { op: "loadCompleted", lsm: 2 },
+      { op: "restart" },
+    ]);
+  });
+
+  test("with one, it is written in its own LSM 3 bracket (load, write, completed; no unload), as ETS does", () => {
+    const addr = Buffer.from([1, 0x11, 0xc9]), assoc = Buffer.from([0]), table = Buffer.from([1, 0, 0, 0, 0, 0xdb, 0]);
+    const plan = planMv0705GaFlash({ addr, assoc, comObj: { address: 0x43fe, bytes: table } });
+    expect(plan.slice(6)).toEqual([
+      { op: "load", lsm: 3 }, { op: "writeMem", address: 0x43fe, bytes: table }, { op: "loadCompleted", lsm: 3 },
+      { op: "restart" },
+    ]);
+  });
+});

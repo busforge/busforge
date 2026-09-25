@@ -1,7 +1,7 @@
 # Real catalogue fixtures
 
 Every distinct manufacturer `ApplicationProgram` found across a real multi-manufacturer KNX
-installation (13 products, 6 manufacturers), gzipped, used by `real-catalogue.test.ts` to pin the
+installation (13 products, 6 manufacturers), plus bench products added for ETS-capture tests, gzipped, used by `real-catalogue.test.ts` to pin the
 parser and the image projection against real catalogue data: every parameter type kind, unions,
 modules, bitfields, and the segment layouts real hardware uses. The set is small enough
 (~1.2 MB gzipped) to cover completely rather than sample, so every product in that installation is

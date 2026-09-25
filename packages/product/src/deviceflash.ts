@@ -2,7 +2,7 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
+import { buildComObjectTableMv0705, clearUnlinkedCommFlags } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 import type { LoadPlan, LoadStep } from "@busforge/knx";
@@ -246,8 +246,11 @@ export function planAbsoluteFullDownload(
   };
   const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
   const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
-  // Only property-mapped devices author L3; memory-mapped ones keep writing the static <Data>.
+  // Property-mapped devices author L3; memory-mapped ones write the static <Data> with the
+  // Communication flag cleared on unlinked objects (clearUnlinkedCommFlags).
   const comObjTableAddr = propertyMapped ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
+  const staticComObjTableAddr = propertyMapped ? undefined : tableAddr(app.groupTables.comObjectSegment, "com-object");
+  const linkedObjects = new Set(links.map((l) => l.comObjNum));
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
@@ -291,6 +294,9 @@ export function planAbsoluteFullDownload(
     // A pure static segment (com-object table / code): its <Data> laid over the erased-flash state.
     const image = Buffer.alloc(size, 0xff);
     seg.data.copy(image);
+    if (address === staticComObjTableAddr) {
+      return { image: clearUnlinkedCommFlags(image, linkedObjects), verify: new Array<boolean>(size).fill(true), source: "comObjTable" };
+    }
     return { image, verify: new Array<boolean>(size).fill(true), source: "static" };
   };
 

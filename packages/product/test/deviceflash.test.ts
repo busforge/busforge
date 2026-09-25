@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseAppConfig } from "../src/index.ts";
-import { planAbsoluteSegmentFlash } from "../src/deviceflash.ts";
+import { planAbsoluteSegmentFlash, planAbsoluteFullDownload } from "../src/deviceflash.ts";
+import { parseLoadProcedures } from "../src/loadproc.ts";
 import { buildAbsoluteSegmentImages } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
@@ -123,4 +124,26 @@ test("adjacent owned bytes coalesce into a single contiguous run", () => {
       expect(seg.runs[i].address).toBeGreaterThanOrEqual(prev.address + prev.bytes.length);
     }
   }
+});
+
+test("a memory-mapped full download clears the Communication flag of every unlinked object, as ETS does", () => {
+  // ABB US/U 4.2 (MV-0701), application defaults, no links: ETS 6 wrote every config byte of the
+  // com-object table (AS-43FE, [count][2 B] then 4-byte entries, config at 3+4n+2) as 0xdb, the
+  // manufacturer template's 0xdf with 0x04 cleared (ETS capture, 2026-09-25). Nothing else changes.
+  const xml = readRealFixture("M-0002_A-A001-13-63C2.xml.gz");
+  const app = parseAppConfig(xml);
+  const cfgAt = (n: number) => 3 + 4 * n + 2;
+  const build = (links: { comObjNum: number; gaRaws: number[] }[]) =>
+    planAbsoluteFullDownload(app, new Map(), links, 0x11c9, parseLoadProcedures(xml), { requireReboot: false }).segments.find((s) => s.address === 0x43fe)!.image;
+  const template = app.absoluteSegments.find((s) => s.address === 0x43fe)!.data;
+  const count = template[0];
+  expect(count).toBe(30);
+  const none = build([]);
+  for (let n = 0; n < count; n++) expect([n, none[cfgAt(n)]]).toEqual([n, template[cfgAt(n)] & ~0x04]);
+  const rest = (b: Buffer) => [...b.subarray(0, template.length)].filter((_, i) => !(i >= 3 && (i - 3) % 4 === 2 && (i - 3) / 4 < count));
+  expect(rest(none)).toEqual(rest(template));
+  // a linked object keeps the template's flag
+  const linked = build([{ comObjNum: 3, gaRaws: [0x0901] }]);
+  expect(linked[cfgAt(3)]).toBe(template[cfgAt(3)]);
+  expect(linked[cfgAt(2)]).toBe(template[cfgAt(2)] & ~0x04);
 });

@@ -176,7 +176,7 @@ const de: Messages = {
     IA_REQUIRED: "Eine physikalische Adresse ist erforderlich.",
     FULL_DOWNLOAD_UNSUPPORTED: "Die Erstinbetriebnahme dieses Geräts wird noch nicht unterstützt: sein Speichermodell hat einen vollständigen Download noch nie überstanden, deshalb lehnt Busforge ab, statt es halb zu beschreiben.",
     COM_OBJECT_SIZE_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Datenpunktgröße an, die Busforge nicht als KNX-Value-Field-Type ausdrücken kann. Eine geratene Größe wird nicht geschrieben.",
-    COM_OBJECT_TABLE_EMPTY: "Diese Konfiguration aktiviert kein einziges Kommunikationsobjekt, das Gerät hätte also nichts zu kommunizieren.",
+    COM_OBJECT_TABLE_EMPTY: "Diese Applikation deklariert keine Kommunikationsobjekte, es gibt also keine Objekttabelle zu schreiben.",
     MEMORY_ADDRESS_TOO_HIGH: "Eine Speicheroperation zielte auf eine Adresse außerhalb des adressierbaren Bereichs, deshalb lehnt Busforge ab, statt an die falsche Stelle zu schreiben. (Segmente oberhalb des klassischen 16-Bit-Bereichs werden mit erweiterten Speicherdiensten programmiert; dieser Fehler bedeutet, dass die Adresse selbst dafür ungültig war.)",
     COM_OBJECT_PRIORITY_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Priorität an, die das ETS-Schema nicht kennt. Busforge rät nicht, was ins Gerät geschrieben werden soll, statt sie stillschweigend herabzustufen.",
     COM_OBJECT_NUMBER_INVALID: "Ein Kommunikationsobjekt löst auf Nummer 0 auf, die es in der Com-Objekt-Tabelle eines Geräts nicht geben kann. Programmieren abgelehnt.",

@@ -3,7 +3,7 @@ import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, clearUnlinkedCommFlags } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
@@ -899,28 +899,49 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("GA_TABLE_TOO_LARGE",
         `the group tables would need address ${addr.length} B / association ${assoc.length} B, but this device reserves only ${maxAddr} B / ${maxAssoc} B${cap?.addressMaxEntries !== undefined ? ` (${cap.addressMaxEntries} group addresses)` : ""}. Remove links or assign fewer group addresses.`);
     }
+    // A memory-mapped device's com-object table carries a Communication flag per object that the full
+    // download clears on unlinked objects, as ETS does. Keeping the device's table here would leave a
+    // newly linked object silent, so the table is rewritten with the links, from the manufacturer's
+    // template (clearUnlinkedCommFlags), and verified with the group tables.
+    const l3 = isMemoryMappedLsm(mask) ? this.memoryMappedComObjTable(ctx.links) : null;
+    const curL3 = l3 ? await dev.memRead(l3.address, l3.bytes.length) : null;
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     return runFlashOp(dev, mask, ctx, {
-      imageBytes: addr.length + assoc.length,
-      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc), // 0 iff both tables match
+      imageBytes: addr.length + assoc.length + (l3?.bytes.length ?? 0),
+      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0), // 0 iff every table matches
       backup: prefix,
       backups: [
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
         { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
+        ...(curL3 ? [{ file: `${prefix}-comobj.bin`, bytes: curL3 }] : []),
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc }), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");
         const { ok } = await verifySettled(
-          () => readGroupTablesMv0705(dev),
-          (back) => back.addr.equals(addr) && back.assoc.equals(assoc),
+          async () => ({ ...(await readGroupTablesMv0705(dev)), l3: l3 ? await dev.memRead(l3.address, l3.bytes.length) : null }),
+          (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && (!l3 || !!back.l3?.equals(l3.bytes)),
         );
         return ok;
       },
     });
+  }
+
+  // The com-object table a memory-mapped device gets for this link set: the template of the segment
+  // the application names, Communication cleared on every unlinked object. Refused when the
+  // application names no such segment or it carries no template: the table cannot be kept silently
+  // stale, and it cannot be authored blind.
+  private memoryMappedComObjTable(links: ComObjectLink[]): { address: number; bytes: Buffer } {
+    const cfg = this.requireCfg("group address flash");
+    const segId = cfg.groupTables.comObjectSegment;
+    const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);
+    if (!seg || seg.data.length === 0) {
+      throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their Communication flag");
+    }
+    return { address: seg.address, bytes: clearUnlinkedCommFlags(seg.data, new Set(links.map((l) => l.comObjNum))) };
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {

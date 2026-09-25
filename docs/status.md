@@ -102,6 +102,16 @@ Notes attached to that table:
   parameter flashes Busforge did on such a device before this change may have left one region,
   which shows only at the device's next restart. Its parameter flash now writes the two regions
   as well; that bracket has not been driven on a Theben device yet.
+- **ABB US/U 4.2 com-object table.** ETS clears the Communication flag of every object without a
+  group address in this memory-mapped table; Busforge used to write the manufacturer's template
+  unchanged. The full download and the group-address flash now both write it as ETS does (the GA
+  flash rewrites the table with the links, so a newly linked object is not left silent). At
+  application defaults the full download is byte-equal to an ETS download (2026-09-25 capture).
+  What ETS writes for a linked object has not been captured yet; the template's flag is kept there.
+- **GVS AMMA with every output disabled.** ETS downloads a configuration that activates no
+  com-object, writing the declared table of silent entries; Busforge used to refuse it
+  (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. Its parameter segment still differs
+  from that ETS download in the disabled channels' regions (under investigation).
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
