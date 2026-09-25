@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { observeReboot, judgeRestoredConfig, type ProbeOutcome } from "./persistence.ts";
+import { observeReboot, judgeRestoredConfig, judgeLoadStates, type ProbeOutcome } from "./persistence.ts";
 import type { ConfigView } from "./client.ts";
 
 // A probe that answers from a scripted sequence, one entry per call; the last entry repeats. The
@@ -65,5 +65,27 @@ describe("judgeRestoredConfig", () => {
     expect(judgeRestoredConfig(view({}), { ...full, paramsRead: false }).state).toBe("fail");
     expect(judgeRestoredConfig(view({}), { ...full, linkGaps: 2 }).state).toBe("fail");
     expect(judgeRestoredConfig(view({}), null).state).toBe("fail");
+  });
+});
+
+describe("judgeLoadStates", () => {
+  const loaded = new Map([[1, 1], [2, 1], [3, 1], [4, 1]]);
+
+  test("every load object that was loaded before the reboot is loaded after it", () => {
+    expect(judgeLoadStates(loaded, new Map(loaded)).state).toBe("pass");
+  });
+
+  test("an application that comes back in ERROR fails, bytes or not", () => {
+    // Jung 400021SE on the bench: tables LOADED, the application object ERROR after A_Restart,
+    // while every byte read back equal.
+    expect(judgeLoadStates(loaded, new Map([[1, 1], [2, 1], [3, 1], [4, 3]]))).toMatchObject({ state: "fail", detail: expect.stringContaining("object 4") });
+  });
+
+  test("a state that could not be read after the reboot is not a pass", () => {
+    expect(judgeLoadStates(loaded, new Map([[1, 1], [2, 1], [3, 1], [4, null]])).state).toBe("fail");
+  });
+
+  test("nothing readable before the restart proves nothing", () => {
+    expect(judgeLoadStates(new Map([[1, null], [2, null]]), new Map()).state).toBe("fail");
   });
 });

@@ -123,7 +123,7 @@ preflight (product in catalog, interface reachable)
   → baseline configure
   → read capabilities from the product
   → run each claimed capability's driver, in the selected channel
-  → persistence (A_Restart, observed reboot, read-back equal to the project)
+  → persistence (A_Restart, observed reboot, load states still LOADED, read-back equal to the project)
   → ui-click-through (ui channel: every parameter and com-object the API exposes must render)
   → behaviours (observe the bus)
   → refusal probes for unclaimed write capabilities

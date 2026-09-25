@@ -58,3 +58,18 @@ export function judgeRestoredConfig(view: ConfigView, coverage: DeviceReadbackIn
   if (lost.length) return { state: "fail", detail: `differs from the project after the reboot: ${lost.slice(0, 5).join(", ")}${lost.length > 5 ? ` and ${lost.length - 5} more` : ""}` };
   return { state: "pass", detail: "parameters and links read back equal to the project after the reboot" };
 }
+
+// The load state of each load object (1 = LOADED, 3 = ERROR, ...), null where it could not be read.
+// Equal bytes do not show that the device runs them: a device can keep every byte across a reboot
+// and still refuse its application at boot (Jung 400021SE: object 4 in ERROR). So every object that
+// was LOADED before the restart must be LOADED after it.
+const LOADED = 1;
+const STATE_NAME: Record<number, string> = { 0: "UNLOADED", 1: "LOADED", 2: "LOADING", 3: "ERROR", 4: "UNLOADING" };
+export function judgeLoadStates(before: Map<number, number | null>, after: Map<number, number | null>): { state: "pass" | "fail"; detail: string } {
+  const watched = [...before].filter(([, s]) => s === LOADED).map(([obj]) => obj);
+  if (!watched.length) return { state: "fail", detail: "no load object read LOADED before the restart" };
+  const lost = watched.filter((obj) => after.get(obj) !== LOADED)
+    .map((obj) => { const s = after.get(obj); return `object ${obj} ${s === null || s === undefined ? "unreadable" : (STATE_NAME[s] ?? `state ${s}`)}`; });
+  if (lost.length) return { state: "fail", detail: `after the reboot: ${lost.join(", ")}` };
+  return { state: "pass", detail: `load objects ${watched.join(", ")} LOADED after the reboot` };
+}

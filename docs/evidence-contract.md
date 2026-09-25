@@ -244,7 +244,10 @@ device answering before the restart, then not answering, then answering again. O
 own silence counts; an interface or tunnel error ends the check as a failure. Firmware differs in
 timing (the GVS actuator answers once more and drops out about 6 s later; the same device polled
 without a restart shows no gap), which is why the probes run for up to a minute rather than once.
-The runner then reads the device back through the server and requires the decoded parameters and
+It reads the load states of load objects 1-4 before the restart and after the reboot, and every
+object that was LOADED must be LOADED again: a device can keep every byte and still refuse its
+application at boot (the Jung 400021SE comes back with its application object in ERROR). The
+runner then reads the device back through the server and requires the decoded parameters and
 group links to equal the project. The com-object table is not read back, so the record says so in
 its method. The result goes onto the `fullDownload` and `flashLinks` records of the same run,
 because their writes are what the read-back sees; `flashParams` reverts every change it makes and

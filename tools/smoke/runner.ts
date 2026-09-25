@@ -23,10 +23,10 @@ import { linkChan, type ChanCtx } from "./channel.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
 import { runEvidence } from "./evidence.ts";
-import { observeReboot, judgeRestoredConfig, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
+import { observeReboot, judgeRestoredConfig, judgeLoadStates, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
-import { KnxIpTunnel, KnxDevice, KnxError } from "../../packages/knx/src/index.ts";
-import type { Firmware } from "../../packages/product/src/index.ts";
+import { KnxIpTunnel, KnxDevice, KnxError, lsmState } from "../../packages/knx/src/index.ts";
+import { isMemoryMappedLsm, type Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
 // silently dropped. click-through is UI-only; provision is a lifecycle capability run every channel.
@@ -55,12 +55,27 @@ async function readBenchFirmware(host: string, ia: string): Promise<Firmware> {
   finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
 }
 
-// Restart the device over the bench interface and observe the reboot (persistence.ts). Like the
-// firmware read, only while the server holds no bus operation.
-async function rebootOnBench(host: string, ia: string): Promise<RebootObservation> {
+type LoadStates = Map<number, number | null>;
+
+// The load state of load objects 1-4, null where the device does not report one.
+async function readLoadStates(tun: KnxIpTunnel, ia: string, mask: string): Promise<LoadStates> {
+  const dev = new KnxDevice(tun, ia);
+  const out: LoadStates = new Map();
+  try {
+    await dev.connect();
+    for (const obj of [1, 2, 3, 4]) out.set(obj, await lsmState(dev, obj, isMemoryMappedLsm(mask)).catch(() => null));
+  } finally { await dev.disconnect(); }
+  return out;
+}
+
+// Restart the device over the bench interface and observe the reboot (persistence.ts), with the
+// load states before the restart and after the reboot. Like the firmware read, only while the
+// server holds no bus operation.
+async function rebootOnBench(host: string, ia: string, mask: string): Promise<{ reboot: RebootObservation; before: LoadStates; after: LoadStates }> {
   const tun = KnxIpTunnel.tcp(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681));
   await tun.connect();
   try {
+    const before = await readLoadStates(tun, ia, mask);
     const restart = async () => { const dev = new KnxDevice(tun, ia); await dev.connect(); await dev.sendRestart(); await dev.disconnect(); };
     // Only the device's own silence is "silent"; an interface or tunnel error is thrown.
     const probe = async (): Promise<ProbeOutcome> => {
@@ -69,7 +84,9 @@ async function rebootOnBench(host: string, ia: string): Promise<RebootObservatio
       catch (e) { if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return "silent"; throw e; }
       finally { await dev.disconnect(); }
     };
-    return await observeReboot(restart, probe);
+    const reboot = await observeReboot(restart, probe);
+    const after = reboot.rebooted ? await readLoadStates(tun, ia, mask) : new Map<number, number | null>();
+    return { reboot, before, after };
   } finally { await tun.disconnect(); }
 }
 
@@ -189,13 +206,16 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       process.stdout.write(`  → persistence (${channel})\n`);
       await settle(2000);
       const checked = await (async (): Promise<NonNullable<RunResult["persistence"]>> => {
-        const reboot = await rebootOnBench(host, spec.device.ia);
+        const { reboot, before, after } = await rebootOnBench(host, spec.device.ia, spec.device.mask);
         log(reboot.detail);
         if (!reboot.rebooted) return { state: "fail", detail: reboot.detail };
+        const states = judgeLoadStates(before, after);
+        log(states.detail);
         await settle(3000);
         const coverage = await client.readBack(pid!, did!, (p) => log(`read ${p}`));
         const judged = judgeRestoredConfig(await client.getConfig(pid!, did!), coverage);
-        return { state: judged.state, detail: `${reboot.detail}; ${judged.detail}` };
+        const state = states.state === "pass" && judged.state === "pass" ? "pass" : "fail";
+        return { state, detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
       })().catch((e): NonNullable<RunResult["persistence"]> => ({ state: "fail", detail: `persistence check aborted: ${e instanceof Error ? e.message : String(e)}` }));
       persistence = checked;
       if (checked.state === "fail") ok = false;

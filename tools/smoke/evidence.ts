@@ -39,7 +39,7 @@ const METHOD: Record<string, string> = {
   readLinks: "group tables read and decoded, every association resolved; not compared with a built image",
 };
 const PERSISTS = new Set(["fullDownload", "flashLinks"]);
-const PERSISTENCE_METHOD = "A_Restart, reboot observed (the device stopped answering, then answered again), then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back";
+const PERSISTENCE_METHOD = "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back";
 const NOT_ASSESSED: AxisResult = { state: "not-assessed" };
 const detail = (d: string) => (d ? { detail: d } : {});
 
