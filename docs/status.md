@@ -116,6 +116,12 @@ Notes attached to that table:
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
   them); the surgical parameter flash leaves those bytes as the device holds them. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
+- **Jung 400021SE: one parameter byte differs from ETS.** At offset 176 of the parameter segment
+  ("delay after bus voltage return") Busforge writes 100 ms where ETS writes 0 ms. Two
+  ParameterRefs of the same parameter (`P-505`) carry different defaults and gate one union; ETS
+  evidently shares one value per parameter, Busforge evaluates each ref's own default and activates
+  both union members. Such differing ref defaults are common (161 in this application alone), so
+  the rule is not changed on one byte of evidence; a targeted ETS capture decides it.
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
@@ -173,8 +179,9 @@ spec states why no behaviour is observable.
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
-The 2026-09-25 runs (GVS, MDT and ABB on build `c2cde85`, the Jung on `7c54b8d`; both channels,
-every capability, behaviour and the persistence step) and their evidence records are kept in
+The 2026-09-25 runs (MDT on build `c2cde85`, the Jung on `7c54b8d`, ABB and GVS again on
+`c935d5f` after their com-object table and union fixes; both channels, every capability,
+behaviour and the persistence step) and their evidence records are kept in
 [evidence/runs/2026-09-25/](evidence/runs/2026-09-25/). Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
@@ -208,9 +215,11 @@ report a device family as working on the strength of a passing test suite.
 ## Known unproven
 
 - **Our image equals what ETS would write** is only checked where an ETS capture of the same
-  device exists: the MDT BE-02001.02 full download, every segment, byte for byte against two ETS
-  captures (`tools/etsdiff.ts`, `tools/fixtures/`), and one System B parameter image whose capture
-  was not kept. Everywhere else the read-back proves `device == our image` and can never prove
+  device exists, all for the full download: the MDT BE-02001.02 (defaults and one link), the ABB
+  US/U 4.2 and the GVS AMMA (defaults), every segment byte for byte (`tools/etsdiff.ts`,
+  captures in `tools/fixtures/`, records in [evidence/reference/](evidence/reference/)). The Jung
+  400021SE matches except one parameter byte (below). The parameter flash and the group-address
+  flash have no ETS capture yet. Everywhere else the read-back proves `device == our image` and can never prove
   `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
 - **MV-0705 group-address flash keeps the device's own com-object table.** A freshly linked
   read-capable object was proven to work on hardware; a **transmit-only object**, the case that
