@@ -71,7 +71,7 @@ export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean; inst
   }
   const params = new Map<string, Param>();
   for (const p of app.params.values()) {
-    if (p.moduleDefId || (p.union && !opts.includeUnions) || p.patchAlways) continue; // patchAlways: ETS-managed marker, never authored
+    if (p.moduleDefId || (p.union && !opts.includeUnions)) continue;
     params.set(p.id, { id: p.id, typeId: p.typeId, value: p.value, codeSegment: p.codeSegment, offset: p.offset, bitOffset: p.bitOffset ?? 0 });
   }
   const refs = new Map<string, ParamRef>();
@@ -121,7 +121,7 @@ function materializeModuleParams(
     for (const r of app.refs.values()) {
       if (r.moduleDefId !== defId) continue;
       const param = app.params.get(r.paramId);
-      if (!param || param.patchAlways) continue; // ETS-managed marker, never authored
+      if (!param) continue;
       const refId = rewrite(r.id);
       const paramId = rewrite(r.paramId);
       // A memory param whose BaseOffset argument is missing (or non-numeric) on this

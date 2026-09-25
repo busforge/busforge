@@ -1,6 +1,6 @@
-import { KnxDevice, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, type LoadPlan, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp } from "./comobjbuild.ts";
@@ -8,7 +8,7 @@ import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload } from "./deviceflash.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -297,6 +297,28 @@ export interface GaFlashCtx {
   persistBackups: PersistBackups;
 }
 
+// What a full download needs to build its image; the device-independent part of FullDownloadCtx.
+export interface FullDownloadInputs {
+  ia: string;
+  params: Map<string, string>;
+  links: ComObjectLink[];
+  moduleInstances?: ModuleInstance[];
+  proc: LoadProcedures;
+}
+// One segment a full download writes. `address` is null where the device assigns it (a System B
+// relative segment, allocated during the download); `fillByte` is set where the allocation pre-fills
+// the segment, so the bytes of `image` equal to it are not transmitted but are still the segment's content.
+export interface FullDownloadSegment {
+  id: string;
+  lsm: number;
+  source: AbsFullSegment["source"];
+  address: number | null;
+  image: Buffer;
+  fillByte?: number;
+}
+// A full download, planned without touching the device: the load plan and every segment's image.
+export interface FullDownloadBuild { plan: LoadPlan; segments: FullDownloadSegment[]; imageBytes: number; }
+
 // An operation a device's memory model does not implement. Carries an ProductError code so the
 // HTTP layer surfaces an honest "unsupported" rather than a 500.
 export class UnsupportedOperation extends ProductError {
@@ -341,6 +363,12 @@ export abstract class DeviceProfile {
     throw new UnsupportedOperation("full download", this.family, this.mask);
   }
 
+  // The image and load plan downloadFull writes, built offline. The same refusals apply; the
+  // device-side pre-flight (declared property checks) is downloadFull's, not part of the plan.
+  planFullDownload(_mask: string, _inputs: FullDownloadInputs): FullDownloadBuild {
+    throw new UnsupportedOperation("full download", this.family, this.mask);
+  }
+
   protected requireCfg(op: string): AppConfig {
     if (!this.cfg) throw new ProductError("APP_PROGRAM_MISSING", `${op} needs the application program but it was not provided`);
     return this.cfg;
@@ -363,22 +391,14 @@ export class SystemBProfile extends DeviceProfile {
     return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload: hasParamSegment };
   }
 
-  // Commission a System B device from nothing: write the application id, the parameter image, the
-  // com-object table and the two group tables in ONE bracket, in the order the mask's own load
-  // procedure prescribes (see planSystemBFullDownload).
-  //
-  // Unlike every other write in this codebase, this one AUTHORS the com-object table instead of
-  // keeping the device's: a virgin device has no table to keep. That is the whole point, and it is
-  // also the risk, because the firmware validates nothing it is given (see comobjbuild.ts). So the
-  // table is built from the same active-configuration projection the read-back and the staleness
-  // gate use, and the result is verified by reading it back off the device afterwards.
-  async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+  planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    return this.planSystemBFull(mask, inputs);
+  }
+
+  private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer } {
     const cfg = this.requireCfg("full download");
-    // The device's own declared pre-flight (hardware type / application id) still runs: a full
-    // download to the wrong hardware is the most expensive mistake available here.
-    const proc = parseLoadProcedures(ctx.appXml);
-    const coverage = assertParCoverage(proc, "relative");
-    await runDeclaredChecks(dev, coverage);
+    const proc = ctx.proc;
+    assertParCoverage(proc, "relative");
     // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
     // AMMA). Threaded into the plan so the allocation and the sparse image write agree with it.
     const fillByte = relParamFillByte(proc);
@@ -421,6 +441,34 @@ export class SystemBProfile extends DeviceProfile {
     }, fillByte, requireReboot);
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
+    return {
+      plan, imageBytes, target, comObj, addr, assoc,
+      segments: [
+        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, fillByte },
+        { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
+        { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
+        { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
+      ],
+    };
+  }
+
+  // Commission a System B device from nothing: write the application id, the parameter image, the
+  // com-object table and the two group tables in ONE bracket, in the order the mask's own load
+  // procedure prescribes (see planSystemBFullDownload).
+  //
+  // Unlike every other write in this codebase, this one AUTHORS the com-object table instead of
+  // keeping the device's: a virgin device has no table to keep. That is the whole point, and it is
+  // also the risk, because the firmware validates nothing it is given (see comobjbuild.ts). So the
+  // table is built from the same active-configuration projection the read-back and the staleness
+  // gate use, and the result is verified by reading it back off the device afterwards.
+  async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    this.requireCfg("full download");
+    // The device's own declared pre-flight (hardware type / application id) still runs: a full
+    // download to the wrong hardware is the most expensive mistake available here.
+    const proc = parseLoadProcedures(ctx.appXml);
+    const coverage = assertParCoverage(proc, "relative");
+    await runDeclaredChecks(dev, coverage);
+    const { plan, imageBytes, target, comObj, addr, assoc } = this.planSystemBFull(mask, { ...ctx, proc });
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -873,6 +921,47 @@ export class System7Profile extends DeviceProfile {
     });
   }
 
+  planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    const { plan, segments, imageBytes } = this.planSystem7Full(mask, inputs);
+    return { plan, imageBytes, segments: segments.map((s) => ({ id: s.id, lsm: s.lsm, source: s.source, address: s.address, image: s.image })) };
+  }
+
+  private planSystem7Full(mask: string, ctx: FullDownloadInputs): { plan: LoadPlan; segments: AbsFullSegment[]; imageBytes: number } {
+    const cfg = this.requireCfg("full download");
+    const proc = ctx.proc;
+    const propertyMapped = !isMemoryMappedLsm(mask);
+    if (propertyMapped && !cfg.groupTables.comObjectSegment) {
+      throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
+        `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
+    }
+    const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    // A link whose com-object this configuration does not activate would build an association to an
+    // object the device ignores: a group address the UI calls programmed and the device never answers.
+    // Refuse, exactly as the surgical GA flash and the System B full download do. Without this the
+    // MV-0705 L3 author clears the (inactive) object's linked bit while the association is still emitted.
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    // The com-object table is authored only for property-mapped devices: the visibility-gated active
+    // objects (imageComObjects) overlaid on the segment's static template, with the linked set from
+    // the group-address links (see comobjbuild.ts buildComObjectTableMv0705 and its two-capture proof).
+    const comObjectTable = propertyMapped
+      ? { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) }
+      : undefined;
+    // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
+    // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
+    // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
+    // the configuration is really there.
+    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, comObjectTable });
+    if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
+
+    return { plan, segments, imageBytes };
+  }
+
   // Commission an absolute-segment (System 7) device from its declared load procedure: author the
   // address + association tables (from the links), every parameter-bearing segment (its <Data>
   // overlaid with the active parameters), and the static application segments (com-object table +
@@ -909,30 +998,7 @@ export class System7Profile extends DeviceProfile {
       }
     }
 
-    const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
-    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
-    // A link whose com-object this configuration does not activate would build an association to an
-    // object the device ignores: a group address the UI calls programmed and the device never answers.
-    // Refuse, exactly as the surgical GA flash and the System B full download do. Without this the
-    // MV-0705 L3 author clears the (inactive) object's linked bit while the association is still emitted.
-    const active = new Set(view.imageComObjects.keys());
-    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
-    if (orphans.length) {
-      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
-        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
-    }
-    // The com-object table is authored only for property-mapped devices: the visibility-gated active
-    // objects (imageComObjects) overlaid on the segment's static template, with the linked set from
-    // the group-address links (see comobjbuild.ts buildComObjectTableMv0705 and its two-capture proof).
-    const comObjectTable = propertyMapped
-      ? { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) }
-      : undefined;
-    // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
-    // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
-    // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
-    // the configuration is really there.
-    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, comObjectTable });
-    if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
+    const { plan, segments, imageBytes } = this.planSystem7Full(mask, { ...ctx, proc });
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
     // app's own segment declarations. OFF by default (ctx.backupBeforeUnload): the download rebuilds

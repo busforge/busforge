@@ -76,7 +76,7 @@ Read and honoured:
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
-| `Parameter` | `LegacyPatchAlways` | marks a parameter ETS itself patches during download, so the image builder does not claim to own it |
+| `Parameter` | `LegacyPatchAlways` | parsed; the parameter is built and owned like any other, because ETS always writes its value over the `<Data>` byte (see [findings.md](findings.md) §8) |
 | `ParameterBlock` (item-less) | self-closing collector blocks | a reached childless header renders as an empty navigable section; headers inside an inactive `choose` branch stay hidden |
 
 Not read, with the reason:

@@ -34,10 +34,9 @@ export interface CfgType {
 export interface CfgParam {
   id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
-  // ETS LegacyPatchAlways: an internal marker ETS itself patches during download (e.g. a
-  // "Download erfolgt" flag), not a user parameter. We must NOT author or own its byte:
-  // its on-device value is whatever ETS' patch computed, which our static default does not
-  // reproduce. The image build skips it so the flash never overwrites it.
+  // ETS LegacyPatchAlways: ETS always writes this parameter's value into the image, over the
+  // <Data> byte, even at its default. The image build treats it like any other parameter, which
+  // does the same.
   patchAlways?: boolean;
   // For a module-def parameter: the Argument id its <Memory> Offset is relative to
   // (Memory@BaseOffset). The effective device offset is `offset + <instance value of

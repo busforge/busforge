@@ -100,11 +100,41 @@ exactly in that gap and passed every check above: a 32-bit float encoded as a 16
 and a com-object table sized to the wrong maximum.
 
 Closing it needs a different oracle: **an ETS download of the same device at the same
-configuration, captured on the wire**. `tools/etsdiff.ts` reassembles ETS's memory writes from
-such a capture and diffs them against the image Busforge builds. That is the check that found
-the float bug (and, once it was fixed, reported zero divergences for the capture), and the
-same method byte-verified the property-mapped com-object table authoring against two ETS
-captures before any of it touched hardware.
+configuration, captured on the wire**. `tools/etsdiff.ts` is that check, and it is the gate for
+the reference axis of [`evidence-contract.md`](evidence-contract.md). It found the float bug (and,
+once it was fixed, reported zero divergences for that capture).
+
+What it compares:
+
+- **ETS's side**: every `A_Memory_Write` (APCI 0x280) and `A_MemoryExtended_Write` (0x1FB) ETS sent
+  to the device under test, replayed in capture order so a later write wins per byte. Writes to
+  other devices are counted and ignored.
+- **Busforge's side**: the full-download image, built by the planner the server's download runs
+  (`DeviceProfile.planFullDownload`), so it refuses whatever the server would refuse. That covers
+  both memory models Busforge downloads: System B (parameter segment, com-object table,
+  association and address table) and System 7 (every absolute segment, including the MV-0705
+  authored com-object table).
+- **Per segment**: bytes ETS wrote, bytes compared, every divergence with its address, both values
+  and the parameters the application declares at that byte. ETS bytes that fall in no Busforge
+  segment, and Busforge bytes ETS never wrote, are listed. The only exclusion is a named rule
+  printed with the bytes it covers (today one: the memory-mapped load-control register `0x0104`
+  of MV-0700/0701, whose writes are load events, not memory).
+- **The configuration** comes from a `.knxproj` (`--project`: parameters, module instances,
+  links, as the import stores them) or, when there is no project, from the application program
+  (`--app`, an `.xml`, `.xml.gz` or `.knxprod`) at its defaults plus whatever `--param` and
+  `--link` state.
+
+A pass needs every ETS-written byte compared and equal, no ETS byte outside Busforge's image and
+every segment placed. Bytes only Busforge writes are named in the record as not covered: on the
+MV-0705 address table, for example, ETS does not write the device's own address (bytes 1-2) and
+Busforge does.
+
+Worked case, the MDT BE-02001.02 (MV-0705, two captures in `tools/fixtures/`, pinned by
+`tools/etsdiff.test.ts`): every byte ETS wrote matches, in the address, association and
+com-object tables and the parameter segment, at defaults and with one link. The comparison first
+found one divergence in the parameter segment, and it was a Busforge bug: the debounce time
+carries `LegacyPatchAlways`, which Busforge used to leave out of the image
+([findings.md](findings.md) §8).
 
 Two lessons from using it, both cheap to relearn the hard way:
 
@@ -114,14 +144,21 @@ Two lessons from using it, both cheap to relearn the hard way:
   every single write look divergent and produced a confident, wrong root cause (a resolver
   "under-activation" bug that did not exist). A 100%-divergence result is a reason to suspect
   the harness, not the code: correlate for a constant offset before authoring a cause. The
-  tool now infers the base from the alignment of distinctive multi-byte runs.
+  tool takes each System B segment's base from the device's own answer to ETS's
+  `PID_TABLE_REFERENCE` read in the capture; `--seg-base=<lsm>:<n>` pins one. Without either, the
+  parameter segment's base is inferred from the alignment of distinctive multi-byte runs, and a
+  table segment is not compared, which fails the gate. ETS's allocation (PID 5) gives the size and
+  fill it asked for, so a byte it allocated with a fill and never wrote is compared as that fill.
 - **Test the competing hypothesis.** The suspected resolver was cleared by a control run:
   writing every union member's default instead of only the active branch *diverges* from ETS,
   so the active-branch gate is exactly what ETS does.
 
-The durable form of this check diffs the built image against a **live read-back**, resolving
-the segment base from the device itself, so no capture and no base inference are needed. That
-is not built yet.
+Not covered yet: the property writes of a download (the program-id stamp, load events) are
+listed but not compared; the System B table-segment placement from `PID_TABLE_REFERENCE` is
+exercised only by synthetic frames, because no System B capture is kept in the repository; and
+the project mode has no offline test against a real `.knxproj`. The durable form of this check
+diffs the built image against a **live read-back**, resolving the segment base from the device
+itself, so no capture is needed. That is not built yet.
 
 ## Placement is not behaviour
 
@@ -285,6 +322,12 @@ bun run packages/product/test/real-catalogue.gen.ts
 # Hardware byte-match against a live device (check 1):
 bun run tools/paramtest.ts <interface> <ia> <app-xml> <0.xml> <device-id>
 
-# Our-image versus ETS, from a captured ETS download:
-bun run tools/etsdiff.ts <project> <ets-capture.log>
+# Our-image versus ETS, from a captured ETS full download (exit 0 = pass):
+bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=<pw>] [--ia=<a.l.d>] [--evidence=<out.json>]
+# ... or without a project, at the application's defaults plus stated values:
+bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml|.xml.gz|.knxprod> [--app-id=<M-XXXX_A-...>] --ia=<a.l.d> \
+  [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
+# e.g. the MDT worked case (passes: every byte ETS wrote matches):
+bun run tools/etsdiff.ts tools/fixtures/mdt-be02001-ets-fulldownload-linked.log \
+  --app=packages/product/test/fixtures/real/M-0083_A-00B6-32-9642.xml.gz --ia=1.1.56 --link=0:3/3/1
 ```

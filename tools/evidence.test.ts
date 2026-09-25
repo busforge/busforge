@@ -37,18 +37,33 @@ describe("readback evidence", () => {
 });
 
 describe("etsdiff evidence", () => {
-  const c = { ia: "1.2.32", productRef: "M-00FA_H-0xA012-1_P-OpenKnxRaumController", hardware2Program: "M-00FA_H-0xA012-1_HP-A012-55-0000", mask: "MV-07B0", divergent: 0, compared: 30, outside: 86, base: 0x54, basePinned: false };
-  test("zero divergent writes against a hashed ETS capture is a reference pass", () => {
-    const r = etsdiffEvidence(c, { recordedAt: run.recordedAt, runnerRevision: "b613b88", artifact: "capture.log", sha256: "c".repeat(64) });
+  const c = {
+    ia: "1.1.56", productRef: "M-0083_H-182-0_P-BE.2D02001.2E02", hardware2Program: "M-0083_A-00B6-32-9642", mask: "MV-0705",
+    configuration: "application defaults, no links", compared: 274, divergent: 0, etsOutside: 0, busforgeOnly: 0, uncomparedSegments: 0,
+    segments: ["AS-4000 0/1", "AS-4468 0/168"], exclusions: [],
+  };
+  const r0 = { recordedAt: run.recordedAt, runnerRevision: "b613b88", artifact: "capture.log", sha256: "c".repeat(64) };
+  test("every compared byte equal against a hashed ETS capture is a reference pass", () => {
+    const r = etsdiffEvidence(c, r0);
     expect(r.results.reference).toMatchObject({ state: "pass" });
     expect(r.origin.reference).toBe("ets-capture");
+    expect(r.subject.appProgramId).toBe("M-0083_A-00B6-32-9642");
+    expect(r.scope.operation).toBe("fullDownload");
   });
-  test("any divergent write is a reference failure", () => {
-    const r = etsdiffEvidence({ ...c, divergent: 2 }, { recordedAt: run.recordedAt, runnerRevision: null, artifact: "capture.log", sha256: "c".repeat(64) });
-    expect(r.results.reference).toEqual({ state: "fail", detail: "2 of 30 parameter-segment writes differ; 30 writes compared, 86 outside the segment not compared, base 0x54 inferred from the capture" });
+  test("any divergent byte is a reference failure", () => {
+    const r = etsdiffEvidence({ ...c, divergent: 1 }, r0);
+    expect(r.results.reference).toEqual({ state: "fail", detail: "1 of 274 compared bytes differ; 274 bytes compared (AS-4000 0/1, AS-4468 0/168)" });
   });
-  test("no compared write is no evidence", () => {
-    expect(() => etsdiffEvidence({ ...c, compared: 0 }, { recordedAt: run.recordedAt, runnerRevision: null, artifact: "capture.log", sha256: "c".repeat(64) })).toThrow("nothing to record");
+  test("an ETS byte outside Busforge's image or an unplaced segment is no pass either", () => {
+    expect(etsdiffEvidence({ ...c, etsOutside: 2 }, r0).results.reference.state).toBe("fail");
+    expect(etsdiffEvidence({ ...c, uncomparedSegments: 1 }, r0).results.reference.state).toBe("fail");
+  });
+  test("exclusions and bytes only Busforge writes are named in the detail", () => {
+    const r = etsdiffEvidence({ ...c, busforgeOnly: 2, exclusions: ["11 bytes: control register"] }, r0);
+    expect(r.results.reference).toMatchObject({ state: "pass", detail: "274 bytes compared (AS-4000 0/1, AS-4468 0/168); excluded by rule: 11 bytes: control register; 2 bytes Busforge writes that ETS does not are not covered" });
+  });
+  test("no compared byte is no evidence", () => {
+    expect(() => etsdiffEvidence({ ...c, compared: 0 }, r0)).toThrow("nothing to record");
   });
 });
 

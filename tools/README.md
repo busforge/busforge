@@ -12,7 +12,7 @@ The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md
 | `dump-param-memory.ts` | Dump every reachable device's parameter memory into a corpus (database-sourced, no project password) |
 | `verify-images.ts` | Offline: byte-verify the image build against that corpus, owned-scoped |
 | `paramtest.ts` | One device, one memory read: build the parameter image from files and compare it against the device |
-| `etsdiff.ts` | Diff busforge's built image against what ETS actually wrote, from a captured programming transaction |
+| `etsdiff.ts` | Diff Busforge's full-download image, segment by segment, against what ETS wrote in a captured full download (the reference-axis gate, see docs/verification.md) |
 | `flashtest.ts` | **Writes to a real device.** Live group-address flash harness with revert |
 | `udp-ssh-relay.ts` | Carry KNXnet/IP over an SSH TCP forward when the direct UDP route is broken |
 | `smoke/runner.ts` | The hardware smoke framework: capabilities and behaviours on real devices, in the `api` and `ui` channels |

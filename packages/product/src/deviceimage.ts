@@ -146,7 +146,8 @@ export function buildAbsoluteSegmentTargets(
 //    Value="0" placeholders whose real content ETS computes from the channel/link
 //    allocation: they are never active in our resolver, so they stay UNOWNED and the
 //    flash preserves the device's computed table rather than zeroing it.
-//  - LegacyPatchAlways params: dropped by toAppModel, so never owned (ETS patches them).
+//  - LegacyPatchAlways params: owned like any other. ETS writes their value over the <Data> byte
+//    (MDT BE-02001.02 captures; the Theben MIX house devices hold the values, not <Data>).
 //  - A plain top-level param that is INACTIVE and whose memory falls inside an active
 //    module instance's region: NOT owned. That byte belongs to the channel the module
 //    placed there; the top-level param is the displaced channel variant (e.g. the relay

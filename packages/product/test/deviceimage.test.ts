@@ -474,3 +474,19 @@ test("a non-byte-aligned wide field owns EVERY byte it spans (not just the first
   deviceKeptLastByte[3] ^= 0xc0; // the 2 bits of the field that live in byte 3
   expect(verifyRelativeOwned(deviceKeptLastByte, target)).toBe(false);
 });
+
+test("a LegacyPatchAlways parameter is written with its value, and a user's edit reaches the image", () => {
+  // MDT BE-02001.02 P-7 "Debounce time" (visible, editable) carries LegacyPatchAlways; its <Data>
+  // byte is 0x32, and two ETS captures (tools/fixtures) write the parameter's value 0x1e over it.
+  const mdt = parseAppConfig(readRealFixture("M-0083_A-00B6-32-9642.xml.gz"));
+  const ref = [...mdt.refs.values()].find((r) => r.id.endsWith("_P-7_R-6"))!;
+  expect(mdt.params.get(ref.paramId)?.patchAlways).toBe(true);
+  const seg = (values: Map<string, string>) => {
+    const instances = mdt.hasModules ? resolveModuleInstances(mdt, values) : [];
+    return buildAbsoluteSegmentTargets(mdt, values, { moduleInstances: instances }).find((t) => t.id.endsWith("AS-4468"))!;
+  };
+  const defaults = seg(new Map());
+  expect(defaults.bytes[3]).toBe(0x1e);
+  expect(defaults.owned[3]).toBe(true);
+  expect(seg(new Map([[ref.id, "100"]])).bytes[3]).toBe(100);
+});

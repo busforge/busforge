@@ -309,3 +309,21 @@ granularity, and do not fall back to a full download for a change that only move
 And a read-back verify is a **placement** proof, never a **behaviour** proof: a link can be
 byte-perfect and still deaf, which is why the smoke framework observes the bus. It was the
 behaviour check, not the read-back, that caught this.
+
+## 8. `LegacyPatchAlways` means "always write the value", not "leave it to ETS"
+
+The application-program attribute `LegacyPatchAlways="true"` marks a parameter ETS writes into the
+image on every download, over the `<Data>` byte, even when the value is the default. Busforge read
+it the other way round, as an ETS-internal marker it must not author, and left such parameters out
+of the image model. Two independent sources show what ETS does:
+
+- **ETS captures.** Two ETS full downloads of the MDT BE-02001.02 write `0x1e` (30 ms, the
+  parameter's value) at the debounce time `P-7`, whose `<Data>` byte is `0x32` (50 ms). `P-7` is a
+  visible, editable parameter, so a user's debounce setting never reached the device either.
+- **House devices ETS commissioned.** Three Theben MIX actuators (application
+  `M-0048_A-493B-21-B471`) hold the parameter values at all three of their `LegacyPatchAlways`
+  parameters (3, 15 and the "Download erfolgt" bit), where Busforge's image had `0`.
+
+The earlier exclusion had raised the owned-byte match on a Theben device only because it removed
+those bytes from the comparison. `LegacyPatchAlways` parameters are now built and owned like any
+other; `tools/etsdiff.ts` matches the MDT captures byte for byte.

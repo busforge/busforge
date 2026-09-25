@@ -93,27 +93,53 @@ export function readbackEvidence(
   });
 }
 
-// Busforge's parameter segment compared with the writes of an ETS full download of the same project.
+// Busforge's full-download image compared, segment by segment, with the memory writes of an ETS full
+// download of the same configuration. A reference pass needs every byte ETS wrote to be compared and
+// equal: an ETS byte outside Busforge's image, or a segment that could not be placed, is not a pass.
+// Bytes Busforge writes that ETS does not are not contradicted by the capture, but not proven by it
+// either, so the detail names them.
+export interface EtsDiffSummary {
+  ia: string; productRef: string | null; hardware2Program: string; mask: string;
+  configuration: string;       // the configuration both sides were built from, in words
+  compared: number;            // bytes compared (ETS-written or ETS-filled, and in Busforge's image)
+  divergent: number;           // of those, bytes that differ
+  etsOutside: number;          // bytes ETS wrote that no Busforge segment covers (after printed exclusions)
+  busforgeOnly: number;        // bytes Busforge writes that ETS neither wrote nor filled
+  uncomparedSegments: number;  // Busforge segments whose device address could not be established
+  segments: string[];          // per segment: "<id> <divergent>/<compared>" or "<id> not compared"
+  declaredUnwritten?: string[]; // declared segments Busforge writes nothing to (ETS wrote nothing there either, or it would be outside)
+  exclusions: string[];        // rule-based exclusions applied, each with its rule
+}
 export function etsdiffEvidence(
-  c: { ia: string; productRef: string; hardware2Program: string; mask: string; divergent: number; compared: number; outside: number; base: number; basePinned: boolean },
+  c: EtsDiffSummary,
   run: { recordedAt: string; runnerRevision: string | null; artifact: string; sha256: string },
 ): EvidenceRecord {
-  // Nothing compared is nothing shown; a pass needs at least one ETS write inside the segment.
-  if (c.compared === 0) throw new Error(`no ETS write fell inside ${c.ia}'s parameter segment at base 0x${c.base.toString(16)}; nothing to record`);
+  // Nothing compared is nothing shown.
+  if (c.compared === 0) throw new Error(`no ETS write to ${c.ia} fell inside Busforge's full-download image; nothing to record`);
   const app = appProgramId(c.hardware2Program);
-  const scope = `${c.compared} writes compared, ${c.outside} outside the segment not compared, base 0x${c.base.toString(16)} ${c.basePinned ? "pinned" : "inferred from the capture"}`;
+  const scope = [
+    `${c.compared} bytes compared (${c.segments.join(", ")})`,
+    ...(c.exclusions.length ? [`excluded by rule: ${c.exclusions.join("; ")}`] : []),
+    ...(c.busforgeOnly ? [`${c.busforgeOnly} bytes Busforge writes that ETS does not are not covered`] : []),
+    ...(c.declaredUnwritten?.length ? [`declared segments neither side writes: ${c.declaredUnwritten.join(", ")}`] : []),
+  ].join("; ");
+  const problems = [
+    ...(c.divergent ? [`${c.divergent} of ${c.compared} compared bytes differ`] : []),
+    ...(c.etsOutside ? [`${c.etsOutside} bytes ETS wrote lie outside Busforge's image`] : []),
+    ...(c.uncomparedSegments ? [`${c.uncomparedSegments} segments could not be placed on the device`] : []),
+  ];
   return parseEvidenceRecord({
     schema: "busforge.evidence/1", id: `etsdiff-${c.ia}-${run.recordedAt}`, recordedAt: run.recordedAt,
     subject: { manufacturer: app.slice(0, 6), productRef: c.productRef, appProgramId: app, mask: c.mask, firmware: { state: "unknown" } },
     medium: "unknown", transport: { kind: "unknown", via: "unknown" },
     build: { server: null, runner: { name: "tools/etsdiff.ts", revision: run.runnerRevision }, spec: null },
-    scope: { operation: "fullDownload", channel: "tool", configuration: "the project's configuration of the device, parameter segment only", configurationFingerprint: null },
+    scope: { operation: "fullDownload", channel: "tool", configuration: `${c.configuration}; full-download image, every segment`, configurationFingerprint: null },
     origin: { configuredBy: "ets", reference: "ets-capture", priorBusforgeWrites: "none" },
     results: {
       transfer: { state: "not-assessed", detail: "offline comparison; no device involved" },
-      reference: c.divergent === 0
-        ? { state: "pass", method: "every parameter-segment write of the ETS download byte-equal to Busforge's image at the segment base", detail: scope }
-        : { state: "fail", detail: `${c.divergent} of ${c.compared} parameter-segment writes differ; ${scope}` },
+      reference: problems.length === 0
+        ? { state: "pass", method: "every memory byte of the ETS full download byte-equal to Busforge's full-download image at the device address", detail: scope }
+        : { state: "fail", detail: `${problems.join("; ")}; ${scope}` },
       behaviour: NOT_ASSESSED, persistence: NOT_ASSESSED,
     },
     supersedes: [], supersedeReason: null,
