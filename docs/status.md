@@ -104,15 +104,17 @@ Notes attached to that table:
   as well; that bracket has not been driven on a Theben device yet.
 - **ABB US/U 4.2 com-object table.** ETS clears the Communication flag of every object without a
   group address in this memory-mapped table; Busforge used to write the manufacturer's template
-  unchanged. The full download and the group-address flash now both write it as ETS does (the GA
-  flash rewrites the table with the links, so a newly linked object is not left silent). At
-  application defaults the full download is byte-equal to an ETS download (2026-09-25 capture).
-  What ETS writes for a linked object has not been captured yet; the template's flag is kept there.
+  unchanged. The full download now clears it (byte-equal to an ETS download at application
+  defaults, 2026-09-25 capture). The group-address flash sets the flag on linked objects and
+  clears it on the rest in the table the device holds, touching no other byte, so a newly linked
+  object is not left silent. That GA-flash path has not been compared with an ETS capture or
+  driven on hardware yet, and what ETS writes for a linked object is not known.
 - **GVS AMMA with every output disabled.** ETS downloads a configuration that activates no
   com-object, writing the declared table of silent entries; Busforge used to refuse it
   (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. In the disabled channels' regions
   every union has no active member, and ETS writes the member marked `DefaultUnionParameter`;
-  Busforge now does the same (module-instance unions excepted, no capture covers them). The whole
+  Busforge's full download now does the same (module-instance unions excepted, no capture covers
+  them); the surgical parameter flash leaves those bytes as the device holds them. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms

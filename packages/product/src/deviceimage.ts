@@ -165,7 +165,10 @@ export function buildRelativeSegmentTarget(
   app: AppConfig,
   values: Map<string, string>,
   lsm: number,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+  // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member.
+  // Only a full download sets it: its evidence is a full-download capture, and a surgical flash must
+  // keep bytes a device holds from ETS wherever Busforge's activation is not proven.
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean } = {},
 ): RelativeSegmentTarget | null {
   const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
   const model = toAppModel(app, { includeUnions: true, instances });
@@ -173,7 +176,7 @@ export function buildRelativeSegmentTarget(
   if (!seg) return null;
   const active = buildDeviceConfig(app, values, opts.lang, instances).imageValues;
   // The unions with at least one active member (only those write an active member, not the default).
-  const activeUnions = new Set<number>();
+  const activeUnions = new Set<string>();
   for (const refId of active.keys()) {
     const u = app.params.get(app.refs.get(refId)?.paramId ?? "")?.unionId;
     if (u !== undefined) activeUnions.add(u);
@@ -239,7 +242,7 @@ export function buildRelativeSegmentTarget(
     //    capture, 2026-09-25: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
     //    covered by a capture and stay unowned.
-    if (v === undefined && cfgParam?.unionDefault && cfgParam.unionId !== undefined && !ref.id.includes("_MI-")
+    if (v === undefined && opts.ownIdleUnionDefaults && cfgParam?.unionDefault && cfgParam.unionId !== undefined && !ref.id.includes("_MI-")
       && !activeUnions.has(cfgParam.unionId) && cfgParam.access !== "None" && app.refs.get(ref.id)?.access !== "None"
       && !inModuleRegion(param.offset)) {
       v = values.get(ref.id) ?? app.refs.get(ref.id)?.value ?? param.value;

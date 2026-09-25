@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { test, expect } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
@@ -489,4 +490,25 @@ test("a LegacyPatchAlways parameter is written with its value, and a user's edit
   expect(defaults.bytes[3]).toBe(0x1e);
   expect(defaults.owned[3]).toBe(true);
   expect(seg(new Map([[ref.id, "100"]])).bytes[3]).toBe(100);
+});
+
+// buildRelativeSegmentTarget is the System B image both the full download and the surgical parameter
+// flash write, and golden.json (buildParameterImage) does not cover it. Fingerprints of bytes/owned/
+// owned-count at application defaults. The full download owns the default member of every idle
+// union (GVS capture); the surgical flash does not, so it keeps a device's own bytes there.
+test("the relative images of the full download and the parameter flash stay pinned", () => {
+  const h = (b: Buffer | boolean[]) => createHash("sha256").update(Buffer.isBuffer(b) ? b : Buffer.from(b.map((x) => (x ? 1 : 0)))).digest("hex").slice(0, 16);
+  const pinned: [string, string, string][] = [
+    ["M-0048_A-493B-21-B471.xml.gz", "6ba718daaf224267/d6ff5b529294fa99/28", "6ba718daaf224267/d6ff5b529294fa99/28"],
+    ["M-0048_A-9071-20-F258-O00EF.xml.gz", "46cbaee9e105624c/92067062ffcf6d7e/2993", "46cbaee9e105624c/92067062ffcf6d7e/2993"],
+    ["M-0083_A-0137-20-7EB2.xml.gz", "1e314970f1fcd316/ec139466568e418e/249", "1e314970f1fcd316/ec139466568e418e/249"],
+    ["M-0085_A-0072-30-69AA.xml.gz", "92c7b74b07859d64/50280f1974b73b94/229", "0637574cc5dee1f2/89a5a7b7cbcadf73/158"],
+    ["M-0162_A-0004-11-F245.xml.gz", "193046a5b142618e/1ac1e7503513d72a/163", "193046a5b142618e/1ac1e7503513d72a/163"],
+  ];
+  for (const [f, full, surgical] of pinned) {
+    const app = parseAppConfig(readRealFixture(f));
+    const inst = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
+    const r = (own: boolean) => { const t = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst, ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned)}/${t.owned.filter(Boolean).length}`; };
+    expect([f, r(true), r(false)]).toEqual([f, full, surgical]);
+  }
 });

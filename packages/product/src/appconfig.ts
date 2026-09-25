@@ -39,7 +39,7 @@ export interface CfgParam {
   // does the same.
   // The <Union> a union member belongs to (index in declaration order), and whether it is the
   // member marked DefaultUnionParameter: the one ETS writes when no member of its union is active.
-  unionId?: number;
+  unionId?: string;
   unionDefault?: boolean;
   patchAlways?: boolean;
   // For a module-def parameter: the Argument id its <Memory> Offset is relative to
@@ -249,7 +249,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const staticKids = staticNode ? kidsOf(staticNode) : [];
 
   const types = parseTypes(staticKids);
-  const { params } = parseParams(staticKids);
+  const { params } = parseParams(staticKids, "static");
   const refs = parseRefs(staticKids);
   const comObjects = parseComObjects(staticKids);
   const comObjectRefs = parseComObjectRefs(staticKids);
@@ -272,7 +272,7 @@ export function parseAppConfig(xml: string): AppConfig {
     const mdStatic = firstByTag(mdKids, "Static");
     const mdStaticKids = mdStatic ? kidsOf(mdStatic) : [];
     merge(types, tagMod(parseTypes(mdStaticKids), mdId));
-    merge(params, tagMod(parseParams(mdStaticKids).params, mdId));
+    merge(params, tagMod(parseParams(mdStaticKids, mdId).params, mdId));
     merge(refs, tagMod(parseRefs(mdStaticKids), mdId));
     merge(comObjects, parseComObjects(mdStaticKids));
     merge(comObjectRefs, parseComObjectRefs(mdStaticKids));
@@ -382,7 +382,8 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
   return out;
 }
 
-function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
+// `unionScope` makes union ids unique across the static part and every module definition.
+function parseParams(staticKids: ONode[], unionScope: string): { params: Map<string, CfgParam> } {
   const params = new Map<string, CfgParam>();
   const container = firstByTag(staticKids, "Parameters");
   // `unionMem` is the <Union>'s shared <Memory> attributes (present only for union
@@ -391,7 +392,7 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   // relative to that shared base (union branches overlap; only the visible one is
   // written). The union flag stays so the proven RelativeSegment image projection can
   // keep excluding them by default (toAppModel), byte-identical to the legacy parser.
-  const add = (pa: ONode, union: boolean, unionMem?: Record<string, string>, unionId?: number) => {
+  const add = (pa: ONode, union: boolean, unionMem?: Record<string, string>, unionId?: string) => {
     const a = attrsOf(pa);
     const mem = firstByTag(kidsOf(pa), "Memory");
     const ma = mem ? attrsOf(mem) : undefined;
@@ -420,7 +421,7 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   for (const u of container ? childrenByTag(kidsOf(container), "Union") : []) {
     const umem = firstByTag(kidsOf(u), "Memory");
     const uma = umem ? attrsOf(umem) : undefined;
-    const unionId = unionCount++;
+    const unionId = `${unionScope}:${unionCount++}`;
     for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true, uma, unionId);
   }
   return { params };
