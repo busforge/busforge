@@ -110,8 +110,10 @@ Notes attached to that table:
   What ETS writes for a linked object has not been captured yet; the template's flag is kept there.
 - **GVS AMMA with every output disabled.** ETS downloads a configuration that activates no
   com-object, writing the declared table of silent entries; Busforge used to refuse it
-  (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. Its parameter segment still differs
-  from that ETS download in the disabled channels' regions (under investigation).
+  (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. In the disabled channels' regions
+  every union has no active member, and ETS writes the member marked `DefaultUnionParameter`;
+  Busforge now does the same (module-instance unions excepted, no capture covers them). The whole
+  download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier

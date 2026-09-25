@@ -129,3 +129,19 @@ describe("MDT BE-02001.02 full download against ETS", () => {
     expect(r.segments.slice(0, 3).map((s) => s.divergences.length + s.etsOnly.length)).not.toEqual([0, 0, 0]);
   });
 });
+
+// ETS 6 full download of the GVS AMMA-04/06.S (System B, fill 0xFF) at application defaults, where
+// every output is disabled and no com-object is active; trimmed to the frames to and from 1.1.203.
+describe("GVS AMMA full download against ETS", () => {
+  test("every byte matches: silent com-object table, and each idle union holds its default member", () => {
+    const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real/M-0085_A-0072-30-69AA.xml.gz"))).toString("utf8");
+    const cfg = parseAppConfig(xml);
+    const ia = iaToNum("1.1.203");
+    const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.203", params: new Map(), links: [], proc: parseLoadProcedures(xml) });
+    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "gvs-amma-ets-fulldownload-defaults.log"), "utf8"), ia);
+    const refs = reportedTableReferences(cap);
+    const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
+    expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 2816, 0], [3, 1066, 0], [2, 2, 0], [1, 2, 0]]);
+    expect(r.unattributed).toEqual([]);
+  });
+});

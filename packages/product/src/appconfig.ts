@@ -37,6 +37,10 @@ export interface CfgParam {
   // ETS LegacyPatchAlways: ETS always writes this parameter's value into the image, over the
   // <Data> byte, even at its default. The image build treats it like any other parameter, which
   // does the same.
+  // The <Union> a union member belongs to (index in declaration order), and whether it is the
+  // member marked DefaultUnionParameter: the one ETS writes when no member of its union is active.
+  unionId?: number;
+  unionDefault?: boolean;
   patchAlways?: boolean;
   // For a module-def parameter: the Argument id its <Memory> Offset is relative to
   // (Memory@BaseOffset). The effective device offset is `offset + <instance value of
@@ -387,7 +391,7 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
   // relative to that shared base (union branches overlap; only the visible one is
   // written). The union flag stays so the proven RelativeSegment image projection can
   // keep excluding them by default (toAppModel), byte-identical to the legacy parser.
-  const add = (pa: ONode, union: boolean, unionMem?: Record<string, string>) => {
+  const add = (pa: ONode, union: boolean, unionMem?: Record<string, string>, unionId?: number) => {
     const a = attrsOf(pa);
     const mem = firstByTag(kidsOf(pa), "Memory");
     const ma = mem ? attrsOf(mem) : undefined;
@@ -405,15 +409,19 @@ function parseParams(staticKids: ONode[]): { params: Map<string, CfgParam> } {
       baseOffsetArg: unionMem ? unionMem.BaseOffset : ma?.BaseOffset,
       patchAlways: a.LegacyPatchAlways === "true" || undefined,
       union: union || undefined,
+      unionId,
+      unionDefault: a.DefaultUnionParameter === "true" || undefined,
     });
   };
   for (const pa of container ? childrenByTag(kidsOf(container), "Parameter") : []) add(pa, false);
   // Union children are parameters too (overlapping memory), placed at the union's
   // shared <Memory>. Included for the UI and (opt-in) the MV-0705 image build.
+  let unionCount = 0;
   for (const u of container ? childrenByTag(kidsOf(container), "Union") : []) {
     const umem = firstByTag(kidsOf(u), "Memory");
     const uma = umem ? attrsOf(umem) : undefined;
-    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true, uma);
+    const unionId = unionCount++;
+    for (const pa of childrenByTag(kidsOf(u), "Parameter")) add(pa, true, uma, unionId);
   }
   return { params };
 }

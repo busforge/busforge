@@ -172,6 +172,12 @@ export function buildRelativeSegmentTarget(
   const seg = model.segments.find((s) => s.lsm === lsm);
   if (!seg) return null;
   const active = buildDeviceConfig(app, values, opts.lang, instances).imageValues;
+  // The unions with at least one active member (only those write an active member, not the default).
+  const activeUnions = new Set<number>();
+  for (const refId of active.keys()) {
+    const u = app.params.get(app.refs.get(refId)?.paramId ?? "")?.unionId;
+    if (u !== undefined) activeUnions.add(u);
+  }
 
   // Memory span [min, max] of each module instance's placed params: the contiguous
   // channel region the allocator assigned. A non-module param inside one of these is a
@@ -229,6 +235,15 @@ export function buildRelativeSegmentTarget(
     let v: string | undefined;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
     else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset)) v = values.get(ref.id) ?? param.value;
+    //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
+    //    capture, 2026-09-25: every disabled channel's unions, byte for byte), under the same
+    //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
+    //    covered by a capture and stay unowned.
+    if (v === undefined && cfgParam?.unionDefault && cfgParam.unionId !== undefined && !ref.id.includes("_MI-")
+      && !activeUnions.has(cfgParam.unionId) && cfgParam.access !== "None" && app.refs.get(ref.id)?.access !== "None"
+      && !inModuleRegion(param.offset)) {
+      v = values.get(ref.id) ?? app.refs.get(ref.id)?.value ?? param.value;
+    }
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;

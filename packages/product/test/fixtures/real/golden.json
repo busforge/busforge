@@ -429,6 +429,23 @@
       }
     }
   },
+  "M-0085_A-0072-30-69AA.xml.gz": {
+    "shape": {
+      "types": 91,
+      "params": 265,
+      "refs": 1024,
+      "comObjects": 92,
+      "segments": 1,
+      "hasModules": false
+    },
+    "modelHash": "a05c76d4097491f1",
+    "lsms": {
+      "4": {
+        "build": "965556b47fcaeb36",
+        "decodeHash": "f2e3d1d84f14a755"
+      }
+    }
+  },
   "M-008E_A-7079-10-9C41.xml.gz": {
     "shape": {
       "types": 51,
