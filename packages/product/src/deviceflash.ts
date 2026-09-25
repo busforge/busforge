@@ -123,7 +123,7 @@ export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buf
     { op: "unload", lsm },
     { op: "load", lsm },
     { op: "alloc", lsm, size: image.length },
-    ...mcb.map((m): LoadStep => ({ op: "writeProp", obj: lsm, pid: 27, start: m.element, data: m.data })),
+    ...mcb.map((m): LoadStep => ({ op: "writeProp", obj: lsm, pid: 27, start: m.element, data: m.data, echoPrefix: m.echoPrefix })),
     { op: "writeSegment", lsm, bytes: image },
     { op: "stampAppId", lsm, data: appIdStamp },
     { op: "loadCompleted", lsm },

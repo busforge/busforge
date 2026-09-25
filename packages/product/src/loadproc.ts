@@ -167,7 +167,9 @@ const MCB_PID = 27;
 const MCB_ENTRY_BYTES = 8;
 const MCB_OBJ = 4;
 
-export interface McbWrite { obj: number; element: number; data: Buffer }
+// echoPrefix: the entry is declared Verify="false", so the device may fill its CRC in the echo;
+// only the region size (the first 4 bytes) must come back as written.
+export interface McbWrite { obj: number; element: number; data: Buffer; echoPrefix?: number }
 
 // The MCB entry a declared LdCtrlWriteProp to PID 27 writes, or a reason it cannot be written
 // faithfully.
@@ -181,7 +183,7 @@ function mcbWrite(step: LdStep): McbWrite | string {
   const element = Number(step.attrs.StartElement ?? 1);
   if (!Number.isInteger(element) || element < 1 || element > 4095) return `StartElement "${step.attrs.StartElement}" is not an element index`;
   if (step.attrs.Count !== undefined && step.attrs.Count !== "1") return `Count="${step.attrs.Count}" writes more than one entry`;
-  return { obj: MCB_OBJ, element, data: data.subarray(0, MCB_ENTRY_BYTES) };
+  return { obj: MCB_OBJ, element, data: data.subarray(0, MCB_ENTRY_BYTES), ...(step.attrs.Verify === "false" ? { echoPrefix: 4 } : {}) };
 }
 
 // The MCB entries a System B application declares for one download, in declaration order. Their

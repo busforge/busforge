@@ -713,6 +713,15 @@ describe("runLoadPlan: a property write must be taken as written", () => {
     await runLoadPlan(dev as unknown as KnxDevice, [step]);
   });
 
+  test("with echoPrefix only that many leading bytes must match: the device may fill the rest", async () => {
+    const dev = new RecDev();
+    dev.propWrite = async (_o: number, _p: number, data: Buffer) => Buffer.concat([data.subarray(0, 6), Buffer.from("c73a", "hex")]); // its own CRC
+    await runLoadPlan(dev as unknown as KnxDevice, [{ ...step, echoPrefix: 4 }]);
+    dev.propWrite = async () => Buffer.alloc(0);
+    const err = await runLoadPlan(dev as unknown as KnxDevice, [{ ...step, echoPrefix: 4 }]).then(() => null, (e: unknown) => e as KnxError);
+    expect(err?.code).toBe("PROPERTY_WRITE_REFUSED");
+  });
+
   test("a declined write (empty echo) fails the plan instead of carrying on", async () => {
     const dev = new RecDev();
     dev.propWrite = async () => Buffer.alloc(0); // echoes nothing, like a device that refuses the element

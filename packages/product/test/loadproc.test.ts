@@ -176,11 +176,12 @@ test("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImag
 
 test("the declared MCB entries of a System B full download, as ETS sends them", () => {
   // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the
-  // 10-byte InlineData (Jung 400021SE capture, 2026-09-25).
+  // 10-byte InlineData (Jung 400021SE capture, 2026-09-25). Declared Verify="false": only the region
+  // size has to come back in the echo.
   const lp = parseLoadProcedures(readRealFixture("M-0048_A-493B-21-B471.xml.gz"));
   expect(declaredMcbWrites(lp, 2003)).toEqual([
-    { obj: 4, element: 1, data: Buffer.from("0000066A00320000", "hex") },
-    { obj: 4, element: 2, data: Buffer.from("0000016900320000", "hex") },
+    { obj: 4, element: 1, data: Buffer.from("0000066A00320000", "hex"), echoPrefix: 4 },
+    { obj: 4, element: 2, data: Buffer.from("0000016900320000", "hex"), echoPrefix: 4 },
   ]);
   expect(declaredMcbWrites(lp, 2003, "par")).toEqual(declaredMcbWrites(lp, 2003));
   expect(declaredMcbWrites(parseLoadProcedures(readRealFixture("M-0162_A-0004-11-F245.xml.gz")), 212)).toEqual([]);

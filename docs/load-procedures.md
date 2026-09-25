@@ -107,8 +107,9 @@ comes back from its next restart with the application in ERROR. Every allocation
 download and in a parameter flash alike, resets the regions (measured on the Jung: two after a
 full download and a GA flash, one after a parameter flash without the writes). So both write the
 declared entries right after the allocation, exactly as ETS does: the first 8 bytes of the
-10-byte `InlineData`, element by element, each echoed back by the device or the download stops
-(`PROPERTY_WRITE_REFUSED`). Entries whose regions do not add up to the segment, that address
+10-byte `InlineData`, element by element. The device must echo each entry, or the download stops
+(`PROPERTY_WRITE_REFUSED`); an entry declared `Verify="false"` only has to come back with its
+region size, because the device may fill in the CRC. Entries whose regions do not add up to the segment, that address
 another object or carry data beyond the entry are refused (`LOAD_STEP_UNSUPPORTED`). ETS sends no
 write for `LoadImageProp`; it reads the device's CRCs back afterwards. No evidence exists for
 absolute devices, so both verbs block on them.

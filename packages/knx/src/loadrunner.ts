@@ -59,7 +59,9 @@ export type LoadStep =
   // their main loop rather than when they are told to; restarting one before it has had that
   // quiet moment throws the whole download away. See planSystemBFullDownload.
   | { op: "settle"; ms: number }
-  | { op: "writeProp"; obj: number; pid: number; data: Buffer; start?: number }
+  // echoPrefix: how many leading bytes of the device's echo must equal `data` (default: all of it).
+  // A declared write without verification may come back with fields the device fills itself.
+  | { op: "writeProp"; obj: number; pid: number; data: Buffer; start?: number; echoPrefix?: number }
   | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
 
 export type LoadPlan = LoadStep[];
@@ -144,7 +146,8 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       // and carrying on would leave e.g. an MCB region the device never took.
       case "writeProp": {
         const echo = await dev.propWrite(step.obj, step.pid, step.data, step.start ?? 1);
-        if (!echo.equals(step.data)) {
+        const n = step.echoPrefix ?? step.data.length;
+        if (echo.length < n || !echo.subarray(0, n).equals(step.data.subarray(0, n))) {
           throw new KnxError("PROPERTY_WRITE_REFUSED", `object ${step.obj} PID ${step.pid} element ${step.start ?? 1}: the device answered ${echo.toString("hex") || "nothing"} to a write of ${step.data.toString("hex")}`);
         }
         break;

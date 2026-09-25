@@ -77,7 +77,7 @@ value.
 | ABB US/U 4.2 universal interface | MV-0701 | absolute, memory-mapped LSM | hardware | hardware | hardware (bytes only) | hardware | not applicable: write-only outputs |
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
-| Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, **does not survive a restart** (see below) | hardware: a surgically flashed link answers a read, until the next restart |
+| Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory; survives a restart since the memory-control-block fix (see below) | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | not proven (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
@@ -90,7 +90,7 @@ value.
 
 Notes attached to that table:
 
-- **Jung 400021SE loses its application at the next restart.** After a Busforge full download the
+- **Jung 400021SE lost its application at the next restart, until the memory-control-block fix.** After a Busforge full download the
   device answers with every load object LOADED and every byte read back equal. After an A_Restart
   (2026-09-25, reproduced twice) the tables are still LOADED, but the application object (object
   4) comes back in ERROR and the device answers no group read. Cause, from an ETS capture: its load
@@ -100,7 +100,8 @@ Notes attached to that table:
   device then keeps both regions through a GA flash and a parameter flash and its application
   survives a restart. The Theben MIX application (`M-0048_A-493B-21`) declares the same regions:
   parameter flashes Busforge did on such a device before this change may have left one region,
-  which shows only at the device's next restart.
+  which shows only at the device's next restart. Its parameter flash now writes the two regions
+  as well; that bracket has not been driven on a Theben device yet.
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
@@ -155,11 +156,11 @@ spec states why no behaviour is observable.
 | `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
 | `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | hardware, both channels | **met** |
 | `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | hardware, both channels | **met**, to the byte only |
-| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware (July) | **fails**: application in ERROR after a restart | **not met** |
+| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
-The 2026-09-25 runs of GVS, MDT and ABB (build `c2cde85`, both channels, every capability,
-behaviour and the persistence step) and their evidence records are kept in
+The 2026-09-25 runs (GVS, MDT and ABB on build `c2cde85`, the Jung on `7c54b8d`; both channels,
+every capability, behaviour and the persistence step) and their evidence records are kept in
 [evidence/runs/2026-09-25/](evidence/runs/2026-09-25/). Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
@@ -167,9 +168,9 @@ bus power cut ([evidence-contract.md](evidence-contract.md)).
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
   stops at the bytes and the table says so rather than implying a bus-observable one.
-- **Jung 400021SE**: every capability it claims, its `output` behaviour and the click-through were
-  green in both channels in July, and the capabilities are green again on 2026-09-25. It fails the
-  bar on persistence: after a restart its application object is in ERROR (device table notes).
+- **Jung 400021SE**: every capability it claims, its `output` behaviour, the click-through and the
+  persistence step are green in both channels on build `7c54b8d` (2026-09-25), after the
+  memory-control-block fix (device table notes). The earlier runs of that day record the failure.
 - **OpenKNX RaumController**: the spec exists but has never been run in either channel. The
   device's commissioning is hardware-proven (see the device table), driven through the production
   endpoints before the framework existed. The device now runs in a live installation rather than on
