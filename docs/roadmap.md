@@ -16,6 +16,12 @@ started until the capability it depends on is hardware-proven.
   does. Blocked on evidence: it needs a **transmit-only** object with no read flag on a
   property-mapped device, and until one is driven the change would be unproven either way
   ([findings.md](findings.md) §7).
+- **Execute the declared memory-control-block steps on System B.** The System B download runs a
+  fixed load bracket and ignores `LdCtrlWriteProp` to PID 27 and `LdCtrlLoadImageProp`, where ETS
+  writes the segment CRC it computed from the image. On the Jung 400021SE that leaves a device that
+  verifies and runs, and comes back from its next restart with the application in ERROR
+  ([status.md](status.md)). An ETS capture of that device gives the exact bytes; the fix is then a
+  hardware restart test, not a read-back.
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared load
   procedures is executed; devices whose procedure declares image-property stamps the engine cannot
   compute are refused (`LOAD_STEP_UNSUPPORTED`) rather than flashed with a partial recipe.

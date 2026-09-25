@@ -75,9 +75,9 @@ value.
 | Manufacturer / product | Mask | Memory model | Read-back | Param flash | GA flash | Full download | Bus behaviour |
 |---|---|---|---|---|---|---|---|
 | ABB US/U 4.2 universal interface | MV-0701 | absolute, memory-mapped LSM | hardware | hardware | hardware (bytes only) | hardware | not applicable: write-only outputs |
-| MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware | hardware: a flashed link answers a read |
+| MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
-| Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory | hardware: a surgically flashed link answers a read |
+| Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, **does not survive a restart** (see below) | hardware: a surgically flashed link answers a read, until the next restart |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | not proven (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
@@ -89,6 +89,20 @@ value.
 | MDT IP interfaces (KNX Data Secure) | opaque (`0xFFFF` to plain reads) | none exposed | hardware, secure identify only | not proven | not proven | not proven | not proven |
 
 Notes attached to that table:
+
+- **Jung 400021SE loses its application at the next restart.** After a Busforge full download the
+  device answers with every load object LOADED and every byte read back equal. After an A_Restart
+  (2026-09-25, reproduced twice) the tables are still LOADED, but the application object (object
+  4) comes back in ERROR and the device answers no group read; a full download restores it until
+  the next restart. Its load procedure declares steps the System B download does not execute: an
+  `LdCtrlWriteProp` of two memory-control-block entries (object 4, PID 27) and
+  `LdCtrlLoadImageProp` on objects 1-4, where ETS writes the segment CRC it computed from the
+  image. The exact bytes ETS sends are not known yet; an ETS capture of this device will show them.
+  The Theben MIX application (`M-0048_A-493B-21`) declares the same steps and is unproven here.
+- **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
+  `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
+  instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
+  hardware proofs of this device did not cover that byte.
 
 - **OpenKNX surgical flashes: never driven, no failure observed.** Earlier versions of this page
   called them unsafe. No surgical write was ever attempted on this device; the label came from
@@ -134,22 +148,26 @@ hardware in **both** channels, together with every behaviour its spec declares. 
 is not done, and neither is a device that byte-verifies without ever acting on the bus, unless its
 spec states why no behaviour is observable.
 
-| Spec | Product | Mask | `api` | `ui` | Done bar |
-|---|---|---|---|---|---|
-| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | hardware | hardware | **met** |
-| `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | **met** |
-| `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | **met**, to the byte only |
-| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | **met** |
-| `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | **not met** |
+| Spec | Product | Mask | `api` | `ui` | Persistence (restart) | Done bar |
+|---|---|---|---|---|---|---|
+| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
+| `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | hardware, both channels | **met** |
+| `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | hardware, both channels | **met**, to the byte only |
+| `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware (July) | **fails**: application in ERROR after a restart | **not met** |
+| `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
+
+The 2026-09-25 runs of GVS, MDT and ABB (build `c2cde85`, both channels, every capability,
+behaviour and the persistence step) and their evidence records are kept in
+[evidence/runs/2026-09-25/](evidence/runs/2026-09-25/). Persistence there means an observed reboot
+after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
+bus power cut ([evidence-contract.md](evidence-contract.md)).
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
   stops at the bytes and the table says so rather than implying a bus-observable one.
-- **Jung 400021SE**: every capability it claims, its `output` behaviour and the click-through are
-  green in both channels. The from-factory provisioning proof is the `api` channel's: the device is
-  kept addressed between runs, so the `ui` channel reaches the full download through the
-  FlashDialog needs-download route (a parameter change that rewrites the com-object table) rather
-  than through the from-factory CommissionDialog.
+- **Jung 400021SE**: every capability it claims, its `output` behaviour and the click-through were
+  green in both channels in July, and the capabilities are green again on 2026-09-25. It fails the
+  bar on persistence: after a restart its application object is in ERROR (device table notes).
 - **OpenKNX RaumController**: the spec exists but has never been run in either channel. The
   device's commissioning is hardware-proven (see the device table), driven through the production
   endpoints before the framework existed. The device now runs in a live installation rather than on
@@ -173,9 +191,10 @@ report a device family as working on the strength of a passing test suite.
 ## Known unproven
 
 - **Our image equals what ETS would write** is only checked where an ETS capture of the same
-  device exists (one System B parameter image, one property-mapped com-object table). Everywhere
-  else the read-back proves `device == our image` and can never prove `our image == ETS`. That
-  blind spot has already hidden a real codec bug.
+  device exists: the MDT BE-02001.02 full download, every segment, byte for byte against two ETS
+  captures (`tools/etsdiff.ts`, `tools/fixtures/`), and one System B parameter image whose capture
+  was not kept. Everywhere else the read-back proves `device == our image` and can never prove
+  `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
 - **MV-0705 group-address flash keeps the device's own com-object table.** A freshly linked
   read-capable object was proven to work on hardware; a **transmit-only object**, the case that
   would actually depend on the table's per-object link bit, is unproven, which is why the
