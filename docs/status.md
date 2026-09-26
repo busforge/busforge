@@ -116,12 +116,13 @@ Notes attached to that table:
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
   them); the surgical parameter flash leaves those bytes as the device holds them. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
-- **Jung 400021SE: one parameter byte differs from ETS.** At offset 176 of the parameter segment
-  ("delay after bus voltage return") Busforge writes 100 ms where ETS writes 0 ms. Two
-  ParameterRefs of the same parameter (`P-505`) carry different defaults and gate one union; ETS
-  evidently shares one value per parameter, Busforge evaluates each ref's own default and activates
-  both union members. Such differing ref defaults are common (161 in this application alone), so
-  the rule is not changed on one byte of evidence; a targeted ETS capture decides it.
+- **Jung 400021SE: one parameter byte differed from ETS.** At offset 176 ("delay after bus voltage
+  return") Busforge wrote 100 ms where ETS writes 0 ms. Two ParameterRefs of one parameter carry
+  different defaults: the one shown uses the parameter's default, the other, only tested by a
+  choose, has its own. ETS shares one value per parameter (a targeted capture and ETS's own export,
+  2026-09-26), Busforge evaluated the tested ref with its own default and activated a second union
+  member. A ref that is not placed now reads the shared value ([findings.md](findings.md) §9); the
+  Jung full download is byte-equal to ETS, and no other bundled application changes.
 - **MDT BE-02001.02 debounce time.** Until 2026-09-25 the debounce time (`P-7`, marked
   `LegacyPatchAlways`) was left out of the image, so the device got the `<Data>` default of 50 ms
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
@@ -216,10 +217,11 @@ report a device family as working on the strength of a passing test suite.
 
 - **Our image equals what ETS would write** is only checked where an ETS capture of the same
   device exists, all for the full download: the MDT BE-02001.02 (defaults and one link), the ABB
-  US/U 4.2 and the GVS AMMA (defaults), every segment byte for byte (`tools/etsdiff.ts`,
+  US/U 4.2, the GVS AMMA and the Jung 400021SE (project configurations), every segment byte for byte (`tools/etsdiff.ts`,
   captures in `tools/fixtures/`, records in [evidence/reference/](evidence/reference/)). The Jung
-  400021SE matches except one parameter byte (below). The parameter flash and the group-address
-  flash have no ETS capture yet. Everywhere else the read-back proves `device == our image` and can never prove
+  400021SE (module device) as well. For the parameter flash one ETS partial download of the Jung
+  exists: it writes the two MCB regions after the allocation, as Busforge's parameter flash does,
+  and its parameter bytes match Busforge's image. The group-address flash has no ETS capture yet. Everywhere else the read-back proves `device == our image` and can never prove
   `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
 - **MV-0705 group-address flash keeps the device's own com-object table.** A freshly linked
   read-capable object was proven to work on hardware; a **transmit-only object**, the case that

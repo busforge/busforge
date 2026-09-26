@@ -327,3 +327,22 @@ of the image model. Two independent sources show what ETS does:
 The earlier exclusion had raised the owned-byte match on a Theben device only because it removed
 those bytes from the comparison. `LegacyPatchAlways` parameters are now built and owned like any
 other; `tools/etsdiff.ts` matches the MDT captures byte for byte.
+
+## 9. Several ParameterRefs of one Parameter share one value
+
+An application may reference one parameter through several ParameterRefs with different `Value`
+attributes. The Jung 400021SE's seconds field (`P-505`) has `R-107` (no Value, so the parameter's
+default 5), shown while the minutes field is 0, and `R-1` (`Value="0"`), shown while it is not.
+Both are tested by chooses that pick one of two union members for the milliseconds field.
+
+A ref's `Value` is the default of that ref when it is the one shown; it is not a separate value.
+ETS showed it directly: switching the minutes to 1 set the seconds to 0 once, and ETS's export then
+stored a value only for the minutes; the seconds written (0) came from `R-1`'s default. With the
+minutes at 0 it evaluated the choose on `R-1` as 5, the shared value, and wrote the union member
+for 5 seconds (0 ms). Busforge evaluated `R-1` with its own default 0, activated the other member
+too, and wrote 100 ms over it.
+
+A ref that is not placed in an active branch now reads a value stored on a sibling ref, else the
+default of the sibling that is placed, else its own; a placed ref keeps its own default, because
+applications select an internal parameter's value by which ref an active branch places. Among the
+bundled applications only the Jung changes.

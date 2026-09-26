@@ -499,6 +499,7 @@ test("a LegacyPatchAlways parameter is written with its value, and a user's edit
 test("the relative images of the full download and the parameter flash stay pinned", () => {
   const h = (b: Buffer | boolean[]) => createHash("sha256").update(Buffer.isBuffer(b) ? b : Buffer.from(b.map((x) => (x ? 1 : 0)))).digest("hex").slice(0, 16);
   const pinned: [string, string, string][] = [
+    ["M-0004_A-7072-21-99A7-O000A.xml.gz", "ac1f3be247fc3306/55d68d3167e051f6/186", "ac1f3be247fc3306/55d68d3167e051f6/186"],
     ["M-0048_A-493B-21-B471.xml.gz", "6ba718daaf224267/d6ff5b529294fa99/28", "6ba718daaf224267/d6ff5b529294fa99/28"],
     ["M-0048_A-9071-20-F258-O00EF.xml.gz", "46cbaee9e105624c/92067062ffcf6d7e/2993", "46cbaee9e105624c/92067062ffcf6d7e/2993"],
     ["M-0083_A-0137-20-7EB2.xml.gz", "1e314970f1fcd316/ec139466568e418e/249", "1e314970f1fcd316/ec139466568e418e/249"],

@@ -241,13 +241,38 @@ export function buildDeviceConfig(
     const p = app.params.get(paramId);
     return !!p && p.access === "None" && !p.hasMemory;
   };
+  // Several ParameterRefs of one Parameter share its single value. A ref's own Value is only the
+  // default of the ref that is shown: ETS applies it when that ref is placed, and every other ref of
+  // the parameter, one that a choose merely tests, reads the same value (Jung 400021SE: P-505 has
+  // R-107 with the parameter's default 5 and R-1 with Value 0; with R-107 placed, ETS evaluated a
+  // choose on R-1 as 5, and its own project export stores no value for the parameter at all). So a
+  // ref that is not placed reads a value stored on a sibling ref, else the placed sibling's default,
+  // else its own. `placed` is kept per working map, in each pass's own document order.
+  const placedByEnv = new WeakMap<Map<string, string>, Map<string, string>>();
+  const placedIn = (e: Map<string, string>) => placedByEnv.get(e) ?? placedByEnv.set(e, new Map()).get(e)!;
+  const refsOfParam = new Map<string, string[]>();
+  for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
+  const markPlaced = (defRefId: string, scope: Scope, e: Map<string, string>) => {
+    const ref = app.refs.get(defRefId);
+    if (!ref) return;
+    const key = scope.rewrite(ref.paramId);
+    if (!placedIn(e).has(key)) placedIn(e).set(key, defRefId);
+  };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
     if (e.has(instId)) return e.get(instId);
     const ref = app.refs.get(defRefId);
     if (!ref) return undefined;
     if (isMerker(ref.paramId)) return undefined; // unplaced Merker: no static default for choose evaluation
-    return ref.value ?? app.params.get(ref.paramId)?.value;
+    const paramDefault = app.params.get(ref.paramId)?.value;
+    const placed = placedIn(e).get(scope.rewrite(ref.paramId));
+    if (placed !== defRefId) {
+      for (const sibling of refsOfParam.get(ref.paramId) ?? []) {
+        if (sibling !== defRefId && e.has(scope.rewrite(sibling))) return e.get(scope.rewrite(sibling));
+      }
+      if (placed !== undefined) return app.refs.get(placed)?.value ?? paramDefault;
+    }
+    return ref.value ?? paramDefault;
   };
   // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
   // or the parameter default), so a later choose on that ref sees it as set. Document-order
@@ -422,7 +447,7 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint, cell: n.cell }); break;
-        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
+        case "paramRef": { markPlaced(n.refId, scope, env); assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         // A scripted action. Carried through as itself (label + handler name) so the UI
         // can show an inert, honestly-labelled control; busforge never runs the script.
@@ -489,7 +514,7 @@ export function buildDeviceConfig(
   const applyEnv = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": assignIfMerker(n.refId, scope, env); break;
+        case "paramRef": markPlaced(n.refId, scope, env); assignIfMerker(n.refId, scope, env); break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope); break;
         case "container": case "block": applyEnv(n.children, scope); break;
@@ -569,7 +594,7 @@ export function buildDeviceConfig(
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "paramRef": { markPlaced(n.refId, scope, imgEnv); assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         // Record EVERY reached com-object (active branches, descending into Access="None"
         // blocks, per module instance) with its resolved flags, so the com-object-table
         // build sees hidden objects' flags too. Keyed by resolved number; a later active

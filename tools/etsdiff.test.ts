@@ -145,3 +145,18 @@ describe("GVS AMMA full download against ETS", () => {
     expect(r.unattributed).toEqual([]);
   });
 });
+
+// ETS 6 full download of the Jung 400021SE (System B, module device, segment above 64 KB) at the
+// project's configuration: two module instances, no links; trimmed to the frames to and from 1.1.204.
+describe("Jung 400021SE full download against ETS", () => {
+  test("every byte matches, including the union a hidden ParameterRef's own default would flip", () => {
+    const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real/M-0004_A-7072-21-99A7-O000A.xml.gz"))).toString("utf8");
+    const cfg = parseAppConfig(xml);
+    const ia = iaToNum("1.1.204");
+    const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: new Map(), links: [], proc: parseLoadProcedures(xml) });
+    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "jung-400021se-ets-fulldownload.log"), "utf8"), ia);
+    const refs = reportedTableReferences(cap);
+    const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
+    expect(r.segments.map((s) => [s.lsm, s.divergences.map((d) => d.offset)])).toEqual([[4, []], [3, []], [2, []], [1, []]]);
+  });
+});
