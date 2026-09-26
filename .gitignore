@@ -23,7 +23,7 @@ scratchpad/
 .DS_Store
 
 # reference-only C# spike (kept locally, never in git)
-reference/
+/reference/
 
 # local session state
 .remember
