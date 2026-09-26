@@ -372,3 +372,38 @@ placed and has no stored value takes only its default branch. A stored value on 
 still counts; the capture shows only the case without one, so that half is an assumption. The
 rule is narrow on purpose: a broader variant (every unplaced ref) changed the image of another
 bundled application at its defaults, with no capture to justify it.
+
+## 12. A parameter owns bits, not the byte it shares
+
+Several parameters, and union members, share one byte. The parameter flash used to own every
+byte a written parameter touched and fill the byte's other bits from the application's `<Data>`
+template. On the GVS AMMA (2026-09-26, bench) byte 64 holds "Output 3&4 function" in its top two
+bits and that channel's unions in the rest. With the channel disabled the unions are idle; the
+full download writes their `DefaultUnionParameter` (0), as ETS does, but a later parameter flash
+wrote the template's 1s beside the two owned bits (`00` became `3f`). The read-back passed,
+because the device held exactly what was written. The firmware did not ignore those bits: at the
+next group-address flash it set the Communication, Read and Transmit flags of object 8 in the
+com-object table by itself while the table was written, so the table read back `4f` where
+Busforge wrote `00`.
+
+So ownership is a bit mask per byte on both memory models: a written byte takes the owned bits
+from Busforge's image and every other bit from the device, and the read-back compares only the
+owned bits. The full download still writes whole bytes; its image is compared with ETS captures.
+
+## 13. Write a device the way ETS does: confirmed, when it says it can take it
+
+The classic `A_Memory_Write` is answered only by the transport layer's T_ACK, which a device
+sends before its firmware has stored the bytes. On the GVS AMMA (2026-09-26, bench), writing the
+1066-byte com-object table right after reallocating its segment left one byte wrong every time:
+0x3786 held the value just written to 0x377a, twelve bytes (one chunk) earlier. Every frame on
+the wire was correct and acknowledged (logged through a proxy); written slowly, the table landed
+exactly. The device was being overtaken.
+
+ETS never writes that device classically. It reads `PID_MAX_APDU_LENGTH` (device object, PID 56)
+after the descriptor, and on a device that answers it (GVS AMMA 55, Jung 400021SE 233) it uses
+the confirmed `A_MemoryExtended_Write` at every address, waiting for each write response; on
+the ABB US/U 4.2 and MDT BE-02001.02, which do not implement the property, it writes classic.
+Its first chunk size on the GVS, 50 bytes, is the maximum APDU minus the 5 octets around the
+data; the USB interface refused that frame and ETS continued with 35. Busforge now makes the
+same choice from the same property, with its own transport limit as the second bound, and the
+table lands exactly.

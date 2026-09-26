@@ -80,8 +80,15 @@ export interface RunOpts {
 }
 
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
+  // Which write service the device takes is settled before the first load-state event, so a device
+  // that does not answer the question is refused before anything is unloaded. A device written with
+  // the confirmed extended write is never put into verify mode: ETS does not do it on such devices,
+  // and the extended write's own read-back proves what was stored.
+  const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeMem" || s.op === "verifyMode");
+  let confirmed: boolean | undefined;
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i];
+    if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") confirmed = await dev.writesConfirmed();
     opts.onStep?.(i, step, plan.length);
     switch (step.op) {
       case "connect": await dev.connect(); break;
@@ -112,7 +119,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "taskSegment": await declareTaskSegmentMM(dev, step.lsm, step.address, step.peiType, step.manufacturer, step.appNumber, step.version); break;
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
-      case "verifyMode": await dev.setVerifyMode(step.on); break;
+      case "verifyMode": if (!confirmed) await dev.setVerifyMode(step.on); break;
       // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of
       // memory writes an RP2040-class device commits its flash, and while it does that it services
       // nothing: no T_ACK, no response. The request machine gives up after three attempts (about

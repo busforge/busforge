@@ -34,6 +34,10 @@ export const VERIFY_MODE = 0x04;
 // at the 255 the single-octet count field allows; override to probe another interface's ceiling.
 export const EXT_READ_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_READ_CHUNK) || 48), 255);
 export const EXT_WRITE_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_WRITE_CHUNK) || 32), 255);
+// A_MemoryExtended_Write spends 5 APDU octets besides the data: the APCI's second octet, the count and
+// the 3-byte address. So a device's maximum APDU length minus 5 is the most one chunk may carry.
+const EXT_WRITE_OVERHEAD = 5;
+const PID_MAX_APDU_LENGTH = 56;
 
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
@@ -117,6 +121,7 @@ export class KnxDevice {
 
   async connect() {
     this.seq = 0;
+    this.maxApdu = undefined;
     await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
   }
@@ -200,11 +205,30 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
+  // PID_MAX_APDU_LENGTH of the device object, read once per connection; null when the device does not
+  // implement it. A value too small to carry one byte in an extended write is refused.
+  private maxApdu: number | null | undefined;
+  // Whether memWrite uses the confirmed extended write on this device. The load runner asks before
+  // its first load-state event, where ETS reads the property too (right after the descriptor).
+  async writesConfirmed(): Promise<boolean> { return (await this.maxApduLength()) !== null; }
+  private async maxApduLength(): Promise<number | null> {
+    if (this.maxApdu !== undefined) return this.maxApdu;
+    const v = await this.propReadIfPresent(0, PID_MAX_APDU_LENGTH);
+    const n = v === null ? null : v.length >= 2 ? v.readUInt16BE(0) : v.length === 1 ? v[0] : null;
+    if (v !== null && (n === null || n <= EXT_WRITE_OVERHEAD)) {
+      throw new KnxError("DEVICE_MAX_APDU_INVALID", `the device declares a maximum APDU length of ${v.toString("hex")}, too small for a memory write`);
+    }
+    this.maxApdu = n;
+    return n;
+  }
   // An optional property: the device answers a property it does not implement with element count 0
   // (and possibly an error byte), which propRead would return as if it were a value. Null here.
   async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {
     const tail = Buffer.from([obj, pid, 1 << 4, 1]);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
+    if (r!.data.length >= 2 && (r!.data[0] !== obj || r!.data[1] !== pid)) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a read of object ${obj} PID ${pid} was answered for object ${r!.data[0]} PID ${r!.data[1]}`);
+    }
     return r!.data.length < 4 || r!.data[2] >> 4 === 0 ? null : r!.data.subarray(4);
   }
   async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
@@ -278,6 +302,20 @@ export class KnxDevice {
     // Past the 16-bit reach of A_Memory_Write, the device is written with A_MemoryExtended. Classic
     // path (and every device that fits in 16 bits) stays byte-identical below.
     if (addr >= 0 && addr + data.length - 1 > 0xffff) return this.memWriteExtended(addr, data, opts);
+    // A device that declares PID_MAX_APDU_LENGTH is written the way ETS writes it: with the confirmed
+    // A_MemoryExtended_Write, one answered chunk at a time, however low the address. The classic write
+    // is acknowledged by the transport layer before the firmware has stored it, and a GVS AMMA took
+    // the next chunk while still storing the previous one after a segment reallocation (a byte of the
+    // com-object table landed 12 bytes further on). ETS captures of four devices: the two that answer
+    // the property (GVS AMMA 55, Jung 400021SE 233) are written extended only, the two that do not
+    // (ABB US/U 4.2, MDT BE-02001.02) classic only.
+    // Its return code says a chunk was accepted, not what was stored, so a caller that asks for the
+    // stored bytes (`echo`) gets a read-back.
+    const maxApdu = await this.maxApduLength();
+    if (maxApdu !== null) {
+      const chunk = Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD, opts.chunk ?? Infinity);
+      return this.memWriteExtended(addr, data, { ...opts, chunk, verify: (opts.verify ?? true) || opts.echo === true });
+    }
     assertAddressable(addr, data.length, "memory write");
     const chunk = opts.chunk ?? 12;
     const total = Math.ceil(data.length / chunk);
@@ -315,7 +353,7 @@ export class KnxDevice {
     }
     if (opts.verify ?? true) {
       const back = await this.memRead(addr, data.length);
-      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `memWrite verify mismatch @0x${addr.toString(16)}`);
+      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `memWrite verify mismatch @0x${addr.toString(16)}: ${describeMismatch(data, back, addr)}`);
     }
   }
 
@@ -382,8 +420,8 @@ export class KnxDevice {
       opts.onProgress?.(++done, total);
     }
     if (opts.verify ?? true) {
-      const back = await this.memReadExtended(addr, data.length);
-      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended memWrite verify mismatch @0x${addr.toString(16)}`);
+      const back = await this.memRead(addr, data.length); // classic below 0xFFFF, the read these devices are proven with
+      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended memWrite verify mismatch @0x${addr.toString(16)}: ${describeMismatch(data, back, addr)}`);
     }
   }
   // Send A_Restart and nothing else: the caller observes the reboot itself. NOT swallowed: every
@@ -458,4 +496,14 @@ export class KnxDevice {
       apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel]))));
     this.seq = (this.seq + 1) & 0x0f;
   }
+}
+
+// Where a read-back differs from what was written, so a failed verify names the bytes, not only the
+// segment: the first differing address, how many bytes differ, and a few bytes on each side.
+function describeMismatch(wrote: Buffer, read: Buffer, addr: number): string {
+  if (read.length !== wrote.length) return `read back ${read.length} of ${wrote.length} bytes`;
+  const diff = [...wrote.keys()].filter((i) => wrote[i] !== read[i]);
+  const i = diff[0];
+  const from = Math.max(0, i - 4), to = Math.min(wrote.length, i + 12);
+  return `${diff.length} of ${wrote.length} bytes differ, first at 0x${(addr + i).toString(16)} (offset ${i}): wrote ${wrote.subarray(from, to).toString("hex")}, read ${read.subarray(from, to).toString("hex")} from 0x${(addr + from).toString(16)}`;
 }

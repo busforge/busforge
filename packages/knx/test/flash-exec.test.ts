@@ -22,6 +22,10 @@ class RecDev {
   async disconnect() { this.calls.push(["disconnect"]); }
   async restart() { this.calls.push(["restart"]); }
   async tableAddr(obj: number) { this.calls.push(["tableAddr", obj]); return this.addrOf[obj]; }
+  confirmed = false; // true: the device declares PID_MAX_APDU_LENGTH and is written extended
+  askedAt: number | null = null; // index into `calls` when the write service was asked
+  async writesConfirmed() { this.askedAt ??= this.calls.length; return this.confirmed; }
+  async setVerifyMode(on: boolean) { this.calls.push(["setVerifyMode", on]); }
   async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
     this.writeCount++;
     this.calls.push(["memWrite", addr, data.toString("hex"), opts.verify ?? null]);
@@ -456,6 +460,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     let control = opts.control ?? 0;
     const dev = Object.create(KnxDevice.prototype);
     dev.propRead = async (obj: number, pid: number) => (obj === 0 && pid === 14 ? Buffer.from([control]) : Buffer.alloc(1));
+    dev.propReadIfPresent = async () => null; // no PID_MAX_APDU_LENGTH: the classic write with its verify-mode echo
     dev.propWrite = async (obj: number, pid: number, data: Buffer) => {
       propWrites.push({ obj, pid, data: Buffer.from(data) });
       if (obj === 0 && pid === 14) control = data[0];
@@ -747,5 +752,24 @@ describe("planMv0705GaFlash: the memory-mapped com-object table", () => {
       { op: "load", lsm: 3 }, { op: "writeMem", address: 0x43fe, bytes: table }, { op: "loadCompleted", lsm: 3 },
       { op: "restart" },
     ]);
+  });
+});
+
+describe("the write service, settled before the bracket", () => {
+  const plan: LoadPlan = [
+    { op: "connect" }, { op: "verifyMode", on: true }, { op: "unload", lsm: 4 },
+    { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }, { op: "verifyMode", on: false },
+  ];
+  test("the device is asked after connecting and before its first load-state event", async () => {
+    const dev = new RecDev();
+    await runLoadPlan(dev as unknown as KnxDevice, plan);
+    expect(dev.askedAt).toBe(1); // after ["connect"], before anything else
+    expect(dev.calls.filter((c) => c[0] === "setVerifyMode").length).toBe(2); // classic: verify mode as planned
+  });
+  test("a device written with the confirmed extended write is never put into verify mode", async () => {
+    const dev = new RecDev();
+    dev.confirmed = true;
+    await runLoadPlan(dev as unknown as KnxDevice, plan);
+    expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
   });
 });

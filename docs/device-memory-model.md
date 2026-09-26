@@ -480,9 +480,18 @@ than truncated and written to the wrong place.
   answered `fd 00 00 00` (return code `0xFD`, that address is forbidden, a legitimate
   refusal).
 
-`memRead` / `memWrite` **auto-select**: a range whose last byte exceeds `0xFFFF` is served
-entirely by the extended path, everything at or below stays on the classic path, byte
-identical.
+`memRead` **auto-selects** by address: a range whose last byte exceeds `0xFFFF` is served
+entirely by the extended path, everything at or below stays on the classic path.
+
+`memWrite` selects **by device, as ETS does**. Before its first write on a connection it reads
+`PID_MAX_APDU_LENGTH` (device object, PID 56). A device that implements it is written with the
+confirmed `A_MemoryExtended_Write` at every address, in chunks of at most that length minus the
+5 octets around the data; one that does not is written with the classic service. ETS captures
+of the four bench devices show exactly this split: the GVS AMMA (55) and the Jung 400021SE (233)
+are written extended only, the ABB US/U 4.2 and the MDT BE-02001.02 (property absent) classic
+only. The difference matters: the classic write is acknowledged by the transport layer before
+the firmware has stored it, and after a segment reallocation the GVS AMMA was overtaken by the
+next chunk ([findings.md](findings.md) §13).
 
 **Chunk sizes differ by direction**, and the reason is the transport, not the service. Over
 a KNX-USB HID interface a request is a single report with no fragmentation. A read request

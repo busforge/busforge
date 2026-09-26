@@ -94,6 +94,7 @@ class MockDevice {
     for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff;
     return b;
   }
+  async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
   async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
     this.events.push("write");
     for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);

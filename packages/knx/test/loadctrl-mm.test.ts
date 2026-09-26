@@ -12,6 +12,7 @@ class MMDev {
   async connect() {}
   async disconnect() {}
   async restart() {}
+  async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
   async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
     this.writes.push({ addr, hex: data.toString("hex"), verify: opts.verify });
     if (addr === 0x0104) {

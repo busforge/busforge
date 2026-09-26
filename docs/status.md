@@ -46,7 +46,7 @@ All hardware verification to date is on **twisted pair**.
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. |
 | Structural change (a parameter that changes the set of com-objects) | partial | hardware | Refused surgically (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` where the family has no full-download path) and promoted to a full download, which rewrites the whole parameter image. A surgical structural flash is on the roadmap, not built. |
-| Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Auto-selected when a range exceeds `0xFFFF`; the classic path is byte-identical below. Previously such devices were refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
+| Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Reads auto-select it when a range exceeds `0xFFFF`. Writes use it, confirmed chunk by chunk, on every device that declares `PID_MAX_APDU_LENGTH`, as ETS does ([device-memory-model.md](device-memory-model.md)). An address past 24 bits is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
 | KNX Data Secure: read (descriptor, property, serial) | yes | hardware | Own AES-128-CCM; tool keys come from the project file. |
 | KNX Data Secure: write (property write) | yes | hardware | Reversible property write on a real secure device. |
 | KNX Data Secure: parameter flash, GA flash or full download over the secure channel | wired | not proven | All three routes pass the device's secure credentials into the session, so the paths are reachable, but the composition (secure session + load procedure) has never been driven; the only secure devices available are gateways with no parameter image. |
@@ -120,8 +120,13 @@ Notes attached to that table:
   (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. In the disabled channels' regions
   every union has no active member, and ETS writes the member marked `DefaultUnionParameter`;
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
-  them); the surgical parameter flash leaves those bytes as the device holds them. The whole
+  them); the surgical parameter flash leaves those bits as the device holds them. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
+- **GVS AMMA: a parameter flash wrote idle union bits.** The parameter flash owned whole bytes, so
+  beside a 2-bit parameter it wrote the `<Data>` template's 1s into the disabled channel's idle
+  unions, where the device held (and ETS writes) 0s. The firmware read them as configuration and,
+  at the next group-address flash, set flags in the com-object table itself, which then failed
+  its read-back. Ownership is now per bit on both memory models ([findings.md](findings.md) §12).
 - **GVS AMMA: objects a union member without a placement switched on.** After enabling a channel,
   Busforge activated three com-objects (5, 6, 8) that ETS leaves out: a choose tested a union
   member no active branch places, read its default and took the branch. ETS treats such a member

@@ -17,7 +17,9 @@ class FakeExtTransport implements KnxTransport {
   sawClassic = 0;
   sawExtended = 0;
   // Injected faults for the negative tests.
-  constructor(private readonly opts: { badCode?: boolean; wrongEcho?: boolean } = {}) {}
+  // `maxApdu`: the PID_MAX_APDU_LENGTH the device declares; absent, it answers that property with no element.
+  constructor(private readonly opts: { badCode?: boolean; wrongEcho?: boolean; maxApdu?: number } = {}) {}
+  extWrites: number[] = []; // data length of each extended write
   async connect() {}
   async disconnect() {}
   get assigned() { return this.assignedIa; }
@@ -26,6 +28,14 @@ class FakeExtTransport implements KnxTransport {
     const tpdu = cemi.subarray(9); // skip the 9-byte L_Data head
     const p = parseApdu(tpdu);
     if (p.control) return;
+    if (p.apci === APCI.PROPERTY_READ) {
+      this.ack(p.seq);
+      const [obj, pid] = p.data;
+      const present = obj === 0 && pid === 56 && this.opts.maxApdu !== undefined;
+      const body = present ? Buffer.from([obj, pid, 0x10, 0x01, this.opts.maxApdu! >> 8, this.opts.maxApdu! & 0xff]) : Buffer.from([obj, pid, 0x00, 0x01]);
+      this.onCemi?.(this.device, this.assignedIa, apdu(p.seq, APCI.PROPERTY_RESPONSE, body), false);
+      return;
+    }
     if ((p.apci & 0x3c0) === APCI.MEMORY_READ || (p.apci & 0x3c0) === APCI.MEMORY_WRITE) { this.sawClassic++; this.ack(p.seq); return; }
     if (p.apci === APCI.MEMORY_EXT_READ) {
       this.sawExtended++;
@@ -43,6 +53,7 @@ class FakeExtTransport implements KnxTransport {
       const count = p.data[0];
       const addr = (p.data[1] << 16) | (p.data[2] << 8) | p.data[3];
       for (let i = 0; i < count; i++) this.mem.set(addr + i, p.data[4 + i]);
+      this.extWrites.push(count);
       this.ack(p.seq);
       const echo = this.opts.wrongEcho ? addr + 1 : addr;
       const head = Buffer.from([this.opts.badCode ? 0x01 : 0x00, (echo >> 16) & 0xff, (echo >> 8) & 0xff, echo & 0xff]);
@@ -92,7 +103,22 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(dev.memReadExtended(0x15000, 4)).rejects.toThrow(/echoed/);
   });
 
-  test("addresses that still fit in 16 bits keep using the classic services (byte-identical path)", async () => {
+  test("a device that declares PID_MAX_APDU_LENGTH is written with the confirmed extended write at any address", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 20 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    const data = Buffer.from(Array.from({ length: 40 }, (_, i) => i + 1));
+    await dev.memWrite(0x3774, data, { verify: false });
+    expect(tun.sawClassic).toBe(0);
+    expect(tun.extWrites).toEqual([15, 15, 10]); // maximum APDU 20 minus the 5 octets around the data
+    expect(Buffer.from(Array.from({ length: 40 }, (_, i) => tun.mem.get(0x3774 + i)!)).equals(data)).toBe(true);
+  });
+
+  test("a device whose maximum APDU cannot carry a byte is refused", async () => {
+    const dev = new KnxDevice(new FakeExtTransport({ maxApdu: 5 }), "1.1.11");
+    expect(dev.memWrite(0x0100, Buffer.from([1]), { verify: false })).rejects.toThrow(/maximum APDU/);
+  });
+
+  test("a device without PID_MAX_APDU_LENGTH keeps the classic services below 16 bits (byte-identical path)", async () => {
     const tun = new FakeExtTransport();
     const dev = new KnxDevice(tun, "1.1.11");
     await dev.memWrite(0x0100, Buffer.from([1, 2, 3]), { verify: false });

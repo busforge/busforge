@@ -29,6 +29,14 @@ class FakeTransport implements KnxTransport {
 // Frames the fake device must not react to: T_Connect (0x80) and the KnxDevice's
 // own T_ACKs of our responses (control frames). Reacting to those would loop.
 const ignorable = (tpdu: Buffer) => tpdu[0] === 0x80 || parseApdu(tpdu).control;
+// The device implements no PID_MAX_APDU_LENGTH (the first memory write asks for it): T_ACK, then a
+// property response with no element, so memWrite keeps the classic service.
+const answersNoMaxApdu = (tun: FakeTransport, p: ReturnType<typeof parseApdu>): boolean => {
+  if (p.apci !== APCI.PROPERTY_READ || p.data[1] !== 56) return false;
+  tun.reply([0xc2 | (p.seq << 2)]);
+  tun.reply([0x40 | (p.seq << 2) | 0x03, 0xd6, 0, 56, 0x00, 0x01]);
+  return true;
+};
 
 describe("KnxDevice request machine (frame level)", () => {
   test("happy propRead: numbered read seq 0, device T_ACKs the response, value skips the 4-byte echo", async () => {
@@ -102,20 +110,21 @@ describe("KnxDevice request machine (frame level)", () => {
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
+      if (answersNoMaxApdu(tun, p)) return;
       // MEMORY_WRITE carries its byte count in the low 6 APCI bits, so mask to the service
       if ((p.apci & 0x3c0) === APCI.MEMORY_WRITE) tun.reply([0xc2 | (p.seq << 2)]); // T_ACK only, no response
     };
-    // 17 one-byte chunks = 17 numbered requests = one full 0..15 cycle plus the wrap-around
+    // The PID_MAX_APDU_LENGTH read takes seq 0; 17 one-byte chunks then carry 1..15, 0, 1: the wrap
     await dev.memWrite(0x2000, Buffer.alloc(17, 0x5a), { chunk: 1, verify: false });
-    const writes = tun.sent.filter((f) => !ignorable(f));
+    const writes = tun.sent.filter((f) => !ignorable(f) && (parseApdu(f).apci & 0x3c0) === APCI.MEMORY_WRITE);
     expect(writes.length).toBe(17);
     // T-sequence lives in octet0 bits 5..2 (frame.ts: 0x40 | seq<<2 | apci-hi)
-    expect(writes.map((f) => (f[0] >> 2) & 0x0f)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0]);
-    // First write, fully hand-built: octet0 = 0x40|0<<2|(0x280>>8 = 2) = 0x42;
+    expect(writes.map((f) => (f[0] >> 2) & 0x0f)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1]);
+    // First write, fully hand-built: octet0 = 0x40|1<<2|(0x280>>8 = 2) = 0x46;
     // octet1 = (0x280&0xff = 0x80) | count 1 = 0x81; addr 20 00; data 5a.
-    expect(writes[0].toString("hex")).toBe("428120005a");
-    // 17th write: seq wrapped to 0 (identical octet0), address advanced to 0x2000+16 = 0x2010.
-    expect(writes[16].toString("hex")).toBe("428120105a");
+    expect(writes[0].toString("hex")).toBe("468120005a");
+    // 16th write: seq wrapped to 0, address advanced to 0x2000+15 = 0x200f.
+    expect(writes[15].toString("hex")).toBe("4281200f5a");
   });
 
   test("memWrite verify:true rejects when the read-back differs from what was written", async () => {
@@ -124,6 +133,7 @@ describe("KnxDevice request machine (frame level)", () => {
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
+      if (answersNoMaxApdu(tun, p)) return;
       if ((p.apci & 0x3c0) === APCI.MEMORY_WRITE) { tun.reply([0xc2 | (p.seq << 2)]); return; } // accept the write
       if ((p.apci & 0x3c0) === APCI.MEMORY_READ) {
         tun.reply([0xc2 | (p.seq << 2)]);
