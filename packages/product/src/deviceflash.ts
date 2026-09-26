@@ -1,5 +1,5 @@
 import type { AppConfig, ModuleInstance } from "./appconfig.ts";
-import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
+import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
@@ -64,11 +64,16 @@ export function planAbsoluteSegmentFlash(
   const segments: SegmentFlashPlan[] = [];
   for (const t of targets) {
     const current = opts.current?.get(t.id);
-    // A byte is written iff it is owned (authoritative) and, when we know the device's
-    // current memory, actually different from it. An owned byte the device already
-    // holds correctly is skipped, so a no-op reconfiguration produces an empty plan.
-    const write = t.owned.map((own, i) => own && (!current || current[i] !== t.bytes[i]));
-    const runs = runsFromMask(t.bytes, t.address, write);
+    // A byte is written iff it holds an owned (authoritative) bit and, when we know the device's
+    // current memory, actually differs from it. An owned byte the device already holds correctly
+    // is skipped, so a no-op reconfiguration produces an empty plan. Bits of a written byte that no
+    // parameter owns are carried over from the device.
+    if (opts.current && (!current || current.length !== t.size)) {
+      throw new ProductError("PARAM_SEGMENT_NOT_READ", `the device's ${t.id} was not read in full (${current?.length ?? 0} of ${t.size} B); refusing to write its shared bytes without the bits it holds`);
+    }
+    const image = current ? Buffer.from(t.bytes.map((b, i) => mergeOwnedBits(current[i], b, t.owned[i]))) : t.bytes;
+    const write = t.owned.map((own, i) => own !== 0 && (!current || current[i] !== image[i]));
+    const runs = runsFromMask(image, t.address, write);
     const ownedBytes = t.owned.reduce((n, b) => n + (b ? 1 : 0), 0);
     const writtenBytes = write.reduce((n, b) => n + (b ? 1 : 0), 0);
     segments.push({
@@ -212,7 +217,7 @@ export interface AbsFullSegment {
   lsm: number;
   source: "addrTable" | "assocTable" | "comObjTable" | "params" | "static";
   image: Buffer;      // the bytes written to this segment
-  verify: boolean[];  // which of `image` a post-restart read-back may assert (excludes device-stamped bytes)
+  verify: ReadonlyArray<number | boolean>;  // which of `image` (bytes, or bit masks per byte) a post-restart read-back may assert (excludes device-stamped bytes)
 }
 export interface AbsFullDownloadPlan {
   plan: LoadPlan;
@@ -278,7 +283,7 @@ export function planAbsoluteFullDownload(
       return { image, verify: new Array<boolean>(image.length).fill(true), source: "comObjTable" };
     }
     const pt = paramTargets.get(address);
-    if (pt) return { image: pt.bytes, verify: pt.verify, source: "params" };
+    if (pt) return { image: pt.bytes, verify: wholeBytes(pt.verify), source: "params" };
     const seg = segByAddr.get(address);
     if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${address} the application does not define; refusing to write an image we cannot build`);
     // A segment the app declares with no static image: on a property-mapped device this is a

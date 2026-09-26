@@ -19,12 +19,26 @@ import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 // placed: per-instance offsets are resolved and a union byte is owned only for the
 // actively-placed branch. Both are hardware byte-verified (docs/device-memory-model.md).
 
-// Mark a parameter's bytes as under flash authority. `verify` additionally records the
-// user-facing subset (Access="None" device-internal markers are written but excluded from
-// the post-flash comparison; the device re-stamps them on download). One home for the
-// mechanics both the absolute and the relative builder previously hand-rolled.
-function markOwned(owned: boolean[], verify: boolean[], offset: number, bytes: number, size: number, verifiable: boolean): void {
-  for (let b = 0; b < bytes && offset + b < size; b++) { owned[offset + b] = true; if (verifiable) verify[offset + b] = true; }
+// Mark a parameter's bits as under flash authority. `owned` and `verify` hold one bit mask per
+// byte (0x80 is KNX bit offset 0), because a sub-byte parameter shares its byte with others: the
+// flash may change only its own bits and must carry the rest over from the device (a GVS AMMA
+// parameter flash that wrote the <Data> template's bits beside a 2-bit parameter set idle union
+// bits the firmware then read as a configured channel). `verify` additionally records the
+// user-facing subset (Access="None" device-internal markers are written but excluded from the
+// post-flash comparison; the device re-stamps them on download).
+function markOwned(owned: number[], verify: number[], offset: number, bitOffset: number, sizeInBit: number, size: number, verifiable: boolean): void {
+  for (let g = bitOffset; g < bitOffset + sizeInBit; g++) {
+    const at = offset + (g >> 3);
+    if (at >= size) break;
+    const m = 0x80 >> (g & 7);
+    owned[at] |= m;
+    if (verifiable) verify[at] |= m;
+  }
+}
+
+// A byte built from `want` where `mask` owns bits and from `have` everywhere else.
+export function mergeOwnedBits(have: number, want: number, mask: number): number {
+  return (have & ~mask) | (want & mask);
 }
 
 export interface DeviceSegmentImage { id: string; address: number; size: number; bytes: Buffer; }
@@ -45,7 +59,7 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // We still WRITE those bytes (they are part of the correct image), but the device overwrites
 // them on download, so checking them in verify would report every successful flash as failed.
 // User-facing parameters (Access != None) stay in `verify`, so a real mis-write still fails.
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: boolean[]; verify: boolean[]; }
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; }
 
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
@@ -100,8 +114,8 @@ export function buildAbsoluteSegmentTargets(
         for (let b = 0; b < bytes && p.offset + b < seg.size; b++) img[p.offset + b] = 0;
       }
     }
-    const owned = new Array<boolean>(seg.size).fill(false);
-    const verify = new Array<boolean>(seg.size).fill(false);
+    const owned = new Array<number>(seg.size).fill(0);
+    const verify = new Array<number>(seg.size).fill(0);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -121,7 +135,7 @@ export function buildAbsoluteSegmentTargets(
       // Access="None" params are device-internal (download markers/counters the device
       // re-stamps); they stay owned/written but are excluded from `verify` (see the type).
       const verifiable = app.params.get(ref.paramId)?.access !== "None";
-      markOwned(owned, verify, param.offset, byteWidth(type.sizeInBit, param.bitOffset), seg.size, verifiable);
+      markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     }
     out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify });
   }
@@ -159,7 +173,7 @@ export function buildAbsoluteSegmentTargets(
 // text/time/malformed value claims no bytes.
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: boolean[]; verify: boolean[]; }
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -208,8 +222,8 @@ export function buildRelativeSegmentTarget(
 
   const img = Buffer.alloc(seg.size);
   seg.data.copy(img); // manufacturer default image (overwritten where owned)
-  const owned = new Array<boolean>(seg.size).fill(false);
-  const verify = new Array<boolean>(seg.size).fill(false);
+  const owned = new Array<number>(seg.size).fill(0);
+  const verify = new Array<number>(seg.size).fill(0);
 
   for (const ref of model.refs.values()) {
     const param = model.params.get(ref.paramId);
@@ -252,7 +266,7 @@ export function buildRelativeSegmentTarget(
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
-    markOwned(owned, verify, param.offset, byteWidth(type.sizeInBit, param.bitOffset), seg.size, verifiable);
+    markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
   }
   return { lsm, size: seg.size, bytes: img, owned, verify };
 }
@@ -266,7 +280,7 @@ export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarg
   const image = Buffer.from(current);
   let diffBytes = 0;
   for (let i = 0; i < target.size; i++) {
-    if (target.owned[i]) image[i] = target.bytes[i];
+    image[i] = mergeOwnedBits(current[i], target.bytes[i], target.owned[i]);
     if (image[i] !== current[i]) diffBytes++;
   }
   return { image, diffBytes };
@@ -276,12 +290,23 @@ export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarg
 // THE owned-byte verify authority for both memory models: unmasked bytes are not under our
 // authority (device-recomputed tables, unowned defaults), so a full-buffer equality check
 // would report a correct flash as failed.
-export function verifyMaskedBytes(back: Buffer, want: Buffer, mask: boolean[]): boolean {
-  for (let i = 0; i < mask.length; i++) if (mask[i] && back[i] !== want[i]) return false;
+// `mask` is a bit mask per byte, or true/false for a whole byte.
+export function verifyMaskedBytes(back: Buffer, want: Buffer, mask: ReadonlyArray<number | boolean>): boolean {
+  if (back.length < mask.length) return false;
+  for (let i = 0; i < mask.length; i++) {
+    const m = mask[i] === true ? 0xff : mask[i] === false ? 0 : (mask[i] as number);
+    if ((back[i] ^ want[i]) & m) return false;
+  }
   return true;
 }
 
 // Verify a relative flash: owned bytes minus Access="None" markers (the `verify` mask).
 export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
   return verifyMaskedBytes(back, target.bytes, target.verify);
+}
+
+// A full download writes every byte of its image, so its read-back asserts every byte a
+// verifiable parameter touches, the template bits beside it included.
+export function wholeBytes(mask: ReadonlyArray<number>): number[] {
+  return mask.map((m) => (m ? 0xff : 0));
 }

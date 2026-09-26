@@ -86,7 +86,7 @@ export function snapshot(xml: string): AppSnapshot {
   let absolute: AppSnapshot["absolute"];
   let flashPlan: AppSnapshot["flashPlan"];
   if (app.absoluteSegments.length) {
-    const maskHash = (m: boolean[]) => sha(m.map((b) => (b ? "1" : "0")).join(""));
+    const maskHash = (m: ReadonlyArray<number | boolean>) => sha(m.map((b) => (b ? "1" : "0")).join(""));
     absolute = {};
     for (const t of [...buildAbsoluteSegmentTargets(app, new Map())].sort((a, b) => a.id.localeCompare(b.id))) {
       absolute[t.id] = { address: t.address, size: t.size, build: sha(t.bytes.toString("hex")), owned: maskHash(t.owned), verify: maskHash(t.verify) };

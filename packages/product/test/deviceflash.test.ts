@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { parseAppConfig, buildDeviceConfig } from "../src/index.ts";
 import { planAbsoluteSegmentFlash, planAbsoluteFullDownload } from "../src/deviceflash.ts";
 import { parseLoadProcedures } from "../src/loadproc.ts";
-import { buildAbsoluteSegmentImages } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 
 // A minimal Data-less MV-0705 app: P-1 and P-3 are active (offsets 0 and 2), P-2 is a
@@ -145,4 +145,21 @@ test("a memory-mapped full download authors the com-object table as ETS does", (
   for (let n = 0; n < template[0]; n++) expect([n, defaults[cfgAt(n)]]).toEqual([n, template[cfgAt(n)] & ~0x04]);
   const led = l3(new Map([["M-0002_A-A001-13-63C2_P-9_R-9", "104"]]), [{ comObjNum: 1, gaRaws: [0x1b04] }]);
   expect([led[cfgAt(1)], led[cfgAt(3)]]).toEqual([0x17, 0x13]);
+});
+
+// A byte an absolute segment's parameters own only in part keeps the device's other bits on a
+// parameter flash (every partly owned byte of a real System 7 application, device bits all set).
+test("an absolute parameter flash writes only the owned bits of a shared byte", () => {
+  const app = parseAppConfig(readRealFixture("M-0083_A-00B6-32-9642.xml.gz"));
+  const targets = buildAbsoluteSegmentTargets(app, new Map());
+  const partly = targets.flatMap((t) => t.owned.map((m, i) => ({ t, i, m })).filter(({ m }) => m !== 0 && m !== 0xff));
+  expect(partly.length).toBeGreaterThan(0);
+  const current = new Map(targets.map((t) => [t.id, Buffer.alloc(t.size, 0xff)]));
+  const plan = planAbsoluteSegmentFlash(app, new Map(), { current });
+  for (const { t, i, m } of partly) {
+    const run = plan.segments.find((s) => s.id === t.id)!.runs.find((r) => t.address + i >= r.address && t.address + i < r.address + r.bytes.length);
+    const written = run ? run.bytes[t.address + i - run.address] : 0xff;
+    expect(written & ~m & 0xff).toBe(~m & 0xff); // every unowned bit is the device's 1
+    expect(written & m).toBe(t.bytes[i] & m);
+  }
 });

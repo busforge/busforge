@@ -50,7 +50,7 @@ for (const m of manifest.devices) {
   // whole image is meaningful). For absolute segments, unowned bytes are defaults,
   // gaps, or inactive-branch values we never write, so a mismatch there is not config
   // drift (it may even be device-internal runtime state we must not touch).
-  const built = new Map<string, { bytes: Buffer; owned: boolean[] | null }>(); // keyed by segId tail / "LSM4"
+  const built = new Map<string, { bytes: Buffer; owned: ReadonlyArray<number | boolean> | null }>(); // keyed by segId tail / "LSM4"
   if (m.mask === "MV-07B0" || m.mask === "MV-0701") {
     // Relative (System B): the SURGICAL target, owned-masked exactly like the flash path
     // (buildRelativeSegmentTarget). This is what makes module devices verify honestly: the
@@ -87,7 +87,9 @@ for (const m of manifest.devices) {
     const n = Math.min(b.length, device.length);
     for (let i = 0; i < n; i++) {
       if (b[i] === device[i]) continue;
-      if (!owned || owned[i]) { oDiff++; if (first < 0) first = i; }
+      // Ownership is a bit mask per byte: only a difference in owned bits is a config difference.
+      const m = !owned ? 0xff : owned[i] === true ? 0xff : owned[i] === false ? 0 : (owned[i] as number);
+      if ((b[i] ^ device[i]) & m) { oDiff++; if (first < 0) first = i; }
       else uDiff++;
     }
     oDiff += Math.abs(b.length - device.length); // a length mismatch is a real (owned) problem

@@ -159,8 +159,8 @@ test("an Access=None internal byte is OWNED (written) but excluded from verify",
   // the correct image, but the device re-stamps it on download, so it must not be checked by
   // the post-flash read-back verify or every successful flash would report as failed.
   const t = buildAbsoluteSegmentTargets(parseAppConfig(internalXml), new Map())[0];
-  expect(t.owned[1]).toBe(true);   // Access=None internal: still written
-  expect(t.verify[1]).toBe(false); // ...but not asserted against the device read-back
+  expect(!!t.owned[1]).toBe(true);   // Access=None internal: still written
+  expect(!!t.verify[1]).toBe(false); // ...but not asserted against the device read-back
 });
 
 // Regression: the image-value pass must resolve choose/Assign in its OWN document
@@ -273,31 +273,33 @@ test("relative target: visible owned (active+inactive), Access=None-inactive pre
   const t = buildRelativeSegmentTarget(app, new Map(), 4)!;
   expect(t.size).toBe(5);
   // P-1 visible + active: owned, value from its active ref (7), not the 1 default.
-  expect(t.owned[0]).toBe(true);
+  expect(!!t.owned[0]).toBe(true);
   expect(t.bytes[0]).toBe(7);
   // P-2 Access=None and inactive: NOT owned -> the byte is left at the <Data> default,
   // and the flash will preserve whatever the device computed there.
-  expect(t.owned[1]).toBe(false);
+  expect(!!t.owned[1]).toBe(false);
   // P-3 visible but inactive: still owned at its default (System B writes every default).
-  expect(t.owned[2]).toBe(true);
+  expect(!!t.owned[2]).toBe(true);
   expect(t.bytes[2]).toBe(3);
   // Union: only the active member (P-A=5) is owned; the overlapping inactive P-B is not.
-  expect(t.owned[3]).toBe(true);
+  expect(!!t.owned[3]).toBe(true);
   expect(t.bytes[3]).toBe(5);
   // Trailing gap owned by no parameter.
-  expect(t.owned[4]).toBe(false);
+  expect(!!t.owned[4]).toBe(false);
   // verify mask: user-facing bytes are checked post-flash; device-internal Access=None bytes
   // are owned (written) but EXCLUDED from verify. P-A (offset 3) is an ACTIVE union member but
   // Access=None, so it is written yet not verified, exactly like the M-008E download marker.
-  expect(t.verify[0]).toBe(true);  // P-1 user-facing: verified
-  expect(t.verify[2]).toBe(true);  // P-3 user-facing default: verified
-  expect(t.verify[3]).toBe(false); // active Access=None union member: owned/written, not verified
+  expect(!!t.verify[0]).toBe(true);  // P-1 user-facing: verified
+  expect(!!t.verify[2]).toBe(true);  // P-3 user-facing default: verified
+  expect(!!t.verify[3]).toBe(false); // active Access=None union member: owned/written, not verified
 });
 
 // The flash merge writes only owned bytes over the live device read and preserves the
 // rest; diffBytes counts only the owned bytes that actually change.
-const relTarget = (owned: boolean[], bytes: number[], verify: boolean[] = owned): RelativeSegmentTarget =>
-  ({ lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned, verify });
+const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned): RelativeSegmentTarget => {
+  const bits = (m: (boolean | number)[]) => m.map((o) => (o === true ? 0xff : o === false ? 0 : o));
+  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify) };
+};
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
   const current = Buffer.from([10, 20, 30, 40]);
@@ -313,6 +315,17 @@ test("mergeRelativeTarget on an unchanged config is a no-op (diffBytes 0)", () =
   const target = relTarget([true, false, true], [5, 0, 7]); // owned values already match the device
   const { diffBytes } = mergeRelativeTarget(current, target);
   expect(diffBytes).toBe(0);
+});
+
+test("a byte shared with bits no parameter owns takes only the owned bits; the rest stay as the device holds them", () => {
+  const current = Buffer.from([0b00000000, 0xa5]);
+  const target = relTarget([0b11000000, 0], [0b01111111, 0]); // a 2-bit field at bit offset 0 set to 01; template 1s beside it
+  const { image, diffBytes } = mergeRelativeTarget(current, target);
+  expect([...image]).toEqual([0b01000000, 0xa5]);
+  expect(diffBytes).toBe(1);
+  expect(verifyRelativeOwned(Buffer.from([0b01000000, 0]), target)).toBe(true);
+  expect(verifyRelativeOwned(Buffer.from([0b01111111, 0]), target)).toBe(true); // unowned bits are not asserted
+  expect(verifyRelativeOwned(Buffer.from([0b10000000, 0]), target)).toBe(false);
 });
 
 test("verifyRelativeOwned checks only owned bytes; unowned drift does not fail it", () => {
@@ -340,11 +353,11 @@ test("a top-level param displaced by an active module instance is not owned", ()
   // MD-7_M-19_MI-1 occupies bytes 74..105. The top-level relay param at offset 105
   // ("Schaltverzoegerung der Relais") sits inside that channel region but belongs to the
   // relay variant, inactive here; its memory is the module's, so it must stay UNOWNED.
-  expect(target.owned[105]).toBe(false);
+  expect(!!target.owned[105]).toBe(false);
   // Sanity: an ACTIVE module-instance param's own byte (channel 1 P-1 at offset 74) IS owned.
   const model = toAppModel(app, { includeUnions: true, instances });
   const ch1 = model.params.get(model.refs.get(`${APP}_MD-7_M-19_MI-1_P-1_R-1`)!.paramId)!;
-  expect(target.owned[ch1.offset!]).toBe(true);
+  expect(!!target.owned[ch1.offset!]).toBe(true);
 });
 
 // DPT-9 (2-byte KNX float) parameters whose STORED value is not byte-canonical. Two
@@ -387,8 +400,8 @@ test("a DPT-9 float default the codec must round: encode writes the rounded byte
   expect([...t.bytes]).toEqual([0x0c, 0x1a, 0xde, 0xad]); // P-F encoded, P-G's <Data> untouched
   // Ownership follows the write: the active float's two bytes are owned and (being
   // user-facing) verified; the inactive P-G wrote nothing, so it owns nothing.
-  expect(t.owned).toEqual([true, true, false, false]);
-  expect(t.verify).toEqual([true, true, false, false]);
+  expect(t.owned.map(Boolean)).toEqual([true, true, false, false]);
+  expect(t.verify.map(Boolean)).toEqual([true, true, false, false]);
   // decode returns the ROUNDED value, not the stored default string. decodeDpt9(0x0C1A):
   // mant = 0x41A = 1050, exp = 1 -> 1050*2/100 = 21. This is the defined round-trip:
   // a re-flash from the decoded value reproduces the same bytes (asserted below).
@@ -431,7 +444,7 @@ test("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does 
   const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
   const instances = resolveModuleInstances(app, env);
   const target = buildRelativeSegmentTarget(app, env, 4, { moduleInstances: instances })!;
-  expect(target.owned[842]).toBe(false); // computed link table: preserved, not authored
+  expect(!!target.owned[842]).toBe(false); // computed link table: preserved, not authored
 });
 
 // A field that is not byte-aligned spans more bytes than its width alone suggests: 12 bits at
@@ -464,10 +477,10 @@ test("a non-byte-aligned wide field owns EVERY byte it spans (not just the first
   const target = buildRelativeSegmentTarget(nonAlignedApp, new Map([[ref, "3000"]]), 4)!;
 
   // 12 bits at BitOffset 6 of the byte at offset 1 -> bytes 1, 2 AND 3.
-  expect(target.owned.slice(1, 4)).toEqual([true, true, true]);
-  expect(target.verify.slice(1, 4)).toEqual([true, true, true]);
-  expect(target.owned[0]).toBe(false); // and nothing outside the field
-  expect(target.owned[4]).toBe(false);
+  expect(target.owned.slice(1, 4).map(Boolean)).toEqual([true, true, true]);
+  expect(target.verify.slice(1, 4).map(Boolean)).toEqual([true, true, true]);
+  expect(!!target.owned[0]).toBe(false); // and nothing outside the field
+  expect(!!target.owned[4]).toBe(false);
 
   // The verify must therefore catch a device that kept the field's last byte: a flash whose
   // ownership stopped short would call such a device correct.
@@ -488,7 +501,7 @@ test("a LegacyPatchAlways parameter is written with its value, and a user's edit
   };
   const defaults = seg(new Map());
   expect(defaults.bytes[3]).toBe(0x1e);
-  expect(defaults.owned[3]).toBe(true);
+  expect(!!defaults.owned[3]).toBe(true);
   expect(seg(new Map([[ref.id, "100"]])).bytes[3]).toBe(100);
 });
 
@@ -509,7 +522,21 @@ test("the relative images of the full download and the parameter flash stay pinn
   for (const [f, full, surgical] of pinned) {
     const app = parseAppConfig(readRealFixture(f));
     const inst = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
-    const r = (own: boolean) => { const t = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst, ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned)}/${t.owned.filter(Boolean).length}`; };
+    const r = (own: boolean) => { const t = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst, ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };
     expect([f, r(true), r(false)]).toEqual([f, full, surgical]);
   }
+});
+
+// GVS AMMA byte 64: "Output 3&4 function" (2 bits at bit offset 0) shares the byte with that
+// channel's unions. With the channel disabled the unions are idle: the parameter flash owns only
+// the parameter's two bits, the full download owns the whole byte (it writes the union defaults,
+// as ETS does). Writing the template's bits beside the parameter set idle union bits that the
+// device's firmware then acted on.
+test("a sub-byte parameter owns only its own bits of the byte it shares", () => {
+  const app = parseAppConfig(readRealFixture("M-0085_A-0072-30-69AA.xml.gz"));
+  const values = new Map([["M-0085_A-0072-30-69AA_P-20_R-20", "1"], ["M-0085_A-0072-30-69AA_UP-142_R-142", "1"]]);
+  expect(buildRelativeSegmentTarget(app, values, 4)!.owned[64]).toBe(0xc0);
+  expect(buildRelativeSegmentTarget(app, values, 4, { ownIdleUnionDefaults: true })!.owned[64]).toBe(0xff);
+  const merged = mergeRelativeTarget(Buffer.alloc(buildRelativeSegmentTarget(app, values, 4)!.size), buildRelativeSegmentTarget(app, values, 4)!).image;
+  expect(merged[64]).toBe(0x00); // the device's zeros beside P-9 survive, not the template's 0x3f
 });

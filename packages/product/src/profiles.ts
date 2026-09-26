@@ -1,6 +1,6 @@
 import { KnxDevice, type LoadPlan, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags } from "./comobjbuild.ts";
@@ -559,7 +559,7 @@ export class SystemBProfile extends DeviceProfile {
           },
           ({ gt, crcOk, img }) => {
             const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = crcOk || (img !== null && verifyRelativeOwned(img, target));
+            const paramsOk = crcOk || (img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify)));
             return tablesOk && paramsOk;
           },
         );

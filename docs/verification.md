@@ -44,7 +44,12 @@ It comes in two strengths, and both are honest hardware evidence:
 - a **full flash round-trip**: apply a real change over the bus and restore it, byte-checked
   each way.
 
-Only owned bytes are compared, because the unowned ones are not under our authority: an
+Ownership is per bit: a sub-byte parameter owns only its own bits of the byte it shares, so a
+parameter flash carries the byte's other bits over from the device and the read-back compares
+only the owned ones ([findings.md](findings.md) §12). When a union switches branch, the other bits
+of a shared byte therefore keep the device's value, as unowned whole bytes always did. The full
+download writes and reads back every byte a parameter touches. Only owned bits are compared, because the
+unowned ones are not under our authority: an
 ETS-computed object-link table or an unused erased-flash region is carried over from the
 device rather than proven (see [device-memory-model.md](device-memory-model.md)). A narrower
 mask still, `verify`, excludes device-internal markers the firmware re-stamps on every
