@@ -196,10 +196,11 @@ spec states why no behaviour is observable.
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
-The 2026-09-25 runs (MDT on build `c2cde85`, the Jung on `7c54b8d`, ABB and GVS again on
-`c935d5f` after their com-object table and union fixes, the Jung again on `bf97acc` after the
-shared-ParameterRef fix; both channels, every capability, behaviour and the persistence step) and
-their evidence records are kept in evidence/runs/. Persistence there means an observed reboot
+All four devices pass both channels, every capability, their behaviour and the persistence step
+on build `1de6231` (2026-09-26 evening), which carries the ETS-matched group-address flash, per-bit
+parameter ownership and the confirmed extended write. Those runs, and the earlier ones they
+supersede (2026-09-25: MDT `c2cde85`, Jung `7c54b8d`, ABB and GVS `c935d5f`; Jung `bf97acc` on
+2026-09-26), are kept with their evidence records in evidence/runs/. Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
 
@@ -207,8 +208,9 @@ bus power cut ([evidence-contract.md](evidence-contract.md)).
   capability plus the click-through is green in both channels, which clears the bar, but the proof
   stops at the bytes and the table says so rather than implying a bus-observable one.
 - **Jung 400021SE**: every capability it claims, its `output` behaviour, the click-through and the
-  persistence step are green in both channels on build `7c54b8d` (2026-09-25), after the
-  memory-control-block fix (device table notes). The earlier runs of that day record the failure.
+  persistence step are green in both channels, first on build `7c54b8d` (2026-09-25) after the
+  memory-control-block fix (device table notes), now on `1de6231`. The earlier runs of 2026-09-25
+  record the failure.
 - **OpenKNX RaumController**: the spec exists but has never been run in either channel. The
   device's commissioning is hardware-proven (see the device table), driven through the production
   endpoints before the framework existed. The device now runs in a live installation rather than on
