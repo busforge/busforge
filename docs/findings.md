@@ -342,7 +342,10 @@ minutes at 0 it evaluated the choose on `R-1` as 5, the shared value, and wrote 
 for 5 seconds (0 ms). Busforge evaluated `R-1` with its own default 0, activated the other member
 too, and wrote 100 ms over it.
 
-A ref that is not placed in an active branch now reads a value stored on a sibling ref, else the
-default of the sibling that is placed, else its own; a placed ref keeps its own default, because
-applications select an internal parameter's value by which ref an active branch places. Among the
+So a parameter has one value: one stored on a placed ref, else one stored on any of its refs, else
+the default of the placed ref. A placed ref with nothing stored keeps its own default, because
+applications select an internal parameter's value by which ref an active branch places; when
+several refs with different defaults are placed, each keeps its own, since which one ETS would use
+is unknown. Which refs are placed is determined once, by walking the tree until the placement no
+longer changes, and every pass (the view and the image) reads the same placement. Among the
 bundled applications only the Jung changes.

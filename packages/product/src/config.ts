@@ -242,36 +242,43 @@ export function buildDeviceConfig(
     return !!p && p.access === "None" && !p.hasMemory;
   };
   // Several ParameterRefs of one Parameter share its single value. A ref's own Value is only the
-  // default of the ref that is shown: ETS applies it when that ref is placed, and every other ref of
-  // the parameter, one that a choose merely tests, reads the same value (Jung 400021SE: P-505 has
+  // default of the ref that is shown (placed in an active branch): ETS applies it when that ref is
+  // placed, and a ref that a choose merely tests reads the same value (Jung 400021SE: P-505 has
   // R-107 with the parameter's default 5 and R-1 with Value 0; with R-107 placed, ETS evaluated a
-  // choose on R-1 as 5, and its own project export stores no value for the parameter at all). So a
-  // ref that is not placed reads a value stored on a sibling ref, else the placed sibling's default,
-  // else its own. `placed` is kept per working map, in each pass's own document order.
-  const placedByEnv = new WeakMap<Map<string, string>, Map<string, string>>();
-  const placedIn = (e: Map<string, string>) => placedByEnv.get(e) ?? placedByEnv.set(e, new Map()).get(e)!;
+  // choose on R-1 as 5, and its own project export stores no value for the parameter at all;
+  // docs/findings.md §9). So one value per parameter: a value stored on a placed ref, else one
+  // stored on any of its refs, else the default of the placed ref. A ref placed itself keeps its own
+  // default when no value is stored, and so does every ref of a parameter whose placed refs carry
+  // different defaults: which one ETS would use is not known.
+  //
+  // `placement` (per instance-scoped parameter id, the def ref ids placed in active branches) is
+  // fixed before the walks below and identical for all of them, so the UI and the image never read
+  // a parameter differently. It is found by walking the tree until it no longer changes.
+  let placement = new Map<string, Set<string>>();
   const refsOfParam = new Map<string, string[]>();
   for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
-  const markPlaced = (defRefId: string, scope: Scope, e: Map<string, string>) => {
-    const ref = app.refs.get(defRefId);
-    if (!ref) return;
-    const key = scope.rewrite(ref.paramId);
-    if (!placedIn(e).has(key)) placedIn(e).set(key, defRefId);
+  const storedOn = (refIds: string[], scope: Scope, e: Map<string, string>): string | undefined => {
+    const vals = new Set(refIds.filter((r) => e.has(scope.rewrite(r))).map((r) => e.get(scope.rewrite(r))!));
+    return vals.size === 1 ? [...vals][0] : undefined; // none, or conflicting: no shared stored value
   };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
-    if (e.has(instId)) return e.get(instId);
     const ref = app.refs.get(defRefId);
-    if (!ref) return undefined;
-    if (isMerker(ref.paramId)) return undefined; // unplaced Merker: no static default for choose evaluation
+    if (!ref) return e.get(instId);
+    if (isMerker(ref.paramId)) return e.get(instId); // unplaced Merker: no static default for choose evaluation
     const paramDefault = app.params.get(ref.paramId)?.value;
-    const placed = placedIn(e).get(scope.rewrite(ref.paramId));
-    if (placed !== defRefId) {
-      for (const sibling of refsOfParam.get(ref.paramId) ?? []) {
-        if (sibling !== defRefId && e.has(scope.rewrite(sibling))) return e.get(scope.rewrite(sibling));
-      }
-      if (placed !== undefined) return app.refs.get(placed)?.value ?? paramDefault;
+    const siblings = (refsOfParam.get(ref.paramId) ?? []).filter((r) => r !== defRefId);
+    const placed = [...(placement.get(scope.rewrite(ref.paramId)) ?? [])];
+    const isPlaced = placed.includes(defRefId);
+    const placedSiblings = placed.filter((r) => r !== defRefId);
+    if (isPlaced) {
+      if (e.has(instId)) return e.get(instId);
+      return storedOn(siblings, scope, e) ?? ref.value ?? paramDefault;
     }
+    const stored = storedOn(placedSiblings, scope, e) ?? (e.has(instId) ? e.get(instId) : undefined) ?? storedOn(siblings, scope, e);
+    if (stored !== undefined) return stored;
+    const defaults = new Set(placedSiblings.map((r) => app.refs.get(r)?.value ?? paramDefault));
+    if (defaults.size === 1) return [...defaults][0];
     return ref.value ?? paramDefault;
   };
   // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
@@ -447,7 +454,7 @@ export function buildDeviceConfig(
     for (const n of nodes) {
       switch (n.kind) {
         case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint, cell: n.cell }); break;
-        case "paramRef": { markPlaced(n.refId, scope, env); assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
+        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         // A scripted action. Carried through as itself (label + handler name) so the UI
         // can show an inert, honestly-labelled control; busforge never runs the script.
@@ -514,7 +521,7 @@ export function buildDeviceConfig(
   const applyEnv = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": markPlaced(n.refId, scope, env); assignIfMerker(n.refId, scope, env); break;
+        case "paramRef": assignIfMerker(n.refId, scope, env); break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope); break;
         case "container": case "block": applyEnv(n.children, scope); break;
@@ -575,6 +582,40 @@ export function buildDeviceConfig(
       }
     }
   };
+  // The placement the walks read (see resolve): the image pass's traversal, recording only which
+  // refs it places, repeated until the placement it finds is the one it walked with.
+  const findPlacement = (): Map<string, Set<string>> => {
+    const found = new Map<string, Set<string>>();
+    const penv = new Map(overrides);
+    const visit = (nodes: DynNode[], scope: Scope) => {
+      for (const n of nodes) {
+        switch (n.kind) {
+          case "paramRef": {
+            const ref = app.refs.get(n.refId);
+            if (ref) { const key = scope.rewrite(ref.paramId); (found.get(key) ?? found.set(key, new Set()).get(key)!).add(n.refId); }
+            assignIfMerker(n.refId, scope, penv);
+            break;
+          }
+          case "assign": penv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, penv) ?? "" : "")); break;
+          case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope, penv)) visit(w.children, scope); break;
+          case "container": case "block": visit(n.children, scope); break;
+          case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) visit(def.dynamic, makeScope(n.refId, def, inst)); break; }
+          case "comObjRef": case "button": case "separator": case "unsupported": break;
+        }
+      }
+    };
+    visit(app.dynamic, TOP);
+    return found;
+  };
+  const samePlacement = (a: Map<string, Set<string>>, b: Map<string, Set<string>>) =>
+    a.size === b.size && [...a].every(([k, v]) => { const w = b.get(k); return !!w && w.size === v.size && [...v].every((x) => w.has(x)); });
+  for (let round = 0; ; round++) {
+    const next = findPlacement();
+    if (samePlacement(next, placement)) break;
+    if (round >= 8) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
+    placement = next;
+  }
+
   const roots: Node[] = [];
   walk(app.dynamic, TOP, roots);
 
@@ -594,7 +635,7 @@ export function buildDeviceConfig(
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": { markPlaced(n.refId, scope, imgEnv); assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         // Record EVERY reached com-object (active branches, descending into Access="None"
         // blocks, per module instance) with its resolved flags, so the com-object-table
         // build sees hidden objects' flags too. Keyed by resolved number; a later active

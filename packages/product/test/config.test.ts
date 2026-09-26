@@ -533,3 +533,56 @@ describe("grid layouts (Rows/Columns/Cell) and Buttons", () => {
     expect(v.imageComObjects.get(1)).toMatchObject({ number: 1, objectSize: "1 Bit" });
   });
 });
+
+// Several ParameterRefs of one parameter share one value (docs/findings.md §9). Modelled on the Jung
+// 400021SE: P-S is shown through R-A (the parameter's default 5) and tested through R-B (Value 0);
+// the test on R-B picks one of two union members. The place that shows R-A is a nested block, and
+// the test comes after it, so a document-order rule would read R-B differently in the UI walk and
+// in the image pass.
+describe("ParameterRefs of one parameter share its value", () => {
+  const xml = (extraRef = "") => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-40" ApplicationNumber="40" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Share" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-40_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="200" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-40_P-S" Name="Seconds" ParameterType="M-TEST_A-40_PT-N" Text="Seconds" Value="5"><Memory CodeSegment="M-TEST_A-40_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Union SizeInBit="8"><Memory CodeSegment="M-TEST_A-40_RS-4" Offset="1" BitOffset="0" />
+        <Parameter Id="M-TEST_A-40_UP-Hi" ParameterType="M-TEST_A-40_PT-N" Text="ms from 100" Value="100" Offset="0" BitOffset="0" />
+        <Parameter Id="M-TEST_A-40_UP-Lo" ParameterType="M-TEST_A-40_PT-N" Text="ms from 0" Value="0" Offset="0" BitOffset="0" />
+      </Union>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-40_P-S_R-A" RefId="M-TEST_A-40_P-S" />
+      <ParameterRef Id="M-TEST_A-40_P-S_R-B" RefId="M-TEST_A-40_P-S" Value="0" />
+      <ParameterRef Id="M-TEST_A-40_UP-Hi_R-H" RefId="M-TEST_A-40_UP-Hi" />
+      <ParameterRef Id="M-TEST_A-40_UP-Lo_R-L" RefId="M-TEST_A-40_UP-Lo" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-40_PB-1" Name="m" Text="Main">
+      <ParameterBlock Id="M-TEST_A-40_PB-2" Name="n" Text="Nested"><ParameterRefRef RefId="M-TEST_A-40_P-S_R-A" /></ParameterBlock>
+      ${extraRef}
+      <choose ParamRefId="M-TEST_A-40_P-S_R-B">
+        <when test="0"><ParameterRefRef RefId="M-TEST_A-40_UP-Hi_R-H" /></when>
+        <when test="&gt;0"><ParameterRefRef RefId="M-TEST_A-40_UP-Lo_R-L" /></when>
+      </choose>
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const visible = (v: ReturnType<typeof buildDeviceConfig>) => params(v).map((p) => p.param.refId.split("_").pop() ?? "").sort((a, b) => a.localeCompare(b));
+
+  test("a ref that is only tested reads the shown ref's default, in the UI and in the image alike", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml()), new Map());
+    expect(visible(v)).toEqual(["R-A", "R-L"]);
+    expect([...v.imageValues.keys()].map((k) => k.split("_").pop() ?? "").sort((a, b) => a.localeCompare(b))).toEqual(["R-A", "R-L"]);
+  });
+
+  test("a value stored on the shown ref is what the tested ref reads", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-A", "0"]]));
+    expect(visible(v)).toEqual(["R-A", "R-H"]);
+  });
+
+  test("the shown ref's stored value wins over a stale one on the tested ref", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-A", "7"], ["M-TEST_A-40_P-S_R-B", "0"]]));
+    expect(visible(v)).toEqual(["R-A", "R-L"]);
+  });
+
+  test("with both refs shown and different defaults, each keeps its own (which one ETS uses is unknown)", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml('<ParameterRefRef RefId="M-TEST_A-40_P-S_R-B" />')), new Map());
+    expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
+  });
+});
