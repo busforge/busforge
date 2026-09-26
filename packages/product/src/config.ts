@@ -261,6 +261,13 @@ export function buildDeviceConfig(
     const vals = new Set(refIds.filter((r) => e.has(scope.rewrite(r))).map((r) => e.get(scope.rewrite(r))!));
     return vals.size === 1 ? [...vals][0] : undefined; // none, or conflicting: no shared stored value
   };
+  // A union member none of whose refs is placed and none of which holds a stored value.
+  const isUnplacedUnionMember = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
+    const ref = app.refs.get(defRefId);
+    if (!ref || !app.params.get(ref.paramId)?.union) return false;
+    if (placement.get(scope.rewrite(ref.paramId))?.size) return false;
+    return !(refsOfParam.get(ref.paramId) ?? []).some((r) => e.has(scope.rewrite(r)));
+  };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
     const ref = app.refs.get(defRefId);
@@ -309,6 +316,11 @@ export function buildDeviceConfig(
   // every P-1 value matches two whens and ETS places both. First-match-wins left the
   // union bits unwritten (hardware-confirmed: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
+    // A choose on a union member that no active branch places matches none of its tests: that
+    // member holds no value, since its union's memory belongs to whichever member is placed (GVS
+    // AMMA, ETS partial download 2026-09-26: tests of 0 on the idle Forced/Delay/Counter members
+    // placed no object in ETS). An unset Merker still reads as 0 here.
+    if (isUnplacedUnionMember(defParamRefId, scope, e)) { const def = whens.find((w) => w.isDefault); return def ? [def] : []; }
     const v = Number(resolve(defParamRefId, scope, e) ?? 0);
     const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
     if (matched.length) return matched;
