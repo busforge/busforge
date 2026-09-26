@@ -41,8 +41,8 @@ All hardware verification to date is on **twisted pair**.
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical, owned bytes only) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. |
-| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer hardware-proven to need it also holds the application object in its own load bracket; System 7 keeps the device's com-object table, in both LSM styles (see known unproven). |
-| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table, which a virgin device does not have, on System B and on the property-mapped System 7 masks; the memory-mapped ones write the manufacturer's static table from the product data. |
+| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer hardware-proven to need it also holds the application object in its own load bracket; System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see known unproven). |
+| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. |
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. |
 | Structural change (a parameter that changes the set of com-objects) | partial | hardware | Refused surgically (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` where the family has no full-download path) and promoted to a full download, which rewrites the whole parameter image. A surgical structural flash is on the roadmap, not built. |
@@ -102,13 +102,19 @@ Notes attached to that table:
   parameter flashes Busforge did on such a device before this change may have left one region,
   which shows only at the device's next restart. Its parameter flash now writes the two regions
   as well; that bracket has not been driven on a Theben device yet.
-- **ABB US/U 4.2 com-object table.** ETS clears the Communication flag of every object without a
-  group address in this memory-mapped table; Busforge used to write the manufacturer's template
-  unchanged. The full download now clears it (byte-equal to an ETS download at application
-  defaults, 2026-09-25 capture). The group-address flash sets the flag on linked objects and
-  clears it on the rest in the table the device holds, touching no other byte, so a newly linked
-  object is not left silent. That GA-flash path has not been compared with an ETS capture or
-  driven on hardware yet, and what ETS writes for a linked object is not known.
+- **ABB US/U 4.2 com-object table.** ETS authors this memory-mapped table as it does the
+  property-mapped MDT one: each active object's config byte from the application, with the link
+  bit set only on objects that have a group address. Busforge used to write the manufacturer's
+  template unchanged. Its full download now authors it that way (byte-equal to ETS at defaults,
+  2026-09-25). On a group-address download ETS writes only the config bytes that change (a
+  partial download after enabling a channel and linking object 1, 2026-09-26); Busforge's
+  group-address flash changes only the linked bit in the table the device holds, touching no
+  other byte.
+- **ABB US/U 4.2 parameter byte order.** The application declares
+  `ParameterByteOrder="LittleEndian"`; ETS writes multi-byte parameters least significant byte
+  first (450 as `c2 01`). Busforge wrote them big-endian. Byte-aligned integers are now written
+  as ETS does; a little-endian parameter that is a float or not byte-aligned is refused
+  (`PARAM_BYTE_ORDER_UNSUPPORTED`), because no capture shows how ETS places one.
 - **GVS AMMA with every output disabled.** ETS downloads a configuration that activates no
   com-object, writing the declared table of silent entries; Busforge used to refuse it
   (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. In the disabled channels' regions
@@ -116,6 +122,11 @@ Notes attached to that table:
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
   them); the surgical parameter flash leaves those bytes as the device holds them. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
+- **GVS AMMA: objects a union member without a placement switched on.** After enabling a channel,
+  Busforge activated three com-objects (5, 6, 8) that ETS leaves out: a choose tested a union
+  member no active branch places, read its default and took the branch. ETS treats such a member
+  as unset and takes the default branch; Busforge now does the same (2026-09-26 partial-download
+  capture). No other bundled application changes at its defaults.
 - **Jung 400021SE: one parameter byte differed from ETS.** At offset 176 ("delay after bus voltage
   return") Busforge wrote 100 ms where ETS writes 0 ms. Two ParameterRefs of one parameter carry
   different defaults: the one shown uses the parameter's default, the other, only tested by a
@@ -183,7 +194,7 @@ spec states why no behaviour is observable.
 The 2026-09-25 runs (MDT on build `c2cde85`, the Jung on `7c54b8d`, ABB and GVS again on
 `c935d5f` after their com-object table and union fixes, the Jung again on `bf97acc` after the
 shared-ParameterRef fix; both channels, every capability, behaviour and the persistence step) and
-their evidence records are kept in [evidence/runs/](evidence/runs/). Persistence there means an observed reboot
+their evidence records are kept in evidence/runs/. Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
 
@@ -221,19 +232,27 @@ report a device family as working on the strength of a passing test suite.
   captures in `tools/fixtures/`, records in [evidence/reference/](evidence/reference/)). The Jung
   400021SE (module device) as well. For the parameter flash one ETS partial download of the Jung
   exists: it writes the two MCB regions after the allocation, as Busforge's parameter flash does,
-  and its parameter bytes match Busforge's image. The group-address flash has no ETS capture yet. Everywhere else the read-back proves `device == our image` and can never prove
+  and its parameter bytes match Busforge's image. For the group-address flash one ETS partial
+  download per bench device exists (links plus, on the ABB, GVS and Jung, a parameter
+  change): every byte ETS wrote, group tables and com-object table included, equals Busforge's
+  image for that configuration (`tools/etsdiff.test.ts`, captures in `tools/fixtures/`). Everywhere else the read-back proves `device == our image` and can never prove
   `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
-- **MV-0705 group-address flash keeps the device's own com-object table.** A freshly linked
-  read-capable object was proven to work on hardware; a **transmit-only object**, the case that
-  would actually depend on the table's per-object link bit, is unproven, which is why the
-  table-rewriting fix applied to System B was deliberately not extended here.
+- **System 7 group-address flash of the com-object table.** It reads the table the device holds
+  and changes only each object's linked bit; ETS rewrites that bit on a group-address download on
+  both LSM styles (MDT and ABB partial-download captures). On a device holding a correct table
+  that equals ETS's bytes; on one whose table another tool left wrong, the other bytes stay wrong.
+  The M-0081 (house device 1.1.x) now gets that bit rewritten too, which no capture of that
+  product covers. A freshly linked read-capable object was proven to work on hardware; a
+  **transmit-only object**, the case that depends on the linked bit, has not been observed on the
+  bus. A property-mapped application that names no com-object table segment keeps the device's
+  table; a memory-mapped one is refused.
 - **Full parameter or group-address flash over KNX Data Secure** has never been driven. Both
   directions of the secure channel are hardware-proven on their own; the composition is not.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.
 - **The OpenKNX RaumController has never been driven through the bracketed System B group-address
-  flash.** The device itself was re-driven on 2026-08-30 (three full downloads, each `verified`, one
+  flash.** The device itself was re-driven (three full downloads, each `verified`, one
   of them onto the device in service), but no surgical group-address flash has been driven on it,
   so that path stays unproven here until the controlled comparison on the roadmap runs.
 - **KNXnet/IP connection-state heartbeat and closure** are verified against Busforge's own server,

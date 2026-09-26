@@ -140,14 +140,13 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
 // MV-0705 (System 7) group-address download: the address (LSM 1) and association (LSM 2)
 // tables live at fixed absolute addresses, so unlike System B there is no relative-segment
 // alloc and no unload. Per LSM: LOAD -> write the table at its fixed address (read-back
-// verified) -> LOAD_COMPLETED, each state-asserted (the engine default), then restart. The
-// com-object table (object 3) is left untouched (a GA change does not alter it). Maps to the
+// verified) -> LOAD_COMPLETED, each state-asserted (the engine default), then restart. Maps to the
 // asserting engine bracket with NO behavior delta (the retired flashGroupTablesMv0705 already
 // asserted LOADING/LOADED and wrote verified); hardware-verified on TP (M-0081). The
 // caller must already be connected (a second T_Connect resets the sequence counter).
-// `comObj`: the com-object table of a memory-mapped device, rewritten with the links in the same
-// flash so a newly linked object gets its Communication flag. ETS writes it inside an LSM 3
-// load/completed bracket with no unload (ABB US/U 4.2 capture, 2026-09-25).
+// `comObj`: the com-object table, rewritten with the links in the same flash so a newly linked
+// object gets its linked bit. ETS writes it inside an LSM 3 load/completed bracket with no unload
+// (ABB US/U 4.2 capture 2026-09-25, MDT BE-02001.02 capture 2026-09-26).
 export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer; comObj?: { address: number; bytes: Buffer } }): LoadPlan {
   const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE, C = OBJ.COMOBJ_TABLE;
   return [

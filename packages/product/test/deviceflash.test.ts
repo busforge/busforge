@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseAppConfig } from "../src/index.ts";
+import { parseAppConfig, buildDeviceConfig } from "../src/index.ts";
 import { planAbsoluteSegmentFlash, planAbsoluteFullDownload } from "../src/deviceflash.ts";
 import { parseLoadProcedures } from "../src/loadproc.ts";
 import { buildAbsoluteSegmentImages } from "../src/deviceimage.ts";
@@ -126,24 +126,23 @@ test("adjacent owned bytes coalesce into a single contiguous run", () => {
   }
 });
 
-test("a memory-mapped full download clears the Communication flag of every unlinked object, as ETS does", () => {
-  // ABB US/U 4.2 (MV-0701), application defaults, no links: ETS 6 wrote every config byte of the
-  // com-object table (AS-43FE, [count][2 B] then 4-byte entries, config at 3+4n+2) as 0xdb, the
-  // manufacturer template's 0xdf with 0x04 cleared (ETS capture, 2026-09-25). Nothing else changes.
+test("a memory-mapped full download authors the com-object table as ETS does", () => {
+  // ABB US/U 4.2 (MV-0701), com-object table AS-43FE: [count][2 B] then 4-byte entries, config byte
+  // at 3+4n+2. ETS 6 captures, 2026-09-25/26: at application defaults no object is configured and
+  // every config byte is the template's 0xdf with the link bit 0x04 cleared (0xdb); with channel A
+  // controlling an LED, object 1 linked and object 3 not, ETS wrote 0x17 and 0x13 (write, low
+  // priority, link bit only on the linked one).
   const xml = readRealFixture("M-0002_A-A001-13-63C2.xml.gz");
   const app = parseAppConfig(xml);
   const cfgAt = (n: number) => 3 + 4 * n + 2;
-  const build = (links: { comObjNum: number; gaRaws: number[] }[]) =>
-    planAbsoluteFullDownload(app, new Map(), links, 0x11c9, parseLoadProcedures(xml), { requireReboot: false }).segments.find((s) => s.address === 0x43fe)!.image;
   const template = app.absoluteSegments.find((s) => s.address === 0x43fe)!.data;
-  const count = template[0];
-  expect(count).toBe(30);
-  const none = build([]);
-  for (let n = 0; n < count; n++) expect([n, none[cfgAt(n)]]).toEqual([n, template[cfgAt(n)] & ~0x04]);
-  const rest = (b: Buffer) => [...b.subarray(0, template.length)].filter((_, i) => !(i >= 3 && (i - 3) % 4 === 2 && (i - 3) / 4 < count));
-  expect(rest(none)).toEqual(rest(template));
-  // a linked object keeps the template's flag
-  const linked = build([{ comObjNum: 3, gaRaws: [0x0901] }]);
-  expect(linked[cfgAt(3)]).toBe(template[cfgAt(3)]);
-  expect(linked[cfgAt(2)]).toBe(template[cfgAt(2)] & ~0x04);
+  const l3 = (params: Map<string, string>, links: { comObjNum: number; gaRaws: number[] }[]) => {
+    const active = buildDeviceConfig(app, params).imageComObjects;
+    return planAbsoluteFullDownload(app, params, links, 0x11c9, parseLoadProcedures(xml), { requireReboot: false, propertyMapped: false, comObjectTable: { active, linked: new Set(links.map((l) => l.comObjNum)) } })
+      .segments.find((s) => s.address === 0x43fe)!.image;
+  };
+  const defaults = l3(new Map(), []);
+  for (let n = 0; n < template[0]; n++) expect([n, defaults[cfgAt(n)]]).toEqual([n, template[cfgAt(n)] & ~0x04]);
+  const led = l3(new Map([["M-0002_A-A001-13-63C2_P-9_R-9", "104"]]), [{ comObjNum: 1, gaRaws: [0x1b04] }]);
+  expect([led[cfgAt(1)], led[cfgAt(3)]]).toEqual([0x17, 0x13]);
 });

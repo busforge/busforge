@@ -14,7 +14,10 @@ const REAL = join(import.meta.dir, "..", "..", "..", "packages", "product", "tes
 const realCfg = parseAppConfig(gunzipSync(readFileSync(join(REAL, "M-0081_A-FE01-11-75D9.xml.gz"))).toString("utf8"));
 // Same application, with the device's declared table capacity overridden (the capacity cases).
 const withCapacity = (addressMaxEntries: number | undefined, associationMaxEntries: number | undefined): AppConfig =>
-  ({ ...realCfg, groupTables: addressMaxEntries === undefined ? undefined : { addressMaxEntries, associationMaxEntries } }) as AppConfig;
+  ({ ...realCfg, groupTables: { ...realCfg.groupTables, addressMaxEntries, associationMaxEntries } }) as AppConfig;
+// The application's com-object table segment: the flash reads the device's table there and changes
+// only each object's linked bit (config byte 0x04).
+const comObjSeg = realCfg.absoluteSegments.find((s) => s.id === realCfg.groupTables.comObjectSegment)!;
 
 // Byte-addressed mock of the bus device, enough to drive the MV-0705 GA flash orchestration
 // (LSM bracket via property 5, table addresses via property 7, memory read/write, restart).
@@ -39,6 +42,8 @@ class MockDevice {
     return Buffer.alloc(0);
   }
   seedTables(addr: Buffer, assoc: Buffer) { addr.forEach((b, i) => this.mem.set(0x1000 + i, b)); assoc.forEach((b, i) => this.mem.set(0x2000 + i, b)); }
+  seedComObjTable(table: Buffer) { table.forEach((b, i) => this.mem.set(comObjSeg.address + i, b)); }
+  constructor() { this.seedComObjTable(comObjSeg.data); } // the device holds a com-object table
 }
 const asDev = (m: MockDevice) => m as unknown as KnxDevice;
 const ia = (1 << 12) | (2 << 8) | 17; // 1.2.17
@@ -110,5 +115,34 @@ describe("MV-0705 GA flash orchestration (mock device)", () => {
     expect(new System7Profile("system-7", "MV-0705", withCapacity(undefined, undefined)).flashGroupTables(asDev(dev), "MV-0705", {
       deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
     })).rejects.toThrow(/reserves only/);
+  });
+
+  test("changes only the linked bit of the device's com-object table, and verifies it", async () => {
+    const dev = new MockDevice();
+    const o = buildGroupTablesMv0705([], ia);
+    dev.seedTables(o.addr, o.assoc);
+    const held = Buffer.from(comObjSeg.data);
+    held[3 + 1 * 4 + 2] |= 0x04; // object 1 held as linked, its link is being removed
+    dev.seedComObjTable(held);
+    const res = await new System7Profile("system-7", "MV-0705", realCfg).flashGroupTables(asDev(dev), "MV-0705", {
+      deviceId: "d", ia: "1.2.17", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+    });
+    expect(res.kind === "flashed" && res.verified).toBe(true);
+    const back = await dev.memRead(comObjSeg.address, held.length);
+    const want = Buffer.from(held); // every config byte keeps all but its linked bit, which follows the links
+    for (let n = 0; n < held[0]; n++) want[3 + n * 4 + 2] = n === 0 ? held[3 + n * 4 + 2] | 0x04 : held[3 + n * 4 + 2] & ~0x04;
+    expect(back.equals(want)).toBe(true);
+  });
+
+  test("REFUSES a memory-mapped device whose application names no com-object table, writing nothing", async () => {
+    const dev = new MockDevice();
+    const o = buildGroupTablesMv0705([], ia);
+    dev.seedTables(o.addr, o.assoc);
+    const noSeg = { ...realCfg, groupTables: { ...realCfg.groupTables, comObjectSegment: undefined } } as AppConfig;
+    const before = new Map(dev.mem);
+    expect(new System7Profile("system-7", "MV-0701", noSeg).flashGroupTables(asDev(dev), "MV-0701", {
+      deviceId: "d", ia: "1.2.17", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+    })).rejects.toThrow(/FULL_DOWNLOAD_TABLE_SEGMENT_MISSING|names no com-object table/);
+    expect(dev.mem).toEqual(before);
   });
 });

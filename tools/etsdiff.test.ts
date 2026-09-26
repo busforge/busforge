@@ -160,3 +160,31 @@ describe("Jung 400021SE full download against ETS", () => {
     expect(r.segments.map((s) => [s.lsm, s.divergences.map((d) => d.offset)])).toEqual([[4, []], [3, []], [2, []], [1, []]]);
   });
 });
+
+// ETS 6 partial downloads after linking objects to group addresses (and, on ABB and GVS, enabling
+// a channel), 2026-09-26, trimmed per device. Every byte ETS wrote must equal the image Busforge
+// builds for the same configuration: parameters, com-object table and group tables.
+describe("partial downloads with links against ETS", () => {
+  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+  const cases: { name: string; ia: string; app: string; params: [string, string][]; links: [number, string][] }[] = [
+    { name: "Jung 400021SE", ia: "1.1.204", app: "M-0004_A-7072-21-99A7-O000A.xml.gz", links: [[253, "3/3/2"], [254, "3/3/3"]],
+      params: [["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_P-496_R-106", "1"]] },
+    { name: "ABB US/U 4.2", ia: "1.1.201", app: "M-0002_A-A001-13-63C2.xml.gz", links: [[1, "3/3/4"]], params: [["M-0002_A-A001-13-63C2_P-9_R-9", "104"]] },
+    { name: "MDT BE-02001.02", ia: "1.1.56", app: "M-0083_A-00B6-32-9642.xml.gz", links: [[0, "3/3/1"], [6, "3/3/5"]], params: [] },
+    { name: "GVS AMMA", ia: "1.1.203", app: "M-0085_A-0072-30-69AA.xml.gz", links: [[2, "3/3/6"]], params: [["M-0085_A-0072-30-69AA_P-20_R-20", "1"], ["M-0085_A-0072-30-69AA_UP-142_R-142", "1"]] },
+  ];
+  const file = { "1.1.204": "jung-400021se", "1.1.201": "abb-usu-4.2", "1.1.56": "mdt-be02001", "1.1.203": "gvs-amma" } as Record<string, string>;
+  for (const c of cases) {
+    test(`${c.name}: every byte ETS wrote matches`, () => {
+      const xml = real(c.app);
+      const cfg = parseAppConfig(xml);
+      const build = classify(cfg).planFullDownload(cfg.mask, { ia: c.ia, params: new Map(c.params), links: c.links.map(([n, ga]) => ({ comObjNum: n, gaRaws: [parseGa(ga)] })), proc: parseLoadProcedures(xml) });
+      const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", `${file[c.ia]}-ets-partial-links.log`), "utf8"), iaToNum(c.ia));
+      const refs = reportedTableReferences(cap);
+      const r = compareSegments(build.segments.map((seg) => ({ seg, address: seg.address ?? refs.get(seg.lsm) ?? null, baseSource: "t" })), memoryImage(cap.writes), etsAllocations(cap), []);
+      const compared = r.segments.reduce((n, s) => n + s.compared, 0);
+      expect(compared).toBeGreaterThan(0);
+      expect(r.segments.flatMap((s) => s.divergences.map((d) => `${s.id}+${d.offset}`))).toEqual([]);
+    });
+  }
+});

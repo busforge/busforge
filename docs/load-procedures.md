@@ -253,9 +253,11 @@ group tables in one bracket.
   a failure verdict, it falls back to a full byte-for-byte read-back.
 - **Memory-mapped System 7** (MV-0700/0701): implemented. The procedure is walked in order
   and every declared segment written: address and association tables from the links,
-  parameter-bearing segments from the built image, and the static com-object table and code
-  segments straight from their `<Data>` (these devices, unlike OpenKNX, ship the whole
-  application image in the product XML).
+  parameter-bearing segments from the built image, and code segments straight from their
+  `<Data>` (these devices, unlike OpenKNX, ship the whole application image in the product XML).
+  The com-object table, where the application names its segment, is authored as on MV-0705: the
+  `<Data>` template with the active objects' config bytes and link bits, as ETS writes it (ABB
+  US/U 4.2 captures).
 - **Property-mapped System 7** (MV-0705): implemented, and it **authors L3** into the
   application's `<ComObjectTable CodeSegment>`. It is offered exactly when the application
   declares that segment; without it the download refuses (`FULL_DOWNLOAD_UNSUPPORTED`)

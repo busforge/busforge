@@ -2,7 +2,7 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { buildComObjectTableMv0705, clearUnlinkedCommFlags } from "./comobjbuild.ts";
+import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 import type { LoadPlan, LoadStep } from "@busforge/knx";
@@ -226,13 +226,13 @@ export function planAbsoluteFullDownload(
   links: ComObjectLink[],
   ownIa: number,
   procedure: LoadProcedures,
-  // `comObjectTable` is supplied only for property-mapped System 7 (MV-0705): the active com-objects
-  // (visibility-gated) and the set of linked object numbers, so the planner can AUTHOR L3 into the
-  // <ComObjectTable> segment instead of writing the manufacturer's static default. Absent (memory-
-  // mapped MV-0700/0701) => L3 is the static <Data>, exactly as the hardware-proven path did.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } } = {},
+  // `comObjectTable`: the active com-objects (visibility-gated) and the linked object numbers, so the
+  // planner AUTHORS L3 into the <ComObjectTable> segment from its template, as ETS does on both LSM
+  // styles (MDT BE-02001.02 and ABB US/U 4.2 captures). Absent => L3 is written as its static <Data>.
+  // `propertyMapped`: a declared segment without <Data> is the device's own (declared, not written).
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } },
 ): AbsFullDownloadPlan {
-  const propertyMapped = opts.comObjectTable !== undefined;
+  const propertyMapped = opts.propertyMapped;
   // The two group tables live in the segments the app names; every other declared segment is the
   // application image (params overlaid on <Data>, or plain <Data>). If the app names a table
   // segment that does not exist, refuse: silently letting it fall through to the static-<Data>
@@ -246,11 +246,7 @@ export function planAbsoluteFullDownload(
   };
   const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
   const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
-  // Property-mapped devices author L3; memory-mapped ones write the static <Data> with the
-  // Communication flag cleared on unlinked objects (clearUnlinkedCommFlags).
-  const comObjTableAddr = propertyMapped ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
-  const staticComObjTableAddr = propertyMapped ? undefined : tableAddr(app.groupTables.comObjectSegment, "com-object");
-  const linkedObjects = new Set(links.map((l) => l.comObjNum));
+  const comObjTableAddr = opts.comObjectTable ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
@@ -272,9 +268,8 @@ export function planAbsoluteFullDownload(
       if (assoc.length > size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${size} B; remove links`);
       return { image: assoc, verify: new Array<boolean>(assoc.length).fill(true), source: "assocTable" };
     }
-    // Property-mapped L3: overlay the configured objects' flags onto the manufacturer's static
-    // template (the segment's <Data>). Memory-mapped devices never reach here (comObjTableAddr is
-    // undefined for them) and keep writing the static image below.
+    // L3: overlay the configured objects' flags onto the manufacturer's static template (the
+    // segment's <Data>).
     if (comObjTableAddr !== undefined && address === comObjTableAddr) {
       const seg = segByAddr.get(address);
       if (!seg || seg.data.length === 0) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the com-object table segment at ${address} carries no <Data> template; refusing to author L3 blind`);
@@ -294,9 +289,6 @@ export function planAbsoluteFullDownload(
     // A pure static segment (com-object table / code): its <Data> laid over the erased-flash state.
     const image = Buffer.alloc(size, 0xff);
     seg.data.copy(image);
-    if (address === staticComObjTableAddr) {
-      return { image: clearUnlinkedCommFlags(image, linkedObjects), verify: new Array<boolean>(size).fill(true), source: "comObjTable" };
-    }
     return { image, verify: new Array<boolean>(size).fill(true), source: "static" };
   };
 

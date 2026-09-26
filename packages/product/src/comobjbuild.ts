@@ -226,36 +226,23 @@ export function programIdStamp(app: AppConfig): Buffer {
   ]);
 }
 
-// The com-object table of a memory-mapped System 7 device (MV-0700/0701) is the manufacturer's
-// static template, and ETS writes it with one change: the Communication flag (config bit 0x04)
-// cleared on every object without a group address (ABB US/U 4.2 capture, 2026-09-25, no links:
-// every config byte 0xdf -> 0xdb, nothing else touched). Same layout as MV-0705: [count][2 B], then
-// 4-byte entries with the config byte third. What ETS writes for a linked object, and that entry n
-// is object n on this mask, has not been captured.
-function commFlags(image: Buffer, linked: ReadonlySet<number>, setLinked: boolean): Buffer {
-  if (image.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table is ${image.length} B; too short to hold its 3-byte header`);
-  const out = Buffer.from(image);
+// Group-address flash on System 7: the com-object table the device holds, with only the linked bit
+// (config 0x04) following the links, set on linked objects and cleared on the rest. ETS rewrites L3
+// on a group-address download on both LSM styles (2026-09-26 partial captures: the whole table on
+// the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device holding a
+// correct table both equal this. Every other byte stays as the device holds it. Layout as in
+// buildComObjectTableMv0705.
+export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>): Buffer {
+  if (deviceTable.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table is ${deviceTable.length} B; too short to hold its 3-byte header`);
+  const out = Buffer.from(deviceTable);
   const count = out[0];
   if (3 + count * 4 > out.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table declares ${count} entries but is only ${out.length} B`);
   const beyond = [...linked].filter((n) => n >= count);
   if (beyond.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyond)} is beyond the ${count}-entry com-object table; refusing to link it`);
   for (let n = 0; n < count; n++) {
     const at = 3 + n * 4 + 2;
-    if (!linked.has(n)) out[at] &= ~0x04;
-    else if (setLinked) out[at] |= 0x04;
+    if (linked.has(n)) out[at] |= 0x04;
+    else out[at] &= ~0x04;
   }
   return out;
-}
-
-// Full download: the manufacturer template, Communication cleared on unlinked objects; a linked
-// object keeps the template's flag.
-export function clearUnlinkedCommFlags(image: Buffer, linked: ReadonlySet<number>): Buffer {
-  return commFlags(image, linked, false);
-}
-
-// Group-address flash: the table the device holds, with only the Communication flag following the
-// links (set on linked objects, cleared on the rest), so every other byte ETS or an earlier download
-// put there stays as it is.
-export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>): Buffer {
-  return commFlags(deviceTable, linked, true);
 }

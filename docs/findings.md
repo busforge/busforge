@@ -297,12 +297,15 @@ against Busforge's own table. So after a GA flash the device's L3 is Busforge's,
 held before, which is the standing verify-versus-ETS gap ([verification.md](verification.md))
 reaching the GA path.
 
-**The System 7 twin is deliberately not fixed the same way.** The MV-0705 GA flash still
-writes only the address and association tables and keeps the device's L3, whose config byte
-carries a per-object `linked` bit, because the System B deadness has not been reproduced there:
-the case that would actually depend on that bit is a **transmit-only object with no read flag**,
-and extending the L3 rewrite without that evidence would be guessing. Proof state in
-[status.md](status.md), the open item in [roadmap.md](roadmap.md).
+**System 7 does the same, because ETS does.** Its L3 config byte carries a per-object `linked`
+bit, and ETS partial downloads after a link change rewrite L3 with the group tables on both LSM
+styles (MDT BE-02001.02 property-mapped: the whole table; ABB US/U 4.2 memory-mapped: only the
+changed config bytes; 2026-09-26). Where the application names the L3 segment, the System 7 GA
+flash reads the table the device holds, changes only each object's linked bit and writes
+L3+L1+L2 in one bracket. On a device holding the table its last full download wrote, that is
+ETS's bytes. The System B deadness itself has not been reproduced on System 7:
+that needs a **transmit-only object with no read flag**. Proof state in [status.md](status.md),
+the open item in [roadmap.md](roadmap.md).
 
 **The general lesson:** flash exactly the segments that diverge from the device, at segment
 granularity, and do not fall back to a full download for a change that only moves L1/L2/L3.
@@ -349,3 +352,23 @@ several refs with different defaults are placed, each keeps its own, since which
 is unknown. Which refs are placed is determined once, by walking the tree until the placement no
 longer changes, and every pass (the view and the image) reads the same placement. Among the
 bundled applications only the Jung changes.
+
+## 10. `ParameterByteOrder="LittleEndian"` reverses multi-byte parameters
+
+An application's `<Options>` may declare `ParameterByteOrder="LittleEndian"` (the ABB US/U 4.2
+does). ETS then writes a multi-byte parameter least significant byte first: a 16-bit value of 450
+lands as `c2 01`, not `01 c2` (2026-09-26 partial-download capture). Busforge applies it to
+byte-aligned integer parameters whose width is a whole number of bytes. A float, or a
+little-endian field that does not start on a byte boundary, is refused: no capture shows how ETS
+places one, and reversing it by guess would write a plausible wrong value.
+
+## 11. A choose on a union member nothing places takes its default branch
+
+Unions overlay several parameters on the same bytes; only the member an active branch places is
+meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated
+with that member's default, it took a branch that activated three com-objects (5, 6, 8); ETS
+leaves them out (2026-09-26 partial-download capture). So a choose on a union member that is not
+placed and has no stored value takes only its default branch. A stored value on such a member
+still counts; the capture shows only the case without one, so that half is an assumption. The
+rule is narrow on purpose: a broader variant (every unplaced ref) changed the image of another
+bundled application at its defaults, with no capture to justify it.

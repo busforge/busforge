@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import {
   buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
-  parseAppConfig, buildDeviceConfig, ProductError, withLinkedCommFlags,
+  parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
 
@@ -277,15 +277,3 @@ describe("a System B application, end to end", () => {
   });
 });
 
-describe("memory-mapped com-object table, Communication flag per link", () => {
-  // [count=3][2 B] then 4-byte entries, config byte third; bits other than 0x04 are the device's own
-  const table = Buffer.from([3, 0x00, 0x00, 0, 0, 0xdb, 0, 0, 0, 0xdf, 7, 0, 0, 0x5b, 0]);
-  test("the GA flash sets it on linked objects and clears it on the rest, touching nothing else", () => {
-    const out = withLinkedCommFlags(table, new Set([0]));
-    expect([out[5], out[9], out[13]]).toEqual([0xdf, 0xdb, 0x5b]);
-    expect([...out].filter((_, i) => ![5, 9, 13].includes(i))).toEqual([...table].filter((_, i) => ![5, 9, 13].includes(i)));
-  });
-  test("a link beyond the table is refused", () => {
-    expect(() => withLinkedCommFlags(table, new Set([3]))).toThrow("beyond the 3-entry");
-  });
-});

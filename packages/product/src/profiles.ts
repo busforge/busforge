@@ -875,8 +875,9 @@ export class System7Profile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
-    // Same com-object staleness gate as System B: an association onto an object the device's
-    // (kept-from-device) com-object table does not configure is a link to nothing.
+    // Same com-object staleness gate as System B: the flash keeps every config byte of the device's
+    // com-object table but the linked bit, so an association onto an object that table does not
+    // configure is a link to nothing.
     assertComObjectTableStable(this.requireCfg("group address flash"), ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
     // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
@@ -899,11 +900,11 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("GA_TABLE_TOO_LARGE",
         `the group tables would need address ${addr.length} B / association ${assoc.length} B, but this device reserves only ${maxAddr} B / ${maxAssoc} B${cap?.addressMaxEntries !== undefined ? ` (${cap.addressMaxEntries} group addresses)` : ""}. Remove links or assign fewer group addresses.`);
     }
-    // A memory-mapped device's com-object table carries a Communication flag per object that the full
-    // download clears on unlinked objects, as ETS does. Keeping the device's table unchanged would
-    // leave a newly linked object silent, so only that flag is set to follow the links in the table
-    // the device holds (withLinkedCommFlags), and the table is verified with the group tables.
-    const l3Seg = isMemoryMappedLsm(mask) ? this.memoryMappedComObjSegment() : null;
+    // Each object's L3 config byte carries a linked bit, and ETS rewrites it on a group-address
+    // download (comobjbuild.ts withLinkedCommFlags). Keeping the device's table would leave a newly
+    // linked object silent, so where the application names the table's segment only that bit is
+    // changed in the table the device holds, and the table is verified with the group tables.
+    const l3Seg = this.comObjSegment(mask);
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
@@ -931,17 +932,20 @@ export class System7Profile extends DeviceProfile {
     });
   }
 
-  // Where a memory-mapped device's com-object table sits and how long it is (its template's length).
-  // Refused when the application names no such segment or it carries no template: a newly linked
-  // object must not be left silent, and the table cannot be read blind.
-  private memoryMappedComObjSegment(): { address: number; size: number } {
+  // Where the device's com-object table sits, from the segment the application names. A memory-mapped
+  // device (MV-0700/0701) whose application names none is refused: its table cannot be located, and a
+  // newly linked object would be left without its linked bit. A property-mapped one (MV-0705) keeps
+  // the device's table untouched (null): its full download is refused without that segment, so the
+  // table there was written by another tool.
+  private comObjSegment(mask: string): { address: number; size: number } | null {
     const cfg = this.requireCfg("group address flash");
     const segId = cfg.groupTables.comObjectSegment;
     const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);
-    if (!seg || seg.data.length === 0) {
-      throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their Communication flag");
+    if (seg && seg.data.length > 0) return { address: seg.address, size: seg.data.length };
+    if (isMemoryMappedLsm(mask)) {
+      throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their link flag");
     }
-    return { address: seg.address, size: seg.data.length };
+    return null;
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -969,17 +973,18 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
-    // The com-object table is authored only for property-mapped devices: the visibility-gated active
-    // objects (imageComObjects) overlaid on the segment's static template, with the linked set from
-    // the group-address links (see comobjbuild.ts buildComObjectTableMv0705 and its two-capture proof).
-    const comObjectTable = propertyMapped
+    // The com-object table is authored on both LSM styles where the application names its segment:
+    // the visibility-gated active objects (imageComObjects) overlaid on the segment's static template,
+    // with the linked set from the group-address links (comobjbuild.ts buildComObjectTableMv0705;
+    // MDT BE-02001.02 and ABB US/U 4.2 ETS captures).
+    const comObjectTable = cfg.groupTables.comObjectSegment !== undefined
       ? { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) }
       : undefined;
     // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
     // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
     // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
     // the configuration is really there.
-    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, comObjectTable });
+    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
     return { plan, segments, imageBytes };

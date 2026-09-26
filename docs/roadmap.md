@@ -12,9 +12,9 @@ started until the capability it depends on is hardware-proven.
   parameter image against the device, and write only the diverging segments in one load bracket.
   Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
   part, and it needs a bus-behaviour proof, not just a byte match.
-- **Rewrite the com-object table on an MV-0705 group-address flash**, the way System B already
-  does. Blocked on evidence: it needs a **transmit-only** object with no read flag on a
-  property-mapped device, and until one is driven the change would be unproven either way
+- **Observe a transmit-only object after a System 7 group-address flash.** The flash rewrites the
+  com-object table byte-equal to ETS; the behaviour that depends on the link bit (an object with
+  no read flag transmitting after it is linked) has not been observed on the bus
   ([findings.md](findings.md) §7).
 - **Execute the declared memory-control-block steps on System B.** The System B download runs a
   fixed load bracket and ignores `LdCtrlWriteProp` to PID 27 and `LdCtrlLoadImageProp`, where ETS
