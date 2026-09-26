@@ -172,6 +172,8 @@ export interface AppConfig {
   appVersion: number;
   appNumber: number;
   appPeiType: number; // ApplicationProgram PeiType; declared to the device in the task-segment control on a full download
+  // <Options ParameterByteOrder>: the byte order of multi-byte parameter values in memory.
+  parameterByteOrder: "BigEndian" | "LittleEndian";
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -298,6 +300,12 @@ export function parseAppConfig(xml: string): AppConfig {
   // "DALI-Gateway KNX plus (DCA Version)" with "you need the ETS DCA App
   // installed"). Detect that explicit marker; the manufacturer's own description
   // becomes the hint we show next to the notice.
+  const optionsNode = firstByTag(staticNode ? kidsOf(staticNode) : [], "Options") ?? firstByTag(appKids, "Options");
+  const byteOrder = optionsNode ? attrsOf(optionsNode).ParameterByteOrder : undefined;
+  if (byteOrder !== undefined && byteOrder !== "BigEndian" && byteOrder !== "LittleEndian") {
+    throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `the application declares ParameterByteOrder "${byteOrder}", which Busforge cannot encode`);
+  }
+  const parameterByteOrder = byteOrder ?? "BigEndian";
   const desc = appAttrs.VisibleDescription ?? "";
   const dca = /\bDCA\b/i.test(appAttrs.Name ?? "") || /\bDCA\b/i.test(desc) ? { hint: desc.trim() } : undefined;
 
@@ -307,6 +315,7 @@ export function parseAppConfig(xml: string): AppConfig {
     appVersion: Number(appAttrs.ApplicationVersion ?? 0),
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     appPeiType: Number(appAttrs.PeiType ?? 0),
+    parameterByteOrder,
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,

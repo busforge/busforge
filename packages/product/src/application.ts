@@ -12,7 +12,9 @@ import { ProductError } from "./errors.ts";
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
 export type ParamBase = "Value" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
-export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; }
+// littleEndian: the application declares <Options ParameterByteOrder="LittleEndian">; a multi-byte
+// value is then stored least significant byte first.
+export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
 export interface Segment { id: string; lsm: number; size: number; data: Buffer; }
@@ -63,11 +65,15 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
 // offsets those builders write.
 // The MV-0705 absolute-segment build opts in: union branches are real parameter
 // memory there, and visibility resolution writes only the active branch.
+function paramType(app: AppConfig, t: CfgType): ParamType {
+  return { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}) };
+}
+
 export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean; instances?: ModuleInstance[] } = {}): AppModel {
   const types = new Map<string, ParamType>();
   for (const t of app.types.values()) {
     if (t.moduleDefId) continue;
-    types.set(t.id, { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed });
+    types.set(t.id, paramType(app, t));
   }
   const params = new Map<string, Param>();
   for (const p of app.params.values()) {
@@ -139,7 +145,7 @@ function materializeModuleParams(
       }
       const offset = param.offset === undefined ? undefined : param.offset + base;
       const t = app.types.get(param.typeId);
-      if (t && !types.has(t.id)) types.set(t.id, { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed });
+      if (t && !types.has(t.id)) types.set(t.id, paramType(app, t));
       params.set(paramId, { id: paramId, typeId: param.typeId, value: undefined, codeSegment: param.codeSegment, offset, bitOffset: param.bitOffset ?? 0 });
       refs.set(refId, { id: refId, paramId, value: undefined });
     }

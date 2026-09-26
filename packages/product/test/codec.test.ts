@@ -195,3 +195,32 @@ describe("multiple refs to one param", () => {
     expect(dec.get("R-b")).toBe("42");
   });
 });
+
+// An application may declare <Options ParameterByteOrder="LittleEndian"> (the ABB US/U 4.2 does):
+// ETS then writes a multi-byte parameter least significant byte first (its LED flash time 450 went
+// out as c2 01 in an ETS partial download, 2026-09-26).
+describe("little-endian parameter byte order", () => {
+  const le = { littleEndian: true };
+  const m = mk(
+    { Tu16: { sizeInBit: 16, ...le }, Ts16: { sizeInBit: 16, signed: true, ...le }, Tu24: { sizeInBit: 24, ...le }, Tu8: { sizeInBit: 8, ...le }, Tb4: { sizeInBit: 4, ...le } },
+    { Pu16: { type: "Tu16", offset: 0 }, Ps16: { type: "Ts16", offset: 2 }, Pu24: { type: "Tu24", offset: 4 }, Pu8: { type: "Tu8", offset: 7 }, Pb4: { type: "Tb4", offset: 8, bit: 4 } },
+  );
+  test("a byte-aligned multi-byte value is written least significant byte first", () => {
+    expect(buildHex(m, { "R-Pu16": "450" }).slice(0, 4)).toBe("c201");
+    expect(buildHex(m, { "R-Ps16": "-2" }).slice(4, 8)).toBe("feff");
+    expect(buildHex(m, { "R-Pu24": "66051" }).slice(8, 14)).toBe("030201");
+  });
+  test("single-byte and in-byte fields are unaffected, and every value reads back", () => {
+    expect(buildHex(m, { "R-Pu8": "171", "R-Pb4": "5" }).slice(14, 18)).toBe("ab05");
+    expect(roundtrip(m, { "R-Pu16": "450", "R-Ps16": "-2", "R-Pu24": "66051", "R-Pu8": "171", "R-Pb4": "5" })).toMatchObject({ "R-Pu16": "450", "R-Ps16": "-2", "R-Pu24": "66051", "R-Pu8": "171", "R-Pb4": "5" });
+  });
+  test("a field that crosses a byte boundary without being byte-aligned is refused: its little-endian layout is unknown", () => {
+    const x = mk({ Tu12: { sizeInBit: 12, ...le } }, { Pu12: { type: "Tu12", offset: 0, bit: 2 } });
+    expect(() => buildHex(x, { "R-Pu12": "5" })).toThrow(/little-endian/);
+  });
+  test("a float or an IP address is refused: no capture shows how ETS orders its bytes", () => {
+    const x = mk({ Tf: { base: "Float", sizeInBit: 16, ...le }, Tip: { base: "IPAddress", sizeInBit: 32, ...le } }, { Pf: { type: "Tf", offset: 0 }, Pip: { type: "Tip", offset: 4 } });
+    expect(() => buildHex(x, { "R-Pf": "1.5" })).toThrow(/little-endian/);
+    expect(() => buildHex(x, { "R-Pip": "203.0.113.11" })).toThrow(/little-endian/);
+  });
+});

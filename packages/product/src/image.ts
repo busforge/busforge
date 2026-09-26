@@ -123,12 +123,14 @@ export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "Numb
 export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string): boolean {
   if (!Number.isFinite(offset)) return false; // malformed memory (no/garbage Offset): no location to write
   if (type.base === "IPAddress") {
+    if (type.littleEndian) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `an IP address parameter in an application with little-endian parameters (offset ${offset}): its byte layout is not known`);
     const octets = parseIPv4(valStr);
     if (!octets || offset + 4 > img.length) return false; // malformed/short: own nothing
     for (let i = 0; i < 4; i++) img[offset + i] = octets[i]; // 4 bytes, big-endian (a.b.c.d)
     return true;
   }
   if (type.base === "Float") {
+    if (type.littleEndian) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `a float parameter in an application with little-endian parameters (offset ${offset}): its byte layout is not known`);
     const v = Number(valStr);
     if (!Number.isFinite(v)) return false;
     if (type.sizeInBit === 32) { if (offset + 4 <= img.length) { img.writeFloatBE(v, offset); return true; } return false; } // DPT 14 (IEEE-754 Single)
@@ -163,6 +165,14 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
       `parameter value ${v} does not fit its declared ${sizeInBit}-bit type (allowed ${min}..${max})`);
   }
   const field = v < 0 ? v + range : v; // two's complement WITHIN the field's width
+  if (type.littleEndian && span > 1) {
+    // Least significant byte first. Defined only for a field that fills whole bytes; how a
+    // little-endian application packs a field across a byte boundary is not known.
+    if (bit !== 0 || sizeInBit % 8 !== 0) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `a ${sizeInBit}-bit field at bit ${bit} (offset ${offset}) in an application with little-endian parameters: its byte layout is not known`);
+    let rest = field;
+    for (let i = 0; i < span; i++) { img[offset + i] = rest % 256; rest = Math.floor(rest / 256); }
+    return true;
+  }
 
   // Splice the field into the big-endian word it lives in. KNX numbers BitOffset from the MOST
   // significant bit (big-endian bit order), so a w-bit field at bit b inside a span of n bytes
@@ -187,6 +197,7 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
   }
   if (type.base === "Float") {
+    if (type.littleEndian) return undefined; // mirror encode's refusal
     if (type.sizeInBit === 32) return offset + 4 > img.length ? undefined : String(img.readFloatBE(offset));
     if (type.sizeInBit === 16) return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
     return undefined; // unknown float width: no codec (mirrors encode's refusal)
@@ -195,9 +206,16 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   const { sizeInBit } = type;
   const span = byteWidth(sizeInBit, bit);
   if (span > MAX_INT_BYTES || offset + span > img.length) return undefined; // mirror encode's refusal
+  const range = 2 ** sizeInBit;
+  if (type.littleEndian && span > 1) {
+    if (bit !== 0 || sizeInBit % 8 !== 0) return undefined; // mirror encode's refusal
+    let word = 0;
+    for (let i = span - 1; i >= 0; i--) word = word * 256 + img[offset + i];
+    const v = type.signed && word >= range / 2 ? word - range : word;
+    return String(v);
+  }
   // Exact inverse of encode's splice: lift the field out of its big-endian word, MSB-first.
   const shift = 2 ** (span * 8 - bit - sizeInBit);
-  const range = 2 ** sizeInBit;
   let word = 0;
   for (let i = 0; i < span; i++) word = word * 256 + img[offset + i];
   let v = Math.floor(word / shift) % range;
