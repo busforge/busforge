@@ -181,9 +181,9 @@ spec states why no behaviour is observable.
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
 The 2026-09-25 runs (MDT on build `c2cde85`, the Jung on `7c54b8d`, ABB and GVS again on
-`c935d5f` after their com-object table and union fixes; both channels, every capability,
-behaviour and the persistence step) and their evidence records are kept in
-[evidence/runs/2026-09-25/](evidence/runs/2026-09-25/). Persistence there means an observed reboot
+`c935d5f` after their com-object table and union fixes, the Jung again on `bf97acc` after the
+shared-ParameterRef fix; both channels, every capability, behaviour and the persistence step) and
+their evidence records are kept in [evidence/runs/](evidence/runs/). Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
 
