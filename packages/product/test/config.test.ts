@@ -586,3 +586,21 @@ describe("ParameterRefs of one parameter share its value", () => {
     expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
   });
 });
+
+test("a placement that never settles is refused, not picked", () => {
+  // A choose on R-B places its sibling R-A only while R-B reads 0; once R-A is placed, R-B reads
+  // R-A's default 1 and places nothing, which makes R-B read 0 again.
+  const xml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-41" ApplicationNumber="41" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Cycle" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-41_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-41_P-1" Name="P" ParameterType="M-TEST_A-41_PT-N" Text="P" Value="0"><Memory CodeSegment="M-TEST_A-41_RS-4" Offset="0" BitOffset="0" /></Parameter>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-41_P-1_R-A" RefId="M-TEST_A-41_P-1" Value="1" />
+      <ParameterRef Id="M-TEST_A-41_P-1_R-B" RefId="M-TEST_A-41_P-1" Value="0" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-41_PB-1" Name="m" Text="Main">
+      <choose ParamRefId="M-TEST_A-41_P-1_R-B"><when test="0"><ParameterRefRef RefId="M-TEST_A-41_P-1_R-A" /></when></choose>
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  expect(() => buildDeviceConfig(parseAppConfig(xml), new Map())).toThrow(/does not settle/);
+});

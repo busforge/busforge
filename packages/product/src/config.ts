@@ -252,8 +252,8 @@ export function buildDeviceConfig(
   // different defaults: which one ETS would use is not known.
   //
   // `placement` (per instance-scoped parameter id, the def ref ids placed in active branches) is
-  // fixed before the walks below and identical for all of them, so the UI and the image never read
-  // a parameter differently. It is found by walking the tree until it no longer changes.
+  // fixed before the walks below, and all of them read the same one. It is found by walking the tree
+  // until it no longer changes.
   let placement = new Map<string, Set<string>>();
   const refsOfParam = new Map<string, string[]>();
   for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
@@ -609,10 +609,16 @@ export function buildDeviceConfig(
   };
   const samePlacement = (a: Map<string, Set<string>>, b: Map<string, Set<string>>) =>
     a.size === b.size && [...a].every(([k, v]) => { const w = b.get(k); return !!w && w.size === v.size && [...v].every((x) => w.has(x)); });
-  for (let round = 0; ; round++) {
+  // A placement seen before without having settled is a cycle: the application admits no single
+  // reading of its shared values, and picking one of the cycle's states would be a guess.
+  const seen: Map<string, Set<string>>[] = [];
+  for (;;) {
     const next = findPlacement();
     if (samePlacement(next, placement)) break;
-    if (round >= 8) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
+    if (seen.some((p) => samePlacement(p, next))) {
+      throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
+    }
+    seen.push(placement);
     placement = next;
   }
 
