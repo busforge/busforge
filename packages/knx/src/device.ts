@@ -145,7 +145,7 @@ export class KnxDevice {
   // Next non-control (data) frame during Sync; skips the device's T_ACK.
   private rawNext(ms = 3000): Promise<Buffer> {
     return new Promise((res, rej) => {
-      const t = setTimeout(() => { this.rawNotify = null; rej(new Error("secure Sync: no response")); }, ms);
+      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, ms);
       const pump = () => {
         while (this.rawInbox?.length) {
           const f = this.rawInbox.shift()!;

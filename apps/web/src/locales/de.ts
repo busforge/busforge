@@ -219,6 +219,8 @@ const de: Messages = {
     RESTART_IGNORED: "Das Gerät hat nach der Neustart-Aufforderung weiter geantwortet, es ist also nicht neu gestartet. Ein Gerät, das nicht neu startet, schreibt seine Konfiguration nie in den Flash und käme beim nächsten Stromausfall unprogrammiert zurück. Deshalb wird das als Fehler gemeldet. Versuche es erneut; wenn es bleibt, starte das Gerät von Hand neu und wiederhole.",
     LOAD_STATE_UNEXPECTED: "Das Gerät hat während der Programmierung nicht den erwarteten Ladezustand erreicht. Das Flashen wurde vor dem Abschluss gestoppt.",
     SECURE_SYNC_FAILED: "Es konnte keine sichere Sitzung mit dem Gerät aufgebaut werden (Authentifizierung fehlgeschlagen). Prüfe, ob der richtige Tool-Key im Projekt liegt.",
+    SECURE_SYNC_NO_RESPONSE: "Das Gerät hat die Anfrage für die sichere Sitzung nicht beantwortet. Ein falscher Tool-Key im Projekt oder ein Gerät, das nicht im Secure-Modus ist, sieht genau so aus.",
+    SECURE_TABLES_UNSUPPORTED: "Dieses Gerät läuft mit KNX Data Secure. Das Schreiben seiner Gruppenadressen oder eine Inbetriebnahme braucht auch seine Sicherheitseinstellungen (Gruppenschlüssel, Sicherheitsflags), die Busforge noch nicht lädt. Deshalb lehnt Busforge ab, statt die Schlüssel auf falsche Gruppenadressen zeigen zu lassen. Parameter programmieren funktioniert weiterhin.",
     NO_FREE_IA: "In Bereich 1 ist keine freie physikalische Adresse verfügbar.",
     INTERNAL: "Etwas ist schiefgelaufen.",
   },

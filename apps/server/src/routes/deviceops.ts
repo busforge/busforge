@@ -4,8 +4,8 @@ import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
-import { getDeviceSecurity } from "../db/deviceSecurity.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
+import { getDeviceSecurity, isSecureDevice } from "../db/deviceSecurity.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import type { CommitFn, ProgressFn, TaskMeta } from "../taskqueue.ts";
@@ -76,12 +76,19 @@ function comObjectTableGuard(
   base: Map<string, string>,
   now: Map<string, string>,
   modules: ModuleInstance[],
+  secure: boolean,
 ): Response | null {
   if (!app) return null; // no cfg: the profile layer's requireCfg refuses downstream
   if (!comObjectTableChanges(app, base, now, modules).length) return null;
+  if (secure) return secureTablesRefusal();
   return classify(app).capabilities().fullDownload
     ? err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400)
     : err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
+}
+
+function secureTablesRefusal(): Response {
+  const e = secureTablesUnsupported();
+  return err(e.code, e.message, 400);
 }
 
 // On-bus device operations: read-back, secure identify, the two flash routes,
@@ -121,6 +128,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    // Addressing is the first step of commissioning, which a secure device cannot finish (see
+    // secureTablesUnsupported); readdressing it would leave it on a new address, never downloaded.
+    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const task = state.queue.submit(
@@ -200,6 +210,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
+    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
@@ -216,7 +227,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       return err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
-    const secure = secureCredsFor(state, id, deviceId);
     // The links carry the LIVE configuration's com-object numbers, so the profile checks them
     // against the com-object table the device was last programmed with (same gate as the
     // parameter flash). Read at the same pre-enqueue point, for the same TOCTOU reason.
@@ -225,14 +235,14 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaModules = getDeviceModules(db, id, deviceId);
     // If wiring these links would leave the device's kept-from-device com-object table stale,
     // a surgical GA flash cannot fix it: promote to a full download (or refuse). Pre-enqueue.
-    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules);
+    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, false);
     if (gaStale) return gaStale;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" }, dryGa, "before-flash-ga",
       (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
-          connection: conn, secure, dataDir: state.dataDir,
+          connection: conn, dataDir: state.dataDir,
           dryRun: dryGa, onProgress: progress,
         }), commit, () => {
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
@@ -248,6 +258,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // programmed baseline is adopted ONLY if that read-back verified.
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "download" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
+    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
     if (app && !classify(app).capabilities().fullDownload) {
@@ -259,12 +270,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const dlParams = getDeviceParams(db, id, deviceId);
     const dlModules = getDeviceModules(db, id, deviceId);
     const dryDl = url.searchParams.get("dry") === "1";
-    const secure = secureCredsFor(state, id, deviceId);
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" }, dryDl, "before-download",
       (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
-          connection: conn, secure, dataDir: state.dataDir,
+          connection: conn, dataDir: state.dataDir,
           params: dlParams, links: resolved.links, moduleInstances: dlModules,
           dryRun: dryDl, onProgress: progress,
         }), commit, () => {
@@ -299,7 +309,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // If these parameters change which com-objects the device has (or their flags), a surgical
     // parameter flash would leave its kept-from-device com-object table stale. Promote to a full
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
-    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules);
+    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined);
     if (flStale) return flStale;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" }, dryParams, "before-flash",

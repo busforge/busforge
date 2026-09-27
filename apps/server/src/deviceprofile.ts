@@ -85,6 +85,14 @@ function backupPersister(dataDir: string, projectId: string): PersistBackups {
 // persistence/transport scope (project dir, connection, secure credentials).
 type ServerScope = { projectId: string; dataDir: string; ia: string; connection: Connection; secure?: SecureCreds };
 
+// A Data Secure device keeps its group keys and per-object security flags in its security
+// interface object (type 17), and its group key table is indexed by address-table position. ETS
+// loads that object with every GA or full download; Busforge does not yet, so rewriting the group
+// tables or commissioning such a device would leave its keys pointing at the wrong addresses.
+export function secureTablesUnsupported(): ApiError {
+  return new ApiError("SECURE_TABLES_UNSUPPORTED", "this device runs KNX Data Secure; writing its group tables or commissioning it also needs its security object loaded (group keys, security flags), which busforge does not do yet", 400);
+}
+
 // Program a device\'s parameter segment from its stored configuration.
 export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
   const profile = classify(parseAppConfig(opts.appXml));
@@ -98,6 +106,7 @@ export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"
 // GA-flash growth guard depends on it. Without the cfg it would fall back to "no growth
 // beyond the current table" and refuse every legitimate add.
 export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & { appXml: string }): Promise<FlashResult> {
+  if (opts.secure) return Promise.reject(secureTablesUnsupported());
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: GaFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
@@ -107,6 +116,7 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
 // tables in one bracket. Unlike a parameter download this AUTHORS the com-object table, because a
 // virgin device has none to keep. Hardware-verified only where docs/commissioning.md says so.
 export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+  if (opts.secure) return Promise.reject(secureTablesUnsupported());
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: FullDownloadCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.downloadFull(dev, mask, ctx), opts.secure);

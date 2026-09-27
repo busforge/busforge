@@ -4,7 +4,7 @@ import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BA
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
-import { getDeviceSecurity } from "./db/deviceSecurity.ts";
+import { getDeviceSecurity, isSecureDevice } from "./db/deviceSecurity.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
 import { resolveDcaModule } from "./dca.ts";
 import { ApiError } from "./errors.ts";
@@ -118,7 +118,9 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // must say so rather than imply a verified "no changes".
   const caps = classify(app).capabilities();
   view.readbackSupport = { params: caps.readParams, links: caps.readLinks };
-  view.capabilities = caps;
+  // A secure device's group tables and commissioning also need its security object, which is not
+  // loaded yet (deviceprofile.ts secureTablesUnsupported), so the UI must not offer either.
+  view.capabilities = isSecureDevice(db, projectId, deviceId) ? { ...caps, flashLinks: false, fullDownload: false } : caps;
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI

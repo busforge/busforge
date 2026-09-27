@@ -191,12 +191,22 @@ through the session at all.
 ## The gap
 
 Both directions of the secure channel are proven on real hardware: a secure descriptor and property
-read, and a reversible secure property write. **What has never been driven is a parameter flash, a
-group-address flash or a full download over the secure channel** (see [status.md](status.md)).
-All three are wired and reachable, none is proven.
+read, and a reversible secure property write. **A parameter flash over the secure channel is wired
+and reachable, but has never been driven** (see [status.md](status.md)).
 
-Driving it needs a secure device a parameter flash can actually target, and two common classes of
-secure device cannot serve:
+**The GA flash and the full download refuse a secure device** (`SECURE_TABLES_UNSUPPORTED`). A
+Data Secure device keeps its group keys and per-object security flags in its security interface
+object (object type 17), and its group key table is indexed by the position of each group address
+in the address table. ETS loads that object with every GA or full download. Busforge does not yet,
+so rewriting the group tables would leave the keys pointing at the wrong addresses, and a full
+download would leave the old security configuration in place. The refusal covers addressing the device
+(the first step of commissioning) and a parameter change that would need the com-object table
+rewritten as well, instead of offering the usual full download; the device page offers none of them.
+"Secure device" here means a device with a stored tool key, the only kind Busforge talks to
+securely.
+
+Driving a secure parameter flash needs a secure device a parameter flash can actually target, and
+two common classes of secure device cannot serve:
 
 - **A secure IP interface has no parameter image.** It is a `DefaultProcedure` device with **zero
   parameter segments**, configured through properties rather than a parameter image, so a parameter
@@ -205,9 +215,20 @@ secure device cannot serve:
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
   restarts it, which drops the connection carrying the flash.
 
-So a secure parameter or group-address flash counts as supported only once it is byte-verified on a
-**suitable** secure device: a sensor or actuator that has a parameter image and is not the interface
-the flash runs over.
+**The bench has a suitable device.** The Jung 400021SE (`M-0004_A-7072-21`) declares
+`IsSecureEnabled="true"` in its application program, has a parameter image and is not the
+interface. In both ETS captures of it (`tools/fixtures/jung-400021se-ets-fulldownload.log`, the
+`A_FunctionPropertyExtState_Read` of object type 17, PID 51, near the start) ETS reads its security
+mode and the device answers `00`, security off: it is secure-capable and currently runs plain.
+Switching it to secure mode needs its factory key (FDSK, on the device certificate) and takes it off
+the plain bench runs until a master reset. Jung's product documentation describes one (start in
+safe state with the programming button held, then hold it longer than 5 s; this restores the FDSK
+and wipes the configuration and address); it has not been tried on the bench. That is a user
+decision, not yet taken.
+
+So a secure parameter flash counts as supported only once it is byte-verified on a **suitable**
+secure device, and the GA flash and full download only once the security object download exists
+and is checked against an ETS capture of the same device.
 
 **Provisioning from a factory key is not built.** Writing a tool key into a factory device is
 hard to reverse (a wrong or half-completed write locks the device out, recoverable only through the

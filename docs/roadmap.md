@@ -107,9 +107,13 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Full secure parameter and group-address flash.** Both directions of the secure channel are
-  hardware-proven; the composition with the load procedure is not, and it needs a secure device
-  that actually has a parameter image (not a gateway).
+- **Secure parameter flash.** Both directions of the secure channel are hardware-proven; the
+  composition with the load procedure is not. The bench Jung 400021SE is secure-capable and could
+  serve once it is switched to secure mode (a user decision, see [knx-secure.md](knx-secure.md#the-gap)).
+- **Security object download.** The GA flash and the full download refuse a secure device
+  (`SECURE_TABLES_UNSUPPORTED`) until Busforge loads the security interface object (group key
+  table, per-object security flags) the way ETS does, checked against an ETS capture of the Jung
+  secured by ETS. Needs group keys imported from the project as well.
 - **FDSK provisioning** (taking a factory secure device into a project) is designed, not built.
 - **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
   store's `manual` and `provisioned` sources are currently unreachable.

@@ -193,6 +193,16 @@ describe("KnxDevice request machine (frame level)", () => {
     const acksAfterReplay = tun.sent.filter((f) => f.toString("hex") === ackForSeq5).length;
     expect(acksAfterReplay).toBe(acksAfterFirst + 1);
   });
+
+  // A secure device drops a Sync request it cannot authenticate without answering, so silence is
+  // what a wrong tool key (or a device not in secure mode) looks like; the error has to say so.
+  test("secure: a Sync nobody answers fails with a coded error", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst: DEV, serial: Buffer.alloc(6, 2) }));
+    tun.handler = () => { /* silence */ };
+    const err = await dev.connect().catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("SECURE_SYNC_NO_RESPONSE");
+  }, 10_000); // the Sync waits 3 s for an answer
 });
 
 // restart() is the step that makes a download STICK, and the only one whose success is inferred

@@ -60,6 +60,11 @@ export function countSealedToolKeys(db: Database): number {
   return (db.query("SELECT COUNT(*) AS n FROM device_security").get() as { n: number }).n;
 }
 
+// Whether one device has a stored tool key, WITHOUT touching key material.
+export function isSecureDevice(db: Database, projectId: string, deviceId: string): boolean {
+  return db.query("SELECT 1 FROM device_security WHERE project_id = ? AND device_id = ?").get(projectId, deviceId) !== null;
+}
+
 // Which devices in a project are secure, WITHOUT touching key material. For the UI
 // (badge a device as secure) and to know whether a secure session is needed.
 export function listSecureDevices(db: Database, projectId: string): { deviceId: string; source: SecuritySource }[] {

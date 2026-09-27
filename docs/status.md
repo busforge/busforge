@@ -49,7 +49,8 @@ All hardware verification to date is on **twisted pair**.
 | Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Reads auto-select it when a range exceeds `0xFFFF`. Writes use it, confirmed chunk by chunk, on every device that declares `PID_MAX_APDU_LENGTH`, as ETS does ([device-memory-model.md](device-memory-model.md)). An address past 24 bits is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
 | KNX Data Secure: read (descriptor, property, serial) | yes | hardware | Own AES-128-CCM; tool keys come from the project file. |
 | KNX Data Secure: write (property write) | yes | hardware | Reversible property write on a real secure device. |
-| KNX Data Secure: parameter flash, GA flash or full download over the secure channel | wired | not proven | All three routes pass the device's secure credentials into the session, so the paths are reachable, but the composition (secure session + load procedure) has never been driven; the only secure devices available are gateways with no parameter image. |
+| KNX Data Secure: parameter flash over the secure channel | wired | not proven | The route passes the device's secure credentials into the session, but the composition (secure session + load procedure) has never been driven. The bench Jung 400021SE is secure-capable (its application declares `IsSecureEnabled`) but runs in plain mode; switching it to secure is a pending user decision ([knx-secure.md](knx-secure.md#the-gap)). |
+| KNX Data Secure: GA flash or full download | no | refused | Both also need the device's security object loaded (group key table indexed by address-table position, per-object security flags), which Busforge does not do, so both refuse a device with a stored tool key (`SECURE_TABLES_UNSUPPORTED`), and so do addressing it (the first step of commissioning) and a parameter change that would need the com-object table rewritten. The device page offers none of them. |
 | KNX Data Secure: FDSK provisioning | no | not implemented | |
 | KNX IP Secure (secure tunnelling transport) | no | not implemented | Out of scope. |
 | Transport: KNXnet/IP tunnelling (UDP and TCP), own implementation | yes | hardware | Connect, tunnel, management, heartbeat and closure. |
@@ -86,7 +87,7 @@ value.
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | not proven | not proven |
 | Sensor (M-0008) | MV-0705 | absolute | hardware | refused by policy (see below) | not proven | not proven | not proven |
 | Theben sensor (M-0048, MV-0705 product) | MV-0705 | absolute | hardware | hardware | not proven | not proven | not proven |
-| MDT IP interfaces (KNX Data Secure) | opaque (`0xFFFF` to plain reads) | none exposed | hardware, secure identify only | not proven | not proven | not proven | not proven |
+| MDT IP interfaces (KNX Data Secure) | opaque (`0xFFFF` to plain reads) | none exposed | hardware, secure identify only | not proven | refused (`SECURE_TABLES_UNSUPPORTED`) | refused (`SECURE_TABLES_UNSUPPORTED`) | not proven |
 
 Notes attached to that table:
 
@@ -254,8 +255,9 @@ report a device family as working on the strength of a passing test suite.
   **transmit-only object**, the case that depends on the linked bit, has not been observed on the
   bus. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.
-- **Full parameter or group-address flash over KNX Data Secure** has never been driven. Both
-  directions of the secure channel are hardware-proven on their own; the composition is not.
+- **A parameter flash over KNX Data Secure** has never been driven. Both directions of the secure
+  channel are hardware-proven on their own; the composition is not. The GA flash and the full
+  download refuse a secure device until the security object is loaded.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.

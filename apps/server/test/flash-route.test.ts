@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
+import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import type { FlashResult } from "../src/deviceprofile.ts";
 
 // Route-level fake-green lock for the flash endpoints: the baseline (device_param_base /
@@ -592,5 +593,93 @@ describe("programming jobs outlive the request that submitted them", () => {
     // Interrupted is final: the new process accepts a fresh write and never re-runs the old one.
     expect(() => after.queue.refuseConcurrentWrite(projectId, deviceId)).not.toThrow();
     expect(writes).toBe(1);
+  });
+});
+
+// A device with a stored tool key is driven over Data Secure. Its group key table is indexed by
+// address-table position and lives in the security object, which neither the GA flash nor the full
+// download loads yet, so both refuse; the parameter flash touches no table and stays available.
+describe("a Data Secure device: table writes refused until its security object is loaded", () => {
+  const readReal = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f))).toString("utf8");
+  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz");
+  const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30";
+  async function secureProject(state: AppState) {
+    const p = await projectWithApp(state, m0162);
+    putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "1", source: "import" }], state.masterKey);
+    return p;
+  }
+
+  for (const route of ["flash-ga", "download"] as const) {
+    for (const dry of [false, true]) {
+      test(`${route}${dry ? " (dry run)" : ""} -> SECURE_TABLES_UNSUPPORTED, the profile is never reached`, async () => {
+        const state = freshState();
+        const { projectId, deviceId } = await secureProject(state);
+        gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+        downloadImpl = async () => { throw new Error("the full download must not be reached"); };
+        try {
+          const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}${dry ? "?dry=1" : ""}`))!;
+          expect(res.status).toBe(400);
+          expect(((await res.json()) as any).error.code).toBe("SECURE_TABLES_UNSUPPORTED");
+        } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
+      });
+    }
+  }
+
+  test("a parameter flash still reaches the profile, with the device's credentials", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    let creds: unknown;
+    paramFlashImpl = async (o) => { creds = o.secure; return flashed(true); };
+    try { await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`)); }
+    finally { paramFlashImpl = realParamFlash; }
+    expect(creds).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) });
+  });
+
+  test("a parameter change that needs the com-object table rewritten is refused, not promoted to a download", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error.code).toBe("SECURE_TABLES_UNSUPPORTED");
+    } finally { paramFlashImpl = realParamFlash; }
+  });
+});
+
+describe("a Data Secure device: addressing, profile layer and device view", () => {
+  const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
+  const secureProject = async (state: AppState) => {
+    const p = await projectWithApp(state, m0162);
+    putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "1", source: "import" }], state.masterKey);
+    return p;
+  };
+
+  test("assign-ia refuses before any bus access", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/assign-ia`))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("SECURE_TABLES_UNSUPPORTED");
+  });
+
+  test("the profile layer refuses secure credentials itself, whoever calls it", async () => {
+    const secure = { toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) };
+    const conn = { id: "c", name: "c", type: "ip", host: "127.0.0.1", port: 1 } as any;
+    const base = { projectId: "p", deviceId: "d", ia: "1.1.1", appXml: m0162, connection: conn, secure, dataDir: "/nonexistent", params: new Map(), moduleInstances: [], links: [] } as any;
+    for (const run of [() => realGaFlash({ ...base, baseParams: new Map() }), () => realDownload(base)]) {
+      const e = await run().catch((x: unknown) => x);
+      expect((e as { code?: string }).code).toBe("SECURE_TABLES_UNSUPPORTED");
+    }
+  });
+
+  test("the device view offers neither a GA flash nor commissioning", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(view.capabilities.flashParams).toBe(true);
+    expect(view.capabilities.flashLinks).toBe(false);
+    expect(view.capabilities.fullDownload).toBe(false);
   });
 });
