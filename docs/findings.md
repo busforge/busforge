@@ -428,4 +428,8 @@ flash reads the tables at their new length and writes only the differing bytes; 
 property-mapped one writes whole tables, the individual address included (ETS skips those two
 bytes; they hold the same value). The parameter
 flash on System 7 already wrote only owned bytes that differ. `tools/etsdiff.test.ts` holds the
-System B parameter bytes against the captures, address and value.
+System B parameter bytes against the captures, address and value. All four bench devices pass both
+smoke channels with persistence on the build that introduced these rules (`50d6b80`, 2026-09-27,
+[evidence/runs/2026-09-27](evidence/runs/2026-09-27/)); the GVS parameter flash took about 77 s
+instead of 96-116 s. The byte-level ETS comparison of the partial downloads lives in tests only; no
+reference evidence record is emitted for it yet.

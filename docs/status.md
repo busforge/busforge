@@ -197,10 +197,11 @@ spec states why no behaviour is observable.
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
 All four devices pass both channels, every capability, their behaviour and the persistence step
-on build `1de6231` (2026-09-26 evening), which carries the ETS-matched group-address flash, per-bit
-parameter ownership and the confirmed extended write. Those runs, and the earlier ones they
-supersede (2026-09-25: MDT `c2cde85`, Jung `7c54b8d`, ABB and GVS `c935d5f`; Jung `bf97acc` on
-2026-09-26), are kept with their evidence records in evidence/runs/. Persistence there means an observed reboot
+on build `50d6b80` (2026-09-27), which writes partial downloads the way ETS does (System B owned
+bytes with the idle unions' defaults, memory-mapped System 7 differing table bytes only) on top of
+the ETS-matched group-address flash, per-bit parameter ownership and the confirmed extended write.
+Those runs, and the earlier ones they supersede (2026-09-25: MDT `c2cde85`, Jung `7c54b8d`, ABB and
+GVS `c935d5f`; 2026-09-26: Jung `bf97acc`, all four on `1de6231`), are kept with their evidence records in evidence/runs/. Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
 
