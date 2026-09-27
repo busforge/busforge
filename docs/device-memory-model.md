@@ -440,7 +440,13 @@ trusted.
 
 ### Chunking and internal read boundaries
 
-`KnxDevice.memRead` reads a segment in chunks (12 bytes by default on the classic path).
+`KnxDevice.memRead` reads a segment in chunks. On the classic path a chunk is 12 bytes, the most a
+standard frame carries; a device that declares `PID_MAX_APDU_LENGTH` gets requests up to that length
+minus the 3 octets of APCI and address, capped at 48 bytes, the size the extended reads already
+carry over the bench's USB interface and the house's KNX IP interface (the path has its own limit,
+which the device's property does not know). The OpenKNX RaumController declares 254 and is read in
+48-byte chunks, which cut its 21.6 KB parameter read over the house interface from 241 s to about
+100 s.
 Some BIM M112 devices have **internal read boundaries**: they refuse any single
 `A_Memory_Read` that spans the boundary and answer with an empty data response. Every byte
 is individually readable; only a request that straddles the line is refused.
@@ -491,7 +497,10 @@ of the four bench devices show exactly this split: the GVS AMMA (55) and the Jun
 are written extended only, the ABB US/U 4.2 and the MDT BE-02001.02 (property absent) classic
 only. The difference matters: the classic write is acknowledged by the transport layer before
 the firmware has stored it, and after a segment reallocation the GVS AMMA was overtaken by the
-next chunk ([findings.md](findings.md) §13).
+next chunk ([findings.md](findings.md) §13). A confirmed write is **not read back before the
+restart**, whatever the caller asks: ETS reads nothing back, and on thelsing/OpenKNX a read returns
+the flash while the write still sits in a RAM buffer ([findings.md](findings.md) §16). The
+operation's read-back after the restart is the proof.
 
 **Chunk sizes differ by direction**, and the reason is the transport, not the service. Over
 a KNX-USB HID interface a request is a single report with no fragmentation. A read request

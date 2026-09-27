@@ -459,3 +459,38 @@ half-open link, since TCP has no heartbeat and a socket write does not fail on a
 silent drop now shows as `DEVICE_NOT_ANSWERING` after the device's retries, and a group or
 broadcast send reports success into nothing. Waiting for the interface's `L_Data.con` (matched by
 destination and TPDU, not by sequence) would restore both; it is on [roadmap.md](roadmap.md).
+
+## 16. OpenKNX reads its flash, not what was just written
+
+The first surgical parameter flash on an OpenKNX device (the house's RaumController 1.1.x,
+one byte: a channel's start delay 1 to 2 s) stopped with `FLASH_VERIFY_MISMATCH`: the
+confirmed `A_MemoryExtended_Write` of the 73 owned bytes was answered with success for every chunk,
+and the read straight after it still showed the old value in the last byte. About a minute later a
+read showed the new one. The flash had stopped before LoadCompleted, so the parameter load-state
+machine stayed Loading and the application did not run.
+
+The firmware explains it (OpenKNX/knx and thelsing/knx `master`, same logic): `BauSystemB`
+answers both memory write services right after `Memory::writeMemory`, which on a flash platform
+copies the bytes into a RAM buffer of one erase block and returns. The buffer reaches the flash only
+on a commit (from the restart request, "flush the EEPROM before resetting") or when a later write
+moves to another erase block. Both memory read services read the flash itself through
+`toAbsolute` (XIP on the RP2040). So any read-back before the restart can show old bytes. The
+classic write's verify mode never caught it because its echo is a copy of the request data, not a
+read.
+
+What changed:
+
+- **No read-back of a confirmed write before the restart**, as ETS does it: the per-chunk return
+  code and the read-back after the restart are the proof. A full download on this device would have
+  hit the same wall, since its echo requests had turned into read-backs on the confirmed path.
+- **A flash never calls a device "unchanged" while a load-state machine it brackets is not LOADED.**
+  The first recovery attempt reported `unchanged` with LSM 4 still Loading; a System B flash now
+  runs its bracket to complete the load, a System 7 flash refuses (`DEVICE_LOAD_INCOMPLETE`).
+- **Read-back relevance comes from the device's values** (see [verification.md](verification.md)).
+  The Busforge project held defaults for this device while the device held its real sensors and
+  channels; before the fix, reverting to the device and flashing would have reset 13 bytes.
+
+Recovery that day: the device held its original value again after a second write had been
+committed, so a LoadCompleted on LSM 4 and an A_Restart brought it back; all four load-state
+machines LOADED, parameter drift zero, and its presence object answered a group read.
+

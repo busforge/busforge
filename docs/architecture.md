@@ -235,7 +235,13 @@ every device model):
    surgical paths always hand over the segments they are about to overwrite; a full download
    hands over nothing unless its opt-in pre-unload backup is asked for (see
    [load-procedures.md](load-procedures.md)).
-8. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device.
+8. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device, but
+   only when every load-state machine the operation brackets is LOADED. Equal bytes under a machine
+   left Loading by an interrupted write are not a running configuration: a System B flash, whose
+   bracket always covers its load-state machines, runs anyway and completes the load; a System 7
+   flash, whose plan brackets only the segments or tables it changes, refuses with
+   `DEVICE_LOAD_INCOMPLETE` whenever one of its load-state machines is not LOADED, diff or not, and
+   points at a full download.
 9. **Dry run** returns the diff and stops.
 10. **Write**, then reconnect after the device's restart, then **read the segment back** and compare
     it against the intended bytes. The result type is a discriminated union: a `flashed` result

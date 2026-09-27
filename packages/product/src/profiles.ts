@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags } from "./como
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -109,6 +109,39 @@ function foldDeviceValues(
   }
 }
 
+// Which refs a read-back records drift for: the ones the project's configuration shows, plus the
+// ones the DEVICE's configuration shows. Visibility depends on parameter values (a sensor type set
+// to "none" hides every setting of that sensor), so relevance from the project alone skips exactly
+// the settings the device has and the project lacks, and a later flash would silently reset them.
+// The device's configuration is found by overlaying its values for every parameter active in the
+// image (hidden Merker included, since they gate chooses too) on the project, repeated until the
+// active set is stable; one that never settles is refused rather than half-read.
+function deviceRelevantRefs(
+  deviceVals: Map<string, string>,
+  liveParams: Map<string, string>,
+  configFor?: (values: Map<string, string>) => { shown: Set<string>; active: Set<string> },
+): Set<string> | undefined {
+  if (!configFor) return undefined;
+  const project = configFor(liveParams);
+  let cur = project;
+  for (let i = 0; i < 16; i++) {
+    const effective = new Map(liveParams);
+    for (const [refId, v] of deviceVals) if (cur.active.has(refId)) effective.set(refId, v);
+    const next = configFor(effective);
+    if (next.active.size === cur.active.size && [...next.active].every((r) => cur.active.has(r))) {
+      return new Set([...project.shown, ...next.shown]);
+    }
+    cur = next;
+  }
+  throw new ProductError("READBACK_UNSTABLE", "the parameters active under the device's configuration never settled; its state cannot be read back reliably");
+}
+
+// Whether every listed load-state machine is LOADED.
+async function allLoaded(dev: KnxDevice, objs: number[], memMapped = false): Promise<boolean> {
+  for (const obj of objs) if ((await lsmState(dev, obj, memMapped)) !== STATE.LOADED) return false;
+  return true;
+}
+
 const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
@@ -191,6 +224,11 @@ interface FlashOp {
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
   write: () => Promise<void>;                     // the model-specific download (device restarts after)
   verify: () => Promise<boolean>;                 // post-restart read-back comparison
+  // A load-state machine this operation concerns is not LOADED (an interrupted earlier write left it
+  // Loading, say), so equal bytes are no proof the device runs them. "rewrite": the bracket always
+  // covers it, so run it even without a diff and let it finish the load. "refuse": the plan brackets
+  // only what differs and could leave it as it is, with or without a diff.
+  loadIncomplete?: "rewrite" | "refuse";
 }
 
 // The one flash sequence every memory model runs: persist the backups, short-circuit an
@@ -207,7 +245,10 @@ async function runFlashOp(
   // write; the hook is injected (the server stores files on disk) so this layer stays
   // filesystem-free and the ordering is testable with a plain recording stub.
   const backup = ctx.persistBackups(op.backups, op.backup);
-  if (op.diffBytes === 0) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
+  if (op.loadIncomplete === "refuse") {
+    throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
+  }
+  if (op.diffBytes === 0 && !op.loadIncomplete) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup };
   await op.write();
   await reconnectAfterRestart(dev);
@@ -233,8 +274,10 @@ export interface ReadStateCtx {
   // the fake-green this whole layer exists to prevent. Omitted => same as live (import time).
   baseParams?: Map<string, string>;
   moduleInstances?: ModuleInstance[];
-  // Drift is only recorded for refs in this set (the config view's keys); see readState.
-  relevantRefs?: Set<string>;
+  // The config view for a given set of values: the param refs it shows, and the refs active in the
+  // image. Drift is recorded only for refs the project's or the device's configuration shows
+  // (deviceRelevantRefs); omitted => every decodable ref.
+  configFor?: (values: Map<string, string>) => { shown: Set<string>; active: Set<string> };
   onProgress?: ProgressFn;
   signal?: AbortSignal;
 }
@@ -587,12 +630,13 @@ export class SystemBProfile extends DeviceProfile {
       // segment at address 0, and reading there would decode whatever bytes happen to live at the
       // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
       const img = await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
+      const deviceVals = decodeParameterImage(model, LSM, img);
       foldDeviceValues(
         paramBase,
-        decodeParameterImage(model, LSM, img),
+        deviceVals,
         decodeParameterImage(model, LSM, target.bytes),
         ctx.liveParams,
-        ctx.relevantRefs,
+        deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor),
       );
       paramsRead = true;
     }
@@ -645,9 +689,11 @@ export class SystemBProfile extends DeviceProfile {
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
+    const loaded = await allLoaded(dev, [LSM]);
     return runFlashOp(dev, mask, ctx, {
       imageBytes: image.length,
       diffBytes,
+      ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
@@ -714,9 +760,11 @@ export class SystemBProfile extends DeviceProfile {
     // is captured here and re-checked after the write.
     const appBefore = await lsmState(dev, OBJ.APP_PROGRAM);
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
+    const tablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]);
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + comObj.length,
       diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj), // 0 iff all three match
+      ...(tablesLoaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: prefix,
       backups: [
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
@@ -800,17 +848,14 @@ export class System7Profile extends DeviceProfile {
     // memRead reports progress in BYTES; accumulate across segments for a whole-read bar.
     const totalBytes = absoluteTargets.reduce((n, t) => n + t.size, 0);
     let doneBytes = 0;
+    const deviceVals = new Map<string, string>(), projectVals = new Map<string, string>();
     for (const t of absoluteTargets) {
       const deviceImg = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("params", doneBytes + d, totalBytes), ctx.signal);
-      foldDeviceValues(
-        paramBase,
-        decodeAbsoluteImage(absModel, t.id, deviceImg),
-        decodeAbsoluteImage(absModel, t.id, t.bytes),
-        ctx.liveParams,
-        ctx.relevantRefs,
-      );
+      for (const [r, v] of decodeAbsoluteImage(absModel, t.id, deviceImg)) deviceVals.set(r, v);
+      for (const [r, v] of decodeAbsoluteImage(absModel, t.id, t.bytes)) projectVals.set(r, v);
       doneBytes += t.size;
     }
+    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor));
 
     if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
     ctx.onProgress?.("links", 0, 2);
@@ -851,9 +896,18 @@ export class System7Profile extends DeviceProfile {
     if (unplaceable.length) {
       throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
     }
+    // The load-state machines the parameter segments are declared under (LdCtrlAbsSegment).
+    const targetAddrs = new Set(targets.map((t) => t.address));
+    const declared = proc.blocks.flatMap((b) => b.steps).filter((st) => st.verb === "LdCtrlAbsSegment" && targetAddrs.has(stepAddress(st) ?? -1));
+    const paramLsms = [...new Set(declared.flatMap((st) => { const l = lsmIdx(st); return l === undefined ? [] : [l]; }))];
+    if (declared.length < targetAddrs.size || paramLsms.length === 0) {
+      throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", "a parameter segment is not declared with its load-state machine in the device's load procedure; its load state cannot be checked, so refusing to flash");
+    }
+    const paramsLoaded = await allLoaded(dev, paramLsms, isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
       imageBytes: totalBytes,
       diffBytes: changedBytes,
+      ...(paramsLoaded ? {} : { loadIncomplete: "refuse" as const }),
       backup: `${ctx.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`,
       backups: targets.map((t) => ({ file: `${ctx.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`, bytes: current.get(t.id)! })),
       write: async () => {
@@ -920,8 +974,10 @@ export class System7Profile extends DeviceProfile {
       comObj: curL3 ?? undefined,
     } : undefined;
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
+    const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + (l3?.bytes.length ?? 0),
+      ...(gaTablesLoaded ? {} : { loadIncomplete: "refuse" as const }),
       diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0), // 0 iff every table matches
       backup: prefix,
       backups: [

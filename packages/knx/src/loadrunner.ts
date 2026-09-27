@@ -87,8 +87,9 @@ export interface RunOpts {
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
   // Which write service the device takes is settled before the first load-state event, so a device
   // that does not answer the question is refused before anything is unloaded. A device written with
-  // the confirmed extended write is never put into verify mode: ETS does not do it on such devices,
-  // and the extended write's own read-back proves what was stored.
+  // the confirmed extended write is never put into verify mode, and is not read back before the
+  // restart: ETS does neither on such devices, and on thelsing/OpenKNX a read before the commit
+  // returns the old bytes. The operation's read-back after the restart proves what was stored.
   const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeMem" || s.op === "verifyMode");
   let confirmed: boolean | undefined;
   for (let i = 0; i < plan.length; i++) {

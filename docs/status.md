@@ -145,8 +145,13 @@ Notes attached to that table:
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
   hardware proofs of this device did not cover that byte.
 
-- **OpenKNX surgical flashes: never driven, no failure observed.** Earlier versions of this page
-  called them unsafe. No surgical write was ever attempted on this device; the label came from
+- **OpenKNX surgical flashes: one attempt, stopped by Busforge's own check, fixed, not yet proven.**
+  The first surgical parameter flash (house unit 1.1.x, one byte) stopped before
+  LoadCompleted because Busforge read the bytes back before the restart, when this firmware still
+  returns the old flash contents ([findings.md](findings.md) §16). The device was recovered to its
+  original configuration the same day. The read-back now waits for the restart, as ETS's does not
+  exist at all; the corrected flash has not run on the device yet. Earlier versions of this page
+  called them unsafe; the label came from
   two failures of the *full download*, both explained since: a module-state region poisoned by
   earlier bench experiments (recovered by `erase openknx`) and a com-object table sized to the
   active instead of the declared objects (fixed in `a7b179c`; the group-address flash now builds

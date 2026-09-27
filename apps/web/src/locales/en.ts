@@ -218,6 +218,8 @@ const en = {
     FLASH_UNVERIFIED: "The device did not confirm what was written to it, so the programming is NOT considered done. Nothing has been marked as programmed; run it again.",
     RESTART_IGNORED: "The device kept answering after it was told to restart, so it did not reboot. A device that does not reboot never writes its configuration to flash and would come back unprogrammed at the next power cut, so this is reported as a failure. Try again; if it persists, restart the device by hand and re-run.",
     LOAD_STATE_UNEXPECTED: "The device did not reach the expected load state during programming. The flash was stopped before completing.",
+    DEVICE_LOAD_INCOMPLETE: "The device already holds these bytes, but the part of it they belong to is not in the loaded state (an earlier write was interrupted), so it is not running them. This flash writes only what differs and cannot finish that; run a full download.",
+    READBACK_UNSTABLE: "The device's configuration could not be read back reliably: which of its settings are in use never settled. Nothing was recorded.",
     SECURE_SYNC_FAILED: "Could not establish a secure session with the device (authentication failed). Check that the correct tool key is in the project.",
     SECURE_SYNC_NO_RESPONSE: "The device did not answer the secure session request. A wrong tool key in the project, or a device that is not in secure mode, looks exactly like this.",
     SECURE_TABLES_UNSUPPORTED: "This device runs KNX Data Secure. Writing its group addresses or commissioning it also needs its security settings (group keys, security flags) loaded, which Busforge does not do yet, so it refuses rather than leave the keys pointing at the wrong group addresses. Parameter programming still works.",

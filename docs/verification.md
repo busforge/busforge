@@ -44,6 +44,16 @@ It comes in two strengths, and both are honest hardware evidence:
 - a **full flash round-trip**: apply a real change over the bus and restore it, byte-checked
   each way.
 
+A read-back records a device value as the programmed baseline only for the parameters the
+**device's** configuration shows. Visibility follows parameter values (a sensor type set to "none"
+hides that sensor's settings), so relevance taken from the project alone skipped exactly the
+settings a device has and its project lacks: after "revert to the device", a flash would have reset
+them without any visible change (13 bytes on the house's OpenKNX RaumController). The
+read-back therefore overlays the device's values for every parameter active in the image (hidden
+Merker included) on the project and recomputes until the active set is stable, then records drift
+for what the project's or the device's configuration shows. It refuses (`READBACK_UNSTABLE`) if the
+set never settles.
+
 Ownership is per bit: a sub-byte parameter owns only its own bits of the byte it shares, so a
 parameter flash carries the byte's other bits over from the device and the read-back compares
 only the owned ones ([findings.md](findings.md) §12). When a union switches branch, the other bits

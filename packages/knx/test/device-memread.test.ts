@@ -63,3 +63,51 @@ describe("memRead handles device read boundaries without misaligning", () => {
     expect(dev.memRead(0x2008, 4, 12)).rejects.toThrow(/refused byte/);
   });
 });
+
+// A device that declares PID_MAX_APDU_LENGTH (or not) and records the byte count of every
+// MemoryRead it is sent. Unimplemented properties answer with element count 0.
+class ApduTransport implements KnxTransport {
+  assignedIa = 0x0001;
+  onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
+  onClosed: ((reason: string) => void) | null = null;
+  readonly device = 0x110b;
+  counts: number[] = [];
+  constructor(private maxApdu: number | null) {}
+  async connect() {}
+  async disconnect() {}
+  async sendCemi(cemi: Buffer): Promise<void> {
+    const p = parseApdu(cemi.subarray(9));
+    if (p.control) return;
+    this.onCemi?.(this.device, this.assignedIa, tpAck(p.seq), false);
+    if (p.apci === APCI.PROPERTY_READ) {
+      const v = this.maxApdu === null ? [] : [this.maxApdu >> 8, this.maxApdu & 0xff];
+      const tail = Buffer.from([p.data[0], p.data[1], (v.length ? 1 : 0) << 4, 1, ...v]);
+      this.onCemi?.(this.device, this.assignedIa, apdu(p.seq, APCI.PROPERTY_RESPONSE, tail), false);
+      return;
+    }
+    if ((p.apci & 0x3c0) !== APCI.MEMORY_READ) return;
+    const count = p.apci & 0x3f;
+    this.counts.push(count);
+    const addr = (p.data[0] << 8) | p.data[1];
+    const data = Buffer.from(Array.from({ length: count }, (_, i) => (addr + i) & 0xff));
+    this.onCemi?.(this.device, this.assignedIa, apdu(p.seq, APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), data]), count), false);
+  }
+}
+
+describe("memRead sizes its requests from the device's maximum APDU", () => {
+  const cases: [string, number | null, number][] = [
+    ["no PID_MAX_APDU_LENGTH: standard-frame 12 bytes", null, 12],
+    ["a declared 40: 37 bytes", 40, 37],
+    ["a declared 254: capped at the proven 48 bytes", 254, 48],
+    ["a declared 15 (standard frame): still 12", 15, 12],
+  ];
+  for (const [name, maxApdu, want] of cases) {
+    test(name, async () => {
+      const tun = new ApduTransport(maxApdu);
+      const dev = new KnxDevice(tun, "1.1.11");
+      const got = await dev.memRead(0x4000, 200);
+      expect(got.equals(Buffer.from(Array.from({ length: 200 }, (_, i) => (0x4000 + i) & 0xff)))).toBe(true);
+      expect(tun.counts[0]).toBe(want);
+    });
+  }
+});

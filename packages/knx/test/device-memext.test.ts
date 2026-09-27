@@ -113,6 +113,17 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(Buffer.from(Array.from({ length: 40 }, (_, i) => tun.mem.get(0x3774 + i)!)).equals(data)).toBe(true);
   });
 
+  // thelsing/OpenKNX answers a memory read from flash while the write still sits in its RAM
+  // erase-block buffer, so a read-back before the restart shows the old bytes. ETS reads nothing
+  // back; neither does the confirmed write, even when a caller asks for verify or an echo.
+  test("the confirmed extended write is not read back before the restart", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 20 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    await dev.memWrite(0x3774, Buffer.from([1, 2, 3, 4]), { verify: true, echo: true });
+    expect(tun.sawClassic).toBe(0);
+    expect(tun.extWrites).toEqual([4]);
+  });
+
   test("a device whose maximum APDU cannot carry a byte is refused", async () => {
     const dev = new KnxDevice(new FakeExtTransport({ maxApdu: 5 }), "1.1.11");
     expect(dev.memWrite(0x0100, Buffer.from([1]), { verify: false })).rejects.toThrow(/maximum APDU/);

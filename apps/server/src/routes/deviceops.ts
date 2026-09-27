@@ -6,7 +6,7 @@ import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
 import { getDeviceSecurity, isSecureDevice } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceParamRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
+import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import type { CommitFn, ProgressFn, TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
@@ -159,7 +159,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     }
     // Only record drift for refs the device config actually exposes (matches
     // what the UI shows; keeps module devices from flagging flat-model refs).
-    const relevantRefs = deviceParamRefs(state, id, deviceId);
+    const modules = getDeviceModules(db, id, deviceId);
+    const configFor = (values: Map<string, string>) => deviceConfigRefs(state, id, deviceId, values, modules);
     const rb = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress, signal) => {
@@ -167,7 +168,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
           liveParams: getDeviceParams(db, id, deviceId), baseParams: getDeviceParamBase(db, id, deviceId),
-          moduleInstances: getDeviceModules(db, id, deviceId), relevantRefs, onProgress: progress, signal,
+          moduleInstances: modules, configFor, onProgress: progress, signal,
         });
       },
     );

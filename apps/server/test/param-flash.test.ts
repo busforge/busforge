@@ -178,4 +178,23 @@ describe("MV-0705 parameter-flash orchestration (real M-0081 app, mock device)",
     expect(dev.state.size).toBe(0);
     expect(dev.mem).toEqual(before);
   });
+
+  // An interrupted earlier write can leave the bytes right and the load-state machine Loading: the
+  // application does not run them, so "unchanged" would be a false all-clear. The absolute plan
+  // writes only what differs, so it cannot finish that load; it refuses.
+  test("a real change while the parameter load-state machine is Loading: refused too, nothing written", async () => {
+    const dev = seeded(true);
+    dev.state.set(3, STATE.LOADING);
+    const err = await classify(cfg).flashParameters(asDev(dev), "0705", ctxFor(false).ctx).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("DEVICE_LOAD_INCOMPLETE");
+    expect(dev.writes).toEqual([]);
+  });
+
+  test("in sync but the parameter load-state machine is Loading: refused, nothing written", async () => {
+    const dev = seeded(false);
+    dev.state.set(3, STATE.LOADING); // LdCtrlAbsSegment declares the parameter segment (0x4200) under LSM 3
+    const err = await classify(cfg).flashParameters(asDev(dev), "0705", ctxFor(false).ctx).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("DEVICE_LOAD_INCOMPLETE");
+    expect(dev.writes).toEqual([]);
+  });
 });

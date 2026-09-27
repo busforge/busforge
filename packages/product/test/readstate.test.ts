@@ -13,7 +13,7 @@ import {
 // programmed baseline + drift. The route tests stub readDeviceState out (readback-route.test.ts),
 // so this is the ONLY test that exercises the projection itself: read segment bytes off a mock
 // device, decode them, and record ONLY the refs that (a) differ from the project image and
-// (b) are in relevantRefs. Expectations are decoded INDEPENDENTLY in the test from the seeded
+// (b) are relevant under the project's or the device's configuration (configFor). Expectations are decoded INDEPENDENTLY in the test from the seeded
 // bytes, so a wrong projection cannot pass by comparing the code against itself.
 
 const REAL = join(import.meta.dir, "fixtures", "real");
@@ -88,19 +88,19 @@ describe("System 7 (MV-0705) readState: parameter drift projection", () => {
     for (const [ref, v] of changed) expect(rb.paramBase.get(ref)).toBe(v); // readState recorded exactly that drift
   });
 
-  test("relevantRefs gates what drift is recorded: excluded refs stay at the live baseline", async () => {
+  test("relevance gates what drift is recorded: excluded refs stay at the live baseline", async () => {
     const drifted = seed(true);
     const dVals = decodeAbsoluteImage(model, seg.id, await drifted.memRead(seg.address, seg.size));
     const pVals = decodeAbsoluteImage(model, seg.id, seg.bytes);
     const changedRef = [...dVals].find(([ref, v]) => pVals.get(ref) !== v)![0];
 
     // Excluding the drifted ref -> it must NOT enter the baseline.
-    const excluded = await profile.readState(asDev(seed(true)), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: new Set(["__none__"]) });
+    const excluded = await profile.readState(asDev(seed(true)), cfg.mask, { liveParams, moduleInstances: [], configFor: () => ({ shown: new Set(["__none__"]), active: new Set(["__none__"]) }) });
     expect(excluded.paramBase.has(changedRef)).toBe(false);
     expect(excluded.paramBase).toEqual(liveParams);
 
     // Including it -> it IS recorded.
-    const included = await profile.readState(asDev(seed(true)), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: new Set([changedRef]) });
+    const included = await profile.readState(asDev(seed(true)), cfg.mask, { liveParams, moduleInstances: [], configFor: () => ({ shown: new Set([changedRef]), active: new Set([changedRef]) }) });
     expect(included.paramBase.get(changedRef)).toBe(dVals.get(changedRef));
   });
 });
@@ -199,7 +199,7 @@ describe("read-back does not launder an unobservable parameter into the programm
     const rb = await prof2.readState(asDev(dev), cfg2.mask, {
       liveParams: new Map(),                 // user reverted the edit
       baseParams: new Map([[ref, "1"]]),     // baseline still claims it was programmed
-      moduleInstances: [], relevantRefs: new Set([ref]),
+      moduleInstances: [], configFor: () => ({ shown: new Set([ref]), active: new Set([ref]) }),
     });
     expect(rb.paramsRead).toBe(true);
     expect(rb.paramBase.has(ref)).toBe(false); // the device proved the default: the claim is gone
@@ -282,7 +282,7 @@ describe("System B readState covers TOP-LEVEL UNION parameters", () => {
 
   test("drift in a union-only byte is reported (not silently invisible)", async () => {
     const drifted = seed();
-    const rb = await profile.readState(asDev(drifted), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: uiRefs });
+    const rb = await profile.readState(asDev(drifted), cfg.mask, { liveParams, moduleInstances: [], configFor: () => ({ shown: uiRefs, active: uiRefs }) });
     // Decode the expectation independently of the profile, from the seeded bytes.
     const dVals = decodeParameterImage(model, APP_PROGRAM, await drifted.memRead(PARAM_BASE, target.size));
     const pVals = decodeParameterImage(model, APP_PROGRAM, target.bytes);
@@ -295,7 +295,63 @@ describe("System B readState covers TOP-LEVEL UNION parameters", () => {
     const clean = new MockReadDevice(tableAddrs);
     seedBytes(clean, PARAM_BASE, target.bytes);
     for (const obj of [1, 2, 3]) { clean.mem.set(tableAddrs[obj], 0); clean.mem.set(tableAddrs[obj] + 1, 0); }
-    const rb = await profile.readState(asDev(clean), cfg.mask, { liveParams, moduleInstances: [], relevantRefs: uiRefs });
+    const rb = await profile.readState(asDev(clean), cfg.mask, { liveParams, moduleInstances: [], configFor: () => ({ shown: uiRefs, active: uiRefs }) });
     expect(rb.paramBase).toEqual(liveParams);
+  });
+});
+
+// Relevance comes from the DEVICE's configuration, not the project's. A setting that only the
+// device's value of another parameter makes visible (a sensor type the project leaves at "none")
+// must still enter the baseline, or a later flash of the project resets it without anyone seeing
+// the difference. Found on the house's OpenKNX RaumController.
+describe("readState records settings that only the device's configuration makes visible", () => {
+  const cfg = app("M-0048_A-9071-20-F258-O00EF.xml.gz");
+  const profile = classify(cfg);
+  const model = toAppModel(cfg, { includeUnions: true, instances: [] });
+  const viewRefs = (values: Map<string, string>) => {
+    const refs = new Set<string>();
+    for (const b of buildDeviceConfig(cfg, values, undefined, []).blocks) for (const it of b.items) if (it.kind === "param") refs.add(it.param.refId);
+    return refs;
+  };
+  const configFor = (values: Map<string, string>) => ({ shown: viewRefs(values), active: new Set(buildDeviceConfig(cfg, values, undefined, []).imageValues.keys()) });
+  const decodable = (ref: string) => decodeParameterImage(model, APP_PROGRAM, buildRelativeSegmentTarget(cfg, new Map(), APP_PROGRAM)!.bytes).has(ref);
+
+  // A visible enum R whose other value reveals an enum S the defaults hide, S image-placeable.
+  const found = (() => {
+    const base = viewRefs(new Map());
+    for (const b of buildDeviceConfig(cfg, new Map(), undefined, []).blocks) for (const it of b.items) {
+      if (it.kind !== "param" || it.param.control !== "enum" || !decodable(it.param.refId)) continue;
+      for (const o of it.param.options ?? []) {
+        if (String(o.value) === it.param.value) continue;
+        const withR = new Map([[it.param.refId, String(o.value)]]);
+        const size = buildRelativeSegmentTarget(cfg, withR, APP_PROGRAM)?.size;
+        for (const b2 of buildDeviceConfig(cfg, withR, undefined, []).blocks) for (const s of b2.items) {
+          if (s.kind !== "param" || base.has(s.param.refId) || s.param.control !== "enum" || !decodable(s.param.refId)) continue;
+          const w = (s.param.options ?? []).map((x) => String(x.value)).find((v) => v !== s.param.value);
+          if (w === undefined) continue;
+          const dv = new Map([...withR, [s.param.refId, w]]);
+          if (buildRelativeSegmentTarget(cfg, dv, APP_PROGRAM)?.size !== size) continue;
+          return { r: it.param.refId, rv: String(o.value), s: s.param.refId, w, device: dv };
+        }
+      }
+    }
+    return null;
+  })();
+
+  test("the device's revealed setting is recorded, not left at the project's default", async () => {
+    expect(found).not.toBeNull();
+    const { r, rv, s, w, device } = found!;
+    const project = buildRelativeSegmentTarget(cfg, new Map(), APP_PROGRAM)!;
+    const onDevice = buildRelativeSegmentTarget(cfg, device, APP_PROGRAM)!;
+    expect(onDevice.size).toBe(project.size);
+    const PARAM_BASE = 0x4000, GT = PARAM_BASE + project.size + 0x1000;
+    const tableAddrs: Record<number, number> = { [APP_PROGRAM]: PARAM_BASE, 1: GT + 0x10, 2: GT + 0x20, 3: GT + 0x30 };
+    const dev = new MockReadDevice(tableAddrs);
+    seedBytes(dev, PARAM_BASE, onDevice.bytes);
+    for (const obj of [1, 2, 3]) { dev.mem.set(tableAddrs[obj], 0); dev.mem.set(tableAddrs[obj] + 1, 0); }
+
+    const rb = await profile.readState(asDev(dev), cfg.mask, { liveParams: new Map(), moduleInstances: [], configFor });
+    expect(rb.paramBase.get(r)).toBe(rv);
+    expect(rb.paramBase.get(s)).toBe(w);
   });
 });

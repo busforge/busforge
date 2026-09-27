@@ -186,8 +186,8 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
 // (deviceimage.ts: `active.get(ref.id) === undefined` keeps the <Data> default rather than
 // writing the override). Adopting either into the baseline would clear a "changed" chip for
 // a value that never reached the device; on re-activating the branch the device still holds
-// its default. Mirrors the links side (resetLinkBase adopts only actually-flashed refs), and
-// uses the same active set (deviceParamRefs) that read-back drift uses, so the two agree.
+// its default. Mirrors the links side (resetLinkBase adopts only actually-flashed refs). The
+// active set is the flashed configuration's view (deviceParamRefs).
 // `params`/`modules`: pass the snapshot the flash used (read once before enqueue) so the
 // baseline decision cannot diverge from the flashed image when a param edit lands while the
 // flash runs on the bus (the GA path resolves flashedRefIds pre-enqueue for the same reason).
@@ -396,6 +396,16 @@ export function deviceParamRefs(state: AppState, projectId: string, deviceId: st
   const refs = new Set<string>();
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") refs.add(it.param.refId);
   return refs;
+}
+
+// The param refs a configuration shows and the refs active in its image (hidden Merker included).
+export function deviceConfigRefs(state: AppState, projectId: string, deviceId: string, params: StoredParams, modules?: StoredModules): { shown: Set<string>; active: Set<string> } {
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return { shown: new Set(), active: new Set() };
+  const view = buildDeviceConfig(app, params, undefined, modules ?? getDeviceModules(state.db, projectId, deviceId));
+  const shown = new Set<string>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") shown.add(it.param.refId);
+  return { shown, active: new Set(view.imageValues.keys()) };
 }
 
 const sameGaSet = (a: number[], b: number[]) => { const x = [...a].sort((m, n) => m - n), y = [...b].sort((m, n) => m - n); return x.length === y.length && x.every((v, i) => v === y[i]); };

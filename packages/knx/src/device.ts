@@ -230,11 +230,20 @@ export class KnxDevice {
     }
     return r!.data.length < 4 || r!.data[2] >> 4 === 0 ? null : r!.data.subarray(4);
   }
-  async memRead(addr: number, len: number, chunk = 12, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+  // Bytes per A_Memory_Read: 12 fit a standard frame. A device that declares a longer APDU gets
+  // requests up to that length (3 octets of APCI and address), capped at EXT_READ_CHUNK: the path
+  // (interface, couplers, a single USB HID report) has its own limit, and that size is what the
+  // extended reads already carry over the bench's USB interface and the house's IP interface.
+  private async classicReadChunk(): Promise<number> {
+    const maxApdu = await this.maxApduLength();
+    return maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - 3));
+  }
+  async memRead(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended (a device that
     // allocates a segment there answers only that service). Classic path stays byte-identical below.
     if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, EXT_READ_CHUNK, onProgress, signal);
     assertAddressable(addr, len, "memory read");
+    const chunk = chunkBytes ?? await this.classicReadChunk();
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
     // MemoryRead that spans an internal memory boundary (they answer with an empty data
     // response); the old concat-and-advance-by-requested-length loop then produced a buffer
@@ -300,20 +309,19 @@ export class KnxDevice {
   async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     // Past the 16-bit reach of A_Memory_Write, the device is written with A_MemoryExtended. Classic
     // path (and every device that fits in 16 bits) stays byte-identical below.
-    if (addr >= 0 && addr + data.length - 1 > 0xffff) return this.memWriteExtended(addr, data, opts);
+    if (addr >= 0 && addr + data.length - 1 > 0xffff) return this.memWriteExtended(addr, data, { chunk: opts.chunk, onProgress: opts.onProgress });
     // A device that declares PID_MAX_APDU_LENGTH is written the way ETS writes it: with the confirmed
     // A_MemoryExtended_Write, one answered chunk at a time, however low the address. The classic write
     // is acknowledged by the transport layer before the firmware has stored it, and a GVS AMMA took
     // the next chunk while still storing the previous one after a segment reallocation (a byte of the
     // com-object table landed 12 bytes further on). ETS captures of four devices: the two that answer
     // the property (GVS AMMA 55, Jung 400021SE 233) are written extended only, the two that do not
-    // (ABB US/U 4.2, MDT BE-02001.02) classic only.
-    // Its return code says a chunk was accepted, not what was stored, so a caller that asks for the
-    // stored bytes (`echo`) gets a read-back.
+    // (ABB US/U 4.2, MDT BE-02001.02) classic only. Like ETS, it is not read back mid-bracket
+    // (see memWriteExtended); `verify` and `echo` apply to the classic write only.
     const maxApdu = await this.maxApduLength();
     if (maxApdu !== null) {
       const chunk = Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD, opts.chunk ?? Infinity);
-      return this.memWriteExtended(addr, data, { ...opts, chunk, verify: (opts.verify ?? true) || opts.echo === true });
+      return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }
     assertAddressable(addr, data.length, "memory write");
     const chunk = opts.chunk ?? 12;
@@ -392,10 +400,12 @@ export class KnxDevice {
     }
     return out;
   }
-  // `echo` is accepted for signature-compatibility with memWrite (the load executor sets it): the
-  // extended write is ALWAYS per-chunk confirmed by its return code, so echo's intent (a per-write
-  // acceptance proof) is inherently satisfied and the flag is a no-op here, not silently dropped.
-  async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
+  // Not read back: on thelsing/OpenKNX (RP2040) a memory write lands in a RAM buffer of the flash
+  // erase block and a memory read returns the flash itself until the block is committed (at the
+  // bracket's restart, or when a write moves to another block), so a read straight after the write
+  // shows the old bytes (house OpenKNX RaumController, 2026-09-27). ETS reads nothing back either.
+  // The per-chunk return code and the caller's read-back after the restart are the proof.
+  async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
     const chunk = Math.min(Math.max(1, opts.chunk ?? EXT_WRITE_CHUNK), 255); // the count is a single request octet
     const total = Math.ceil(data.length / chunk) || 1;
@@ -405,10 +415,9 @@ export class KnxDevice {
       const slice = data.subarray(pos, pos + n);
       const a = addr + pos;
       const tail = Buffer.concat([Buffer.from([n, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]), slice]);
-      // A_MemoryExtended_Write is CONFIRMED: the device always answers [returnCode, addr(3)]. That
-      // return code is the per-chunk proof the write landed (the extended counterpart of the classic
-      // verify-mode echo); a non-zero code or a mismatched address is a hard failure, never taken as
-      // success.
+      // A_MemoryExtended_Write is CONFIRMED: the device always answers [returnCode, addr(3)]. The code
+      // says the device took the chunk; a non-zero code or a mismatched address is a hard failure,
+      // never taken as success.
       const r = await this.request((s) => apdu(s, APCI.MEMORY_EXT_WRITE, tail), true);
       const d = r!.data; // [returnCode, addr(3)]
       if (d.length < 4) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended write @0x${a.toString(16)}: short confirmation (${d.length}B)`);
@@ -417,10 +426,6 @@ export class KnxDevice {
       if (echoedAt !== a) throw new KnxError("FLASH_VERIFY_MISMATCH", `the device confirmed an extended write to 0x${echoedAt.toString(16)} for a write to 0x${a.toString(16)}; refusing to take that as proof`);
       pos += n;
       opts.onProgress?.(++done, total);
-    }
-    if (opts.verify ?? true) {
-      const back = await this.memRead(addr, data.length); // classic below 0xFFFF, the read these devices are proven with
-      if (!back.equals(data)) throw new KnxError("FLASH_VERIFY_MISMATCH", `extended memWrite verify mismatch @0x${addr.toString(16)}: ${describeMismatch(data, back, addr)}`);
     }
   }
   // Send A_Restart and nothing else: the caller observes the reboot itself. NOT swallowed: every
