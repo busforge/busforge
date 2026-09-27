@@ -197,8 +197,10 @@ rather than burning past the device's ~6 s connection timeout and killing the se
 
 1. **Do not block on the KNXnet/IP `L_Data.con`** (the decisive one). It carries the
    **server** sequence counter, not the client's, so naive matching never succeeds, every
-   send stalls for its full timeout, and that starves response handling. The `TunnelingAck`
-   already provides flow control; treat the bus confirmation as fire-and-forget.
+   send stalls for its full timeout, and that starves response handling. Over UDP the
+   `TunnelingAck` provides flow control; over TCP there is none at the KNXnet/IP level (§15), and
+   the device's own T_ACK paces every management frame. Treat the bus confirmation as
+   fire-and-forget.
 2. **Stamp the source address.** Outgoing `L_Data` may carry `0.0.0` expecting the interface
    to substitute the tunnel address. Some interfaces do not do this for connection-oriented
    frames, so device replies never route back. Set the source to the assigned tunnel address
@@ -430,6 +432,30 @@ bytes; they hold the same value). The parameter
 flash on System 7 already wrote only owned bytes that differ. `tools/etsdiff.test.ts` holds the
 System B parameter bytes against the captures, address and value. All four bench devices pass both
 smoke channels with persistence on the build that introduced these rules (`50d6b80`, 2026-09-27,
-[evidence/runs/2026-09-27](evidence/runs/2026-09-27/)); the GVS parameter flash took about 77 s
+evidence/runs/2026-09-27); the GVS parameter flash took about 77 s
 instead of 96-116 s. The byte-level ETS comparison of the partial downloads lives in tests only; no
 reference evidence record is emitted for it yet.
+
+## 15. Tunnelling over TCP has no acknowledgement, and the bench bridge hid it
+
+Against the house's MDT SCN-IP000.03, every operation over a TCP tunnel failed with
+`TUNNEL_ACK_TIMEOUT`, and the `auto` transport (TCP first) never read a single device answer. Two
+client faults, both invisible on the bench:
+
+- **The client waited for a TUNNELLING_ACK over TCP.** KNXnet/IP Tunnelling v2 uses none on TCP (xknx's
+  `TCPTunnel` neither waits for one nor sends one; ETS sends none to the bench bridge either). The
+  bridge acknowledges every TCP request anyway, so against it the wait always ended. The client now
+  writes each request once and acknowledges nothing over TCP.
+- **The `auto` wrapper copied the receive callbacks only at connect time.** A device session installs
+  its `onCemi` on the already connected transport, so the device's answers never reached it (the
+  capture showed 1.1.x answering its descriptor read correctly, T_ACK and all, and Busforge timing
+  out). The bench connection is pinned to `tcp`, which bypasses the wrapper.
+
+With both fixed, a full read-back of the OpenKNX RaumController 1.1.x over the house interface
+completed over `auto` (TCP) (operator observation, no evidence record).
+
+What the TCP client gives up with the acknowledgement: it was the only KNXnet/IP-level sign of a
+half-open link, since TCP has no heartbeat and a socket write does not fail on a dead peer. A
+silent drop now shows as `DEVICE_NOT_ANSWERING` after the device's retries, and a group or
+broadcast send reports success into nothing. Waiting for the interface's `L_Data.con` (matched by
+destination and TPDU, not by sequence) would restore both; it is on [roadmap.md](roadmap.md).

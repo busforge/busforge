@@ -77,6 +77,24 @@ describe("AutoIpTunnel", () => {
     expect(tcp.disconnected).toBe(true);
   });
 
+  // A KnxDevice is built on an already connected transport and installs its onCemi then; before
+  // this was forwarded, every device answer over an "auto" connection was lost.
+  test("callbacks set after connect reach the inner tunnel too", async () => {
+    const tcp = new StubTunnel();
+    const t = new AutoIpTunnel("h", 3671, () => tcp, () => new StubTunnel());
+    await t.connect();
+    const onCemi = () => {};
+    const onRawCemi = () => {};
+    const onClosed = () => {};
+    t.onCemi = onCemi;
+    t.onRawCemi = onRawCemi;
+    t.onClosed = onClosed;
+    expect(tcp.onCemi).toBe(onCemi);
+    expect(tcp.onRawCemi).toBe(onRawCemi);
+    expect(tcp.onClosed).toBe(onClosed);
+    expect(t.onCemi).toBe(onCemi);
+  });
+
   test("falls back to UDP only on TUNNEL_CONNECT_FAILED, wiring callbacks onto UDP", async () => {
     const tcp = new StubTunnel(() => { throw new KnxError("TUNNEL_CONNECT_FAILED", "refused"); });
     const udp = new StubTunnel();

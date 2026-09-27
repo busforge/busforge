@@ -12,7 +12,6 @@ import { KnxError } from "./errors.ts";
 // silently records nothing.
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const CONNECTIONSTATE_TIMEOUT_MS = 10_000;
-const TCP_ACK_TIMEOUT_MS = 10_000;
 const CONNECTIONSTATE_TRIES = 3;
 
 // Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
@@ -61,8 +60,8 @@ function realTcpSocket(): TcpSocket {
   };
 }
 
-// KNXnet/IP tunnelling connection. Handles the KNXnet/IP layer (connect,
-// tunnelling request/ack both directions) and surfaces incoming cEMI L_Data
+// KNXnet/IP tunnelling connection. Handles the KNXnet/IP layer (connect, tunnelling
+// requests both directions, acknowledged over UDP only) and surfaces incoming cEMI L_Data
 // (source IA + raw TPDU) to a listener. The connection-oriented KNX transport
 // lives one layer up in KnxDevice.
 export class KnxIpTunnel implements KnxTransport {
@@ -75,10 +74,7 @@ export class KnxIpTunnel implements KnxTransport {
   assignedIa = 0;
   private txSeq = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
-  // Per-send wait for a tunnelling ACK; an instance field so a test can shorten it. UDP uses the
-  // spec's short wait because a lost datagram is retransmitted. TCP delivers the ACK or drops the
-  // connection, so a short wait only turns a late ACK into a failed operation: a single retransmitted
-  // TCP segment on a Wi-Fi hop takes longer than 1.5 s.
+  // Per-send wait for a tunnelling ACK over UDP; an instance field so a test can shorten it.
   private ackTimeoutMs = 1500;
   // Set the moment teardown begins. A datagram that lands between DISCONNECT_REQ and the socket
   // actually closing must not be answered: the ACK would be written into a socket that is gone, and
@@ -109,7 +105,6 @@ export class KnxIpTunnel implements KnxTransport {
   static tcp(ip: string, port = KNXPORT, createTcpSocket: () => TcpSocket = realTcpSocket): KnxIpTunnel {
     const t = new KnxIpTunnel(ip, port);
     t.mode = "tcp";
-    t.ackTimeoutMs = TCP_ACK_TIMEOUT_MS;
     t.createTcpSocket = createTcpSocket;
     return t;
   }
@@ -326,8 +321,9 @@ export class KnxIpTunnel implements KnxTransport {
     } else if (svc === SVC.TUNNEL_ACK) {
       if (this.ackWaiter && body[2] === this.ackWaiter.seq) { this.ackWaiter.resolve(); this.ackWaiter = null; }
     } else if (svc === SVC.TUNNEL_REQ) {
-      const serverSeq = body[2];
-      await this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, this.channel, serverSeq, 0x00])));
+      // 3/8/4 v2: tunnelling over TCP has no TUNNELLING_ACK in either direction; the stream is the
+      // acknowledgement. Only a UDP request is answered.
+      if (this.mode === "udp") await this.send(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, this.channel, body[2], 0x00])));
       const cemi = body.subarray(4);
       // Only L_Data.ind is a telegram from the bus. A gateway also tunnels L_Data.con back — its
       // confirmation that a frame WE sent reached the bus — and the two are byte-identical apart
@@ -341,14 +337,18 @@ export class KnxIpTunnel implements KnxTransport {
     }
   }
 
-  // KNXnet/IP-layer send of a cEMI with tunnelling ack. Over UDP the request is retransmitted on an
-  // ACK timeout (up to `tries`, the spec's recovery for a lost datagram). Over TCP it is sent EXACTLY
-  // once regardless of `tries`: TCP already guarantees order and delivery, so a retransmission could
-  // only duplicate a memory write, which is precisely the damage this project exists to prevent. A
-  // missing ACK is then a hard TUNNEL_ACK_TIMEOUT, not a reason to resend.
+  // KNXnet/IP-layer send of a cEMI. Over UDP it waits for the tunnelling ACK and retransmits on a
+  // timeout (up to `tries`, the spec's recovery for a lost datagram). Over TCP (3/8/4 v2) there is no
+  // TUNNELLING_ACK: a real KNX IP interface never sends one, so the frame is written exactly once and
+  // the send is complete. A retransmission could only duplicate a memory write.
   async sendCemi(cemi: Buffer, tries = 3): Promise<void> {
-    const attempts = this.mode === "tcp" ? 1 : tries;
-    for (let i = 0; i < attempts; i++) {
+    if (this.mode === "tcp") {
+      const seq = this.txSeq;
+      this.txSeq = (seq + 1) & 0xff;
+      await this.send(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi])));
+      return;
+    }
+    for (let i = 0; i < tries; i++) {
       const seq = this.txSeq;
       const frame = knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi]));
       const ack = new Promise<boolean>((resolve) => { this.ackWaiter = { seq, resolve: () => resolve(true) }; setTimeout(() => resolve(false), this.ackTimeoutMs); });

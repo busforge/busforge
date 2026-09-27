@@ -2,9 +2,9 @@ import { test, expect } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
 import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts";
 
-// A TCP tunnel delivers in order: when the tunnelling ACK is late, the device's T_ACK and its
-// response are behind it in the same stream. The device's own timers must therefore start when
-// the frame has left the tunnel, not before, or a late tunnel ACK reads as a silent device.
+// A UDP send resolves on the tunnelling ACK, which can be late. The device's own timers must
+// therefore start when the frame has left the tunnel, not before, or a late tunnel ACK reads as a
+// silent device.
 class LateTunnelAck implements KnxTransport {
   assignedIa = 0x0001;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;

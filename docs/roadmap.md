@@ -34,10 +34,16 @@ started until the capability it depends on is hardware-proven.
   already gone; the bridge sees the client stop acknowledging and drops the channel. Reproduced
   twice on 2026-08-30 from the containerised server against `apps/bridge`, where the same download
   over `tcp` completes and verifies. **It is not a general UDP fault**: the same server downloaded
-  over UDP to a real MDT KNX-IP interface the same evening without trouble, and that gateway
-  refuses `tcp` outright (`TUNNEL_ACK_TIMEOUT`), so transport cannot simply be pinned. Suspect the
+  over UDP to a real MDT KNX-IP interface the same evening without trouble. (That gateway's
+  `TUNNEL_ACK_TIMEOUT` over `tcp` was Busforge waiting for tunnelling ACKs that TCP does not use;
+  fixed 2026-09-27, TCP to it now works, see [connections.md](connections.md).) Suspect the
   client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
   disconnect race but not this path.
+- **Wait for the interface's `L_Data.con` over TCP.** Tunnelling over TCP has no acknowledgement,
+  so a half-open link shows only as `DEVICE_NOT_ANSWERING` after the device's retries, and a group
+  or broadcast send reports success into nothing ([findings.md](findings.md) §15). Matching the
+  confirmation by destination and TPDU (not by sequence, see §5.1) with a short, coded timeout
+  would restore a liveness signal and make a negative confirmation (`BUS_SEND_FAILED`) real on IP.
 - **Measure the longest download to confirm the stop grace period.** A normal shutdown waits for
   a running write, bounded by the container's `stop_grace_period: 30m`. That figure rests on one
   measurement (71 s for a 21.9 KB OpenKNX image) and an estimate for 12-byte `A_Memory_Write`

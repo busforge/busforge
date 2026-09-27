@@ -160,9 +160,8 @@ export class KnxDevice {
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
     for (let i = 0; i < tries; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 200));
-      // The waiters are registered before the send, the device's timeouts start after it: the send
-      // resolves on the tunnelling ACK, and over TCP the device's T_ACK and response queue behind
-      // that ACK in the same stream, so a late tunnel ACK must not eat the device's time.
+      // The waiters are registered before the send, the device's timeouts start after it: over UDP
+      // the send resolves on the tunnelling ACK, and a late ACK must not eat the device's time.
       let ackTimeout = (): void => undefined;
       let respTimeout = (): void => undefined;
       const ackP = new Promise<boolean>((res) => { this.ackResolve = () => res(true); ackTimeout = () => res(false); });

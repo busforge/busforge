@@ -5,13 +5,20 @@ import type { Connection } from "./db/connections.ts";
 // through an `ssh -L` forward or a multi-homed host where UDP source selection fails, so it is tried
 // first; ONLY a refused/unreachable TCP connect (a coded TUNNEL_CONNECT_FAILED) falls back to classic
 // UDP. Any other error is a real bus/protocol failure and propagates unchanged, so it is never masked
-// as "the gateway only speaks UDP". Callers wire onCemi/onClosed/onRawCemi BEFORE calling connect()
-// (see bus.ts), so this holds them and copies them onto whichever inner tunnel it ends up opening.
+// as "the gateway only speaks UDP". The callbacks may be set before connect() (bus.ts) or after it
+// (a KnxDevice installs its onCemi on a connected transport), so each one is held here and also
+// forwarded to the inner tunnel whenever it is set.
 export class AutoIpTunnel implements KnxTransport {
   private inner: KnxTransport | null = null;
-  onCemi: KnxTransport["onCemi"] = null;
-  onRawCemi: KnxTransport["onRawCemi"] = null;
-  onClosed: KnxTransport["onClosed"] = null;
+  private cemiCb: KnxTransport["onCemi"] = null;
+  private rawCemiCb: KnxTransport["onRawCemi"] = null;
+  private closedCb: KnxTransport["onClosed"] = null;
+  get onCemi(): KnxTransport["onCemi"] { return this.cemiCb; }
+  set onCemi(cb: KnxTransport["onCemi"]) { this.cemiCb = cb; if (this.inner) this.inner.onCemi = cb; }
+  get onRawCemi(): KnxTransport["onRawCemi"] { return this.rawCemiCb; }
+  set onRawCemi(cb: KnxTransport["onRawCemi"]) { this.rawCemiCb = cb; if (this.inner) this.inner.onRawCemi = cb; }
+  get onClosed(): KnxTransport["onClosed"] { return this.closedCb; }
+  set onClosed(cb: KnxTransport["onClosed"]) { this.closedCb = cb; if (this.inner) this.inner.onClosed = cb; }
 
   // makeTcp/makeUdp are test seams (mirroring KnxIpTunnel's createSocket/createTcpSocket); the
   // defaults build the real tunnels, so production behaviour is a plain TCP-first, UDP-fallback.
@@ -28,21 +35,22 @@ export class AutoIpTunnel implements KnxTransport {
 
   async connect(): Promise<void> {
     const tcp = this.makeTcp(this.host, this.port);
+    this.inner = tcp;
     this.wire(tcp);
     try {
       await tcp.connect();
-      this.inner = tcp;
       return;
     } catch (e) {
+      this.inner = null;
       // A refused/unreachable TCP endpoint is the one signal that says "try UDP". Everything else
       // (a rejected channel, a protocol error, a timeout after the socket was up) is a real failure
       // the caller must see, not a reason to silently retry on a different transport.
       if (!(e instanceof KnxError) || e.code !== "TUNNEL_CONNECT_FAILED") throw e;
     }
     const udp = this.makeUdp(this.host, this.port);
-    this.wire(udp);
-    await udp.connect();
     this.inner = udp;
+    this.wire(udp);
+    try { await udp.connect(); } catch (e) { this.inner = null; throw e; }
   }
 
   // Copy the caller-assigned callbacks onto the concrete tunnel just before it connects.

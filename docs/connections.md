@@ -60,6 +60,14 @@ and the gateway never answers. UDP stays the fallback for gateways that speak on
 The `auto` wrapper decides at connect time and falls back **only** on a `TUNNEL_CONNECT_FAILED`.
 Any other error (a rejected channel, a protocol failure, a timeout after the socket was already up)
 propagates unchanged, so a real bus fault is never masked as "the gateway must only speak UDP".
+The wrapper forwards the receive callbacks to the tunnel it opened whenever they are set, also after
+the connect: a device session installs its own on a connected transport.
+
+**Over TCP there is no tunnelling acknowledgement** (KNXnet/IP Tunnelling v2). The client writes each
+TUNNELLING_REQUEST once and neither waits for a TUNNELLING_ACK nor sends one for a request it
+receives; a real KNX IP interface (MDT SCN-IP000.03) sends none, and waiting for one failed every
+operation with `TUNNEL_ACK_TIMEOUT`. Busforge's own bridge still acknowledges a TCP client's
+requests, which the client ignores. Over UDP the acknowledge-and-retransmit loop runs as before.
 
 ### Liveness: the client keeps its own status honest
 

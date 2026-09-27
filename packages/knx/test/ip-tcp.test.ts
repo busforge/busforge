@@ -142,43 +142,40 @@ describe("KnxIpTunnel over TCP", () => {
     expect(tunnel["heartbeatTimer"]).toBeNull();
   });
 
-  test("sendCemi sends one TUNNELLING_REQUEST and completes when its ACK arrives", async () => {
+  // 3/8/4 v2: no TUNNELLING_ACK over TCP. A real KNX IP interface (MDT SCN-IP000.03) sends none,
+  // so waiting for one failed every TCP operation against it with TUNNEL_ACK_TIMEOUT.
+  test("sendCemi writes one TUNNELLING_REQUEST and completes without waiting for an ACK", async () => {
     const { sock, tunnel } = await connectedTcp();
     const cemi = cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80]));
 
-    const p = tunnel.sendCemi(cemi);
-    await tick();
+    await tunnel.sendCemi(cemi); // no ACK is ever injected
     expect(sock.sent.length).toBe(1);
     expect([...sock.sent[0]!]).toEqual([
       0x06, 0x10, 0x04, 0x20, 0x00, 0x14,
       0x04, CHANNEL, 0x00, 0x00,
       ...cemi,
     ]);
-    sock.inject(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, CHANNEL, 0x00, 0x00])));
-    await p; // resolves on the ACK
   });
 
-  test("sendCemi does NOT retransmit on an ACK timeout: exactly one request, then TUNNEL_ACK_TIMEOUT", async () => {
+  test("each send advances the sequence counter and none is retransmitted", async () => {
     const { sock, tunnel } = await connectedTcp();
-    tunnel["ackTimeoutMs"] = 10; // don't wait the full 1.5 s
     const cemi = cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80]));
-
-    const err = await tunnel.sendCemi(cemi).then(() => null, (e: unknown) => e as Error & { code?: string });
-    expect(err).not.toBeNull();
-    expect(err!.code).toBe("TUNNEL_ACK_TIMEOUT");
-    // TCP guarantees delivery, so a retransmission would only duplicate the memory write. The
-    // request went out exactly once.
-    expect(sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_REQ).length).toBe(1);
+    await tunnel.sendCemi(cemi);
+    await tunnel.sendCemi(cemi);
+    const reqs = sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_REQ);
+    expect(reqs.map((f) => f[8])).toEqual([0x00, 0x01]);
   });
 
-  test("over TCP the tunnelling ACK wait is not the UDP 1.5 s", async () => {
-    const tcp = KnxIpTunnel.tcp("192.0.2.1");
-    const udp = new KnxIpTunnel("192.0.2.1");
-    expect(tcp["ackTimeoutMs"]).toBeGreaterThanOrEqual(10_000);
-    expect(udp["ackTimeoutMs"]).toBe(1500);
+  test("a stray TUNNELLING_ACK (Busforge's own bridge sends them) is ignored", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    await tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80])));
+    sock.inject(knxFrame(SVC.TUNNEL_ACK, Buffer.from([0x04, CHANNEL, 0x00, 0x00])));
+    await tick();
+    await tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80])));
+    expect(sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_REQ).length).toBe(2);
   });
 
-  test("an inbound L_Data.ind is ACKed and surfaced via onCemi", async () => {
+  test("an inbound L_Data.ind is surfaced via onCemi and not ACKed", async () => {
     const { sock, tunnel } = await connectedTcp();
     const calls: { src: number; dst: number; isGroup: boolean }[] = [];
     tunnel.onCemi = (src, dst, _tpdu, isGroup) => calls.push({ src, dst, isGroup });
@@ -190,9 +187,7 @@ describe("KnxIpTunnel over TCP", () => {
     sock.inject(req);
     await tick();
 
-    const acks = sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_ACK);
-    expect(acks.length).toBe(1);
-    expect(acks[0]![8]).toBe(0x05); // the gateway's sequence number echoed back
+    expect(sock.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_ACK).length).toBe(0);
     expect(calls.length).toBe(1);
     expect(calls[0]!.src).toBe(iaToNum("1.2.7"));
     expect(calls[0]!.dst).toBe(0x0a03);
@@ -485,12 +480,12 @@ describe("KNXnet/IP tunnel over TCP, client and server end to end", () => {
     // Flush several macrotasks: the paired link delivers each write on its own macrotask.
     const flush = async () => { for (let i = 0; i < 12; i++) await tick(); };
 
-    // client -> bus: sendCemi resolves on the server's tunnelling ACK, and the frame is on the bus.
+    // client -> bus: sendCemi resolves once the frame is written (no ACK over TCP); it reaches the bus.
     const out = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
     await tunnel.sendCemi(out);
+    await flush();
     expect(bus.written.length).toBe(1);
     expect(bus.written[0]!.equals(out)).toBe(true);
-    await flush(); // let the server's L_Data.con and its client ACK settle, freeing the channel queue
 
     // bus -> client: a telegram from the bus surfaces via onCemi on the client.
     const seen: number[] = [];
