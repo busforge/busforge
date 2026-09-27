@@ -1,5 +1,6 @@
 import { KnxDevice, PID, OBJ } from "./device.ts";
 import type { LoadPlan, LoadStep } from "./loadrunner.ts";
+import { KnxError } from "./errors.ts";
 
 // The KNX load procedure (MV-07B0 / System B, property-mapped LSMs). Ported from
 // the proven reference; see docs/findings.md for the wire details and gotchas.
@@ -147,14 +148,40 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
 // `comObj`: the com-object table, rewritten with the links in the same flash so a newly linked
 // object gets its linked bit. ETS writes it inside an LSM 3 load/completed bracket with no unload
 // (ABB US/U 4.2 capture 2026-09-25, MDT BE-02001.02 capture 2026-09-26).
-export function planMv0705GaFlash(tables: { addr: Buffer; assoc: Buffer; comObj?: { address: number; bytes: Buffer } }): LoadPlan {
+// `current`: what the device holds at each table's address, at the new table's length. Given, only
+// the bytes that differ are written, as ETS does on a memory-mapped device (ABB US/U 4.2 partial
+// download, 2026-09-26: it reads the tables and writes the two, one and two bytes that changed).
+export function planMv0705GaFlash(
+  tables: { addr: Buffer; assoc: Buffer; comObj?: { address: number; bytes: Buffer } },
+  current?: { addr: Buffer; assoc: Buffer; comObj?: Buffer },
+): LoadPlan {
   const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE, C = OBJ.COMOBJ_TABLE;
+  // A table the device already holds is left out, bracket and all: nothing in it is touched.
+  const bracket = (lsm: number, writes: LoadStep[]): LoadStep[] => (writes.length ? [{ op: "load", lsm }, ...writes, { op: "loadCompleted", lsm }] : []);
+  const table = (lsm: number, bytes: Buffer, cur?: Buffer): LoadStep[] =>
+    bracket(lsm, cur ? differingRuns(bytes, cur).map((r): LoadStep => ({ op: "writeSegment", lsm, offset: r.offset, bytes: r.bytes })) : [{ op: "writeSegment", lsm, bytes }]);
+  const comObj = tables.comObj;
   return [
-    { op: "load", lsm: D }, { op: "writeSegment", lsm: D, bytes: tables.addr }, { op: "loadCompleted", lsm: D },
-    { op: "load", lsm: A }, { op: "writeSegment", lsm: A, bytes: tables.assoc }, { op: "loadCompleted", lsm: A },
-    ...(tables.comObj ? [{ op: "load", lsm: C }, { op: "writeMem", address: tables.comObj.address, bytes: tables.comObj.bytes }, { op: "loadCompleted", lsm: C }] as LoadStep[] : []),
+    ...table(D, tables.addr, current?.addr),
+    ...table(A, tables.assoc, current?.assoc),
+    ...(comObj ? bracket(C, current?.comObj
+      ? differingRuns(comObj.bytes, current.comObj).map((r): LoadStep => ({ op: "writeMem", address: comObj.address + r.offset, bytes: r.bytes }))
+      : [{ op: "writeMem", address: comObj.address, bytes: comObj.bytes }]) : []),
     { op: "restart" },
   ];
+}
+
+// The runs of consecutive bytes where `want` differs from `have` (same length).
+function differingRuns(want: Buffer, have: Buffer): { offset: number; bytes: Buffer }[] {
+  if (have.length !== want.length) throw new KnxError("TABLE_READ_SHORT", `compared ${want.length} B with ${have.length} B read from the device; refusing to write a partial table blind`);
+  const runs: { offset: number; bytes: Buffer }[] = [];
+  for (let i = 0; i < want.length; ) {
+    if (want[i] === have[i]) { i++; continue; }
+    const start = i;
+    while (i < want.length && want[i] !== have[i]) i++;
+    runs.push({ offset: start, bytes: Buffer.from(want.subarray(start, i)) });
+  }
+  return runs;
 }
 
 // Parameter ("par") downloads for BOTH memory models are driven by the generic executor:

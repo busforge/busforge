@@ -407,3 +407,25 @@ Its first chunk size on the GVS, 50 bytes, is the maximum APDU minus the 5 octet
 data; the USB interface refused that frame and ETS continued with 35. Busforge now makes the
 same choice from the same property, with its own transport limit as the second bound, and the
 table lands exactly.
+
+## 14. What ETS writes in a partial download, and what Busforge writes
+
+The four partial-download captures of 2026-09-26 show one rule per device family, derived from
+which bytes changed between the two configurations and which ETS wrote:
+
+| Family (bench device) | ETS reads first | Parameter segment | Group and com-object tables |
+|---|---|---|---|
+| System B (GVS AMMA, Jung 400021SE) | nothing | unload, realloc **without** fill, then exactly the bytes its parameter model owns (GVS 229 of 2816, Jung 186 of 7701), idle unions' `DefaultUnionParameter` included | reallocated and written whole |
+| System 7 memory-mapped (ABB US/U 4.2) | the tables and parameters | only the bytes that differ from the device | only the bytes that differ (2, 1 and 2) |
+| System 7 property-mapped (MDT BE-02001.02) | one read | (no parameter change) | written whole, the own individual address excepted |
+
+Busforge follows the same rules. The System B parameter flash owns the idle unions' defaults
+too and writes only the bytes holding an owned bit, each read back as it is written. It relies on
+the device keeping the rest across the reallocation, as ETS does, only while the segment stays at
+its old address; if the allocation moves it, the whole image is written. Its final read-back
+checks every byte of the segment against the image or against the read before the flash. The memory-mapped System 7 group-address
+flash reads the tables at their new length and writes only the differing bytes; the
+property-mapped one writes whole tables, the individual address included (ETS skips those two
+bytes; they hold the same value). The parameter
+flash on System 7 already wrote only owned bytes that differ. `tools/etsdiff.test.ts` holds the
+System B parameter bytes against the captures, address and value.

@@ -113,7 +113,7 @@ export interface AbsParFlashPlan {
 // The System B ("relative") par-download bracket as a LoadPlan for the generic executor,
 // replacing the formerly hardcoded flashParameters() in @busforge/knx. Step order is the
 // hardware-proven bracket (M-0162 full-image byte-match, Theben 493B module
-// param change): unload -> load -> alloc(size) -> write the segment (read-back verified,
+// param change): unload -> load -> alloc(size) -> write the owned bytes (read-back verified,
 // address resolved at execution time) -> stamp the app id so LoadCompleted validates ->
 // load-completed -> restart. Connection lifecycle stays with the caller, like the
 // absolute planner. One DELIBERATE delta vs the retired executor: the engine asserts
@@ -121,7 +121,13 @@ export interface AbsParFlashPlan {
 // not yet hardware-smoked on a System B device (see docs/load-procedures.md).
 // `mcb` are the memory-control-block entries the application declares (declaredMcbWrites): the
 // allocation resets the segment's regions, so they are written again right after it.
-export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buffer, requireReboot = true, mcb: McbWrite[] = []): LoadPlan {
+// Only the bytes holding an owned bit are written (`owned`, a bit mask per byte), as ETS does: its
+// parameter download reallocates without fill and writes exactly the bytes its parameter model owns
+// (GVS AMMA and Jung 400021SE partial-download captures, 2026-09-26), relying on the device to keep
+// the rest. That holds only while the segment stays at `keptAt`, the address it had before; one the
+// allocation moved is written whole (writeSegmentOwned). The caller's read-back of the whole
+// segment proves the result.
+export function planRelativeParFlash(lsm: number, image: Buffer, owned: ReadonlyArray<number>, keptAt: number, appIdStamp: Buffer, requireReboot = true, mcb: McbWrite[] = []): LoadPlan {
   const other = mcb.find((m) => m.obj !== lsm);
   if (other) throw new ProductError("LOAD_STEP_UNSUPPORTED", `an MCB entry for object ${other.obj}; the parameter flash only allocates object ${lsm}`);
   return [
@@ -129,7 +135,7 @@ export function planRelativeParFlash(lsm: number, image: Buffer, appIdStamp: Buf
     { op: "load", lsm },
     { op: "alloc", lsm, size: image.length },
     ...mcb.map((m): LoadStep => ({ op: "writeProp", obj: lsm, pid: 27, start: m.element, data: m.data, echoPrefix: m.echoPrefix })),
-    { op: "writeSegment", lsm, bytes: image },
+    { op: "writeSegmentOwned", lsm, image, owned, keptAt },
     { op: "stampAppId", lsm, data: appIdStamp },
     { op: "loadCompleted", lsm },
     // Whether the closing A_Restart must PROVE a reboot. thelsing/knx persists ON the restart, so no

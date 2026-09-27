@@ -2,8 +2,8 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
-import { iaToNum } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures } from "../packages/product/src/index.ts";
+import { iaToNum, ownedRuns } from "../packages/knx/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget } from "../packages/product/src/index.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
@@ -185,6 +185,34 @@ describe("partial downloads with links against ETS", () => {
       const compared = r.segments.reduce((n, s) => n + s.compared, 0);
       expect(compared).toBeGreaterThan(0);
       expect(r.segments.flatMap((s) => s.divergences.map((d) => `${s.id}+${d.offset}`))).toEqual([]);
+    });
+  }
+});
+
+// The same partial downloads, for the System B parameter segment: ETS reallocates it without fill
+// and writes exactly the bytes its parameter model owns. Busforge's parameter flash, merged over the
+// device's segment as the full download left it, must write the same bytes with the same values.
+describe("System B parameter flash against ETS's partial download", () => {
+  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+  const cases: { name: string; ia: string; app: string; file: string; params: [string, string][] }[] = [
+    { name: "Jung 400021SE", ia: "1.1.204", app: "M-0004_A-7072-21-99A7-O000A.xml.gz", file: "jung-400021se",
+      params: [["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_P-496_R-106", "1"]] },
+    { name: "GVS AMMA", ia: "1.1.203", app: "M-0085_A-0072-30-69AA.xml.gz", file: "gvs-amma", params: [["M-0085_A-0072-30-69AA_P-20_R-20", "1"], ["M-0085_A-0072-30-69AA_UP-142_R-142", "1"]] },
+  ];
+  for (const c of cases) {
+    test(`${c.name}: the same bytes, with the same values`, () => {
+      const xml = real(c.app);
+      const cfg = parseAppConfig(xml);
+      const before = classify(cfg).planFullDownload(cfg.mask, { ia: c.ia, params: new Map(), links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 4)!.image;
+      const target = buildRelativeSegmentTarget(cfg, new Map(c.params), 4, { ownIdleUnionDefaults: true })!;
+      const { image } = mergeRelativeTarget(Buffer.from(before), target);
+      const ours = new Map<number, number>();
+      for (const r of ownedRuns(image, target.owned)) r.bytes.forEach((b, i) => ours.set(r.offset + i, b));
+      const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", `${c.file}-ets-partial-links.log`), "utf8"), iaToNum(c.ia));
+      const base = reportedTableReferences(cap).get(4)!;
+      const ets = new Map([...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + target.size).map(([a, b]) => [a - base, b]));
+      expect([...ours.keys()].sort((a, b) => a - b)).toEqual([...ets.keys()].sort((a, b) => a - b));
+      expect([...ours].filter(([o, b]) => ets.get(o) !== b)).toEqual([]);
     });
   }
 });

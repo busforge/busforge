@@ -61,7 +61,7 @@ proven executors did. Every other bracket keeps the asserting default.
 
 | Planner | Emits |
 | --- | --- |
-| `planRelativeParFlash` | the System B parameter bracket: unload, load, alloc, write the segment, stamp the app id, load-completed, restart |
+| `planRelativeParFlash` | the System B parameter bracket: unload, load, alloc (no fill), write the bytes holding an owned bit (the whole image if the allocation moved the segment), stamp the app id, load-completed, restart; the read-back checks the whole segment ([findings.md](findings.md) §14) |
 | `planAbsoluteParFlash` | the surgical absolute-segment bracket: per LSM that owns a changed segment, load, write the changed owned runs, load-completed, then restart |
 | `planSystemBGaFlash` | the three group tables (com-object, address, association) rewritten in one bracket |
 | `planMv0705GaFlash` | the two fixed System 7 group tables |

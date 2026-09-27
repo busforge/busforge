@@ -773,3 +773,33 @@ describe("the write service, settled before the bracket", () => {
     expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
   });
 });
+
+describe("the System 7 GA flash against what the device holds", () => {
+  test("given the device's tables, only the bytes that differ are written, each inside its LSM bracket; an unchanged table is not touched", () => {
+    const addr = Buffer.from("0211c91b04", "hex"), assoc = Buffer.from("010001", "hex"), comObj = { address: 0x43fe, bytes: Buffer.from("0a0b0c0d", "hex") };
+    const plan = planMv0705GaFlash({ addr, assoc, comObj }, { addr: Buffer.from("0111c90000", "hex"), assoc: Buffer.from("010001", "hex"), comObj: Buffer.from("0a0b0f0d", "hex") });
+    expect(plan).toEqual([
+      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, offset: 0, bytes: Buffer.from([0x02]) }, { op: "writeSegment", lsm: 1, offset: 3, bytes: Buffer.from([0x1b, 0x04]) }, { op: "loadCompleted", lsm: 1 },
+      { op: "load", lsm: 3 }, { op: "writeMem", address: 0x4400, bytes: Buffer.from([0x0c]) }, { op: "loadCompleted", lsm: 3 },
+      { op: "restart" },
+    ]);
+  });
+  test("a device read shorter than the table is refused, not written around", () => {
+    expect(() => planMv0705GaFlash({ addr: Buffer.from("0211c9", "hex"), assoc: Buffer.from("00", "hex") }, { addr: Buffer.from("01", "hex"), assoc: Buffer.from("00", "hex") })).toThrow(/partial table/);
+  });
+});
+
+describe("a parameter download that writes only owned bytes", () => {
+  const image = Buffer.from([1, 2, 3, 4, 5, 6]);
+  const owned = [0xff, 0, 0xc0, 0x01, 0, 0xff];
+  test("where the segment stayed, only the runs holding an owned bit are written, each read back", async () => {
+    const dev = new RecDev();
+    await runLoadPlan(dev as unknown as KnxDevice, [{ op: "writeSegmentOwned", lsm: 4, image, owned, keptAt: 0x4000 }]);
+    expect(dev.calls.filter((c) => c[0] === "memWrite")).toEqual([["memWrite", 0x4000, "01", true], ["memWrite", 0x4002, "0304", true], ["memWrite", 0x4005, "06", true]]);
+  });
+  test("where the allocation moved the segment, the whole image is written", async () => {
+    const dev = new RecDev();
+    await runLoadPlan(dev as unknown as KnxDevice, [{ op: "writeSegmentOwned", lsm: 4, image, owned, keptAt: 0x5000 }]);
+    expect(dev.calls.filter((c) => c[0] === "memWrite")).toEqual([["memWrite", 0x4000, "010203040506", true]]);
+  });
+});

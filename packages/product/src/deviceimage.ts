@@ -179,9 +179,9 @@ export function buildRelativeSegmentTarget(
   app: AppConfig,
   values: Map<string, string>,
   lsm: number,
-  // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member.
-  // Only a full download sets it: its evidence is a full-download capture, and a surgical flash must
-  // keep bytes a device holds from ETS wherever Busforge's activation is not proven.
+  // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member,
+  // as ETS writes it in both its full and its parameter download (GVS AMMA captures, 2026-09-25/26).
+  // The read-back model leaves it unset: it compares what the configuration derives.
   opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean } = {},
 ): RelativeSegmentTarget | null {
   const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
@@ -273,7 +273,7 @@ export function buildRelativeSegmentTarget(
 
 // Merge a surgical relative target onto the live segment for a System B download: write
 // ONLY owned bytes, carry every unowned byte over from the device read. Returns the full
-// image to flash (the protocol rewrites the whole segment after realloc) and the count of
+// image to flash (the bytes a download may write or keep) and the count of
 // bytes that differ from `current` (== owned bytes we are actually changing; 0 means a
 // no-op reconfiguration). `current` is the device read, guaranteed `target.size` long.
 export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarget): { image: Buffer; diffBytes: number } {

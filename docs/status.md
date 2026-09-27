@@ -120,7 +120,7 @@ Notes attached to that table:
   (`COM_OBJECT_TABLE_EMPTY`) and now writes the same table. In the disabled channels' regions
   every union has no active member, and ETS writes the member marked `DefaultUnionParameter`;
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
-  them); the surgical parameter flash leaves those bits as the device holds them. The whole
+  them); the parameter flash writes them as well, as ETS's partial download does. The whole
   download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
 - **GVS AMMA: a parameter flash wrote idle union bits.** The parameter flash owned whole bytes, so
   beside a 2-bit parameter it wrote the `<Data>` template's 1s into the disabled channel's idle

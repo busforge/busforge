@@ -1,6 +1,6 @@
 import { KnxDevice, type LoadPlan, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags } from "./comobjbuild.ts";
@@ -629,8 +629,10 @@ export class SystemBProfile extends DeviceProfile {
     // imply a different one, flashing would leave that table stale while reporting success.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
-    // we cannot reproduce is preserved by sourcing unowned bytes from the live read.
-    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances });
+    // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
+    // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
+    // them (GVS AMMA partial-download capture, 2026-09-26: exactly the owned bytes, those included).
+    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
     const mcb = declaredMcbWrites(proc, target.size, "par");
 
@@ -650,15 +652,18 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        planRelativeParFlash(LSM, image, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb),
+        planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
-      // The device restarts after load-completed; verify ONLY the owned bytes.
+      // The device restarts after load-completed. Every bit is checked: the owned ones against the
+      // target (minus Access="None" markers the device re-stamps), the rest against the read before
+      // the flash, because only the owned bytes were written and the device had to keep the others.
       verify: async () => {
         const verifyAddr = await dev.tableAddr(LSM);
+        const mask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
         const { ok } = await verifySettled(
           () => dev.memRead(verifyAddr, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
-          (back) => verifyRelativeOwned(back, target),
+          (back) => verifyMaskedBytes(back, image, mask),
         );
         return ok;
       },
@@ -907,6 +912,13 @@ export class System7Profile extends DeviceProfile {
     const l3Seg = this.comObjSegment(mask);
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
+    // A memory-mapped device gets only the bytes that differ, as ETS writes it (planMv0705GaFlash);
+    // a property-mapped one gets whole tables, as ETS writes the MDT BE-02001.02.
+    const current = isMemoryMappedLsm(mask) ? {
+      addr: await dev.memRead(await loadedTableAddr(dev, OBJ.ADDR_TABLE, "address table"), addr.length),
+      assoc: await dev.memRead(await loadedTableAddr(dev, OBJ.ASSOC_TABLE, "association table"), assoc.length),
+      comObj: curL3 ?? undefined,
+    } : undefined;
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + (l3?.bytes.length ?? 0),
@@ -919,7 +931,7 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");

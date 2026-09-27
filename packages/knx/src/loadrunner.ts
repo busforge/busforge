@@ -48,6 +48,11 @@ export type LoadStep =
   // fill, so the device has already zeroed it and only the bytes that are NOT zero need to be
   // sent (see planSystemBFullDownload).
   | { op: "writeSegment"; lsm: number; bytes: Buffer; offset?: number; verify?: boolean; echo?: boolean }
+  // A parameter download after a reallocation without fill: if the segment is still where it was
+  // (`keptAt`), the device kept its bytes and only those holding an owned bit are written (`owned`,
+  // a bit mask per byte), as ETS does; if the allocation moved it, nothing there is the old content,
+  // so the whole image is written. Every write is read back before the bracket closes.
+  | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
   // Put the device into (or out of) verify mode, in which it answers every memory write with what
   // actually landed in its memory. A download's `LdCtrlWriteRelMem Verify="true"` asks for this.
   | { op: "verifyMode"; on: boolean }
@@ -148,6 +153,12 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       // loadedTableAddr, not tableAddr: a load-state machine whose allocation failed still reports
       // its table reference as 0, and writing a 21601-byte parameter image over the bottom of the
       // device's memory is not something to discover later from a failed assert.
+      case "writeSegmentOwned": {
+        const at = await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`);
+        const runs = at === step.keptAt ? ownedRuns(step.image, step.owned) : [{ offset: 0, bytes: step.image }];
+        for (const r of runs) await dev.memWrite(at + r.offset, r.bytes, { verify: true, onProgress: opts.onWrite });
+        break;
+      }
       case "writeSegment": await dev.memWrite((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echo: step.echo, onProgress: opts.onWrite }); break;
       // The device echoes what it stored; a declined write answers with nothing (or something else),
       // and carrying on would leave e.g. an MCB region the device never took.
@@ -175,4 +186,16 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       }
     }
   }
+}
+
+// The runs of consecutive bytes that hold an owned bit.
+export function ownedRuns(image: Buffer, owned: ReadonlyArray<number>): { offset: number; bytes: Buffer }[] {
+  const runs: { offset: number; bytes: Buffer }[] = [];
+  for (let i = 0; i < image.length; ) {
+    if (!owned[i]) { i++; continue; }
+    const start = i;
+    while (i < image.length && owned[i]) i++;
+    runs.push({ offset: start, bytes: Buffer.from(image.subarray(start, i)) });
+  }
+  return runs;
 }
