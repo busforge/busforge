@@ -231,6 +231,20 @@ interface FlashOp {
   loadIncomplete?: "rewrite" | "refuse";
 }
 
+// A device that has just rebooted can still be starting its application and drop management frames
+// for a while (the OpenKNX RaumController went silent 9 KB into the 21.6 KB read-back, the write
+// itself committed and LOADED, 2026-09-27). One lost read is not a verdict on the write: reconnect and
+// read once more; a second silence is reported as it is.
+async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>): Promise<boolean> {
+  try { return await verify(); }
+  catch (e) {
+    if ((e as { code?: string }).code !== "DEVICE_NOT_ANSWERING") throw e;
+    try { await dev.disconnect(); } catch { /* the link may already be gone */ }
+    await reconnectAfterRestart(dev, { initialMs: 5000 });
+    return verify();
+  }
+}
+
 // The one flash sequence every memory model runs: persist the backups, short-circuit an
 // unchanged device and a dry run, write, reconnect across the device's restart, verify.
 // Centralized so the invariants (backup BEFORE any write, verify AFTER the restart,
@@ -252,7 +266,7 @@ async function runFlashOp(
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup };
   await op.write();
   await reconnectAfterRestart(dev);
-  const verified = await op.verify();
+  const verified = await verifyAfterRestart(dev, op.verify);
   return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup };
 }
 

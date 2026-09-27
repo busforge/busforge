@@ -53,6 +53,24 @@ describe("System B parameter flash on a device whose bytes already match", () =>
     expect(dev.writes).toBe(0);
   });
 
+  // A rebooted OpenKNX device went silent partway through the read-back of a write that had landed:
+  // one lost read is retried after a reconnect, not reported as a failed flash.
+  test("a read-back that loses the device once is retried after a reconnect", async () => {
+    const dev = seeded();
+    dev.mem.set(BASE, target.bytes[0] ^ 0xff); // a real change, so the flash writes and verifies
+    let failOnce = true;
+    const read = dev.memRead.bind(dev);
+    dev.memRead = async (addr: number, len: number) => {
+      if (dev.writes > 0 && failOnce) { failOnce = false; throw Object.assign(new Error("no reliable response"), { code: "DEVICE_NOT_ANSWERING" }); }
+      return read(addr, len);
+    };
+    const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+    expect(failOnce).toBe(false);
+    expect(res.kind).toBe("flashed");
+    if (res.kind !== "flashed") throw new Error("unreachable");
+    expect(res.verified).toBe(true);
+  }, 30_000);
+
   test("LSM 4 Loading: the bracket runs and leaves it LOADED", async () => {
     const dev = seeded();
     dev.state.set(4, STATE.LOADING);

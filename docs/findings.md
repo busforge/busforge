@@ -494,3 +494,11 @@ Recovery that day: the device held its original value again after a second write
 committed, so a LoadCompleted on LSM 4 and an A_Restart brought it back; all four load-state
 machines LOADED, parameter drift zero, and its presence object answered a group read.
 
+With the fixes, the same one-byte change went through: written, committed at the restart, all
+four load-state machines LOADED, and a separate read-back after the restart showed the new value.
+That flash itself reported an error, because the rebooted device went silent 9 KB into the 21.6 KB
+read-back while its application started; the verify now reconnects and reads once more after such a
+silence. The revert to the original value then completed as `flashed`, `verified: true`, and the
+presence object answered a group read afterwards. Operator observation over the house interface,
+no evidence record.
+

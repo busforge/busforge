@@ -38,11 +38,10 @@ export const openknxRaumController: DeviceSpec = {
   ],
   // System B claims flashParams/flashLinks and the endpoints perform them. They are kept out of
   // automated runs because a failed boot on this firmware ends in an auto-erase whose recovery needs
-  // the device's serial console. The one surgical attempt so far stopped on Busforge's own
-  // pre-restart read-back (docs/findings.md §16), not on the device. They are proven by the
-  // controlled comparison on docs/roadmap.md instead.
+  // the device's serial console. The surgical parameter flash has since been proven by hand on the
+  // house unit (docs/findings.md §16); both stay for the controlled comparison on docs/roadmap.md.
   unsafe: [
-    { capability: "flashParams", reason: "one attempt on the house unit stopped before LoadCompleted on a pre-restart read-back this firmware cannot answer truthfully (docs/findings.md §16), fixed but not yet re-run; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
+    { capability: "flashParams", reason: "proven by hand on the house unit (one byte, verified after the restart, docs/findings.md §16), not by this spec; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
     { capability: "flashLinks", reason: "never driven on OpenKNX; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
   ],
   // No fuzz: the seeded param sweep is the surgical path excluded above, so there is nothing to

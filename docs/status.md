@@ -79,7 +79,7 @@ value.
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory; survives a restart since the memory-control-block fix (see below) | hardware: a surgically flashed link answers a read |
-| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | not proven (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
+| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter on the house unit, `verified` after the restart (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
@@ -145,13 +145,15 @@ Notes attached to that table:
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
   hardware proofs of this device did not cover that byte.
 
-- **OpenKNX surgical flashes: one attempt, stopped by Busforge's own check, fixed, not yet proven.**
-  The first surgical parameter flash (house unit 1.1.x, one byte) stopped before
-  LoadCompleted because Busforge read the bytes back before the restart, when this firmware still
-  returns the old flash contents ([findings.md](findings.md) §16). The device was recovered to its
-  original configuration the same day. The read-back now waits for the restart, as ETS's does not
-  exist at all; the corrected flash has not run on the device yet. Earlier versions of this page
-  called them unsafe; the label came from
+- **OpenKNX surgical parameter flash: proven on the house unit, group-address flash not.** The first
+  attempt (1.1.x, one byte) stopped before LoadCompleted because Busforge read the
+  bytes back before the restart, when this firmware still returns the old flash contents
+  ([findings.md](findings.md) §16); the device was recovered the same day. With the read-back moved
+  after the restart the change and its revert both landed, persisted across the restart (read back
+  separately) and the revert reported `verified: true`; the application answered a group read
+  afterwards. Operator observation, no evidence record, one parameter. The group-address flash was
+  not tried: the house project's links for this unit do not match the device. Earlier versions of
+  this page called them unsafe; the label came from
   two failures of the *full download*, both explained since: a module-state region poisoned by
   earlier bench experiments (recovered by `erase openknx`) and a com-object table sized to the
   active instead of the declared objects (fixed in `a7b179c`; the group-address flash now builds
