@@ -5,11 +5,11 @@ export { KnxIpTunnel, type TunnelSocket, type TcpSocket } from "./connection.ts"
 export { KnxIpServer, type KnxIpServerOptions, type ServerSocket, type ServerTcpSocket, type ServerTcpListener } from "./ipserver.ts";
 export { KnxUsbTransport, listUsbInterfaces, type UsbInterfaceInfo } from "./usb.ts";
 export { searchInterfaces } from "./discover.ts";
-export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER } from "./device.ts";
+export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER, OBJECT_TYPE_SECURITY, transferChunks } from "./device.ts";
 export * from "./individualaddress.ts";
 export * from "./flash.ts";
 export * from "./grouptable-read.ts";
 export * from "./loadrunner.ts";
-export { secureEncode, secureDecode, SCF, SCF_TOOL_DATA, type SecureFields } from "./secure.ts";
+export { secureEncode, secureDecode, SCF, SCF_TOOL_DATA, SECURE_APDU_OVERHEAD, type SecureFields } from "./secure.ts";
 export { SecureSession } from "./secureSession.ts";
 export { KnxError } from "./errors.ts";

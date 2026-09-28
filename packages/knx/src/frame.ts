@@ -1,5 +1,6 @@
 // KNXnet/IP + cEMI + TPCI/APCI byte handling. See ../../../docs/findings.md.
 import { formatGa, type Levels } from "./ga.ts";
+import { KnxError } from "./errors.ts";
 
 export const KNXPORT = 3671;
 
@@ -42,6 +43,12 @@ export const APCI = {
   MEMORY_EXT_WRITE: 0x1fb, MEMORY_EXT_WRITE_RESP: 0x1fc,
   MEMORY_EXT_READ: 0x1fd, MEMORY_EXT_READ_RESP: 0x1fe,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
+  // Extended property services: a 16-bit object TYPE (not an object index), a 12-bit instance and a
+  // 12-bit PID. The security interface object (type 17) is reachable only through these. The
+  // function-property pair acts on a property rather than reading or writing its value.
+  PROPERTY_EXT_READ: 0x1cc, PROPERTY_EXT_RESPONSE: 0x1cd,
+  PROPERTY_EXT_WRITE_CON: 0x1ce, PROPERTY_EXT_WRITE_CON_RESP: 0x1cf,
+  FUNCTION_PROPERTY_EXT_COMMAND: 0x1d4, FUNCTION_PROPERTY_EXT_STATE_READ: 0x1d5, FUNCTION_PROPERTY_EXT_STATE_RESPONSE: 0x1d6,
   RESTART: 0x380,
   // Individual-address management. These are BROADCAST services (unnumbered, destination
   // 0x0000): they address a device by the fact that its programming mode is on, not by its
@@ -166,6 +173,17 @@ export function apdu(seq: number, apci: number, tail: Buffer = Buffer.alloc(0), 
   const o0 = 0x40 | (seq << 2) | ((apci >> 8) & 0x03);
   const o1 = (apci & 0xff) | (apciLowData & 0x3f);
   return Buffer.concat([Buffer.from([o0, o1]), tail]);
+}
+
+// The 5-octet address of an extended property service: object type, then instance and PID packed
+// as two 12-bit fields.
+export function propertyExtHead(objectType: number, instance: number, pid: number): Buffer {
+  const fits = (v: number, max: number) => Number.isInteger(v) && v >= 0 && v <= max;
+  // Masking an out-of-range value would name another property (PID 0x1038 would become the tool key).
+  if (!fits(objectType, 0xffff) || !fits(instance, 0xfff) || !fits(pid, 0xfff)) {
+    throw new KnxError("PROPERTY_ADDRESS_INVALID", `object type ${objectType}, instance ${instance}, PID ${pid} does not fit an extended property address`);
+  }
+  return Buffer.from([(objectType >> 8) & 0xff, objectType & 0xff, (instance >> 4) & 0xff, ((instance & 0x0f) << 4) | ((pid >> 8) & 0x0f), pid & 0xff]);
 }
 
 export interface ParsedApdu { control: boolean; seq: number; apci: number; data: Buffer; }

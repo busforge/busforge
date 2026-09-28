@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import type { KnxTransport } from "./transport.ts";
 import type { SecureSession } from "./secureSession.ts";
-import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, APCI, type ParsedApdu } from "./frame.ts";
+import { SECURE_APDU_OVERHEAD } from "./secure.ts";
+import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, propertyExtHead, APCI, type ParsedApdu } from "./frame.ts";
 import { KnxError } from "./errors.ts";
 
 // Interface-object property ids and standard table-object numbers used across the
@@ -38,6 +39,48 @@ export const EXT_WRITE_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_W
 // the 3-byte address. So a device's maximum APDU length minus 5 is the most one chunk may carry.
 const EXT_WRITE_OVERHEAD = 5;
 const PID_MAX_APDU_LENGTH = 56;
+// Element count (one octet) and start index (two) of an extended property service. Masking a value
+// out of range would address other elements, so it is refused.
+function assertElements(start: number, count: number): void {
+  if (!Number.isInteger(count) || count < 0 || count > 0xff || !Number.isInteger(start) || start < 0 || start > 0xffff) {
+    throw new KnxError("PROPERTY_ADDRESS_INVALID", `element count ${count} from ${start} does not fit an extended property service`);
+  }
+}
+
+// The security interface object (KNX Data Secure) and its security-mode function property.
+export const OBJECT_TYPE_SECURITY = 17;
+const PID_SECURITY_MODE = 51;
+
+// Data bytes per memory request, from the device's maximum APDU length (null when it declares none)
+// and whether the session is secured. A_Memory_Read spends 3 octets besides the data, the extended
+// read and write 5; the path limits above are for plain frames, so a secured session subtracts its
+// framing from both (a Jung 400021SE over the bench answered no secured 48-byte read, and every
+// 35-byte one). A secured session needs the device's maximum APDU: a device that does not declare it
+// is held to the 15-octet standard frame, which no secured request fits. Where the framing leaves no
+// data byte, the request is refused rather than sent oversize into silence.
+export function transferChunks(maxApdu: number | null, secured: boolean): { classicRead: number; extRead: number; extWrite: number } {
+  if (!secured) {
+    return {
+      classicRead: maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - 3)),
+      extRead: EXT_READ_CHUNK,
+      extWrite: maxApdu === null ? EXT_WRITE_CHUNK : Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD),
+    };
+  }
+  if (maxApdu === null) {
+    throw new KnxError("SECURE_APDU_TOO_SHORT", "the device declares no maximum APDU length, so it takes standard frames only, and a secured memory request does not fit one");
+  }
+  const fit = (n: number, what: string) => {
+    if (n - SECURE_APDU_OVERHEAD < 1) {
+      throw new KnxError("SECURE_APDU_TOO_SHORT", `a secured ${what} does not fit the device's maximum APDU length of ${maxApdu}`);
+    }
+    return n - SECURE_APDU_OVERHEAD;
+  };
+  return {
+    classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - 3), "memory read"),
+    extRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory read"),
+    extWrite: fit(Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory write"),
+  };
+}
 
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
@@ -204,6 +247,64 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
+  // ---- extended property services (object type + instance, see APCI.PROPERTY_EXT_*) ----
+  // Each answer echoes the 5-octet property address; one for another property is refused, never
+  // taken as this one's.
+  private extEcho(r: ParsedApdu, expectApci: number, head: Buffer, what: string): Buffer {
+    if (r.apci !== expectApci) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `${what} was answered with service 0x${r.apci.toString(16)}, not 0x${expectApci.toString(16)}`);
+    }
+    if (r.data.length < head.length || !r.data.subarray(0, head.length).equals(head)) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `${what} for ${head.toString("hex")} was answered for ${r.data.subarray(0, head.length).toString("hex")}`);
+    }
+    return r.data.subarray(head.length);
+  }
+  // The value of `count` elements from `start`; a device answers a property it lacks, or a read it
+  // refuses, with zero elements, which is an error here rather than an empty value.
+  async propExtRead(objectType: number, instance: number, pid: number, start = 1, count = 1): Promise<Buffer> {
+    assertElements(start, count);
+    const head = propertyExtHead(objectType, instance, pid);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_EXT_READ, Buffer.concat([head, Buffer.from([count, start >> 8, start & 0xff])])), true);
+    const rest = this.extEcho(r!, APCI.PROPERTY_EXT_RESPONSE, head, "an extended property read");
+    if (rest.length < 3 || rest[0] === 0) {
+      throw new KnxError("PROPERTY_EXT_READ_REFUSED", `object type ${objectType} PID ${pid}: the device returned no element${rest.length > 3 ? ` (code 0x${rest[3].toString(16)})` : ""}`);
+    }
+    return rest.subarray(3);
+  }
+  // A confirmed write: the device answers with a return code, and anything but success is refused.
+  async propExtWriteCon(objectType: number, instance: number, pid: number, data: Buffer, start = 1, count = 1): Promise<void> {
+    assertElements(start, count);
+    const head = propertyExtHead(objectType, instance, pid);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_EXT_WRITE_CON, Buffer.concat([head, Buffer.from([count, start >> 8, start & 0xff]), data])), true);
+    const rest = this.extEcho(r!, APCI.PROPERTY_EXT_WRITE_CON_RESP, head, "an extended property write");
+    if (rest.length < 4 || rest[3] !== 0x00) {
+      throw new KnxError("PROPERTY_EXT_WRITE_REFUSED", `object type ${objectType} PID ${pid} element ${start}: the device answered ${rest.toString("hex") || "nothing"}`);
+    }
+  }
+  // Function properties answer both the command and the state read with [returnCode, result...].
+  async funcPropExtCommand(objectType: number, instance: number, pid: number, data: Buffer): Promise<{ returnCode: number; result: Buffer }> {
+    return this.funcPropExt(APCI.FUNCTION_PROPERTY_EXT_COMMAND, objectType, instance, pid, data);
+  }
+  async funcPropExtStateRead(objectType: number, instance: number, pid: number, data: Buffer): Promise<{ returnCode: number; result: Buffer }> {
+    return this.funcPropExt(APCI.FUNCTION_PROPERTY_EXT_STATE_READ, objectType, instance, pid, data);
+  }
+  private async funcPropExt(apci: number, objectType: number, instance: number, pid: number, data: Buffer): Promise<{ returnCode: number; result: Buffer }> {
+    const head = propertyExtHead(objectType, instance, pid);
+    const r = await this.request((s) => apdu(s, apci, Buffer.concat([head, data])), true);
+    const rest = this.extEcho(r!, APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE, head, "a function property");
+    if (rest.length < 1) throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `object type ${objectType} PID ${pid}: a function property answer without a return code`);
+    return { returnCode: rest[0], result: rest.subarray(1) };
+  }
+  // Whether Data Secure is switched on: the security object's PID_SECURITY_MODE, service 0, answers
+  // [service, mode]. A device without the object, or any other answer, is an error, not "off".
+  async securityMode(): Promise<boolean> {
+    const { returnCode, result } = await this.funcPropExtStateRead(OBJECT_TYPE_SECURITY, 1, PID_SECURITY_MODE, Buffer.from([0x00, 0x00]));
+    if (returnCode !== 0x00 || result.length < 2 || result[0] !== 0x00 || result[1] > 1) {
+      throw new KnxError("SECURITY_MODE_UNREADABLE", `the security object answered ${Buffer.concat([Buffer.from([returnCode]), result]).toString("hex")} to a read of its security mode`);
+    }
+    return result[1] === 1;
+  }
+
   // PID_MAX_APDU_LENGTH of the device object, read once per connection; null when the device does not
   // implement it. A value too small to carry one byte in an extended write is refused.
   private maxApdu: number | null | undefined;
@@ -235,13 +336,18 @@ export class KnxDevice {
   // (interface, couplers, a single USB HID report) has its own limit, and that size is what the
   // extended reads already carry over the bench's USB interface and the house's IP interface.
   private async classicReadChunk(): Promise<number> {
-    const maxApdu = await this.maxApduLength();
-    return maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - 3));
+    return transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead;
+  }
+  // The extended services run at the path limits in a plain session, as they always have; a secured
+  // one also fits them to the device's maximum APDU (transferChunks).
+  private async extChunks(): Promise<ReturnType<typeof transferChunks>> {
+    const secured = this.secure !== undefined;
+    return transferChunks(secured ? await this.maxApduLength() : null, secured);
   }
   async memRead(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended (a device that
     // allocates a segment there answers only that service). Classic path stays byte-identical below.
-    if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, EXT_READ_CHUNK, onProgress, signal);
+    if (addr >= 0 && addr + len - 1 > 0xffff) return this.memReadExtended(addr, len, undefined, onProgress, signal);
     assertAddressable(addr, len, "memory read");
     const chunk = chunkBytes ?? await this.classicReadChunk();
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
@@ -320,10 +426,11 @@ export class KnxDevice {
     // (see memWriteExtended); `verify` and `echo` apply to the classic write only.
     const maxApdu = await this.maxApduLength();
     if (maxApdu !== null) {
-      const chunk = Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD, opts.chunk ?? Infinity);
+      const chunk = Math.min(transferChunks(maxApdu, this.secure !== undefined).extWrite, opts.chunk ?? Infinity);
       return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }
     assertAddressable(addr, data.length, "memory write");
+    if (this.secure !== undefined) transferChunks(null, true); // refuses: no secured write fits a standard frame
     const chunk = opts.chunk ?? 12;
     const total = Math.ceil(data.length / chunk);
     let done = 0;
@@ -376,9 +483,9 @@ export class KnxDevice {
       throw new KnxError("MEMORY_ADDRESS_TOO_HIGH", `${what} at 0x${addr.toString(16)} is outside the 24-bit A_MemoryExtended address space`);
     }
   }
-  async memReadExtended(addr: number, len: number, chunk = EXT_READ_CHUNK, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
+  async memReadExtended(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     this.assertExtAddressable(addr, len, "extended memory read");
-    chunk = Math.min(Math.max(1, chunk), 255); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, chunkBytes ?? (await this.extChunks()).extRead), 255); // the count is a single request octet
     const out = Buffer.alloc(len);
     let pos = 0;
     while (pos < len) {
@@ -407,7 +514,7 @@ export class KnxDevice {
   // The per-chunk return code and the caller's read-back after the restart are the proof.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
-    const chunk = Math.min(Math.max(1, opts.chunk ?? EXT_WRITE_CHUNK), 255); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255); // the count is a single request octet
     const total = Math.ceil(data.length / chunk) || 1;
     let done = 0;
     for (let pos = 0; pos < data.length; ) {

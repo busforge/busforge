@@ -136,12 +136,25 @@ export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: strin
 export function secureIdentify(
   connection: Connection, ia: string, toolKey: Buffer, serial: Buffer,
   onProgress?: ProgressFn,
-): Promise<{ mask: string; serial: string }> {
+): Promise<{ mask: string; serial: string; securityMode: SecurityModeReading }> {
   return withDeviceSession(connection, ia, null, onProgress, async (dev, mask) => {
     const sn = await dev.propRead(0, 11); // device object (0), serial-number property (PID 11)
-    return { mask, serial: sn.toString("hex") };
+    // The security object's own statement; shown on the Jung 400021SE. A device that does not
+    // answer it (not shown on the MDT IP interfaces) is reported as such, not as on or off; a
+    // failure of the link itself still fails the identification. Keep this the session's last
+    // request: after a device timeout the transport sequence is not advanced.
+    const securityMode: SecurityModeReading = await dev.securityMode()
+      .then((on): SecurityModeReading => ({ state: on ? "on" : "off" }))
+      .catch((e): SecurityModeReading => {
+        const code = (e as { code?: string }).code;
+        if (!DEVICE_SIDE_SECURITY_MODE_FAILURES.has(code ?? "")) throw e;
+        return { state: "unreadable", detail: e instanceof Error ? e.message : String(e) };
+      });
+    return { mask, serial: sn.toString("hex"), securityMode };
   }, { toolKey, serial });
 }
+export type SecurityModeReading = { state: "on" | "off" } | { state: "unreadable"; detail: string };
+const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING"]);
 
 // Give a device its physical address. Unlike every other operation here this one CANNOT use
 // withDeviceSession: the device is reached by broadcast, precisely because it may not have a

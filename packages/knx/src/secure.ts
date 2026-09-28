@@ -12,6 +12,10 @@ import { createCipheriv } from "node:crypto";
 // known-answer vectors plus, ultimately, a real secure read-back on the device.
 
 const MAC_LEN = 4; // KNX truncates the 16-byte CCM tag to 4 bytes
+// Octets a secured APDU adds to the plain one it carries: its own TPCI/APCI pair (A_Data_Secure),
+// the SCF, the 6-byte sequence and the MAC; the whole inner APDU, APCI included, is the ciphertext.
+// Every size limit of the plain path shrinks by this much inside a secure session.
+export const SECURE_APDU_OVERHEAD = 2 + 1 + 6 + MAC_LEN;
 const SecureService = 0x03f1; // the 10-bit APCI of A_Data_Secure
 
 // SCF (Security Control Field) bits: T A A A B S S S.

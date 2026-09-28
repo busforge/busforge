@@ -183,7 +183,17 @@ recognised as secure gets a badge in the device list.
 One dedicated endpoint exists, `secure-identify`: it opens a secure session with no mask gate (the
 identification is what learns the mask) and returns the real device descriptor and serial. It is the
 proof that the envelope works against a device that answers `0xFFFF` to everything plain. It is
-reachable over the API and has no button in the UI today.
+reachable over the API and has no button in the UI today. It also reports the device's security
+mode (PID 51 of the security interface object, through `A_FunctionPropertyExtState_Read`), or that
+the device did not answer it; it never guesses "off".
+
+**A secured frame is 13 octets longer than the plain one it carries** (its own TPCI/APCI pair, SCF,
+sequence and MAC). Every per-request data size therefore shrinks by 13 inside a session
+(`transferChunks` in `packages/knx/src/device.ts`), and a request the framing leaves no room in is
+refused (`SECURE_APDU_TOO_SHORT`), as is any secured memory request to a device that declares no
+maximum APDU length. Shown for reads: a 48-byte extended read, the most the bench's USB path carries
+in plain, got no answer from the secured Jung, 35 bytes did (sizes in between not tried). The write
+sizes follow from the same arithmetic and have not been sent secured yet.
 
 **Individual-address assignment has no secure path.** It is a broadcast operation and cannot go
 through the session at all.
@@ -215,16 +225,17 @@ two common classes of secure device cannot serve:
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
   restarts it, which drops the connection carrying the flash.
 
-**The bench has a suitable device.** The Jung 400021SE (`M-0004_A-7072-21`) declares
-`IsSecureEnabled="true"` in its application program, has a parameter image and is not the
-interface. In both ETS captures of it (`tools/fixtures/jung-400021se-ets-fulldownload.log`, the
-`A_FunctionPropertyExtState_Read` of object type 17, PID 51, near the start) ETS reads its security
-mode and the device answers `00`, security off: it is secure-capable and currently runs plain.
-Switching it to secure mode needs its factory key (FDSK, on the device certificate) and takes it off
-the plain bench runs until a master reset. Jung's product documentation describes one (start in
-safe state with the programming button held, then hold it longer than 5 s; this restores the FDSK
-and wipes the configuration and address); it has not been tried on the bench. That is a user
-decision, not yet taken.
+**The bench has a suitable device, and it now runs secure.** The Jung 400021SE (`M-0004_A-7072-21`)
+declares `IsSecureEnabled="true"`, has a parameter image and is not the interface. On 2026-09-28 ETS
+6.4.1 secure-commissioned it from its certificate, with one secured group address (0/0/1 on channel
+1's switching output), through the logging proxy (see [The ETS reference capture](#the-ets-reference-capture)).
+It left the plain bench runs with that: the plain smoke spec no longer applies, and the way back to
+plain is Jung's documented master reset (start in safe state with the programming button held, then
+hold it longer than 5 s; restores the FDSK, wipes configuration and address), not tried yet.
+
+With the ETS project imported, Busforge reads the secured Jung back in full: parameters and links
+equal to the ETS project, no gap (2026-09-28). `secure-identify` reports its security mode as on,
+read from the security object itself.
 
 So a secure parameter flash counts as supported only once it is byte-verified on a **suitable**
 secure device, and the GA flash and full download only once the security object download exists
@@ -235,6 +246,29 @@ hard to reverse (a wrong or half-completed write locks the device out, recoverab
 factory key or a factory reset), so it needs a sacrificial device to develop and verify against, plus
 explicit sign-off and a recovery procedure. It is on [roadmap.md](roadmap.md), and no partial version
 of it ships.
+
+## The ETS reference capture
+
+ETS secure-commissioning the Jung was recorded through the logging proxy on 2026-09-28. All 523
+secured frames decrypt with Busforge's own CCM and Sync (`tools/secure-capture-decode.ts`, keys
+from the environment only), none is left undecrypted: the independent check that the envelope
+matches ETS on an application device. The capture is kept on the development machine, not in the
+repository: with the device certificate it decrypts completely, and the certificate is stored
+nowhere. What ETS does, in order:
+
+1. Sync with the **FDSK**, the serial field of the Sync request all zero.
+2. Read PID 51 (security mode) of object type 17: off. Switch it on (`A_FunctionPropertyExtCommand`).
+3. Write PID 56, the new **tool key**, with `A_PropertyExtValue_WriteCon`. The device answers that
+   write already under the new key.
+4. Sync again with the tool key; everything after runs under it.
+5. Device descriptor and properties, then the security object's own load bracket
+   (`A_FunctionPropertyExtCommand` on PID 5: unload, start loading, and load completed at the end),
+   PID 54 cleared (its element count set to 0), PID 53 (group key table, one entry for 0/0/1),
+   PID 61 (74 writes, 73 of 18 elements and one of 13), then the memory (`A_MemoryExtended_Write`,
+   up to 151 bytes per frame) and the usual load controls and restart.
+
+The exported ETS project carries the same tool key (checked by hash). This capture is the reference
+for the security object download and for Busforge's own activation, both still to build.
 
 ## The honesty bar for this area
 
