@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { iaToNum, ownedRuns } from "../packages/knx/src/index.ts";
@@ -215,4 +216,50 @@ describe("System B parameter flash against ETS's partial download", () => {
       expect([...ours].filter(([o, b]) => ets.get(o) !== b)).toEqual([]);
     });
   }
+});
+
+// The CLI's partial mode, end to end: one record per Busforge flash operation that the partial
+// download touched, and none for an operation whose segments ETS left alone.
+describe("etsdiff --partial evidence", () => {
+  const realDir = join(import.meta.dir, "../packages/product/test/fixtures/real");
+  const cli = async (args: string[]) => {
+    const out = join(tmpdir(), `etsdiff-partial-${crypto.randomUUID()}.json`);
+    const p = Bun.spawnSync(["bun", "run", join(import.meta.dir, "etsdiff.ts"), ...args, "--partial", `--evidence=${out}`], { stdout: "pipe", stderr: "pipe" });
+    const written = existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) as { scope: { operation: string }; results: { reference: { state: string; detail?: string } } }[] : null;
+    rmSync(out, { force: true });
+    return { exitCode: p.exitCode, records: written?.map((r) => [r.scope.operation, r.results.reference.state]) ?? null, details: written?.map((r) => r.results.reference.detail) ?? [], stderr: p.stderr.toString() };
+  };
+  test("GVS AMMA: parameters and links, one pass each", async () => {
+    const r = await cli([join(import.meta.dir, "fixtures/gvs-amma-ets-partial-links.log"), `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, "--ia=1.1.203",
+      "--param=M-0085_A-0072-30-69AA_P-20_R-20=1", "--param=M-0085_A-0072-30-69AA_UP-142_R-142=1", "--link=2:3/3/6"]);
+    expect([r.exitCode, r.records]).toEqual([0, [["flashParams", "pass"], ["flashLinks", "pass"]]]);
+  });
+  test("MDT BE-02001.02: links only, so no parameter record", async () => {
+    const r = await cli([join(import.meta.dir, "fixtures/mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1", "--link=6:3/3/5"]);
+    expect([r.exitCode, r.records]).toEqual([0, [["flashLinks", "pass"]]]);
+  });
+  test("a configuration ETS did not download fails, and its record says so", async () => {
+    const r = await cli([join(import.meta.dir, "fixtures/mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1"]);
+    expect([r.exitCode, r.records]).toEqual([1, [["flashLinks", "fail"]]]);
+  });
+  // GVS AMMA (System B): the parameter segment is placed by the device's table reference and
+  // matches; ETS also allocated the association table (a fill and no write) but the capture holds
+  // no table reference for it, so that segment could not be compared.
+  test("a table ETS allocated but the capture cannot place is a failed record, not a silent pass", async () => {
+    const xml = gunzipSync(readFileSync(join(realDir, "M-0085_A-0072-30-69AA.xml.gz"))).toString("utf8");
+    const cfg = parseAppConfig(xml);
+    const params = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.203", params: new Map(), links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 4)!;
+    const base = 0x3fc6;
+    const capture = join(tmpdir(), `etsdiff-gvs-${crypto.randomUUID()}.log`);
+    writeFileSync(capture, [
+      line("BRIDGE->ETS", 0x29, "1.1.203", "0.0.0", propResponse(4, 7, [0, 0, base >> 8, base & 0xff])),
+      line("ETS->BRIDGE", 0x11, "0.0.0", "1.1.203", memWrite(base, [...params.image.subarray(0, 4)])),
+      line("ETS->BRIDGE", 0x11, "0.0.0", "1.1.203", propWrite(2, 5, [0x03, 0x0b, 0, 0, 0, 0x02, 0, 0, 0, 0])),
+    ].join("\n"));
+    const r = await cli([capture, `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, "--ia=1.1.203"]);
+    rmSync(capture, { force: true });
+    expect([r.exitCode, r.records]).toEqual([1, [["flashParams", "pass"], ["flashLinks", "fail"]]]);
+    expect(r.details[1]).toContain("L2 association table not compared, address unknown");
+    expect(r.details[1]).toContain("L1 address table not written by this partial download");
+  });
 });

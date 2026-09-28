@@ -145,11 +145,14 @@ Holds busforge's built parameter image against what **ETS** actually wrote to a 
 for byte.
 
 ```bash
-bun run tools/etsdiff.ts <project.knxproj> <ets-capture.log> [--device=<index>] [--base=<n>] [--evidence=<out.json>]
+bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=<pw>] [--device=<i> | --ia=<a.l.d>] [--partial] [--evidence=<out.json>]
 ```
 
 `--evidence` writes the result as a reference [evidence record](evidence-contract.md) that points at
 the capture by path and SHA-256. Keep the capture: a comparison nobody can repeat does not count.
+`--partial` takes an ETS partial download instead of a full one and writes one record per Busforge
+flash operation it touched: `flashParams` for the parameter segments, `flashLinks` for the group
+tables. The full invocation reference is in [verification.md](verification.md).
 
 This closes a gap nothing else can: busforge's own flash verifies that the device holds what we
 sent, which can never prove that what we sent is what ETS would have sent. For a union-heavy

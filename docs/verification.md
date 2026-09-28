@@ -345,4 +345,9 @@ bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml|.xml.gz|.knxprod> [--a
 # e.g. the MDT worked case (passes: every byte ETS wrote matches):
 bun run tools/etsdiff.ts tools/fixtures/mdt-be02001-ets-fulldownload-linked.log \
   --app=packages/product/test/fixtures/real/M-0083_A-00B6-32-9642.xml.gz --ia=1.1.56 --link=0:3/3/1
+# An ETS partial download: --partial compares what it wrote and records one reference per flash
+# operation it touched (flashParams, flashLinks); a segment ETS left alone is not a gap.
+bun run tools/etsdiff.ts tools/fixtures/mdt-be02001-ets-partial-links.log \
+  --app=packages/product/test/fixtures/real/M-0083_A-00B6-32-9642.xml.gz --ia=1.1.56 \
+  --link=0:3/3/1 --link=6:3/3/5 --partial --evidence=docs/evidence/reference/mdt-be02001-partial-links.json
 ```

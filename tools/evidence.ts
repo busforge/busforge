@@ -109,13 +109,19 @@ export interface EtsDiffSummary {
   segments: string[];          // per segment: "<id> <divergent>/<compared>" or "<id> not compared"
   declaredUnwritten?: string[]; // declared segments Busforge writes nothing to (ETS wrote nothing there either, or it would be outside)
   exclusions: string[];        // rule-based exclusions applied, each with its rule
+  // What the capture was: an ETS full download (the default), or an ETS partial download split by
+  // the Busforge operation that writes the compared segments.
+  operation?: "fullDownload" | "flashParams" | "flashLinks";
 }
 export function etsdiffEvidence(
   c: EtsDiffSummary,
   run: { recordedAt: string; runnerRevision: string | null; artifact: string; sha256: string },
 ): EvidenceRecord {
+  const operation = c.operation ?? "fullDownload";
+  const partial = operation !== "fullDownload";
+  const image = partial ? "image for the same configuration" : "full-download image";
   // Nothing compared is nothing shown.
-  if (c.compared === 0) throw new Error(`no ETS write to ${c.ia} fell inside Busforge's full-download image; nothing to record`);
+  if (c.compared === 0 && !c.uncomparedSegments) throw new Error(`no ETS write to ${c.ia} fell inside Busforge's ${image}; nothing to record`);
   const app = appProgramId(c.hardware2Program);
   const scope = [
     `${c.compared} bytes compared (${c.segments.join(", ")})`,
@@ -128,17 +134,25 @@ export function etsdiffEvidence(
     ...(c.etsOutside ? [`${c.etsOutside} bytes ETS wrote lie outside Busforge's image`] : []),
     ...(c.uncomparedSegments ? [`${c.uncomparedSegments} segments could not be placed on the device`] : []),
   ];
+  const segmentsOf = { fullDownload: "every segment", flashParams: "the parameter segments", flashLinks: "the group tables" }[operation];
   return parseEvidenceRecord({
-    schema: "busforge.evidence/1", id: `etsdiff-${c.ia}-${run.recordedAt}`, recordedAt: run.recordedAt,
+    schema: "busforge.evidence/1", id: `etsdiff-${partial ? `${operation}-` : ""}${c.ia}-${run.recordedAt}`, recordedAt: run.recordedAt,
     subject: { manufacturer: app.slice(0, 6), productRef: c.productRef, appProgramId: app, mask: c.mask, firmware: { state: "unknown" } },
     medium: "unknown", transport: { kind: "unknown", via: "unknown" },
     build: { server: null, runner: { name: "tools/etsdiff.ts", revision: run.runnerRevision }, spec: null },
-    scope: { operation: "fullDownload", channel: "tool", configuration: `${c.configuration}; full-download image, every segment`, configurationFingerprint: null },
+    scope: {
+      operation, channel: "tool", configurationFingerprint: null,
+      configuration: partial
+        ? `${c.configuration}; ETS partial download against Busforge's configuration image (not the flash operation's write set), ${segmentsOf}`
+        : `${c.configuration}; full-download image, every segment`,
+    },
     origin: { configuredBy: "ets", reference: "ets-capture", priorBusforgeWrites: "none" },
     results: {
       transfer: { state: "not-assessed", detail: "offline comparison; no device involved" },
       reference: problems.length === 0
-        ? { state: "pass", method: "every memory byte of the ETS full download byte-equal to Busforge's full-download image at the device address", detail: scope }
+        ? { state: "pass", method: partial
+          ? `every memory byte the ETS partial download wrote to ${segmentsOf} byte-equal to Busforge's image for the same configuration at the device address`
+          : "every memory byte of the ETS full download byte-equal to Busforge's full-download image at the device address", detail: scope }
         : { state: "fail", detail: `${problems.join("; ")}; ${scope}` },
       behaviour: NOT_ASSESSED, persistence: NOT_ASSESSED,
     },

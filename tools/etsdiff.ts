@@ -6,7 +6,7 @@
 //   bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=<pw>] [--device=<index> | --ia=<a.l.d>]
 //   bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml | app.xml.gz | product.knxprod> --ia=<a.l.d>
 //        [--app-id=<M-XXXX_A-...>] [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
-//   common: [--base=<n>] [--seg-base=<lsm>:<n>]... [--evidence=<out.json>]
+//   common: [--base=<n>] [--seg-base=<lsm>:<n>]... [--partial] [--evidence=<out.json>]
 //
 // --project takes the device's configuration from the project (parameters, module instances and
 // links, exactly as an import stores them). Without a project, --app names the application program
@@ -14,6 +14,11 @@
 // other parameter is at its application default. --evidence writes the result as an evidence
 // record pointing at the capture by path and hash; the capture must be kept for the record to stay
 // checkable (docs/evidence-contract.md).
+//
+// --partial takes an ETS partial download instead: ETS writes only the segments that changed, so
+// the same comparison runs over what it wrote, and the evidence splits into one record per
+// Busforge operation that writes the compared segments (flashParams for the parameter segments,
+// flashLinks for the group tables).
 //
 // WHY THIS EXISTS. Busforge's own flash verifies device == our-image. That proves the device holds
 // what we sent; it can NEVER prove our-image == what ETS would have sent. A wrong codec, resolver or
@@ -56,6 +61,7 @@ const PID_LOAD_STATE_CONTROL = 5;
 const PID_TABLE_REFERENCE = 7;
 // The memory-mapped LSM interface (MV-0700/0701): load controls are memory writes to this register.
 const MM_CTRL_ADDR = 0x0104;
+const TABLE_SOURCES = new Set<FullDownloadSegment["source"]>(["addrTable", "assocTable", "comObjTable"]);
 
 // ── capture parsing ──────────────────────────────────────────────────────────
 
@@ -310,7 +316,7 @@ async function main(): Promise<number> {
   const many = (k: string) => args.filter((a) => a.startsWith(`--${k}=`)).map((a) => a.slice(k.length + 3));
   const [capturePath, ...extra] = args.filter((a) => !a.startsWith("--"));
   if (!capturePath || extra.length) {
-    console.error("usage: bun run tools/etsdiff.ts <ets-capture.log> (--project=<file.knxproj> [--password=<pw>] [--device=<i>|--ia=<a.l.d>] | --app=<xml|xml.gz|knxprod> --ia=<a.l.d> [--app-id=..] [--product=..] [--param=<ref>=<v>].. [--link=<obj>:<ga>[,<ga>]]..) [--base=<n>] [--seg-base=<lsm>:<n>].. [--evidence=<out.json>]");
+    console.error("usage: bun run tools/etsdiff.ts <ets-capture.log> (--project=<file.knxproj> [--password=<pw>] [--device=<i>|--ia=<a.l.d>] | --app=<xml|xml.gz|knxprod> --ia=<a.l.d> [--app-id=..] [--product=..] [--param=<ref>=<v>].. [--link=<obj>:<ga>[,<ga>]]..) [--base=<n>] [--seg-base=<lsm>:<n>].. [--partial] [--evidence=<out.json>]");
     return 2;
   }
   const subject = await loadSubject(opt, many);
@@ -323,7 +329,7 @@ async function main(): Promise<number> {
 
   const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());
   const cap = parseCapture(new TextDecoder().decode(captureBytes), iaToNum(subject.ia));
-  if (cap.writes.length === 0) throw new Error(`no memory write to ${subject.ia} in ${capturePath}; is it an ETS full download of that device through the logging proxy?`);
+  if (cap.writes.length === 0) throw new Error(`no memory write to ${subject.ia} in ${capturePath}; is it an ETS download of that device through the logging proxy?`);
   const mem = memoryImage(cap.writes);
   const alloc = etsAllocations(cap);
   const reported = reportedTableReferences(cap);
@@ -377,28 +383,68 @@ async function main(): Promise<number> {
   for (const p of cap.propWrites) propSummary.set(`obj ${p.obj} PID ${p.pid}`, (propSummary.get(`obj ${p.obj} PID ${p.pid}`) ?? 0) + 1);
   if (propSummary.size) console.log(`\nnot compared, ETS property writes: ${[...propSummary].map(([k, n]) => `${k} x${n}`).join(", ")}`);
 
-  const uncompared = diff.segments.filter((r) => r.address === null).length;
+  const partial = args.includes("--partial");
+  // A segment without a device address is never compared. In a full download that is a gap. In a
+  // partial download it is acceptable only for a segment ETS did not touch at all: a byte ETS wrote
+  // there would be unattributed and fail anyway, but an allocation with a fill and no write would
+  // not, so a segment whose load state machine ETS drove counts as not compared.
+  const touchedLsm = new Set([...alloc.keys(), ...cap.propWrites.map((p) => p.obj)]);
+  const gap = (i: number) => diff.segments[i].address === null && (!partial || touchedLsm.has(placed[i].seg.lsm));
+  const uncompared = placed.filter((_, i) => gap(i)).length;
   const pass = compared > 0 && divergent === 0 && etsOnly === 0 && diff.unattributed.length === 0 && uncompared === 0;
-  console.log(`\nsummary: ${compared} bytes compared across ${diff.segments.length - uncompared} segments, ${divergent} divergent, ${etsOnly + diff.unattributed.length} ETS bytes outside Busforge's image, ${busforgeOnly} Busforge bytes ETS does not write, ${uncompared} segments not compared.`);
+  const withBytes = diff.segments.filter((r) => r.compared > 0).length;
+  console.log(`\nsummary: ${compared} bytes compared across ${withBytes} segments, ${divergent} divergent, ${etsOnly + diff.unattributed.length} ETS bytes outside Busforge's image, ${busforgeOnly} Busforge bytes ETS does not write, ${uncompared} segments not compared.`);
 
   const evidencePath = opt("evidence");
   if (evidencePath) {
-    const record = etsdiffEvidence(
-      {
-        ia: subject.ia, productRef: subject.productRef, hardware2Program: subject.appRef, mask: cfg.mask, configuration: subject.configuration,
-        compared, divergent, etsOutside: etsOnly + diff.unattributed.length, busforgeOnly, uncomparedSegments: uncompared,
-        segments: diff.segments.map((r) => `${r.id} ${r.address === null ? "not compared" : `${r.divergences.length}/${r.compared}`}`),
-        exclusions: diff.exclusions.map((e) => `${e.addresses.length} bytes: ${e.rule}`),
-        declaredUnwritten: declaredUnwritten.map((s) => `${s.id.split("_").pop()} (${s.size}B)`),
-      },
-      { recordedAt: new Date().toISOString(), runnerRevision: gitRevision(), artifact: capturePath, sha256: sha256(captureBytes) },
-    );
-    await Bun.write(evidencePath, JSON.stringify([record], null, 2) + "\n");
-    console.log(`evidence: ${evidencePath}`);
+    const recordedAt = new Date().toISOString();
+    const run = { recordedAt, runnerRevision: gitRevision(), artifact: capturePath, sha256: sha256(captureBytes) };
+    // A full download is one operation. A partial download is split by the Busforge operation that
+    // writes each segment; a static segment is written by the full download alone and joins neither,
+    // so a failure there has no record to carry it and the evidence is refused.
+    if (partial) {
+      const lost = placed.flatMap((p, i) => p.seg.source === "static" && (diff.segments[i].divergences.length || diff.segments[i].etsOnly.length || gap(i)) ? [p.seg.id] : []);
+      if (lost.length) throw new Error(`static segment(s) ${lost.join(", ")} disagree with ETS or could not be compared; no flash operation writes them, so no partial record can carry that. Compare a full download instead.`);
+    }
+    const groups: { operation: "fullDownload" | "flashParams" | "flashLinks"; idx: number[] }[] = partial
+      ? (["flashParams", "flashLinks"] as const).map((operation) => ({
+        operation,
+        idx: placed.flatMap((p, i) => (operation === "flashParams" ? p.seg.source === "params" : TABLE_SOURCES.has(p.seg.source)) ? [i] : []),
+      }))
+      : [{ operation: "fullDownload", idx: placed.map((_, i) => i) }];
+    const segmentState = (i: number) => {
+      const r = diff.segments[i];
+      if (r.address !== null) return `${r.divergences.length}/${r.compared}`;
+      return gap(i) ? "not compared, address unknown" : "not written by this partial download";
+    };
+    const records = groups.flatMap(({ operation, idx }) => {
+      const rs = idx.map((i) => diff.segments[i]);
+      const n = rs.reduce((k, r) => k + r.compared, 0);
+      if (partial && n === 0 && !idx.some(gap)) return [];
+      return [etsdiffEvidence(
+        {
+          ia: subject.ia, productRef: subject.productRef, hardware2Program: subject.appRef, mask: cfg.mask, configuration: subject.configuration,
+          compared: n, divergent: rs.reduce((k, r) => k + r.divergences.length, 0),
+          etsOutside: rs.reduce((k, r) => k + r.etsOnly.length, 0) + diff.unattributed.length,
+          busforgeOnly: rs.reduce((k, r) => k + r.busforgeOnly.length, 0),
+          uncomparedSegments: idx.filter(gap).length,
+          segments: idx.map((i) => `${diff.segments[i].id} ${segmentState(i)}`),
+          // Exclusions cover ETS bytes outside every segment, so they belong to the capture, not to one operation.
+          exclusions: diff.exclusions.map((e) => `${e.addresses.length} bytes${partial ? " of the capture" : ""}: ${e.rule}`),
+          declaredUnwritten: partial ? undefined : declaredUnwritten.map((s) => `${s.id.split("_").pop()} (${s.size}B)`),
+          operation,
+        },
+        run,
+      )];
+    });
+    if (records.length === 0) throw new Error(`no ETS write to ${subject.ia} fell inside a segment a Busforge flash writes; nothing to record`);
+    await Bun.write(evidencePath, JSON.stringify(records, null, 2) + "\n");
+    console.log(`evidence: ${evidencePath} (${records.map((r) => `${r.scope.operation} ${r.results.reference.state}`).join(", ")})`);
   }
+  const what = partial ? "ETS's partial download wrote matches Busforge's image for the same configuration" : "ETS wrote matches Busforge's full-download image";
   console.log(pass
-    ? "PASS: every byte ETS wrote matches Busforge's full-download image."
-    : "FAIL: Busforge's full download disagrees with ETS or could not be compared completely (see docs/verification.md). A read-back cannot catch this.");
+    ? `PASS: every byte ${what}.`
+    : `FAIL: Busforge's ${partial ? "image" : "full download"} disagrees with ETS or could not be compared completely (see docs/verification.md). A read-back cannot catch this.`);
   return pass ? 0 : 1;
 }
 

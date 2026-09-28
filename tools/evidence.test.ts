@@ -65,6 +65,22 @@ describe("etsdiff evidence", () => {
   test("no compared byte is no evidence", () => {
     expect(() => etsdiffEvidence({ ...c, compared: 0 }, r0)).toThrow("nothing to record");
   });
+  test("a partial download is recorded against the flash operation that writes its segments", () => {
+    const r = etsdiffEvidence({ ...c, operation: "flashLinks" }, r0);
+    expect(r.scope).toMatchObject({ operation: "flashLinks", configuration: "application defaults, no links; ETS partial download against Busforge's configuration image (not the flash operation's write set), the group tables" });
+    expect(r.results.reference).toMatchObject({ state: "pass", method: expect.stringContaining("ETS partial download wrote to the group tables") });
+    expect(r.id).toBe(`etsdiff-flashLinks-1.1.56-${run.recordedAt}`);
+    expect(r.scope.configuration).toContain("not the flash operation's write set");
+  });
+  test("a partial parameter record names the parameter segments, and fails like any other", () => {
+    expect(etsdiffEvidence({ ...c, operation: "flashParams" }, r0).results.reference)
+      .toMatchObject({ method: expect.stringContaining("wrote to the parameter segments") });
+    expect(etsdiffEvidence({ ...c, operation: "flashParams", divergent: 3 }, r0).results.reference).toMatchObject({ state: "fail" });
+  });
+  test("an operation ETS touched but that could not be compared is a failed record", () => {
+    const r = etsdiffEvidence({ ...c, operation: "flashLinks", compared: 0, uncomparedSegments: 1, segments: ["L2 not compared, address unknown"] }, r0);
+    expect(r.results.reference).toMatchObject({ state: "fail", detail: expect.stringContaining("1 segments could not be placed") });
+  });
 });
 
 test("an application program id keeps its suffix (Jung ...-O000A)", () => {
