@@ -251,7 +251,8 @@ report a device family as working on the strength of a passing test suite.
   and its parameter bytes match Busforge's image. For the group-address flash one ETS partial
   download per bench device exists (links plus, on the ABB, GVS and Jung, a parameter
   change): every byte ETS wrote, group tables and com-object table included, equals Busforge's
-  image for that configuration (`tools/etsdiff.test.ts`, captures in `tools/fixtures/`). Everywhere else the read-back proves `device == our image` and can never prove
+  image for that configuration (`tools/etsdiff.test.ts`, captures in `tools/fixtures/`, records per
+  flash operation `*-partial-links.json` in [evidence/reference/](evidence/reference/)). Everywhere else the read-back proves `device == our image` and can never prove
   `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
   and changes only each object's linked bit; ETS rewrites that bit on a group-address download on
