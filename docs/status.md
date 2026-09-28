@@ -49,8 +49,8 @@ All hardware verification to date is on **twisted pair**.
 | Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Reads auto-select it when a range exceeds `0xFFFF`. Writes use it, confirmed chunk by chunk, on every device that declares `PID_MAX_APDU_LENGTH`, as ETS does ([device-memory-model.md](device-memory-model.md)). An address past 24 bits is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
 | KNX Data Secure: read (descriptor, property, serial, security mode) | yes | hardware | Own AES-128-CCM; tool keys come from the project file. The Jung 400021SE, secure-commissioned by ETS, reads back in full (parameters and links equal to the ETS project) and reports its security mode as on. All 523 secured frames of ETS commissioning it decrypt with Busforge's CCM ([knx-secure.md](knx-secure.md#the-ets-reference-capture)). |
 | KNX Data Secure: write (property write) | yes | hardware | Reversible property write on a real secure device. |
-| KNX Data Secure: parameter flash over the secure channel | wired | not proven | The route passes the device's secure credentials into the session, but the composition (secure session + load procedure) has never been driven. The bench Jung 400021SE runs secure since 2026-09-28 and is the target for it ([knx-secure.md](knx-secure.md#the-gap)). |
-| KNX Data Secure: GA flash or full download | yes (System B) | hardware, full download | The security object (group key table, per-object security flags) is loaded in the same bracket as the tables, the way ETS does it. On the ETS-secured Jung 400021SE (2026-09-28) Busforge's secured full download verified after its restart, and its 158 security-object frames were byte-identical to ETS's decrypted capture. A dry-run GA flash found the ETS-loaded object equal to Busforge's; a GA flash that changes a secured link has not been driven. Other memory models refuse (`SECURE_TABLES_UNSUPPORTED`). That the secured group address still works on the bus is not shown: Busforge cannot yet send or decrypt a secured group telegram. |
+| KNX Data Secure: parameter flash over the secure channel | yes | hardware | On the ETS-secured Jung 400021SE (2026-09-28): one parameter changed and reverted by surgical flash through the session, 2 bytes each way, both verified. Not a smoke run with evidence records yet. |
+| KNX Data Secure: GA flash or full download | yes (System B) | hardware | The security object (group key table, per-object security flags) is loaded in the same bracket as the tables, the way ETS does it. On the ETS-secured Jung 400021SE (2026-09-28): the secured full download verified after its restart, its 158 security-object frames byte-identical to ETS's decrypted capture; a GA flash that linked a second object to the secured address set that object's flag on the device and verified, and its revert left the device equal to ETS's load again. Not smoke runs with evidence records yet. Other memory models refuse (`SECURE_TABLES_UNSUPPORTED`). That the secured address works on the bus is not shown: Busforge cannot yet send or decrypt a secured group telegram. |
 | KNX Data Secure: FDSK provisioning | no | not implemented | ETS doing it on the Jung is captured and decrypted as the reference. |
 | KNX IP Secure (secure tunnelling transport) | no | not implemented | Out of scope. |
 | Transport: KNXnet/IP tunnelling (UDP and TCP), own implementation | yes | hardware | Connect, tunnel, management, heartbeat and closure. |
@@ -274,10 +274,9 @@ report a device family as working on the strength of a passing test suite.
   **transmit-only object**, the case that depends on the linked bit, has not been observed on the
   bus. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.
-- **A surgical parameter flash and a GA flash that changes a link, over KNX Data Secure,** have not
-  been driven. A secured full download has (it writes memory, properties and the security object
-  through the session and restarts the device), so the composition of session and load procedure is
-  shown; the two surgical paths use the same pieces but are not smoke runs yet.
+- **KNX Data Secure writes are operator runs, not smoke runs.** The secured full download, a
+  surgical parameter flash and a GA flash that changed the security object were each driven once on
+  the Jung and verified; no smoke spec drives them yet, so there are no evidence records.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.

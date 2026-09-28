@@ -234,6 +234,8 @@ const en = {
     SECURE_ADDRESSING_UNSUPPORTED: "This device runs KNX Data Secure. Busforge has no secured way to assign an individual address, so it does not readdress it.",
     SECURE_LINK_MIXED: "A communication object is linked to both secured and unsecured group addresses. It has one security setting for all of them, so Busforge refuses to program it.",
     SECURE_KEY_BAD: "A stored KNX Data Secure key has the wrong length, so it was not used.",
+    SECURE_ANSWER_REJECTED: "The device acknowledged the request and answered, but its answers could not be authenticated (a failed check, or an answer that was not secured), so none of them was used. A wrong or changed key, a device that left secure mode, or something altering the traffic looks like this.",
+    SECURE_KEY_MISSING: "A KNX Data Secure device answers at this address, and the project holds no key for it. Either the project was imported without its keys (the ETS project file carries them), or this is not the expected device.",
     PROPERTY_ELEMENT_TOO_LONG: "One entry of the security object does not fit a request this device accepts, so it was not written.",
     NO_FREE_IA: "No free individual address is available in area 1.",
     INTERNAL: "Something went wrong.",

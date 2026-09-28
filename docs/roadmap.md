@@ -122,9 +122,10 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Secure bench proof.** A secured full download of the Jung 400021SE is verified; the smoke spec
-  for the secured device (surgical parameter flash, GA flash, evidence records) and the negatives
-  (wrong key, missing key, a tampered or replayed answer) are open.
+- **Secure smoke spec.** The secured full download, parameter flash and GA flash and the negatives
+  (wrong key, missing key, a tampered or replayed answer) were each shown once on the Jung 400021SE
+  by hand. The smoke framework provisions projects from the catalog, which carries no keys, so a
+  secured spec needs a project imported with its keys; until then there are no evidence records.
 - **Secured group telegrams.** Busforge can neither send nor decrypt one, so a secured group address
   cannot be observed working; the monitor shows it as undecryptable.
 - **The security object on System 7.** Only System B loads it with the group tables; the others

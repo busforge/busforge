@@ -194,6 +194,45 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(acksAfterReplay).toBe(acksAfterFirst + 1);
   });
 
+  // An answer that fails its MAC is never used; when the device acknowledged the request and then
+  // sent only such answers, the error says it answered and was not believed, not that it was silent.
+  // A replay is MAC-valid (the key is fine) and a stale retransmission is ordinary transport, so it
+  // is not evidence of anything: a device that sends nothing else is reported as not answering.
+  const secureFake = (reply: (tun: FakeTransport, seq: number, farSide: SecureSession) => void, ack = true) => {
+    const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+    const tun = new FakeTransport();
+    const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
+    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }));
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const seq = (tpdu[0] >> 2) & 0x0f;
+      if (ack) tun.reply([0xc2 | (seq << 2)]);
+      reply(tun, seq, farSide);
+    };
+    return { dev, farSide, tun };
+  };
+  const code = async (p: Promise<unknown>) => ((await p.catch((e: unknown) => e)) as { code?: string }).code;
+
+  test("secure: answers that fail authentication after an acknowledged request fail as rejected", async () => {
+    const { dev } = secureFake((tun, seq, far) => { const f = far.wrapManagement(Buffer.from("0340abcd", "hex"), seq); f[f.length - 1] ^= 1; tun.reply([...f]); });
+    expect(await code(dev.deviceDescriptor())).toBe("SECURE_ANSWER_REJECTED");
+  }, 30_000);
+
+  test("secure: a replayed answer followed by silence is not answering, not a key problem", async () => {
+    let earlier: Buffer | null = null;
+    const { dev } = secureFake((tun, seq, far) => {
+      if (!earlier) { earlier = far.wrapManagement(Buffer.from("0340abcd", "hex"), seq); tun.reply([...earlier]); return; }
+      tun.reply([...earlier]);
+    });
+    await dev.deviceDescriptor();
+    expect(await code(dev.deviceDescriptor())).toBe("DEVICE_NOT_ANSWERING");
+  }, 30_000);
+
+  test("secure: a garbled frame on a request that was never acknowledged is not answering", async () => {
+    const { dev } = secureFake((tun, seq, far) => { const f = far.wrapManagement(Buffer.from("0340abcd", "hex"), seq); f[f.length - 1] ^= 1; tun.reply([...f]); }, false);
+    expect(await code(dev.deviceDescriptor())).toBe("DEVICE_NOT_ANSWERING");
+  }, 30_000);
+
   // A device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores
   // it (Jung 400021SE, 2026-09-28): the restart, and the master reset, go through the session.
   test("secure: A_Restart and the master reset are sent secured, never plain", async () => {

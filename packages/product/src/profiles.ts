@@ -258,7 +258,9 @@ interface FlashOp {
 async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>): Promise<boolean> {
   try { return await verify(); }
   catch (e) {
-    if ((e as { code?: string }).code !== "DEVICE_NOT_ANSWERING") throw e;
+    // A garbled secured frame while the device comes back up is no verdict on the write either.
+    const code = (e as { code?: string }).code;
+    if (code !== "DEVICE_NOT_ANSWERING" && code !== "SECURE_ANSWER_REJECTED") throw e;
     try { await dev.disconnect(); } catch { /* the link may already be gone */ }
     await reconnectAfterRestart(dev, { initialMs: 5000 });
     return verify();

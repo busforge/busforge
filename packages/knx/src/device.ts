@@ -193,7 +193,7 @@ export class KnxDevice {
     let p = outer;
     if (this.secure) {
       const inner = this.secure.unwrap(tpdu);
-      if (inner.status === "invalid") return;
+      if (inner.status === "invalid") { this.unauthentic++; return; }
       if (inner.status === "replay") { this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {}); return; }
       p = parseApdu(inner.apdu);
     }
@@ -246,8 +246,17 @@ export class KnxDevice {
     const svc = Buffer.from(tpdu); svc[0] &= 0x03;
     return this.secure.wrapManagement(svc, (tpdu[0] >> 2) & 0x0f);
   }
+  // Answers dropped in the current try because they could not be authenticated (a failed MAC, or
+  // an answer not secured at all). A replay is not counted: it is MAC-valid, and a stale
+  // retransmission of an earlier answer is ordinary transport.
+  private unauthentic = 0;
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
+    // Whether the last try was acknowledged and then got only unauthentic answers: the device
+    // answered and was not believed, which is a different failure from silence.
+    let rejectedAfterAck = false;
     for (let i = 0; i < tries; i++) {
+      this.unauthentic = 0;
+      rejectedAfterAck = false;
       if (i > 0) await new Promise((r) => setTimeout(r, 200));
       // The waiters are registered before the send, the device's timeouts start after it: over UDP
       // the send resolves on the tunnelling ACK, and a late ACK must not eat the device's time.
@@ -273,9 +282,12 @@ export class KnxDevice {
       if (!(await ackP)) continue;
       if (!expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
       const r = await respP;
-      if (r === null) continue;
+      if (r === null) { rejectedAfterAck = this.unauthentic > 0; continue; }
       this.seq = (this.seq + 1) & 0x0f;
       return r;
+    }
+    if (rejectedAfterAck) {
+      throw new KnxError("SECURE_ANSWER_REJECTED", `the device acknowledged the request and answered, but ${this.unauthentic} answer(s) could not be authenticated (a failed MAC, or an answer not secured at all); nothing from them was used`);
     }
     throw new KnxError("DEVICE_NOT_ANSWERING", "no reliable response (device not answering)");
   }

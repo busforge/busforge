@@ -242,9 +242,19 @@ Busforge builds from the project; Busforge's secured full download then wrote it
 security-object frames, requests and answers, byte-identical to ETS's decrypted capture), restarted
 the device through the session and verified tables, parameter CRC and security object after the
 restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
-a device in secure mode ignores. **Not shown:** a GA flash that changes a secured link, and the
-secured group address working on the bus (Busforge cannot yet send or decrypt a secured group
+a device in secure mode ignores. A GA flash that linked a second object to the secured address set
+its flag on the device and verified; its revert restored ETS's load. **Not shown:** the secured group
+address working on the bus (Busforge cannot yet send or decrypt a secured group
 telegram).
+
+**Refusals, shown on the same device:** a wrong tool key gets no answer to the Sync
+(`SECURE_SYNC_NO_RESPONSE`); a plain session gets the descriptor `0xFFFF`, which the mask gate
+reports as a missing key or an unexpected secure device (`SECURE_KEY_MISSING`), not as a mismatch;
+a real answer with one bit flipped is dropped and reported as `SECURE_ANSWER_REJECTED` (the device
+acknowledged and answered, and was not believed); a real answer replayed in place of the next is
+dropped too and reported as `DEVICE_NOT_ANSWERING`, because a replay is MAC-valid and a stale
+retransmission is ordinary transport, so it is no evidence against the key. Neither is ever used.
+Both answers were altered in the test script between the tunnel and the session, not on the bus.
 
 Driving a secure parameter flash needs a secure device a parameter flash can actually target, and
 two common classes of secure device cannot serve:
@@ -268,8 +278,8 @@ With the ETS project imported, Busforge reads the secured Jung back in full: par
 equal to the ETS project, no gap (2026-09-28). `secure-identify` reports its security mode as on,
 read from the security object itself.
 
-So the secured full download is supported on System B, shown on this one device; the surgical
-parameter flash and GA flash over the session wait for their smoke runs.
+So the secured full download, parameter flash and GA flash are supported on System B, each shown
+once on this one device; a smoke spec with evidence records for them is still to come.
 
 **Provisioning from a factory key is not built.** Writing a tool key into a factory device is
 hard to reverse (a wrong or half-completed write locks the device out, recoverable only through the

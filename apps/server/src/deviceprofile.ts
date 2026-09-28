@@ -32,6 +32,17 @@ export {
 // Data Secure transparently.
 export interface SecureCreds { toolKey: Buffer; serial: Buffer; }
 
+// The mask gate. A device in Data Secure mode answers a plain descriptor read with 0xFFFF, so that
+// answer in a session without a tool key means the key is missing, not that the device is wrong.
+export function maskGate(mask: string, wantMask: string, secured: boolean): ApiError | null {
+  if (!sameMask(wantMask, wantMask)) return new ApiError("MASK_UNKNOWN", "application mask unknown; refusing");
+  if (!secured && mask === "MV-FFFF") {
+    return new ApiError("SECURE_KEY_MISSING", "a KNX Data Secure device answers at this address (descriptor 0xFFFF to a plain request), and the project holds no tool key for it: either the project was imported without its keys, or this is not the expected device", 400);
+  }
+  if (!sameMask(mask, wantMask)) return new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+  return null;
+}
+
 // Open a connection-oriented link to the device, verify it is the device/application we
 // expect, run the model-specific body, and always tear the link down. The mask check is
 // the primary safety gate (wrong device or wrong application aborts before any read or
@@ -57,8 +68,8 @@ async function withDeviceSession<T>(
       // primary wrong-device safety check must not pass on a coincidental substring.
       // sameMask(x, x) is false only for an unparseable mask, i.e. "we don\'t know what
       // application this is" -> refuse before comparing anything.
-      if (!sameMask(wantMask, wantMask)) throw new ApiError("MASK_UNKNOWN", "application mask unknown; refusing");
-      if (!sameMask(mask, wantMask)) throw new ApiError("MASK_MISMATCH", `device mask ${mask} != expected ${wantMask}; aborting (wrong device or application)`);
+      const refused = maskGate(mask, wantMask, secure !== undefined);
+      if (refused) throw refused;
     }
     const result = await body(dev, mask);
     await dev.disconnect(); await tun.disconnect();
@@ -164,7 +175,7 @@ export function secureIdentify(
   }, { toolKey, serial });
 }
 export type SecurityModeReading = { state: "on" | "off" } | { state: "unreadable"; detail: string };
-const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING"]);
+const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "SECURE_ANSWER_REJECTED"]);
 
 // Give a device its physical address. Unlike every other operation here this one CANNOT use
 // withDeviceSession: the device is reached by broadcast, precisely because it may not have a

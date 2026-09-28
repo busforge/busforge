@@ -234,6 +234,8 @@ const de: Messages = {
     SECURE_ADDRESSING_UNSUPPORTED: "Dieses Gerät läuft mit KNX Data Secure. Busforge kann eine physikalische Adresse nicht gesichert vergeben und adressiert es deshalb nicht um.",
     SECURE_LINK_MIXED: "Ein Kommunikationsobjekt ist mit gesicherten und ungesicherten Gruppenadressen verknüpft. Es hat nur eine Sicherheitseinstellung für alle, deshalb lehnt Busforge das Programmieren ab.",
     SECURE_KEY_BAD: "Ein gespeicherter KNX-Data-Secure-Schlüssel hat die falsche Länge und wurde nicht verwendet.",
+    SECURE_ANSWER_REJECTED: "Das Gerät hat die Anfrage bestätigt und geantwortet, aber seine Antworten ließen sich nicht authentifizieren (fehlgeschlagene Prüfung oder eine ungesicherte Antwort), deshalb wurde keine verwendet. Ein falscher oder geänderter Schlüssel, ein Gerät, das den Secure-Modus verlassen hat, oder etwas, das den Verkehr verändert, sieht so aus.",
+    SECURE_KEY_MISSING: "An dieser Adresse antwortet ein KNX-Data-Secure-Gerät, und das Projekt enthält keinen Schlüssel dafür. Entweder wurde das Projekt ohne seine Schlüssel importiert (die ETS-Projektdatei enthält sie), oder es ist nicht das erwartete Gerät.",
     PROPERTY_ELEMENT_TOO_LONG: "Ein Eintrag des Sicherheitsobjekts passt in keine Anfrage, die dieses Gerät annimmt, und wurde nicht geschrieben.",
     NO_FREE_IA: "In Bereich 1 ist keine freie physikalische Adresse verfügbar.",
     INTERNAL: "Etwas ist schiefgelaufen.",
