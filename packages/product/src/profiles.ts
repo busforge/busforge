@@ -1,4 +1,4 @@
-import { KnxDevice, type LoadPlan, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -13,6 +13,7 @@ import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
+import { buildSecurityObject } from "./securityobject.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
 // done/total counters (unit-agnostic; memory reads report bytes). Structurally identical
@@ -146,6 +147,25 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
   if (a.length !== b.length) return Math.max(a.length, b.length);
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
 };
+
+// What a Data Secure device's security object holds, in the shape buildSecurityObject builds: the
+// group key table by its element count, and the flags of objects 1..`flagCount`. The device reads
+// its group keys back only inside the secured session this runs in.
+async function readSecurityObject(dev: KnxDevice, flagCount: number): Promise<SecurityObjectTables> {
+  const n = (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 0, 1)).readUInt16BE(0);
+  const groupKeys = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
+  const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, flagCount, 1);
+  return { groupKeys, goFlags };
+}
+const sameSecurityObject = (a: SecurityObjectTables, b: SecurityObjectTables) => a.groupKeys.equals(b.groupKeys) && a.goFlags.equals(b.goFlags);
+
+// Only System B's secured tables are loaded the way ETS does it (planSecurityObjectLoad); on any
+// other memory model the security object would be left behind the tables it belongs to.
+function refuseSecureTables(ctx: { security?: SecureTablesCtx }, family: string): void {
+  if (ctx.security) {
+    throw new ProductError("SECURE_TABLES_UNSUPPORTED", `this device runs KNX Data Secure, and loading its security object with its group tables is implemented for System B devices only, not ${family}`);
+  }
+}
 
 // Firmware families hardware-verified to persist their configuration at LoadCompleted rather than on
 // the closing A_Restart, so a restart that does not reboot is not a failure (KnxDevice.restart's
@@ -338,9 +358,14 @@ export interface FullDownloadCtx {
   // a future UI can offer "back up before commissioning" for the ETS-migration case. See
   // docs/load-procedures.md and docs/roadmap.md.
   backupBeforeUnload?: boolean;
+  // Present exactly when the device runs KNX Data Secure: the project's group keys, by address.
+  security?: SecureTablesCtx;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
 }
+// A Data Secure device's group-address tables come with its security object (group keys and
+// per-object flags), which every write of those tables reloads.
+export interface SecureTablesCtx { groupKeys: ReadonlyMap<number, Buffer>; }
 export interface GaFlashCtx {
   deviceId: string; // used in backup file names
   ia: string;
@@ -354,6 +379,7 @@ export interface GaFlashCtx {
   baseParams: Map<string, string>;
   moduleInstances?: ModuleInstance[];
   dryRun: boolean;
+  security?: SecureTablesCtx;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
 }
@@ -365,6 +391,7 @@ export interface FullDownloadInputs {
   links: ComObjectLink[];
   moduleInstances?: ModuleInstance[];
   proc: LoadProcedures;
+  security?: SecureTablesCtx;
 }
 // One segment a full download writes. `address` is null where the device assigns it (a System B
 // relative segment, allocated during the download); `fillByte` is set where the allocation pre-fills
@@ -407,6 +434,9 @@ function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided:
 export abstract class DeviceProfile {
   abstract readonly memoryModel: MemoryModel;
   abstract readonly family: SystemFamily;
+  // Whether a Data Secure device of this model gets its security object loaded with its group
+  // tables (group-address flash and full download); where not, those writes refuse a secure device.
+  readonly loadsSecurityObject: boolean = false;
   constructor(readonly mask: string, protected readonly cfg: AppConfig | null) {}
 
   // Capabilities are a function of the memory model + parsed application alone; they
@@ -441,6 +471,7 @@ export abstract class DeviceProfile {
 // System B layout. Hardware-proven (read and flash, on twisted pair).
 export class SystemBProfile extends DeviceProfile {
   readonly memoryModel = "relative" as const;
+  override readonly loadsSecurityObject = true;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
 
   capabilities(): DeviceCapabilities {
@@ -456,7 +487,7 @@ export class SystemBProfile extends DeviceProfile {
     return this.planSystemBFull(mask, inputs);
   }
 
-  private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer } {
+  private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
@@ -497,13 +528,14 @@ export class SystemBProfile extends DeviceProfile {
     // device that does not reboot lost the download; other firmware persists at LoadCompleted and
     // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
     const requireReboot = !persistsOnLoadCompleted(cfg);
+    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys) : undefined;
     const plan = planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size));
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security);
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
-      plan, imageBytes, target, comObj, addr, assoc,
+      plan, imageBytes, target, comObj, addr, assoc, security,
       segments: [
         { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, fillByte },
         { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
@@ -529,7 +561,7 @@ export class SystemBProfile extends DeviceProfile {
     const proc = parseLoadProcedures(ctx.appXml);
     const coverage = assertParCoverage(proc, "relative");
     await runDeclaredChecks(dev, coverage);
-    const { plan, imageBytes, target, comObj, addr, assoc } = this.planSystemBFull(mask, { ...ctx, proc });
+    const { plan, imageBytes, target, comObj, addr, assoc, security } = this.planSystemBFull(mask, { ...ctx, proc });
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -616,12 +648,14 @@ export class SystemBProfile extends DeviceProfile {
             const mcb = await readSegmentCrc(dev, LSM);
             const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
             const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
-            return { gt, crcOk, img };
+            const sec = security ? await readSecurityObject(dev, security.goFlags.length) : null;
+            return { gt, crcOk, img, sec };
           },
-          ({ gt, crcOk, img }) => {
+          ({ gt, crcOk, img, sec }) => {
             const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
             const paramsOk = crcOk || (img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify)));
-            return tablesOk && paramsOk;
+            const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
+            return tablesOk && paramsOk && securityOk;
           },
         );
         return ok;
@@ -761,9 +795,13 @@ export class SystemBProfile extends DeviceProfile {
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
+    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys) : undefined;
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
     const cur = await readGroupTables(dev, undefined, false);
+    // The security object is compared, not backed up: its group keys are secrets, and the project
+    // holds them anyway.
+    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length) : undefined;
     // The application program object's load state BEFORE the flash. A GA flash unloads and rewrites the
     // three tables the running application references, and on some System B stacks that invalidates the
     // application itself: hardware-proven on the Jung 400021SE (Insta), where the flash leaves all three
@@ -778,7 +816,8 @@ export class SystemBProfile extends DeviceProfile {
     const tablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]);
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + comObj.length,
-      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj), // 0 iff all three match
+      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj) // 0 iff all three match
+        + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags) : 0),
       ...(tablesLoaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: prefix,
       backups: [
@@ -799,7 +838,7 @@ export class SystemBProfile extends DeviceProfile {
         // LOAD/LoadCompleted on an object holding no application is a transition this flash has no
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
-        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg))); // rebuilt L3 carries the correct comm flags for the new link set
+        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security)); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -817,8 +856,9 @@ export class SystemBProfile extends DeviceProfile {
             "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
         }
         const { ok } = await verifySettled(
-          () => readGroupTables(dev),
-          (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj),
+          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security.goFlags.length) : null }),
+          ({ tables: back, sec }) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj)
+            && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
         return ok;
       },
@@ -950,6 +990,7 @@ export class System7Profile extends DeviceProfile {
   }
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
+    refuseSecureTables(ctx, this.family);
     // Same com-object staleness gate as System B: the flash keeps every config byte of the device's
     // com-object table but the linked bit, so an association onto an object that table does not
     // configure is a link to nothing.
@@ -1033,6 +1074,7 @@ export class System7Profile extends DeviceProfile {
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    refuseSecureTables(inputs, this.family);
     const { plan, segments, imageBytes } = this.planSystem7Full(mask, inputs);
     return { plan, imageBytes, segments: segments.map((s) => ({ id: s.id, lsm: s.lsm, source: s.source, address: s.address, image: s.image })) };
   }
@@ -1082,6 +1124,7 @@ export class System7Profile extends DeviceProfile {
   // comes up running. The device validates none of it; the read-back after the restart is the
   // only proof, so a "flashed" result carries a real verified flag.
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    refuseSecureTables(ctx, this.family);
     const cfg = this.requireCfg("full download");
     // Property-mapped System 7 (MV-0705) authors its com-object table (L3); memory-mapped MV-0700/0701
     // writes L3 as the manufacturer's static <Data>. The two paths share planAbsoluteFullDownload; the

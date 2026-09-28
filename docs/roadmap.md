@@ -122,14 +122,23 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Secure parameter flash.** Both directions of the secure channel are hardware-proven; the
-  composition with the load procedure is not. The bench Jung 400021SE is secure-capable and could
-  serve once it is switched to secure mode (a user decision, see [knx-secure.md](knx-secure.md#the-gap)).
-- **Security object download.** The GA flash and the full download refuse a secure device
-  (`SECURE_TABLES_UNSUPPORTED`) until Busforge loads the security interface object (group key
-  table, per-object security flags) the way ETS does, checked against an ETS capture of the Jung
-  secured by ETS. Needs group keys imported from the project as well.
+- **Secure bench proof.** A secured full download of the Jung 400021SE is verified; the smoke spec
+  for the secured device (surgical parameter flash, GA flash, evidence records) and the negatives
+  (wrong key, missing key, a tampered or replayed answer) are open.
+- **Secured group telegrams.** Busforge can neither send nor decrypt one, so a secured group address
+  cannot be observed working; the monitor shows it as undecryptable.
+- **The security object on System 7.** Only System B loads it with the group tables; the others
+  refuse a secure device's GA flash and full download.
 - **FDSK provisioning** (taking a factory secure device into a project) is designed, not built.
+- **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
+  address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
+  such a device over; wanted for users, not needed for the bench.
+- **Secure a group address Busforge creates.** Group keys arrive only with a project import, so an
+  address created in Busforge is plain, and linking it to a secure device's object programs that
+  object as plain.
+- **A plain device linked to a secured group address** is not refused. ETS keeps such a project
+  consistent, but an edit in Busforge can produce it; the plain device then sends and expects plain
+  telegrams on an address the secure devices only accept secured.
 - **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
   store's `manual` and `provisioned` sources are currently unreachable.
 - **Individual-address assignment has no secure path.** It is a broadcast operation and cannot use

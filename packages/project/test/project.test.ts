@@ -155,6 +155,19 @@ describe("0.xml parser", () => {
   test("leaves deviceSecurity empty for a project with no secure devices", () => {
     expect(parseProject(xml0, undefined, "fallback").deviceSecurity).toEqual([]);
   });
+
+  test("parses a secured group address's key apart from the address itself", () => {
+    // Synthetic key, never a real project's.
+    const secured = xml0.replace(
+      'Address="2" Name="Living Room On/Off" DatapointType="DPST-1-1" />',
+      'Address="2" Name="Living Room On/Off" DatapointType="DPST-1-1" Key="EBESExQVFhcYGRobHB0eHw==" />',
+    );
+    const p = parseProject(secured, undefined, "fallback");
+    expect(p.groupKeys).toEqual([{ raw: 2, key: "EBESExQVFhcYGRobHB0eHw==" }]);
+    // The address model never carries the key to a client.
+    expect(JSON.stringify(p.groupAddresses)).not.toContain("EBESExQV");
+    expect(parseProject(xml0, undefined, "fallback").groupKeys).toEqual([]);
+  });
 });
 
 describe("loadKnxproj (integration)", () => {

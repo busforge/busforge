@@ -153,6 +153,13 @@ provisioned keys, but there is no endpoint for either.
 A key that is not 16 bytes, or a serial that is not 6, is refused (`SECURE_KEY_BAD`) rather than
 stored. Tool keys are never returned to the client and never logged.
 
+**Group keys** come from the same file: a secured group address carries its 16-byte key in the
+`Key` attribute of its `<GroupAddress>`. They live in `group_keys` (`project_id`, `raw`, `key`,
+`source`), sealed like the tool keys, and are parsed apart from the address model so a key never
+travels with an address to the client. Neither deleting an address nor a restore point touches its
+key, so an address that comes back (by a restore, or recreated on the same value) is secured again,
+never silently plain. Exports carry them next to the tool keys.
+
 ### At rest, in restore points, in exports
 
 **At rest.** The tool key is sealed with AES-256-GCM under an installation **master key** held
@@ -192,8 +199,15 @@ sequence and MAC). Every per-request data size therefore shrinks by 13 inside a 
 (`transferChunks` in `packages/knx/src/device.ts`), and a request the framing leaves no room in is
 refused (`SECURE_APDU_TOO_SHORT`), as is any secured memory request to a device that declares no
 maximum APDU length. Shown for reads: a 48-byte extended read, the most the bench's USB path carries
-in plain, got no answer from the secured Jung, 35 bytes did (sizes in between not tried). The write
-sizes follow from the same arithmetic and have not been sent secured yet.
+in plain, got no answer from the secured Jung, 35 bytes did (sizes in between not tried). A secured
+write is held to the 40 octets ETS sends on that path: 22-byte memory writes and 18-byte property
+elements, which is what Busforge's own secured download of the Jung wrote and the device answered.
+The extended property services carry 4 octets more than the extended memory ones, so their element
+data per request is 4 less (`propRead`, `propWrite`).
+
+**Every numbered service goes through the session**, the restart and the master reset included. A
+device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores it (the
+Jung, 2026-09-28), which the restart check reports as `RESTART_IGNORED`.
 
 **Individual-address assignment has no secure path.** It is a broadcast operation and cannot go
 through the session at all.
@@ -201,19 +215,36 @@ through the session at all.
 ## The gap
 
 Both directions of the secure channel are proven on real hardware: a secure descriptor and property
-read, and a reversible secure property write. **A parameter flash over the secure channel is wired
-and reachable, but has never been driven** (see [status.md](status.md)).
+read, a reversible secure property write, and a **secured full download** of the Jung (below).
 
-**The GA flash and the full download refuse a secure device** (`SECURE_TABLES_UNSUPPORTED`). A
-Data Secure device keeps its group keys and per-object security flags in its security interface
-object (object type 17), and its group key table is indexed by the position of each group address
-in the address table. ETS loads that object with every GA or full download. Busforge does not yet,
-so rewriting the group tables would leave the keys pointing at the wrong addresses, and a full
-download would leave the old security configuration in place. The refusal covers addressing the device
-(the first step of commissioning) and a parameter change that would need the com-object table
-rewritten as well, instead of offering the usual full download; the device page offers none of them.
-"Secure device" here means a device with a stored tool key, the only kind Busforge talks to
-securely.
+### The security object
+
+A Data Secure device keeps its group keys and per-object security flags in its security interface
+object (object type 17), which ETS loads with every download of the group tables. On System B
+Busforge does the same (`planSecurityObjectLoad` in `packages/knx/src/flash.ts`, built by
+`buildSecurityObject` in `packages/product/src/securityobject.ts`):
+
+| Property | What is written |
+|---|---|
+| PID 5 | the load state, driven with `A_FunctionPropertyExtCommand` (unload with the other objects, then load and load completed after all memory) |
+| PID 54 | element 0 (the count of the individual-address table) set to 0 |
+| PID 53 | the group key table: one 18-byte entry per secured address the device is linked to, the address's 1-based position in the device's address table then the key, ascending |
+| PID 61 | one flag byte per group object from object 1: `0x03` (authentication and confidentiality) for an object on a secured address, `0x00` otherwise |
+
+An object linked to both secured and plain addresses is refused (`SECURE_LINK_MIXED`): it has one
+flag for all its links. The dry-run diff and the verify both read the object back (the device
+returns its group keys only inside the session). Other memory models refuse a secure device's GA
+flash and full download (`SECURE_TABLES_UNSUPPORTED`); addressing a secure device is refused
+(`SECURE_ADDRESSING_UNSUPPORTED`).
+
+**Shown on the Jung, 2026-09-28:** a dry-run GA flash found the object ETS had loaded equal to the one
+Busforge builds from the project; Busforge's secured full download then wrote it (all 158
+security-object frames, requests and answers, byte-identical to ETS's decrypted capture), restarted
+the device through the session and verified tables, parameter CRC and security object after the
+restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
+a device in secure mode ignores. **Not shown:** a GA flash that changes a secured link, and the
+secured group address working on the bus (Busforge cannot yet send or decrypt a secured group
+telegram).
 
 Driving a secure parameter flash needs a secure device a parameter flash can actually target, and
 two common classes of secure device cannot serve:
@@ -237,9 +268,8 @@ With the ETS project imported, Busforge reads the secured Jung back in full: par
 equal to the ETS project, no gap (2026-09-28). `secure-identify` reports its security mode as on,
 read from the security object itself.
 
-So a secure parameter flash counts as supported only once it is byte-verified on a **suitable**
-secure device, and the GA flash and full download only once the security object download exists
-and is checked against an ETS capture of the same device.
+So the secured full download is supported on System B, shown on this one device; the surgical
+parameter flash and GA flash over the session wait for their smoke runs.
 
 **Provisioning from a factory key is not built.** Writing a tool key into a factory device is
 hard to reverse (a wrong or half-completed write locks the device out, recoverable only through the
@@ -261,14 +291,20 @@ nowhere. What ETS does, in order:
 3. Write PID 56, the new **tool key**, with `A_PropertyExtValue_WriteCon`. The device answers that
    write already under the new key.
 4. Sync again with the tool key; everything after runs under it.
-5. Device descriptor and properties, then the security object's own load bracket
-   (`A_FunctionPropertyExtCommand` on PID 5: unload, start loading, and load completed at the end),
-   PID 54 cleared (its element count set to 0), PID 53 (group key table, one entry for 0/0/1),
-   PID 61 (74 writes, 73 of 18 elements and one of 13), then the memory (`A_MemoryExtended_Write`,
-   up to 151 bytes per frame) and the usual load controls and restart.
+5. Device descriptor and properties, the usual unloads, and the security object's unload
+   (`A_FunctionPropertyExtCommand` on PID 5, event 4) with them.
+6. The memory (`A_MemoryExtended_Write`). ETS first tried 151-byte frames, got no answer, and wrote
+   everything in 22-byte frames after that.
+7. The security object's bracket, after all memory and before any other object completes: PID 5
+   event 1 (loading), PID 54 cleared (element 0, its count, set to 0), PID 53 (the group key table,
+   one 18-byte entry: index 1, the position of 0/0/1 in the address table, and its key), PID 61 (one flag byte per group object: 74 writes,
+   73 of 18 elements and one of 13, only object 253 set to `0x03`), PID 5 event 2 (loaded).
+8. The application id, the other objects' load completed, and the restart.
 
-The exported ETS project carries the same tool key (checked by hash). This capture is the reference
-for the security object download and for Busforge's own activation, both still to build.
+Every secured request ETS sends there is at most 40 octets long: a 22-byte memory write and an
+18-element property write come to exactly that. The exported ETS project carries the same tool key
+(checked by hash) and, on the group address, the same group key the device holds. This capture is
+the reference for the security object download and for Busforge's own activation (still to build).
 
 ## The honesty bar for this area
 

@@ -524,3 +524,21 @@ The mapping now strips `_M-k_MI-n`, the exact inverse of how the module expansio
 ids (checked over every module fixture: 4384 Jung and 4648 MDT refs, no mismatch). The same seed
 on the Jung then promoted the revert to a full download and passed, persistence included. Baselines
 written before the fix still lack these parameters; see [roadmap.md](roadmap.md).
+
+## 18. A device in secure mode ignores a plain A_Restart
+
+Busforge's first secured full download of the Jung 400021SE (2026-09-28) wrote every segment and the
+security object, closed every load bracket, and then failed with `RESTART_IGNORED`. The decrypted
+capture showed why: `sendRestart` built its frame beside the request machine and sent A_Restart in
+clear. The device acknowledged it on the transport layer (T_ACK) and then did nothing with it, and
+answered the secured descriptor read that followed. A device in secure mode accepts no plain
+application service on a secured tool connection, and a T_ACK says only that the frame arrived.
+
+Every numbered service now goes through one wire step (`KnxDevice.onWire`), the restart and the
+master reset included. The rerun restarted and verified. The restart check caught it because it
+proves the reboot by the device's silence, not by the acknowledgement; a check that trusted the
+T_ACK would have called this download done.
+
+Two sizes from the same capture: ETS never sends a secured request longer than 40 octets on the
+bench path (after 151-byte frames went unanswered it wrote 22-byte memory chunks and 18-element
+property writes, both exactly 40), and Busforge now holds secured writes to that.

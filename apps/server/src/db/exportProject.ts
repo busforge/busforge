@@ -4,6 +4,7 @@ import { getAppProgram } from "./catalog.ts";
 import { readSpaces } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 import { open } from "../secrets.ts";
+import { listGroupKeyRows } from "./groupKeys.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
 // (every instance table, including the programmed baselines and module instances)
@@ -45,6 +46,7 @@ export interface ProjectExport {
   // therefore exposes them, which the UI must warn about before exporting. Optional
   // so artifacts from before secure support still import. See docs/knx-secure.md.
   deviceSecurity?: { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; source: string }[];
+  groupKeys?: { raw: number; key: string; source: string }[];
 }
 
 const paramRows = (db: Database, table: string, projectId: string) =>
@@ -98,6 +100,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     .all(projectId) as { deviceId: string; toolKey: Uint8Array; serialNumber: Uint8Array; sequenceNumber: string; source: string }[])
     .map((r) => ({ deviceId: r.deviceId, toolKey: open(Buffer.from(r.toolKey), masterKey).toString("base64"), serialNumber: Buffer.from(r.serialNumber).toString("base64"), sequenceNumber: r.sequenceNumber, source: r.source }));
 
+  const groupKeys = listGroupKeyRows(db, projectId).map((r) => ({ raw: r.raw, key: open(r.key, masterKey).toString("base64"), source: r.source }));
+
   return {
     busforgeExport: EXPORT_VERSION,
     exportedAt: now,
@@ -116,5 +120,6 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     snapshots,
     telegrams,
     deviceSecurity,
+    groupKeys,
   };
 }

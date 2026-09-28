@@ -16,6 +16,8 @@ import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/bagga
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../src/db/importProject.ts";
 import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.ts";
+import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
+import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu } from "../src/telegram.ts";
 
@@ -477,6 +479,19 @@ describe("project export", () => {
     // and the original master key cannot open the re-sealed copy (no silent wrong key)
     expect(() => getDeviceSecurity(db, "p2", dev, MK)).toThrow();
   });
+
+  test("round-trips Data Secure group keys through export/import, re-sealed under the importing master key", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const key = Buffer.alloc(16, 0x5a);
+    putGroupKeys(db, "p1", [{ raw: 1, key, source: "import" }], MK);
+    const ex = exportProject(db, "p1", 5000, MK)!;
+    expect(ex.groupKeys).toEqual([{ raw: 1, key: key.toString("base64"), source: "import" }]);
+    const MK2 = Buffer.alloc(32, 2);
+    importProjectExport(db, ex, "p2", 6000, MK2);
+    expect(getGroupKeys(db, "p2", MK2)).toEqual(new Map([[1, key]]));
+    expect(() => getGroupKeys(db, "p2", MK)).toThrow();
+  });
 });
 
 describe("device security persistence", () => {
@@ -499,6 +514,24 @@ describe("device security persistence", () => {
     restoreSnapshot(db, "p1", snap.id, 3000);
     // the key is unchanged: a config rollback can never lose device access
     expect(getDeviceSecurity(db, "p1", dev, MK)!.toolKey).toEqual(toolKey);
+  });
+
+  test("group keys are stored sealed and outlive a restore and a deleted address", () => {
+    const db = seed();
+    const key = Buffer.alloc(16, 0x5a);
+    putGroupKeys(db, "p1", [{ raw: 1, key, source: "import" }], MK);
+    const raw = db.query("SELECT key FROM group_keys WHERE project_id = 'p1'").get() as { key: Uint8Array };
+    expect(Buffer.from(raw.key)).not.toEqual(key);
+    createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 2000);
+    restoreSnapshot(db, "p1", listSnapshots(db, "p1")[0].id, 3000);
+    expect(getGroupKeys(db, "p1", MK)).toEqual(new Map([[1, key]]));
+    // An address deleted and brought back by a restore must come back secured, not plain.
+    deleteGroupAddress(db, "p1", 1);
+    expect(getGroupKeys(db, "p1", MK)).toEqual(new Map([[1, key]]));
+  });
+
+  test("refuses a group key that is not 16 bytes", () => {
+    expect(() => putGroupKeys(seed(), "p1", [{ raw: 1, key: Buffer.alloc(15), source: "import" }], MK)).toThrow(/16 bytes/);
   });
 
   test("getProject surfaces secureDeviceCount for the export warning", () => {

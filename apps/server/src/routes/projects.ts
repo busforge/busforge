@@ -12,6 +12,7 @@ import { importProjectExport, validateExport, busforgeGaps } from "../db/importP
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
 import { putDeviceSecurity } from "../db/deviceSecurity.ts";
+import { putGroupKeys } from "../db/groupKeys.ts";
 import { resolveAppXml, importGaps } from "../deviceservice.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -82,6 +83,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           sequenceNumber: s.sequenceNumber,
           source: "import" as const,
         })), state.masterKey);
+      }
+      if (project.groupKeys.length) {
+        putGroupKeys(db, id, project.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: "import" as const })), state.masterKey);
       }
     })();
     // Surface what did NOT fully import: devices whose application program was not in

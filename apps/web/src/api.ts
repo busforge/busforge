@@ -32,7 +32,7 @@ export interface Gateway { name: string; ip: string; port: number; ia: string; m
 // (null for a local dev build).
 export interface VersionInfo { version: string; commit: string; builtAt: string | null; }
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
-export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; }
+export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; baggageUnreadable?: boolean; }
 // Metadata from analyzing an import file without persisting it (the preview step).

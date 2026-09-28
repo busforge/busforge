@@ -6,7 +6,7 @@ import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly } from "../db/deviceparams.ts";
 import { getDeviceSecurity, isSecureDevice } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
+import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import type { CommitFn, ProgressFn, TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
@@ -90,7 +90,7 @@ function comObjectTableGuard(
 ): Response | null {
   if (!app) return null; // no cfg: the profile layer's requireCfg refuses downstream
   if (!comObjectTableChanges(app, base, now, modules).length) return null;
-  if (secure) return secureTablesRefusal();
+  if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
   return classify(app).capabilities().fullDownload
     ? err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400)
     : err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
@@ -138,9 +138,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-    // Addressing is the first step of commissioning, which a secure device cannot finish (see
-    // secureTablesUnsupported); readdressing it would leave it on a new address, never downloaded.
-    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
+    // Addressing is a broadcast, and busforge has no secured form of it (docs/roadmap.md), so a
+    // secure device is not readdressed this way.
+    if (isSecureDevice(db, id, deviceId)) return err("SECURE_ADDRESSING_UNSUPPORTED", "this device runs KNX Data Secure, and busforge has no secured form of individual-address assignment, so it does not readdress it", 400);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const task = state.queue.submit(
@@ -222,7 +222,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
-    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
@@ -260,7 +259,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
-          connection: conn, dataDir: state.dataDir,
+          connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, id, deviceId),
           dryRun: dryGa, onProgress: progress,
         });
       }, commit, () => {
@@ -279,7 +278,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // programmed baseline is adopted ONLY if that read-back verified.
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "download" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
-    if (isSecureDevice(db, id, deviceId)) return secureTablesRefusal();
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
     if (app && !classify(app).capabilities().fullDownload) {
@@ -295,7 +293,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" }, dryDl, "before-download",
       (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
-          connection: conn, dataDir: state.dataDir,
+          connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, id, deviceId),
           params: dlParams, links: resolved.links, moduleInstances: dlModules,
           dryRun: dryDl, onProgress: progress,
         }), commit, () => {

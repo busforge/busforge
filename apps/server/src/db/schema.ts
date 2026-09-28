@@ -359,6 +359,20 @@ const MIGRATIONS: string[] = [
     SELECT 1 FROM device_link_base b WHERE b.project_id = devices.project_id AND b.device_id = devices.instance_id
   );
   `,
+  // KNX Data Secure group keys, one per secured group address, SEALED at rest like the tool keys.
+  // Keyed by the address itself (a group address is identified by its raw value in this schema),
+  // and kept apart from group_addresses: keys are commissioning state, not configuration, so neither
+  // a snapshot restore nor deleting the address touches one (an address that comes back must not
+  // come back plain).
+  `
+  CREATE TABLE group_keys (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    raw        INTEGER NOT NULL,
+    key        BLOB NOT NULL,
+    source     TEXT NOT NULL,
+    PRIMARY KEY (project_id, raw)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

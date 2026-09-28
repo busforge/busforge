@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
 import { getDeviceSecurity, isSecureDevice } from "./db/deviceSecurity.ts";
+import { getGroupKeys } from "./db/groupKeys.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
 import { resolveDcaModule } from "./dca.ts";
 import { ApiError } from "./errors.ts";
@@ -27,6 +28,13 @@ type StoredModules = ReturnType<typeof getDeviceModules>;
 export function secureCredsFor(state: AppState, projectId: string, deviceId: string): SecureCreds | undefined {
   const sec = getDeviceSecurity(state.db, projectId, deviceId, state.masterKey);
   return sec ? { toolKey: sec.toolKey, serial: sec.serialNumber } : undefined;
+}
+
+// What a write of a device's group tables needs when the device runs Data Secure: the session
+// credentials, and the project's group keys its security object is loaded with. Empty otherwise.
+export function secureTablesFor(state: AppState, projectId: string, deviceId: string): { secure?: SecureCreds; security?: SecureTablesCtx } {
+  const secure = secureCredsFor(state, projectId, deviceId);
+  return secure ? { secure, security: { groupKeys: getGroupKeys(state.db, projectId, state.masterKey) } } : {};
 }
 
 // Resolve a device's application-program XML: from the shared catalog, falling
@@ -118,9 +126,9 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // must say so rather than imply a verified "no changes".
   const caps = classify(app).capabilities();
   view.readbackSupport = { params: caps.readParams, links: caps.readLinks };
-  // A secure device's group tables and commissioning also need its security object, which is not
-  // loaded yet (deviceprofile.ts secureTablesUnsupported), so the UI must not offer either.
-  view.capabilities = isSecureDevice(db, projectId, deviceId) ? { ...caps, flashLinks: false, fullDownload: false } : caps;
+  // A secure device's group tables and commissioning also need its security object, which only
+  // some memory models load; on the others the UI must not offer either.
+  view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false } : caps;
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI

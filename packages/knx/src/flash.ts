@@ -1,4 +1,4 @@
-import { KnxDevice, PID, OBJ } from "./device.ts";
+import { KnxDevice, PID, OBJ, OBJECT_TYPE_SECURITY, SECURITY_PID } from "./device.ts";
 import type { LoadPlan, LoadStep } from "./loadrunner.ts";
 import { KnxError } from "./errors.ts";
 
@@ -56,6 +56,39 @@ export async function lsmState(dev: KnxDevice, obj: number, memMapped = false) {
   if (memMapped) return (await dev.memRead(MM_STATUS_BASE + obj, 1))[0];
   return (await dev.propRead(obj, PID.LOAD_STATE_CONTROL))[0];
 }
+// The security interface object (KNX Data Secure) is reached by its object TYPE through the extended
+// services, not by an object index, and its load state is a function property: ETS sends the same
+// 10-byte event as a PID-5 write, and the device answers [return code, resulting state].
+const SECURITY_EVENT_STATE: Record<number, number> = { [LSM.UNLOAD]: STATE.UNLOADED, [LSM.LOAD]: STATE.LOADING, [LSM.LOAD_COMPLETED]: STATE.LOADED };
+export async function securityLsmEvent(dev: KnxDevice, event: number): Promise<void> {
+  const { returnCode, result } = await dev.funcPropExtCommand(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.LOAD_STATE_CONTROL, ev(event));
+  const want = SECURITY_EVENT_STATE[event];
+  if (returnCode !== 0 || result.length < 1 || result[0] !== want) {
+    throw new KnxError("LOAD_STATE_UNEXPECTED", `security object: event ${event} answered return code 0x${returnCode.toString(16)} state ${result.length ? result[0] : "none"}, expected state ${want}`);
+  }
+}
+
+// What a secured download loads into the security object: the group key table (18-byte entries of
+// address-table index + key, ascending by index) and one security flag byte per group object from
+// object 1.
+export interface SecurityObjectTables { groupKeys: Buffer; goFlags: Buffer; }
+export const GROUP_KEY_ENTRY = 18;
+
+// The security object's bracket as ETS runs it inside a secured download (Jung 400021SE,
+// 2026-09-28): after the memory writes, LOAD, clear the individual-address table (element 0, the
+// count, set to 0), write the group key table and the per-object flags, LOAD_COMPLETED. Its UNLOAD
+// goes with the other objects' unloads before anything is written (securityUnload).
+export function planSecurityObjectLoad(t: SecurityObjectTables): LoadStep[] {
+  return [
+    { op: "securityLsm", event: LSM.LOAD },
+    { op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 0, elementSize: 2, data: Buffer.alloc(2) },
+    ...(t.groupKeys.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GROUP_KEY_TABLE, start: 1, elementSize: GROUP_KEY_ENTRY, data: t.groupKeys } as LoadStep] : []),
+    { op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags },
+    { op: "securityLsm", event: LSM.LOAD_COMPLETED },
+  ];
+}
+export const securityUnload: LoadStep = { op: "securityLsm", event: LSM.UNLOAD };
+
 export async function allocSegment(dev: KnxDevice, obj: number, size: number, fill = false, fillByte = 0) { await dev.propWrite(obj, PID.LOAD_STATE_CONTROL, allocPayload(size, fill, fillByte)); }
 
 // Declare an ABSOLUTE segment to a memory-mapped LSM (LdCtrlAbsSegment). 11-byte load control:
@@ -107,17 +140,21 @@ export function appId(manufacturer: number, appNumber: number, version: number):
 // (proven: new GA answers 0x00, old GA silent, diff 1 byte). LOAD does not free the parameter image (only
 // UNLOAD does), so the bracket costs two events and no rewrite. Omitting it reproduces the old table-only
 // wire order, which the plan tests pin.
-export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true, holdApplication = false): LoadPlan {
+// `security`: a Data Secure device's group keys and per-object flags follow its links, so they are
+// reloaded in the same bracket, the way a secured full download does it (planSecurityObjectLoad).
+export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true, holdApplication = false, security?: SecurityObjectTables): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
     ...(holdApplication ? [{ op: "load", lsm: P, assert: false } as LoadStep] : []),
     { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
+    ...(security ? [securityUnload] : []),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
     { op: "writeSegment", lsm: C, bytes: tables.comObj },
     { op: "writeSegment", lsm: A, bytes: tables.assoc },
     { op: "writeSegment", lsm: D, bytes: tables.addr },
+    ...(security ? planSecurityObjectLoad(security) : []),
     { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false },
     { op: "loadCompleted", lsm: D, assert: false },
@@ -264,7 +301,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = []): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   // The memory-control-block entries the application declares (PID 27), written right after the
   // object's allocation as ETS does. They split a segment into regions the device checks at boot;
@@ -282,6 +319,9 @@ export function planSystemBFullDownload(tables: {
     // Everything goes back to unloaded first: a device that was half-programmed by a previous
     // attempt must not contribute leftovers to this one.
     { op: "unload", lsm: P }, { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
+    // A Data Secure device's security object goes back to unloaded with the others, and is loaded
+    // after every memory write and before any other object completes, as ETS does it.
+    ...(security ? [securityUnload] : []),
     // All four brackets are opened and allocated before anything is written, which is what the
     // mask's procedure does. The parameter segment asks for fill: a first-time download owns the
     // whole segment, so any byte the new application does not write must be the mask's declared fill
@@ -304,6 +344,7 @@ export function planSystemBFullDownload(tables: {
     // `fillByte` (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above),
     // and the device's CRC over the finished segment proves the whole 21601 bytes at the end.
     ...sparseRuns(tables.params, 12, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    ...(security ? planSecurityObjectLoad(security) : []),
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },

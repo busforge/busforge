@@ -6,6 +6,7 @@ import { Bus } from "./bus.ts";
 import { openDb } from "./db/schema.ts";
 import { insertTelegram } from "./db/telegrams.ts";
 import { countSealedToolKeys } from "./db/deviceSecurity.ts";
+import { countSealedGroupKeys } from "./db/groupKeys.ts";
 import { versionInfo } from "./version.ts";
 import { ApiError, errorCode } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
@@ -54,10 +55,10 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   // Refuse to start if the DB holds sealed tool keys but no master key is available:
   // auto-generating a fresh one (the zero-config default) would silently make every
   // stored key unopenable. Surface the missing key instead of faking a working store.
-  const sealedKeyRows = countSealedToolKeys(db);
+  const sealedKeyRows = countSealedToolKeys(db) + countSealedGroupKeys(db);
   const hasMasterKey = !!process.env.BUSFORGE_MASTER_KEY || existsSync(join(dataDir, "master.key"));
   if (sealedKeyRows > 0 && !hasMasterKey) {
-    throw new Error("device_security holds sealed tool keys but no master key is available; set BUSFORGE_MASTER_KEY or restore the master.key file, refusing to auto-generate a key that cannot open them");
+    throw new Error("the database holds sealed Data Secure keys but no master key is available; set BUSFORGE_MASTER_KEY or restore the master.key file, refusing to auto-generate a key that cannot open them");
   }
   const masterKey = getMasterKey(dataDir);
   closeUnfinishedTasks(db, now());

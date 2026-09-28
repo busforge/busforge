@@ -48,6 +48,8 @@ export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
 // obtained live via Sync). Keys are sealed before they touch the DB (see secrets.ts);
 // the parser only lifts the plaintext out of the already-decrypted project archive.
 export interface DeviceSecurity { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; }
+// A Data Secure group address's key (base64, 16 bytes), from its <GroupAddress Key> attribute.
+export interface GroupKey { raw: number; key: string; }
 
 export interface TopologyLine {
   address: number;
@@ -113,6 +115,7 @@ export interface Project {
   deviceModules: DeviceModules[]; // per-device module instances from 0.xml
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
   deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
+  groupKeys: GroupKey[]; // Data-Secure group keys from 0.xml (only secured group addresses)
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
 }

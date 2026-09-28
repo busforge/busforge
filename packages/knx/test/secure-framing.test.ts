@@ -9,13 +9,14 @@ describe("chunk sizes of a secured session", () => {
   test("the secure framing costs 13 octets", () => expect(SECURE_APDU_OVERHEAD).toBe(13));
 
   test("a plain session keeps today's sizes", () => {
-    expect(transferChunks(233, false)).toEqual({ classicRead: 48, extRead: 48, extWrite: 32 });
-    expect(transferChunks(null, false)).toEqual({ classicRead: 12, extRead: 48, extWrite: 32 });
+    expect(transferChunks(233, false)).toEqual({ classicRead: 48, extRead: 48, extWrite: 32, propRead: 44, propWrite: 28 });
+    expect(transferChunks(null, false)).toEqual({ classicRead: 12, extRead: 48, extWrite: 32, propRead: 44, propWrite: 28 });
   });
 
   test("a secured session leaves room for the framing on the path and in the device's APDU", () => {
     // Jung 400021SE (maximum APDU 233) over the bench: 35 bytes read back on 2026-09-28, 48 did not.
-    expect(transferChunks(233, true)).toEqual({ classicRead: 35, extRead: 35, extWrite: 19 });
+    // Writes are the 22-byte memory chunks and 18-byte property elements ETS sends it there.
+    expect(transferChunks(233, true)).toEqual({ classicRead: 35, extRead: 35, extWrite: 22, propRead: 31, propWrite: 18 });
     // A small device APDU is the binding limit: data + 5 (write) + 13 must not exceed it.
     const small = transferChunks(20, true);
     expect(small.extWrite + 5 + SECURE_APDU_OVERHEAD).toBeLessThanOrEqual(20);

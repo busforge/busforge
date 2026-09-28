@@ -1,5 +1,5 @@
-import { KnxDevice, PID } from "./device.ts";
-import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, LSM, STATE } from "./flash.ts";
+import { KnxDevice, PID, OBJECT_TYPE_SECURITY } from "./device.ts";
+import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, securityLsmEvent, LSM, STATE } from "./flash.ts";
 import { KnxError } from "./errors.ts";
 import { loadedTableAddr } from "./grouptable-read.ts";
 
@@ -67,7 +67,11 @@ export type LoadStep =
   // echoPrefix: how many leading bytes of the device's echo must equal `data` (default: all of it).
   // A declared write without verification may come back with fields the device fills itself.
   | { op: "writeProp"; obj: number; pid: number; data: Buffer; start?: number; echoPrefix?: number }
-  | { op: "stampAppId"; lsm: number; data: Buffer };      // propWrite(lsm, 13, appId) so loadCompleted validates
+  | { op: "stampAppId"; lsm: number; data: Buffer }       // propWrite(lsm, 13, appId) so loadCompleted validates
+  // The Data Secure security object (type 17): a load event whose resulting state is asserted, and a
+  // confirmed write of whole elements of one of its properties (see planSecurityObjectLoad).
+  | { op: "securityLsm"; event: number }
+  | { op: "writeSecurityProp"; pid: number; start: number; elementSize: number; data: Buffer };
 
 export type LoadPlan = LoadStep[];
 
@@ -172,6 +176,8 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         break;
       }
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
+      case "securityLsm": await securityLsmEvent(dev, step.event); break;
+      case "writeSecurityProp": await dev.propExtWriteElements(OBJECT_TYPE_SECURITY, 1, step.pid, step.start, step.elementSize, step.data); break;
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
         if (step.assert !== false) {

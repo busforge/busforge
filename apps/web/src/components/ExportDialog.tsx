@@ -26,11 +26,12 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
   const open = controlled ? openProp : openState;
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Warn when this export would carry device keys in clear: the project has secure
-  // devices and no container password is set. The keys travel either way (by design);
-  // the password is their only protection.
+  // Warn when this export would carry keys in clear: the project has secure devices or
+  // secured group addresses and no container password is set. The keys travel either way
+  // (by design); the password is their only protection.
   const { data: project } = useProject(projectId);
-  const exposesKeys = (project?.secureDeviceCount ?? 0) > 0 && !password.trim();
+  const secureDevices = project?.secureDeviceCount ?? 0;
+  const exposesKeys = (secureDevices > 0 || (project?.groupKeyCount ?? 0) > 0) && !password.trim();
 
   function reset() { setPassword(""); setError(null); }
   const setOpen = (o: boolean) => {
@@ -82,7 +83,9 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
         {exposesKeys && (
           <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" data-testid="export-keys-warning">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-            {t("export.secretsWarning", { count: project?.secureDeviceCount ?? 0 })}
+            {secureDevices > 0
+              ? t("export.secretsWarning", { count: secureDevices })
+              : t("export.groupKeysWarning", { count: project?.groupKeyCount ?? 0 })}
           </p>
         )}
 

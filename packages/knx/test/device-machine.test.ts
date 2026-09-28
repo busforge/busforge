@@ -194,6 +194,23 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(acksAfterReplay).toBe(acksAfterFirst + 1);
   });
 
+  // A device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores
+  // it (Jung 400021SE, 2026-09-28): the restart, and the master reset, go through the session.
+  test("secure: A_Restart and the master reset are sent secured, never plain", async () => {
+    const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
+    const tun = new FakeTransport();
+    tun.handler = () => { /* a rebooting device answers nothing */ };
+    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }));
+    await dev.restart();
+    await dev.masterReset();
+    const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
+    const restart = tun.sent[0], reset = tun.sent[tun.sent.length - 1];
+    for (const f of [restart, reset]) expect(f[1]).toBe(0xf1); // A_Data_Secure, not the service in clear
+    const inner = (f: Buffer) => { const r = farSide.unwrap(f); if (r.status !== "ok") throw new Error(r.status); return ((r.apdu[0] & 0x03) << 8) | r.apdu[1]; };
+    expect(inner(restart)).toBe(APCI.RESTART);
+    expect(inner(reset) & 0x3fe).toBe(APCI.RESTART);
+  }, 10_000);
+
   // A secure device drops a Sync request it cannot authenticate without answering, so silence is
   // what a wrong tool key (or a device not in secure mode) looks like; the error has to say so.
   test("secure: a Sync nobody answers fails with a coded error", async () => {

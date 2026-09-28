@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity } from "./model.ts";
+import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey } from "./model.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
@@ -64,7 +64,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames);
   const locations = parseLocations(installation?.Locations);
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
-  const { groupRanges, groupAddresses } = parseGroupAddresses(installation?.GroupAddresses, groupAddressLevels);
+  const { groupRanges, groupAddresses, groupKeys } = parseGroupAddresses(installation?.GroupAddresses, groupAddressLevels);
   const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
   const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
   const gaIdToRaw = new Map<string, number>();
@@ -74,7 +74,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
   const deviceSecurity = devices.map((d) => parseDeviceSecurity(doc, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
 
-  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, unresolvedLinks, malformedDevices };
+  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, groupKeys, unresolvedLinks, malformedDevices };
 }
 
 // The project's group-address style, as a level count. ETS stores GroupAddressStyle on
@@ -262,12 +262,18 @@ function parseLocations(loc: unknown): SpaceNode[] {
   return kids(node(loc)?.Space).map(toSpace);
 }
 
-function parseGroupAddresses(gas: unknown, levels: Levels): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[] } {
+// A secured group address carries its key in the Key attribute (plain inside the password-protected
+// archive, like a device's ToolKey). It is kept apart from the GroupAddress model so the key never
+// travels with the address to a client.
+function parseGroupAddresses(gas: unknown, levels: Levels): { groupRanges: GroupRangeNode[]; groupAddresses: GroupAddress[]; groupKeys: GroupKey[] } {
   const flat: GroupAddress[] = [];
+  const groupKeys: GroupKey[] = [];
   const toGa = (g: XmlNode): GroupAddress => {
     const raw = Number(attr(g.Address));
     const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: text(g.Name), dpt: dptDisplay(attr(g.DatapointType)) };
     flat.push(ga);
+    const key = attr(g.Key);
+    if (key !== undefined) groupKeys.push({ raw, key });
     return ga;
   };
   const toRange = (r: XmlNode): GroupRangeNode => ({
@@ -279,7 +285,7 @@ function parseGroupAddresses(gas: unknown, levels: Levels): { groupRanges: Group
     addresses: kids(r.GroupAddress).map(toGa),
   });
   const groupRanges = kids(node(node(gas)?.GroupRanges)?.GroupRange).map(toRange);
-  return { groupRanges, groupAddresses: flat };
+  return { groupRanges, groupAddresses: flat, groupKeys };
 }
 
 // Descends into arrays: see buildGaIdMap.

@@ -86,11 +86,11 @@ function backupPersister(dataDir: string, projectId: string): PersistBackups {
 type ServerScope = { projectId: string; dataDir: string; ia: string; connection: Connection; secure?: SecureCreds };
 
 // A Data Secure device keeps its group keys and per-object security flags in its security
-// interface object (type 17), and its group key table is indexed by address-table position. ETS
-// loads that object with every GA or full download; Busforge does not yet, so rewriting the group
-// tables or commissioning such a device would leave its keys pointing at the wrong addresses.
+// interface object (type 17). Where the device's memory model does not load that object with the
+// group tables (profile.loadsSecurityObject), rewriting its tables or commissioning it would leave
+// its keys behind, so those writes refuse it.
 export function secureTablesUnsupported(): ApiError {
-  return new ApiError("SECURE_TABLES_UNSUPPORTED", "this device runs KNX Data Secure; writing its group tables or commissioning it also needs its security object loaded (group keys, security flags), which busforge does not do yet", 400);
+  return new ApiError("SECURE_TABLES_UNSUPPORTED", "this device runs KNX Data Secure; writing its group tables or commissioning it also needs its security object loaded (group keys, security flags), which busforge does not do for this device family", 400);
 }
 
 // Program a device\'s parameter segment from its stored configuration.
@@ -100,13 +100,22 @@ export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashParameters(dev, mask, ctx), opts.secure);
 }
 
+// A secured session that rewrites a device's group tables must load its security object with
+// them; credentials without the group keys would leave the old keys and flags behind the new tables.
+function refuseSessionWithoutSecurityObject(opts: { secure?: SecureCreds; security?: unknown }): Promise<never> | null {
+  return opts.secure && !opts.security
+    ? Promise.reject(new ApiError("SECURE_TABLES_UNSUPPORTED", "a secured write of the group tables was asked for without the group keys its security object is loaded with", 400))
+    : null;
+}
+
 // Program a device\'s group-address tables (address + association) from its com-object
 // links. Classify from the parsed application (not the mask alone) so the profile carries
 // the app\'s declared table capacity (<AddressTable>/<AssociationTable> MaxEntries); the
 // GA-flash growth guard depends on it. Without the cfg it would fall back to "no growth
 // beyond the current table" and refuse every legitimate add.
 export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & { appXml: string }): Promise<FlashResult> {
-  if (opts.secure) return Promise.reject(secureTablesUnsupported());
+  const refused = refuseSessionWithoutSecurityObject(opts);
+  if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: GaFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
@@ -116,7 +125,8 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
 // tables in one bracket. Unlike a parameter download this AUTHORS the com-object table, because a
 // virgin device has none to keep. Hardware-verified only where docs/commissioning.md says so.
 export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
-  if (opts.secure) return Promise.reject(secureTablesUnsupported());
+  const refused = refuseSessionWithoutSecurityObject(opts);
+  if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: FullDownloadCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.downloadFull(dev, mask, ctx), opts.secure);

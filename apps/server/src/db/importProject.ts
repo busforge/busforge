@@ -8,6 +8,7 @@ import { insertSpaces } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
+import { putGroupKeys } from "./groupKeys.ts";
 
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
 // the whole project under a fresh id, restore its referenced catalog application
@@ -63,7 +64,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   // Validate each security entry's shape so a crafted artifact fails as a clean 400
@@ -75,6 +76,12 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     }
     if (s.source !== undefined && !["import", "manual", "provisioned"].includes(s.source as string)) {
       throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity source");
+    }
+  }
+  for (const g of (d.groupKeys as Record<string, unknown>[] | undefined) ?? []) {
+    if (typeof g.raw !== "number" || typeof g.key !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys entry");
+    if (g.source !== undefined && !["import", "manual", "provisioned"].includes(g.source as string)) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys source");
     }
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
@@ -154,6 +161,9 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
         sequenceNumber: s.sequenceNumber,
         source: (s.source as SecuritySource) || "import",
       })), masterKey);
+    }
+    if (data.groupKeys?.length) {
+      putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as SecuritySource) || "import" })), masterKey);
     }
   })();
 }

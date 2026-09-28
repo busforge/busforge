@@ -49,22 +49,60 @@ function assertElements(start: number, count: number): void {
 
 // The security interface object (KNX Data Secure) and its security-mode function property.
 export const OBJECT_TYPE_SECURITY = 17;
-const PID_SECURITY_MODE = 51;
+// Properties of the security interface object that a secured download loads.
+export const SECURITY_PID = {
+  LOAD_STATE_CONTROL: 5,
+  SECURITY_MODE: 51,
+  GROUP_KEY_TABLE: 53,          // elements of address-table index (2) + key (16)
+  SECURITY_IA_TABLE: 54,        // peers' individual addresses and sequence counters
+  TOOL_KEY: 56,
+  GO_SECURITY_FLAGS: 61,        // one byte per group object, element k = object k
+} as const;
+const PID_SECURITY_MODE = SECURITY_PID.SECURITY_MODE;
+
+// Split whole elements of `elementSize` bytes, starting at element `start`, into requests of at
+// most `budget` data bytes (and 255 elements, the count being one octet).
+export function elementRuns(start: number, elementSize: number, data: Buffer, budget: number): { start: number; count: number; bytes: Buffer }[] {
+  if (!Number.isInteger(elementSize) || elementSize < 1 || data.length % elementSize !== 0) {
+    throw new KnxError("PROPERTY_ADDRESS_INVALID", `${data.length} bytes are not whole elements of ${elementSize}`);
+  }
+  const per = Math.min(0xff, Math.floor(budget / elementSize));
+  if (per < 1) {
+    throw new KnxError("PROPERTY_ELEMENT_TOO_LONG", `one ${elementSize}-byte element does not fit a request of ${budget} data bytes to this device`);
+  }
+  const runs: { start: number; count: number; bytes: Buffer }[] = [];
+  for (let off = 0; off < data.length; off += per * elementSize) {
+    const bytes = data.subarray(off, off + per * elementSize);
+    runs.push({ start: start + off / elementSize, count: bytes.length / elementSize, bytes });
+  }
+  return runs;
+}
 
 // Data bytes per memory request, from the device's maximum APDU length (null when it declares none)
 // and whether the session is secured. A_Memory_Read spends 3 octets besides the data, the extended
 // read and write 5; the path limits above are for plain frames, so a secured session subtracts its
 // framing from both (a Jung 400021SE over the bench answered no secured 48-byte read, and every
-// 35-byte one). A secured session needs the device's maximum APDU: a device that does not declare it
-// is held to the 15-octet standard frame, which no secured request fits. Where the framing leaves no
-// data byte, the request is refused rather than sent oversize into silence.
-export function transferChunks(maxApdu: number | null, secured: boolean): { classicRead: number; extRead: number; extWrite: number } {
+// 35-byte one). A secured write is held to the 40 octets ETS itself sends on that path (22-byte
+// memory writes and 18-byte property elements in its secured download of the Jung, after longer
+// requests went unanswered). A secured session needs the device's maximum APDU: a device that does
+// not declare it is held to the 15-octet standard frame, which no secured request fits. Where the
+// framing leaves no data byte, the request is refused rather than sent oversize into silence.
+//
+// The extended property services spend 4 octets more than the extended memory ones (object type,
+// instance and PID in 5, count and start in 3, against count and address in 4), so their element
+// data per request (`propRead`, `propWrite`) is the memory figure less 4; where that leaves no room
+// for one element, the property request itself refuses.
+const SECURE_WRITE_PATH_APDU = 40;
+const PROP_EXTRA_OVERHEAD = 4;
+export function transferChunks(maxApdu: number | null, secured: boolean): { classicRead: number; extRead: number; extWrite: number; propRead: number; propWrite: number } {
+  const withProps = (c: { classicRead: number; extRead: number; extWrite: number }) =>
+    ({ ...c, propRead: c.extRead - PROP_EXTRA_OVERHEAD, propWrite: c.extWrite - PROP_EXTRA_OVERHEAD });
   if (!secured) {
-    return {
+    return withProps({
       classicRead: maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - 3)),
       extRead: EXT_READ_CHUNK,
       extWrite: maxApdu === null ? EXT_WRITE_CHUNK : Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD),
-    };
+    });
   }
   if (maxApdu === null) {
     throw new KnxError("SECURE_APDU_TOO_SHORT", "the device declares no maximum APDU length, so it takes standard frames only, and a secured memory request does not fit one");
@@ -75,11 +113,11 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
     }
     return n - SECURE_APDU_OVERHEAD;
   };
-  return {
+  return withProps({
     classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - 3), "memory read"),
     extRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory read"),
-    extWrite: fit(Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory write"),
-  };
+    extWrite: fit(Math.min(SECURE_WRITE_PATH_APDU, maxApdu) - EXT_WRITE_OVERHEAD, "extended memory write"),
+  });
 }
 
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
@@ -200,6 +238,14 @@ export class KnxDevice {
     });
   }
 
+  // A numbered APDU as it goes on the wire. Plain: as-is. Secure: stripped to the bare service APDU
+  // (inner TPCI 0) and wrapped for its T-sequence; a device in secure mode acknowledges a plain
+  // service on the transport layer and then ignores it.
+  private onWire(tpdu: Buffer): Buffer {
+    if (!this.secure) return tpdu;
+    const svc = Buffer.from(tpdu); svc[0] &= 0x03;
+    return this.secure.wrapManagement(svc, (tpdu[0] >> 2) & 0x0f);
+  }
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
     for (let i = 0; i < tries; i++) {
       if (i > 0) await new Promise((r) => setTimeout(r, 200));
@@ -211,10 +257,7 @@ export class KnxDevice {
       const respP = expectResponse
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
-      // Plain: send the numbered APDU as-is. Secure: strip the numbering to the bare
-      // service APDU (inner TPCI 0) and wrap it for this T-sequence.
-      let tpdu = build(this.seq);
-      if (this.secure) { const svc = Buffer.from(tpdu); svc[0] &= 0x03; tpdu = this.secure.wrapManagement(svc, this.seq); }
+      const tpdu = this.onWire(build(this.seq));
       try {
         await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
       } catch (e) {
@@ -294,6 +337,24 @@ export class KnxDevice {
     const rest = this.extEcho(r!, APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE, head, "a function property");
     if (rest.length < 1) throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `object type ${objectType} PID ${pid}: a function property answer without a return code`);
     return { returnCode: rest[0], result: rest.subarray(1) };
+  }
+  // Whole elements written from `start`, as many per request as the path and the device take.
+  async propExtWriteElements(objectType: number, instance: number, pid: number, start: number, elementSize: number, data: Buffer): Promise<void> {
+    for (const r of elementRuns(start, elementSize, data, (await this.extChunks()).propWrite)) {
+      await this.propExtWriteCon(objectType, instance, pid, r.bytes, r.start, r.count);
+    }
+  }
+  // `count` whole elements read from `start`. An answer of another length is an error, not data.
+  async propExtReadElements(objectType: number, instance: number, pid: number, start: number, count: number, elementSize: number): Promise<Buffer> {
+    const parts: Buffer[] = [];
+    for (const r of elementRuns(start, elementSize, Buffer.alloc(count * elementSize), (await this.extChunks()).propRead)) {
+      const got = await this.propExtRead(objectType, instance, pid, r.start, r.count);
+      if (got.length !== r.bytes.length) {
+        throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `object type ${objectType} PID ${pid}: asked for ${r.count} element(s) of ${elementSize} bytes from ${r.start}, got ${got.length} bytes`);
+      }
+      parts.push(got);
+    }
+    return Buffer.concat(parts);
   }
   // Whether Data Secure is switched on: the security object's PID_SECURITY_MODE, service 0, answers
   // [service, mode]. A device without the object, or any other answer, is an error, not "off".
@@ -539,7 +600,7 @@ export class KnxDevice {
   // reboot proof reads the device's SILENCE as "it rebooted", so a frame the interface never accepted
   // must not reach one; that silence would mean nothing at all.
   async sendRestart(): Promise<void> {
-    await this.tun.sendCemi(cemiLData(this.me, this.dst, apdu(this.seq, APCI.RESTART)));
+    await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
     this.seq = (this.seq + 1) & 0x0f;
   }
 
@@ -604,7 +665,7 @@ export class KnxDevice {
     // silent-failure the restart() comment describes. Only the device's post-send silence (it
     // reboots and does not ack) is tolerated, and that is not what sendCemi rejects on.
     await this.tun.sendCemi(cemiLData(this.me, this.dst,
-      apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel]))));
+      this.onWire(apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])))));
     this.seq = (this.seq + 1) & 0x0f;
   }
 }
