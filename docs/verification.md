@@ -79,8 +79,9 @@ baseline from before this check carries `-1` (not counted) and is refused until 
 What this is proven on: tests over real application programs (MDT BE-02001.02 and Jung 400021SE as
 module devices, M-0081 for ref variants), and a one-off manual replay (not kept as a test) of the
 house's OpenKNX RaumController links read, where a "revert to the device" followed by
-a group-address flash would write exactly the links the device holds. A group-address flash on that device after the revert is
-not yet shown on hardware.
+a group-address flash would write exactly the links the device holds. On that device the revert
+was then shown on hardware: the dry run reported `unchanged`, and a link added and removed again
+were each `verified` ([status.md](status.md)).
 
 Ownership is per bit: a sub-byte parameter owns only its own bits of the byte it shares, so a
 parameter flash carries the byte's other bits over from the device and the read-back compares

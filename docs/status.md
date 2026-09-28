@@ -79,7 +79,7 @@ value.
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory; survives a restart since the memory-control-block fix (see below) | hardware: a surgically flashed link answers a read |
-| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter on the house unit, `verified` after the restart (see below) | not proven (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
+| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter on the house unit, `verified` after the restart (see below) | hardware, one link added and removed on the house unit, each `verified` after the restart, the added link answered a group read (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
@@ -145,14 +145,21 @@ Notes attached to that table:
   instead of 30 ms, and an edit never reached it ([findings.md](findings.md) §8). The earlier
   hardware proofs of this device did not cover that byte.
 
-- **OpenKNX surgical parameter flash: proven on the house unit, group-address flash not.** The first
+- **OpenKNX surgical parameter and group-address flash: proven on the house unit.** The first
   attempt (1.1.x, one byte) stopped before LoadCompleted because Busforge read the
   bytes back before the restart, when this firmware still returns the old flash contents
   ([findings.md](findings.md) §16); the device was recovered the same day. With the read-back moved
   after the restart the change and its revert both landed, persisted across the restart (read back
   separately) and the revert reported `verified: true`; the application answered a group read
-  afterwards. Operator observation, no evidence record, one parameter. The group-address flash was
-  not tried: the house project's links for this unit do not match the device. Earlier versions of
+  afterwards. Operator observation, no evidence record, one parameter. The group-address flash
+  first needed the device's links in the project: the read-back had left 11 of them
+  out of the baseline and shown a project-only link as "no change" (fixed in `e9709f8`, see
+  [verification.md](verification.md)). After a read-back with 0 gaps and "revert to the device", a
+  dry run reported `unchanged` over all 2788 table bytes. Linking object 23 to a new group address
+  wrote 75 bytes, `verified: true` after the restart, and the object answered a group read on it;
+  removing the link again wrote 75 bytes, `verified: true`, a fresh read-back showed no drift and no
+  gaps, the dry run `unchanged`, and the test address stopped answering while an existing house
+  link (5/2/9) still did. Operator observation, no evidence record, one link. Earlier versions of
   this page called them unsafe; the label came from
   two failures of the *full download*, both explained since: a module-state region poisoned by
   earlier bench experiments (recovered by `erase openknx`) and a com-object table sized to the
@@ -269,10 +276,9 @@ report a device family as working on the strength of a passing test suite.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.
-- **The OpenKNX RaumController has never been driven through the bracketed System B group-address
-  flash.** The device itself was re-driven (three full downloads, each `verified`, one
-  of them onto the device in service), but no surgical group-address flash has been driven on it,
-  so that path stays unproven here until the controlled comparison on the roadmap runs.
+- **The OpenKNX RaumController's surgical flashes are operator observations on one house unit**
+  (one parameter, one link), not smoke runs with evidence records; no ETS reference of a partial
+  download exists for this product (no ETS project matches the unit).
 - **KNXnet/IP connection-state heartbeat and closure** are verified against Busforge's own server,
   not against a third-party gateway's real timing.
 - **The USB transport is proven on one interface model.** Its single-report HID limits (read and
