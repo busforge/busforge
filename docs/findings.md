@@ -502,3 +502,25 @@ silence. The revert to the original value then completed as `flashed`, `verified
 presence object answered a group read afterwards. Operator observation over the house interface,
 no evidence record.
 
+
+## 17. A module parameter resolves through its module definition, or the baseline never learns it
+
+The bench regression failed on the Jung 400021SE with a seed that swept channel 1's
+"Kanalfunktion" (`…_MD-1_M-100_MI-1_P-149_R-142`) from 1 to 8 and back. The value 8 (door/window
+status) removes com-objects #253 and #254, so the mutation was correctly promoted to a full
+download. The revert was not: it went out as a surgical parameter flash, reported `verified`, and
+the device kept the table without #253 and #254. The persistence step caught it after the restart,
+because the link the run had placed on #254 was gone from the device.
+
+The cause was one regex. To decide which stored parameters a flash wrote, Busforge maps a
+module-instance ref back to its definition, and stripped only `_MI-n`, so
+`…_MD-1_M-100_P-149_R-142` never matched the definition `…_MD-1_P-149_R-142`. Every
+module-instance parameter of every module device therefore counted as unwritten and kept its old
+baseline after any verified download or flash. For "Kanalfunktion", which has no device memory,
+the baseline still implied the default after the download that programmed 8, so the com-object
+table guard compared 1 with 1 and let the surgical flash through.
+
+The mapping now strips `_M-k_MI-n`, the exact inverse of how the module expansion builds instance
+ids (checked over every module fixture: 4384 Jung and 4648 MDT refs, no mismatch). The same seed
+on the Jung then promoted the revert to a full download and passed, persistence included. Baselines
+written before the fix still lack these parameters; see [roadmap.md](roadmap.md).

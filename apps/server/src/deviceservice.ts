@@ -165,9 +165,10 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
   const stored = params ?? getDeviceParams(state.db, projectId, deviceId);
   if (!app) return new Set(stored.keys());
   for (const refId of stored.keys()) {
-    // A module-instance ref (…_MI-n_…) resolves through its ModuleDef ref.
+    // A module-instance ref (…_MD-x_M-k_MI-n_…) resolves through its ModuleDef ref (…_MD-x_…),
+    // the inverse of the instance id the module expansion prefixes (application.ts).
     let resolved: { base: string; hasMemory: boolean } | undefined;
-    for (const rid of [refId, refId.replace(/_MI-\d+/, "")]) {
+    for (const rid of [refId, refId.replace(/_M-\d+_MI-\d+/, "")]) {
       const ref = app.refs.get(rid);
       const param = ref ? app.params.get(ref.paramId) : undefined;
       const t = param ? app.types.get(param.typeId) : undefined;

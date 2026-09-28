@@ -338,6 +338,34 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
 });
 
 
+// Jung 400021SE (module device): "Kanalfunktion" of channel 1 is a module-instance parameter with no
+// device memory, yet it decides which com-objects the channel has (8 = door/window status removes
+// #253 and #254). A download programmed with it compiled the device's com-object table for that
+// value, so the baseline must record it: otherwise switching back looks like no change and the
+// surgical parameter flash leaves the device on the other table while reporting success.
+describe("a memory-less module parameter that shapes the com-object table", () => {
+  const jungXml = gunzipSync(readFileSync(join(
+    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0004_A-7072-21-99A7-O000A.xml.gz",
+  ))).toString("utf8");
+  const CHANNEL_FUNCTION = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142";
+
+  test("a download adopts it, and switching it back promotes the parameter flash to a download", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, jungXml);
+    setDeviceParam(state.db, projectId, deviceId, CHANNEL_FUNCTION, "8");
+    downloadImpl = async () => flashed(true);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/download`));
+    expect(getDeviceParamBase(state.db, projectId, deviceId).get(CHANNEL_FUNCTION)).toBe("8");
+
+    setDeviceParam(state.db, projectId, deviceId, CHANNEL_FUNCTION, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+  });
+});
+
+
 const programmingRoutes = ["flash", "flash-ga", "download"] as const;
 function setProgrammingResult(run: () => Promise<FlashResult>) {
   paramFlashImpl = run;

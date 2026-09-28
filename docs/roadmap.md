@@ -12,6 +12,15 @@ started until the capability it depends on is hardware-proven.
   parameter image against the device, and write only the diverging segments in one load bracket.
   Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
   part, and it needs a bus-behaviour proof, not just a byte match.
+- **Baselines written before 2026-09-28 lack every module-instance parameter.** Until then a
+  verified download or parameter flash never adopted a module device's `…_M-k_MI-n_…` parameters
+  into the baseline ([findings.md](findings.md) §17). For a memory-less one that shapes the
+  com-object table (the Jung's "Kanalfunktion"), such a baseline still implies the default, so
+  switching back to the default looks like no change and the surgical flash is not promoted to a
+  download. A read-back cannot repair it: a memory-less parameter is not on the device. Today the
+  remedy is one full download of each module device Busforge programmed before the fix; the
+  robust one is a migration that marks those baselines as unknown and refuses a table-relevant
+  surgical flash until that download.
 - **Observe a transmit-only object after a System 7 group-address flash.** The flash rewrites the
   com-object table byte-equal to ETS; the behaviour that depends on the link bit (an object with
   no read flag transmitting after it is linked) has not been observed on the bus
