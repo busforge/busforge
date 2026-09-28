@@ -53,26 +53,32 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
   const m = (o: Record<string, number[]>) => new Map(Object.entries(o));
   const obj = (x: Map<string, number[]>) => Object.fromEntries(x);
 
-  test("non-module: overrides differing, adds device-only, clears live-only", () => {
+  test("known numbering: overrides differing, adds device-only, clears live-only", () => {
     const live = m({ A: [1, 2], B: [5], D: [3] });
     const device = m({ A: [2, 1], B: [9], C: [7] }); // A same set (reordered), B differs, C new, D gone
-    const r = mergeLinkBaseline(live, device, false);
+    const r = mergeLinkBaseline(live, device, new Set(["A", "B", "C", "D"]));
     expect(obj(r.base)).toEqual({ A: [1, 2], B: [9], C: [7] });
     expect(r.gaps).toBe(0); // 1:1 mapping, nothing dropped
   });
 
-  test("module: only trusts device links mapping onto a known live com-object, and COUNTS the ignored ones", () => {
+  test("known numbering: a live link on an object the device's configuration hides is kept, not cleared", () => {
+    const live = m({ A: [1], H: [4] });
+    const r = mergeLinkBaseline(live, m({ A: [1] }), new Set(["A"])); // H is not placed on the device: unobservable
+    expect(obj(r.base)).toEqual({ A: [1], H: [4] });
+  });
+
+  test("unknown module numbering: only trusts device links mapping onto a known live com-object, and COUNTS the ignored ones", () => {
     const live = m({ A: [1, 2], B: [5], D: [3] });
     const device = m({ A: [9], C: [7] }); // A in live -> override; C not in live -> ignored but REPORTED; B,D absent -> kept
-    const r = mergeLinkBaseline(live, device, true);
+    const r = mergeLinkBaseline(live, device, undefined);
     expect(obj(r.base)).toEqual({ A: [9], B: [5], D: [3] });
     expect(r.gaps).toBe(1); // C never entered the baseline; the caller must surface it
   });
 
   test("no drift yields an unchanged baseline (both branches)", () => {
     const live = m({ A: [1], B: [2] });
-    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), false).base)).toEqual({ A: [1], B: [2] });
-    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), true).base)).toEqual({ A: [1], B: [2] });
+    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), new Set(["A", "B"])).base)).toEqual({ A: [1], B: [2] });
+    expect(obj(mergeLinkBaseline(live, m({ A: [1], B: [2] }), undefined).base)).toEqual({ A: [1], B: [2] });
   });
 });
 

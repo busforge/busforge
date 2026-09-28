@@ -52,6 +52,9 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (typeof dev.id !== "string" || typeof dev.ia !== "string" || typeof dev.name !== "string" || typeof dev.appRef !== "string") {
       throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     }
+    if (dev.linkBaseGaps !== undefined && !(Number.isInteger(dev.linkBaseGaps) && (dev.linkBaseGaps as number) >= -1)) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
+    }
     // Duplicate instance ids would merge their per-device config last-wins on insert; refuse
     // with the same coded error the knxproj import uses (insertProject), so both paths fail
     // cleanly before touching the DB instead of hitting the raw unique index mid-transaction.
@@ -100,8 +103,11 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
       .run(id, data.project.name, now);
     applyProjectProperties(db, id, data.project);
 
-    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);
+    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    // An artifact from before the gap count carries a link baseline whose gaps were never
+    // counted: unknown (-1) until the device is read again, as the schema migration does.
+    const withLinkBase = new Set(data.deviceLinkBase.map((l) => l.deviceId));
+    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0));
 
     const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
     const idMap = new Map<number, number>(); // exported range id -> new row id

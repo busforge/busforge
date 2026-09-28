@@ -54,6 +54,34 @@ Merker included) on the project and recomputes until the active set is stable, t
 for what the project's or the device's configuration shows. It refuses (`READBACK_UNSTABLE`) if the
 set never settles.
 
+Links follow the same rule. A device stores each association by com-object number, and a number
+names a com-object only under a configuration: parameters choose which objects exist, and on a
+module device each module instance shifts its objects. The read-back resolves the numbers through
+the configuration the same read converged on (the project's values with the device's own value for
+every parameter active in its image; parameters without a memory offset keep the project's value,
+since the device cannot show them). Where the project's configuration places the same object at
+that number, the project's ref variant keeps the link, so a link both sides hold is not drift.
+
+- A link the device holds enters the baseline even where the project has none.
+- A project link the device does not hold shows as drift, but only on an object the device's
+  configuration places; a link on an object it hides is unobservable and stays.
+- A device link counts as a gap (`linkGaps`) when no configuration places its number (a module
+  template object has no number of its own until an instance shifts it), when it sits on an
+  object the project's configuration does not show (it enters the baseline, but the device page
+  cannot display it), or when a module device was read without its parameters.
+
+While the last read left gaps, a group-address flash is refused (`LINK_BASELINE_INCOMPLETE`): it
+writes the tables whole and would overwrite links nobody has seen. The device page names the count.
+A verified group-address flash or full download sets it to zero, since the device then holds exactly
+the project's links, and base rows for links it no longer holds are dropped. A device holding a link
+baseline from before this check carries `-1` (not counted) and is refused until it is read back.
+
+What this is proven on: tests over real application programs (MDT BE-02001.02 and Jung 400021SE as
+module devices, M-0081 for ref variants), and a one-off manual replay (not kept as a test) of the
+house's OpenKNX RaumController links read, where a "revert to the device" followed by
+a group-address flash would write exactly the links the device holds. A group-address flash on that device after the revert is
+not yet shown on hardware.
+
 Ownership is per bit: a sub-byte parameter owns only its own bits of the byte it shares, so a
 parameter flash carries the byte's other bits over from the device and the read-back compares
 only the owned ones ([findings.md](findings.md) §12). When a union switches branch, the other bits

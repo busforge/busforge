@@ -584,6 +584,13 @@ export function DeviceConfig() {
         </div>
       )}
 
+      {!!view?.linkBaseGaps && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300" data-testid="link-gaps-notice">
+          <AlertTriangle className="size-4 shrink-0" />
+          <span>{view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")}</span>
+        </div>
+      )}
+
       {(gaps.types.length > 0 || gaps.elements.length > 0) && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />

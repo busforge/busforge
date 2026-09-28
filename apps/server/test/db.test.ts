@@ -8,7 +8,7 @@ import { openDb } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -63,6 +63,7 @@ describe("schema/migrations", () => {
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
       PRAGMA user_version = 16;`);
@@ -117,6 +118,16 @@ describe("projects", () => {
     const data = exportProject(db, "p1", 5, MK)!;
     importProjectExport(db, data, "p2", 6, MK);
     expect(getProject(db, "p2")!.groupAddressLevels).toBe(2);
+  });
+
+  test("a device's link-baseline gaps survive a .busforge round-trip", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    setLinkBaseGaps(db, "p1", "P-TEST-0_DI-1", 3);
+    const MK = Buffer.alloc(32, 7);
+    const data = exportProject(db, "p1", 5, MK)!;
+    importProjectExport(db, data, "p2", 6, MK);
+    expect([getLinkBaseGaps(db, "p2", "P-TEST-0_DI-1"), getLinkBaseGaps(db, "p2", "P-TEST-0_DI-2")]).toEqual([3, 0]);
   });
 
   test("seeds and reads a device's module instances", () => {
@@ -883,11 +894,16 @@ describe("connections", () => {
     const old = new Database(path, { create: true });
     old.exec(`CREATE TABLE devices (project_id TEXT, instance_id TEXT, ia TEXT, app_ref TEXT, product_ref TEXT);
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
       INSERT INTO connections (id,name,type,host,port,created_at) VALUES ('c1','GW','ip','1.2.3.4',3671,1000);
+      INSERT INTO devices (project_id,instance_id,ia) VALUES ('p','read','1.1.1'),('p','never','1.1.2');
+      INSERT INTO device_link_base VALUES ('p','read','O-0_R-1',0,1);
       PRAGMA user_version = 18;`);
     old.close();
     const db = openDb(path);
     expect(getConnection(db, "c1")!.ipTransport).toBe("auto");
+    // A device holding a link baseline has not had its links counted: unknown (-1) until read back.
+    expect(db.query("SELECT instance_id AS d, link_base_gaps AS g FROM devices ORDER BY d").all()).toEqual([{ d: "never", g: 0 }, { d: "read", g: -1 }]);
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });

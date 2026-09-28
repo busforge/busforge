@@ -3,7 +3,7 @@ import { getProjectConnection } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly } from "../db/deviceparams.ts";
 import { getDeviceSecurity, isSecureDevice } from "../db/deviceSecurity.ts";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor } from "../deviceservice.ts";
@@ -25,6 +25,16 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
   const appXml = resolveAppXml(state, projectId, dev.appRef);
   if (!appXml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
   return { dev, conn, appXml };
+}
+
+// A group-address flash writes the tables whole. While the last read-back left device links out of
+// what the device page shows (or they have not been counted since the check was added, -1), the
+// flash would overwrite links nobody has seen.
+function linkBaselineIncomplete(db: AppState["db"], projectId: string, deviceId: string): ApiError {
+  const gaps = getLinkBaseGaps(db, projectId, deviceId);
+  return new ApiError("LINK_BASELINE_INCOMPLETE", gaps < 0
+    ? "this device's links have not been counted since this check was added; read it back before programming its group addresses"
+    : `the last read-back found ${gaps} device association(s) the device page cannot show; a group-address flash would overwrite them unseen`, 409);
 }
 
 // Adoption belongs inside the queued job: a following job must see the committed baseline,
@@ -161,31 +171,32 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // what the UI shows; keeps module devices from flagging flat-model refs).
     const modules = getDeviceModules(db, id, deviceId);
     const configFor = (values: Map<string, string>) => deviceConfigRefs(state, id, deviceId, values, modules);
+    // The baselines are persisted inside the queued job, so a write queued behind this read sees
+    // them (and its gap count) when it starts, not whatever was there when it was submitted.
     const rb = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress, signal) => {
-        return readDeviceState({
+        const read = await readDeviceState({
           ia: dev.ia, appXml,
           connection: conn, secure: secureCredsFor(state, id, deviceId),
           liveParams: getDeviceParams(db, id, deviceId), baseParams: getDeviceParamBase(db, id, deviceId),
           moduleInstances: modules, configFor, onProgress: progress, signal,
         });
+        // Persist ONLY the aspects actually read off the device. An aspect we couldn't
+        // read keeps its existing baseline rather than getting a fabricated/garbage one.
+        // One transaction: a link baseline must never stand with a stale gap count.
+        const lb = read.linksRead ? readbackLinkBase(state, id, deviceId, read.links, read.deviceConfig) : null;
+        db.transaction(() => {
+          if (read.paramsRead) replaceParamBase(db, id, deviceId, read.paramBase);
+          if (lb) { replaceLinkBase(db, id, deviceId, lb.base); setLinkBaseGaps(db, id, deviceId, lb.gaps); }
+        })();
+        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0 };
       },
     );
-    // Persist ONLY the aspects actually read off the device. An aspect we couldn't
-    // read keeps its existing baseline rather than getting a fabricated/garbage one.
-    if (rb.paramsRead) replaceParamBase(db, id, deviceId, rb.paramBase);
-    let linkGaps = 0;
-    if (rb.linksRead) {
-      const lb = readbackLinkBase(state, id, deviceId, rb.links);
-      replaceLinkBase(db, id, deviceId, lb.base);
-      linkGaps = lb.gaps;
-    }
     // `readback` tells the client what this read actually covered: `linkGaps` counts
-    // device associations that could not be mapped onto a known com-object and are
-    // therefore NOT in the baseline (drift there stays invisible). Surfaced instead of
-    // letting the read-back pass as a complete links baseline.
-    return json(buildDeviceView(state, id, deviceId, body.lang, { readback: { paramsRead: rb.paramsRead, linksRead: rb.linksRead, linkGaps } }));
+    // device associations the baseline could not show (see readbackLinkBase), surfaced
+    // instead of letting the read-back pass as a complete links baseline.
+    return json(buildDeviceView(state, id, deviceId, body.lang, { readback: rb }));
   }
 
   // /api/projects/:id/devices/:deviceId/secure-identify -> read a Data Secure device's
@@ -216,6 +227,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+    // The group tables are written whole, so links the last read-back could not place in the
+    // baseline (and the user therefore never saw as drift) would be overwritten silently.
+    if (getLinkBaseGaps(db, id, deviceId) !== 0) throw linkBaselineIncomplete(db, id, deviceId);
     // Each memory model knows whether its group tables can be WRITTEN today: System B and
     // System 7 (MV-0705) yes (both hardware-verified), recognised-but-unsupported families no.
     // The capability guards the flash path so a model we cannot program never corrupts the
@@ -240,13 +254,19 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (gaStale) return gaStale;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" }, dryGa, "before-flash-ga",
-      (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => flashDeviceGroupAddresses({
+      (progress, commit) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => {
+        // Re-checked when the job starts: a read-back queued ahead of it may have found gaps.
+        if (getLinkBaseGaps(db, id, deviceId) !== 0) throw linkBaselineIncomplete(db, id, deviceId);
+        return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
           connection: conn, dataDir: state.dataDir,
           dryRun: dryGa, onProgress: progress,
-        }), commit, () => {
+        });
+      }, commit, () => {
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
+        keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
+        setLinkBaseGaps(db, id, deviceId, 0);
       }),
     );
   }
@@ -281,6 +301,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         }), commit, () => {
         resetParamBase(db, id, deviceId, dlParams, unwrittenParamRefs(state, id, deviceId, dlParams, dlModules));
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
+        keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
+        setLinkBaseGaps(db, id, deviceId, 0);
       }),
     );
   }

@@ -113,9 +113,13 @@ export interface DeviceConfigView {
   readbackSupport?: { params: boolean; links: boolean };
   // The full capability record for this device (classify().capabilities()), attached by the
   // server. The single source of truth the server gate, the UI, and the smoke framework all read,
-  // so the UI never offers a flash the server would refuse. readbackSupport is the read subset,
+  // so the UI never offers a flash the server's capability gate would refuse (refusals from the
+  // device's state, such as linkBaseGaps below, come on top). readbackSupport is the read subset,
   // kept for the read-back honesty text.
   capabilities?: DeviceCapabilities;
+  // Device links the last read-back could not show on this page (-1: not counted since the check
+  // was added). While non-zero the server refuses a group-address flash (LINK_BASELINE_INCOMPLETE).
+  linkBaseGaps?: number;
   // Present only on a read-back response: what the read actually covered. Attached by the
   // server (the read-back route), never by buildDeviceConfig.
   readback?: DeviceReadbackInfo;

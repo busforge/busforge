@@ -350,6 +350,15 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_tasks_project ON tasks(project_id, finished_at);
   `,
+  // Device associations the last read-back could not show. While any remain, a group-address
+  // flash would overwrite links nobody has seen. A device already holding a link baseline has not
+  // had its links counted, so its count is unknown (-1) until it is read back.
+  `
+  ALTER TABLE devices ADD COLUMN link_base_gaps INTEGER NOT NULL DEFAULT 0;
+  UPDATE devices SET link_base_gaps = -1 WHERE EXISTS (
+    SELECT 1 FROM device_link_base b WHERE b.project_id = devices.project_id AND b.device_id = devices.instance_id
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

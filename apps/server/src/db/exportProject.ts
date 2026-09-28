@@ -20,7 +20,9 @@ export interface ProjectExport {
   busforgeExport: number; // format version
   exportedAt: number;
   project: ProjectProperties; // see projectProps.ts: the one shared definition
-  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string }[];
+  // linkBaseGaps: device associations the last read-back could not show (-1: not counted yet).
+  // Optional so artifacts exported before it existed still import (as 0).
+  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   // Building structure (0.xml <Locations>). Optional so artifacts exported before
   // it was carried still import (they re-import with no location grouping).
@@ -60,7 +62,7 @@ export function exportProject(db: Database, projectId: string, now: number, mast
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
-  const devices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY instance_id")
+  const devices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps FROM devices WHERE project_id = ? ORDER BY instance_id")
     .all(projectId) as ProjectExport["devices"];
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as ProjectExport["groupRanges"];

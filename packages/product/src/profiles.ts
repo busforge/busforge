@@ -120,7 +120,7 @@ function deviceRelevantRefs(
   deviceVals: Map<string, string>,
   liveParams: Map<string, string>,
   configFor?: (values: Map<string, string>) => { shown: Set<string>; active: Set<string> },
-): Set<string> | undefined {
+): { relevant: Set<string>; deviceConfig: Map<string, string> } | undefined {
   if (!configFor) return undefined;
   const project = configFor(liveParams);
   let cur = project;
@@ -129,7 +129,7 @@ function deviceRelevantRefs(
     for (const [refId, v] of deviceVals) if (cur.active.has(refId)) effective.set(refId, v);
     const next = configFor(effective);
     if (next.active.size === cur.active.size && [...next.active].every((r) => cur.active.has(r))) {
-      return new Set([...project.shown, ...next.shown]);
+      return { relevant: new Set([...project.shown, ...next.shown]), deviceConfig: effective };
     }
     cur = next;
   }
@@ -272,7 +272,11 @@ async function runFlashOp(
 
 // The programmed-baseline read back off the bus (see readState). `paramBase` is sparse like
 // device_parameters; the caller persists only the aspects whose *Read flag is true.
-export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; }
+// `deviceConfig` is the configuration the read converged on: the project's values with the
+// device's own value for every parameter active in its image. It is what the device numbers its
+// com-objects by; parameters without a memory offset carry the project's value, since the device
+// cannot show them. Absent when the parameters were not read or no configuration was supplied.
+export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; deviceConfig?: Map<string, string>; }
 
 // DeviceCapabilities lives in config.ts (the lower module) so the wire view can carry it without a
 // cycle; re-exported here (imported above) because it is the return type of capabilities().
@@ -632,6 +636,7 @@ export class SystemBProfile extends DeviceProfile {
     const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     let links: ComObjectLink[] = [];
     let paramsRead = false, linksRead = false;
+    let deviceConfig: Map<string, string> | undefined;
 
     // Parameters (LSM 4): read the whole segment, decode it, compare against the image the
     // FLASH would write, both normalized via the same codec. The project side is the surgical
@@ -645,13 +650,9 @@ export class SystemBProfile extends DeviceProfile {
       // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
       const img = await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
       const deviceVals = decodeParameterImage(model, LSM, img);
-      foldDeviceValues(
-        paramBase,
-        deviceVals,
-        decodeParameterImage(model, LSM, target.bytes),
-        ctx.liveParams,
-        deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor),
-      );
+      const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, device?.relevant);
+      deviceConfig = device?.deviceConfig;
       paramsRead = true;
     }
     // Group-address links: read address + association tables (skip the com-object table) and reverse.
@@ -662,7 +663,7 @@ export class SystemBProfile extends DeviceProfile {
       links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
       linksRead = true;
     }
-    return { mask, paramsRead, linksRead, paramBase, links };
+    return { mask, paramsRead, linksRead, paramBase, links, deviceConfig };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -869,13 +870,14 @@ export class System7Profile extends DeviceProfile {
       for (const [r, v] of decodeAbsoluteImage(absModel, t.id, t.bytes)) projectVals.set(r, v);
       doneBytes += t.size;
     }
-    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor));
+    const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, device?.relevant);
 
     if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
     ctx.onProgress?.("links", 0, 2);
     const gt = await readGroupTablesMv0705(dev, (d, total) => ctx.onProgress?.("links", d, total));
     const links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
-    return { mask, paramsRead: true, linksRead: true, paramBase, links };
+    return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {

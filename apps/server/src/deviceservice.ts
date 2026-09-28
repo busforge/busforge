@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
 import { getDeviceSecurity, isSecureDevice } from "./db/deviceSecurity.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
@@ -146,7 +146,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities };
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
   return extra ? { ...wire, ...extra } : wire;
 }
 
@@ -411,17 +411,20 @@ export function deviceConfigRefs(state: AppState, projectId: string, deviceId: s
 const sameGaSet = (a: number[], b: number[]) => { const x = [...a].sort((m, n) => m - n), y = [...b].sort((m, n) => m - n); return x.length === y.length && x.every((v, i) => v === y[i]); };
 
 // Merge a device's read-back links into the sparse link baseline: copy the live
-// links, then override only where the device differs. Non-module devices map 1:1,
-// so a com-object missing from the device read is genuinely unassigned (cleared).
-// Module devices can't reverse instance numbering reliably, so only links that map
-// onto a known live com-object are trusted; others are neither invented nor dropped.
-// `gaps` counts the device links that were NOT folded into the baseline (module
-// device-only links on unknown keys): drift there stays invisible, and the caller
-// must surface that instead of presenting the read as a complete links baseline.
-export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<string, number[]>, hasModules: boolean): { base: Map<string, number[]>; gaps: number } {
+// links, then override only where the device differs. When the device's com-object
+// numbering is known (`observable` given: the keys the device's configuration places),
+// a com-object missing from the device read is genuinely unassigned and is cleared, but
+// only where the device could show a link at all; a live link on an object the device's
+// configuration hides stays (unobservable, not absent). Without known numbering (a module
+// device whose own configuration was not read) only links that map onto a known live
+// com-object are trusted; others are neither invented nor dropped.
+// `gaps` counts the device links that were NOT folded into the baseline: drift there
+// stays invisible, and the caller must surface that instead of presenting the read as a
+// complete links baseline.
+export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<string, number[]>, observable?: Set<string>): { base: Map<string, number[]>; gaps: number } {
   const base = new Map(live);
   let gaps = 0;
-  if (hasModules) {
+  if (!observable) {
     for (const [key, dev] of device) {
       if (live.has(key)) { if (!sameGaSet(live.get(key) ?? [], dev)) base.set(key, dev); }
       else gaps++;
@@ -429,41 +432,73 @@ export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<strin
   } else {
     for (const key of new Set([...live.keys(), ...device.keys()])) {
       const proj = live.get(key) ?? [];
-      const dev = device.get(key) ?? [];
-      if (!sameGaSet(proj, dev)) { if (dev.length) base.set(key, dev); else base.delete(key); }
+      const dev = device.get(key);
+      if (dev === undefined && !observable.has(key)) continue;
+      if (!sameGaSet(proj, dev ?? [])) { if (dev?.length) base.set(key, dev); else base.delete(key); }
     }
   }
   return { base, gaps };
 }
 
+// The com-object a stored ref key names, without the ComObjectRef variant: "O-133_R-300101304"
+// and "O-133_R-300101301" are two presentations of one object.
+const objectOf = (key: string) => key.replace(/_R-[^_]+$/, "");
+
 // Turn the links read off a device (keyed by com-object number) into the sparse
 // link baseline keyed by stored ref id: copy the live links, then override only
 // the com-objects whose device GA set differs from the project, so the live-vs-
 // base diff flags exactly the drift. Inverse of resolveDeviceLinks' numbering.
-// `gaps` additionally counts device links whose com-object number maps to no known
-// ref id at all (stale/foreign associations): they cannot enter the baseline.
-export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[]): { base: Map<string, number[]>; gaps: number } {
+//
+// A number names a com-object only under a configuration: module instances shift their objects,
+// and parameters choose which objects exist. With `deviceConfig` (the configuration the same read
+// converged on, DeviceReadback.deviceConfig) numbers resolve through the objects that
+// configuration places; where the project's configuration places the same object at that number,
+// the project's ref variant is kept, so a link both sides hold is not drift. Without it, only the
+// project's view places numbers, and module links outside the live links stay gaps.
+//
+// `gaps` counts device links left invisible: a number no configuration places (a module
+// template object only exists shifted per instance, so its bare number places nothing), and a
+// link on an object the project's configuration does not show, which enters the baseline but
+// cannot appear on the device page.
+export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[], deviceConfig?: Map<string, string>): { base: Map<string, number[]>; gaps: number } {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
-  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
-  // number -> stored ref key. App covers hidden com-objects; the view's
-  // module-resolved numbers take precedence.
-  const keyByNum = new Map<number, string>();
+  const modules = getDeviceModules(db, projectId, deviceId);
+  const placed = (params: Map<string, string>) => {
+    const byNum = new Map<number, string>();
+    for (const b of buildDeviceConfig(app, params, undefined, modules).blocks) for (const it of b.items) {
+      if (it.kind === "comObject") byNum.set(it.comObject.number, stripRef(app.id, it.comObject.refId));
+    }
+    return byNum;
+  };
+  const projNum = placed(getDeviceParams(db, projectId, deviceId));
+  const devNum = deviceConfig ? placed(deviceConfig) : projNum;
+  // Objects with an absolute number keep it under every configuration, so a hidden one still
+  // names its object. A module (BaseNumber) object is numbered only inside an instance.
+  const flatNum = new Map<number, string>();
   for (const [full, cor] of app.comObjectRefs) {
-    const num = app.comObjects.get(cor.refId)?.number;
-    if (num !== undefined) keyByNum.set(num, stripRef(app.id, full));
+    const co = app.comObjects.get(cor.refId);
+    if (co && !co.baseNumber) flatNum.set(co.number, stripRef(app.id, full));
   }
-  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") keyByNum.set(it.comObject.number, stripRef(app.id, it.comObject.refId));
+  const keyAt = (n: number): string | undefined => {
+    const dev = devNum.get(n) ?? flatNum.get(n);
+    if (!dev) return undefined;
+    const proj = projNum.get(n);
+    return proj && objectOf(proj) === objectOf(dev) ? proj : dev;
+  };
+  const shown = new Set(projNum.values());
 
   const device = new Map<string, number[]>();
-  let unmapped = 0;
+  let unplaced = 0, hidden = 0;
   for (const l of deviceLinks) {
-    const key = keyByNum.get(l.comObjNum);
-    if (key) device.set(key, l.gaRaws);
-    else unmapped++; // association on a com-object number the app model does not know
+    const key = keyAt(l.comObjNum);
+    if (!key) { unplaced++; continue; }
+    device.set(key, l.gaRaws);
+    if (!shown.has(key)) hidden++;
   }
-
-  const merged = mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, app.hasModules);
-  return { base: merged.base, gaps: merged.gaps + unmapped };
+  const numberingKnown = !app.hasModules || deviceConfig !== undefined;
+  const observable = numberingKnown ? new Set([...devNum.keys()].map((n) => keyAt(n)!)) : undefined;
+  const merged = mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, observable);
+  return { base: merged.base, gaps: merged.gaps + unplaced + (numberingKnown ? hidden : 0) };
 }

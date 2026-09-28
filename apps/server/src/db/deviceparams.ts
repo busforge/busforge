@@ -103,7 +103,7 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ? WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0 WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
@@ -267,6 +267,24 @@ export function replaceLinkBase(db: Database, projectId: string, deviceId: strin
     const ins = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
     for (const [refId, gaRaws] of links) gaRaws.forEach((raw, slot) => ins.run(projectId, deviceId, refId, slot, raw));
   })();
+}
+
+// Device associations the last read-back could not show (see readbackLinkBase); -1 for a device
+// whose links have not been counted since the check was added, which only a read-back resolves.
+export function setLinkBaseGaps(db: Database, projectId: string, deviceId: string, gaps: number): void {
+  db.prepare("UPDATE devices SET link_base_gaps = ? WHERE project_id = ? AND instance_id = ?").run(gaps, projectId, deviceId);
+}
+export function getLinkBaseGaps(db: Database, projectId: string, deviceId: string): number {
+  const r = db.query("SELECT link_base_gaps AS gaps FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId) as { gaps: number } | null;
+  return r?.gaps ?? 0;
+}
+
+// After a write of the whole group tables the device holds no link outside `keep` (the refs the
+// flash wrote, plus the project's own links on hidden objects): drop any other baseline row.
+export function keepLinkBaseOnly(db: Database, projectId: string, deviceId: string, keep: Set<string>): void {
+  const rows = db.query("SELECT DISTINCT com_obj_ref_id AS k FROM device_link_base WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { k: string }[];
+  const del = db.prepare("DELETE FROM device_link_base WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?");
+  for (const { k } of rows) if (!keep.has(k)) del.run(projectId, deviceId, k);
 }
 
 // Discard one parameter's drift: set its live value back to the baseline (the
