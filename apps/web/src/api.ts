@@ -68,7 +68,7 @@ export interface GaComObj {
 // (write), plus the address's readable range path.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download" | "secure-activate";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;

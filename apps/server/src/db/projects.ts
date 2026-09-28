@@ -37,7 +37,7 @@ export interface StoredProject {
   groupRanges: GroupRangeNode[];
   locations: SpaceNode[];      // building structure (empty for projects without it)
   gaCount: number;
-  secureDeviceCount: number;   // devices with a Data-Secure tool key in the store
+  secureDeviceCount: number;   // devices with a Data-Secure tool key or factory key in the store
   groupKeyCount: number;       // group addresses with a Data-Secure group key in the store
 }
 
@@ -211,7 +211,9 @@ export function getProject(db: Database, id: string): StoredProject | null {
 
   // How many devices carry a Data-Secure tool key, so the UI can warn before an
   // unencrypted export leaks them in clear (and badge secure devices later).
-  const secureDeviceCount = (db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = ?").get(id) as { n: number }).n;
+  // Devices whose tool key or factory key (certificate) is stored: either one leaves in clear in an
+  // export without a password.
+  const secureDeviceCount = (db.query("SELECT COUNT(*) AS n FROM (SELECT device_id FROM device_security WHERE project_id = ?1 UNION SELECT device_id FROM device_certificates WHERE project_id = ?1)").get(id) as { n: number }).n;
   const groupKeyCount = (db.query("SELECT COUNT(*) AS n FROM group_keys WHERE project_id = ?").get(id) as { n: number }).n;
 
   return { id: p.id, name: p.name, connectionId: p.connectionId, groupAddressLevels: p.groupAddressLevels, devices, groupRanges: roots, locations: readSpaces(db, id), gaCount: gaRows.length, secureDeviceCount, groupKeyCount };

@@ -11,7 +11,7 @@ import { ApiError, errorCode } from "./errors.ts";
 // is never replayed: the store reports it as interrupted, and for a write that means the device
 // state is unknown.
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download" | "secure-activate";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 
 export interface Task {

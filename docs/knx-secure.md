@@ -209,8 +209,10 @@ data per request is 4 less (`propRead`, `propWrite`).
 device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores it (the
 Jung, 2026-09-28), which the restart check reports as `RESTART_IGNORED`.
 
-**Individual-address assignment has no secure path.** It is a broadcast operation and cannot go
-through the session at all.
+**Individual-address assignment goes out plain.** It is a broadcast and cannot go through a session.
+It is not refused for a secure device: a master reset clears the address with the key, and the
+assignment is proven by talking to the device on its new address. On a device still in secure mode
+the plain programming-mode reset afterwards is likely ignored, which the assignment reports.
 
 ## The gap
 
@@ -234,8 +236,7 @@ Busforge does the same (`planSecurityObjectLoad` in `packages/knx/src/flash.ts`,
 An object linked to both secured and plain addresses is refused (`SECURE_LINK_MIXED`): it has one
 flag for all its links. The dry-run diff and the verify both read the object back (the device
 returns its group keys only inside the session). Other memory models refuse a secure device's GA
-flash and full download (`SECURE_TABLES_UNSUPPORTED`); addressing a secure device is refused
-(`SECURE_ADDRESSING_UNSUPPORTED`).
+flash and full download (`SECURE_TABLES_UNSUPPORTED`).
 
 **Shown on the Jung, 2026-09-28:** a dry-run GA flash found the object ETS had loaded equal to the one
 Busforge builds from the project; Busforge's secured full download then wrote it (all 158
@@ -281,11 +282,41 @@ read from the security object itself.
 So the secured full download, parameter flash and GA flash are supported on System B, each shown
 once on this one device; a smoke spec with evidence records for them is still to come.
 
-**Provisioning from a factory key is not built.** Writing a tool key into a factory device is
-hard to reverse (a wrong or half-completed write locks the device out, recoverable only through the
-factory key or a factory reset), so it needs a sacrificial device to develop and verify against, plus
-explicit sign-off and a recovery procedure. It is on [roadmap.md](roadmap.md), and no partial version
-of it ships.
+### Activation from the device certificate
+
+A factory-fresh secure device, or one after a master reset, opens only under its **factory default
+setup key (FDSK)**, printed on it as a 36-character certificate (and QR code): RFC 4648 base32 of the
+6-byte serial, the 16-byte FDSK and a CRC-4 nibble (`decodeCertificate` in
+`packages/knx/src/certificate.ts`). A certificate that does not decode or whose checksum fails is
+refused (`CERTIFICATE_INVALID`); one whose serial differs from the tool key's on file is refused
+(`CERTIFICATE_SERIAL_MISMATCH`). The decoder was checked once against the Jung's real label: the
+serial matched the device and the FDSK decrypted ETS's activation of it.
+
+`PUT .../certificate` stores the FDSK sealed (`device_certificates`, exported like the tool keys; it
+is kept after activation, since a master reset returns the device to it). `POST .../secure-activate`
+then does what ETS does (`activateSecureDevice` in `packages/knx/src/activation.ts`):
+
+1. If a tool key is on file and the device opens under it, it is already active: nothing is written.
+2. Otherwise a session under the FDSK, the Sync's serial field zeroed as ETS sends it. A device that
+   opens under neither key is offline, busy, or holds a key Busforge does not know
+   (`ACTIVATION_NO_KEY_ACCEPTED`). Inside the session the device's own serial must equal the
+   certificate's (`CERTIFICATE_SERIAL_MISMATCH`): the CRC-4 does not catch every typo, and the
+   factory Sync carries no serial.
+3. The tool key is **persisted before it is written**: the key on file if there is one (so a repeated
+   run converges, and a key imported from ETS keeps the ETS project valid), a new random one
+   otherwise, stored as `pending` and marked `provisioned` once confirmed.
+4. Security mode on (PID 51), the tool key written (PID 56). The device answers that write already
+   under the new key, so the session switches keys between framing the write and its answer, and the
+   write is never retried: a retry would go out under a key the device may not hold.
+5. A new session under the new key must open and report security mode on (`ACTIVATION_UNCONFIRMED`
+   otherwise, the key stays on file for the next run).
+
+An interruption at any point leaves the device opening under exactly one of the two keys Busforge
+holds. A device that refuses the key write answers under its old key, which the rekeyed session
+cannot read, so that refusal shows as `SECURE_ANSWER_REJECTED` rather than by its return code; a
+rerun converges through the FDSK. A project holding a key only Busforge has (`pending` or
+`provisioned`) is not deleted without `keysExported=1` (`PROJECT_HOLDS_OWN_KEYS`), since deleting it
+locks the device out until a master reset. **Not shown on hardware yet**: it needs a master reset of the Jung first.
 
 ## The ETS reference capture
 

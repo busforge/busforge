@@ -4,8 +4,10 @@ import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly } from "../db/deviceparams.ts";
-import { getDeviceSecurity, isSecureDevice } from "../db/deviceSecurity.ts";
-import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
+import { getDeviceSecurity, putDeviceSecurity, setToolKeySource } from "../db/deviceSecurity.ts";
+import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
+import { decodeCertificate } from "@busforge/knx";
+import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import type { CommitFn, ProgressFn, TaskMeta } from "../taskqueue.ts";
@@ -138,9 +140,6 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-    // Addressing is a broadcast, and busforge has no secured form of it (docs/roadmap.md), so a
-    // secure device is not readdressed this way.
-    if (isSecureDevice(db, id, deviceId)) return err("SECURE_ADDRESSING_UNSUPPORTED", "this device runs KNX Data Secure, and busforge has no secured form of individual-address assignment, so it does not readdress it", 400);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const task = state.queue.submit(
@@ -217,6 +216,52 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       },
     );
     return json({ ia: dev.ia, secure: true, ...result });
+  }
+
+  // /api/projects/:id/devices/:deviceId/certificate  -> store the device certificate printed on a
+  // secure device (its serial and factory key), sealed. Nothing is sent to the device.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "certificate" && req.method === "PUT") {
+    const deviceId = decodeURIComponent(seg[4]);
+    if (!getDeviceForFlash(db, id, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const body = (await req.json().catch(() => ({}))) as { certificate?: unknown };
+    let cert: { serial: Buffer; fdsk: Buffer };
+    try { cert = decodeCertificate(typeof body.certificate === "string" ? body.certificate : ""); }
+    catch (e) { return err("CERTIFICATE_INVALID", e instanceof Error ? e.message : String(e), 400); }
+    const known = getDeviceSecurity(db, id, deviceId, state.masterKey)?.serialNumber;
+    if (known && !known.equals(cert.serial)) {
+      return err("CERTIFICATE_SERIAL_MISMATCH", `the certificate is for serial ${cert.serial.toString("hex")}, this device is ${known.toString("hex")}`, 400);
+    }
+    putDeviceCertificate(db, id, { deviceId, fdsk: cert.fdsk, serialNumber: cert.serial }, state.masterKey);
+    return json({ serial: cert.serial.toString("hex") });
+  }
+
+  // /api/projects/:id/devices/:deviceId/secure-activate  -> take the device from its factory key
+  // to a tool key of busforge's, persisted before it is written (see activateDevice). Repeatable:
+  // a device that already holds the key on file is left alone.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "secure-activate" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const cert = getDeviceCertificate(db, id, deviceId, state.masterKey);
+    if (!cert) return err("CERTIFICATE_MISSING", "no device certificate is stored for this device", 400);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const task = state.queue.submit(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "secure-activate", writes: true },
+      async (progress) => {
+        const stored = getDeviceSecurity(db, id, deviceId, state.masterKey);
+        // A key busforge generates is kept as pending before it is written, and marked provisioned
+        // once the device is confirmed under it; a key already on file keeps its origin.
+        let generated = false;
+        const result = await activateDevice(conn, dev.ia, { fdsk: cert.fdsk, serial: cert.serialNumber }, stored?.toolKey, (key) => {
+          generated = !stored;
+          putDeviceSecurity(db, id, [{ deviceId, toolKey: key, serialNumber: cert.serialNumber, sequenceNumber: stored?.sequenceNumber ?? "", source: stored?.source ?? "pending" }], state.masterKey);
+        }, progress);
+        if (generated || stored?.source === "pending") setToolKeySource(db, id, deviceId, "provisioned");
+        return result;
+      },
+    );
+    return json(task, 202);
   }
 
   // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables

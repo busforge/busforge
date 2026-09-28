@@ -233,6 +233,37 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(await code(dev.deviceDescriptor())).toBe("DEVICE_NOT_ANSWERING");
   }, 30_000);
 
+  // The device answers the tool key write under the new key (ETS capture, Jung 400021SE).
+  test("secure: the tool key write is sent once under the old key and its answer taken under the new one", async () => {
+    const oldKey = Buffer.alloc(16, 0xfd), newKey = Buffer.alloc(16, 0x11);
+    const tun = new FakeTransport();
+    const farOld = new SecureSession({ toolKey: oldKey, src: DEV, dst: tun.assignedIa });
+    const farNew = new SecureSession({ toolKey: newKey, src: DEV, dst: tun.assignedIa });
+    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: oldKey, src: tun.assignedIa, dst: DEV }));
+    const inner: string[] = [];
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const r = farOld.unwrap(tpdu);
+      if (r.status !== "ok") throw new Error("the write must go out under the old key");
+      inner.push(r.apdu.toString("hex"));
+      const seq = (tpdu[0] >> 2) & 0x0f;
+      tun.reply([0xc2 | (seq << 2)]);
+      tun.reply([...farNew.wrapManagement(Buffer.from("01cf001100103801000100", "hex"), seq)]);
+    };
+    await dev.writeToolKey(newKey);
+    expect(inner).toEqual(["01ce0011001038010001" + newKey.toString("hex")]);
+  });
+
+  test("secure: an unanswered tool key write is not retried", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: Buffer.alloc(16, 0xfd), src: tun.assignedIa, dst: DEV }));
+    let sent = 0;
+    tun.handler = (tpdu) => { if (!ignorable(tpdu)) sent++; };
+    const err = await dev.writeToolKey(Buffer.alloc(16, 0x11)).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("DEVICE_NOT_ANSWERING");
+    expect(sent).toBe(1);
+  }, 10_000);
+
   // A device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores
   // it (Jung 400021SE, 2026-09-28): the restart, and the master reset, go through the session.
   test("secure: A_Restart and the master reset are sent secured, never plain", async () => {

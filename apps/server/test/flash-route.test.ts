@@ -7,6 +7,8 @@ import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase
 import { deviceParamRefs } from "../src/deviceservice.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
+import { getDeviceCertificate } from "../src/db/deviceCertificates.ts";
+import { encodeCertificate } from "@busforge/knx";
 import { classify, parseAppConfig } from "@busforge/product";
 import type { FlashResult } from "../src/deviceprofile.ts";
 
@@ -716,19 +718,56 @@ describe("a Data Secure device: its table writes carry the security object", () 
   });
 });
 
-describe("a Data Secure device: addressing", () => {
+describe("a Data Secure device: addressing and activation", () => {
   const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
   const secureProject = async (state: AppState) => {
     const p = await projectWithApp(state, m0162);
-    putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "1", source: "import" }], state.masterKey);
+    putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.from("00fa01020304", "hex"), sequenceNumber: "1", source: "import" }], state.masterKey);
     return p;
   };
+  const put = (state: AppState, path: string, body: unknown) => handleApi(new Request(`http://x${path}`, { method: "PUT", body: JSON.stringify(body), headers: { "content-type": "application/json" } }), state);
 
-  test("assign-ia refuses before any bus access", async () => {
+  // A master reset clears the address along with the key, so the address has to be assignable. The
+  // broadcast goes out plain; the knx layer proves the result on the new address.
+  test("assign-ia is not refused for being secure", async () => {
     const state = freshState();
     const { projectId, deviceId } = await secureProject(state);
     const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/assign-ia`))!;
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error.code).toBe("SECURE_ADDRESSING_UNSUPPORTED");
+    expect(res.status).toBe(202);
+    expect(((await res.json()) as any).kind).toBe("assign-ia");
+  });
+
+  test("a certificate is stored sealed only when it decodes and belongs to this device", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    const path = `/api/projects/${projectId}/devices/${deviceId}/certificate`;
+    const fdsk = Buffer.alloc(16, 0xfd);
+    expect(((await (await put(state, path, { certificate: "AAAAAA" }))!.json()) as any).error.code).toBe("CERTIFICATE_INVALID");
+    const other = encodeCertificate(Buffer.from("00fa09090909", "hex"), fdsk);
+    expect(((await (await put(state, path, { certificate: other }))!.json()) as any).error.code).toBe("CERTIFICATE_SERIAL_MISMATCH");
+    const res = (await put(state, path, { certificate: encodeCertificate(Buffer.from("00fa01020304", "hex"), fdsk) }))!;
+    expect(await res.json()).toEqual({ serial: "00fa01020304" });
+    expect(getDeviceCertificate(state.db, projectId, deviceId, state.masterKey)?.fdsk).toEqual(fdsk);
+    const raw = state.db.query("SELECT fdsk FROM device_certificates").get() as { fdsk: Uint8Array };
+    expect(Buffer.from(raw.fdsk).equals(fdsk)).toBe(false);
+  });
+
+  test("a project holding a tool key only busforge has is not deleted without the acknowledgement", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m0162);
+    putDeviceSecurity(state.db, projectId, [{ deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "", source: "provisioned" }], state.masterKey);
+    const del = (q = "") => handleApi(new Request(`http://x/api/projects/${projectId}${q}`, { method: "DELETE" }), state);
+    const refused = (await del())!;
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as any).error.code).toBe("PROJECT_HOLDS_OWN_KEYS");
+    expect((await del("?keysExported=1"))!.status).toBe(200);
+  });
+
+  test("activation without a stored certificate is refused before any bus access", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/secure-activate`))!;
+    expect(((await res.json()) as any).error.code).toBe("CERTIFICATE_MISSING");
   });
 });
+

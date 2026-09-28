@@ -11,7 +11,7 @@ import { exportProject } from "../db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
-import { putDeviceSecurity } from "../db/deviceSecurity.ts";
+import { putDeviceSecurity, countOwnToolKeys } from "../db/deviceSecurity.ts";
 import { putGroupKeys } from "../db/groupKeys.ts";
 import { resolveAppXml, importGaps } from "../deviceservice.ts";
 import { json, err, text } from "../httputil.ts";
@@ -151,6 +151,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json({ id, name });
   }
   if (seg.length === 3 && req.method === "DELETE") {
+    // A tool key busforge generated exists nowhere else: deleting it locks the device out until a
+    // master reset. Only an explicit acknowledgement (after an export) deletes such a project.
+    const ownKeys = countOwnToolKeys(db, id);
+    if (ownKeys > 0 && url.searchParams.get("keysExported") !== "1") {
+      return err("PROJECT_HOLDS_OWN_KEYS", `this project holds ${ownKeys} tool key(s) that only busforge has; export the project first, then delete it with keysExported=1`, 409);
+    }
     if (!deleteProject(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
     if (bus.activeProjectId === id) await bus.disconnect();
     gcAppPrograms(db); // drop catalog entries no longer referenced by any project

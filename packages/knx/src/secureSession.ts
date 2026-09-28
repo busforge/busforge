@@ -1,3 +1,4 @@
+import { KnxError } from "./errors.ts";
 import { secureEncode, secureDecode, SCF, SCF_TOOL_DATA } from "./secure.ts";
 
 // A KNX Data Secure tool-access session: the stateful layer over the pure CCM in
@@ -54,6 +55,13 @@ export class SecureSession {
     this.dst = opts.dst;
     this.serial = opts.serial ?? Buffer.alloc(6);
     this.seq = opts.seq ?? 1n;
+  }
+
+  // Switch to a new tool key within the session. A device takes a new tool key (PID 56) and
+  // answers that very write under it, so the switch comes between the send and the answer.
+  rekey(toolKey: Buffer): void {
+    if (toolKey.length !== 16) throw new KnxError("SECURE_KEY_BAD", `a tool key is 16 bytes, got ${toolKey.length}`);
+    this.toolKey = toolKey;
   }
 
   get sequence(): bigint { return this.seq; }

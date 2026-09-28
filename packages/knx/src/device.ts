@@ -250,7 +250,9 @@ export class KnxDevice {
   // an answer not secured at all). A replay is not counted: it is MAC-valid, and a stale
   // retransmission of an earlier answer is ordinary transport.
   private unauthentic = 0;
-  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3): Promise<ParsedApdu | null> {
+  // `afterWrap` runs once the request is framed for the wire and before it is sent, so an answer
+  // that races the send is already taken under whatever it sets up.
+  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void): Promise<ParsedApdu | null> {
     // Whether the last try was acknowledged and then got only unauthentic answers: the device
     // answered and was not believed, which is a different failure from silence.
     let rejectedAfterAck = false;
@@ -267,6 +269,7 @@ export class KnxDevice {
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
       const tpdu = this.onWire(build(this.seq));
+      afterWrap?.();
       try {
         await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
       } catch (e) {
@@ -349,6 +352,20 @@ export class KnxDevice {
     const rest = this.extEcho(r!, APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE, head, "a function property");
     if (rest.length < 1) throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `object type ${objectType} PID ${pid}: a function property answer without a return code`);
     return { returnCode: rest[0], result: rest.subarray(1) };
+  }
+  // Write a new tool key (PID 56 of the security object). The device answers this write already
+  // under the new key, so the session switches keys once the write is framed under the old one. It is sent once and never
+  // retried: a retry would go out under a key the device may not hold. A write that gets no answer
+  // leaves it open which key the device holds, and the caller has to find out by trying both.
+  async writeToolKey(key: Buffer): Promise<void> {
+    const sec = this.secure;
+    if (!sec) throw new KnxError("SECURE_SESSION_REQUIRED", "a tool key is only ever written inside a secured session");
+    const head = propertyExtHead(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.TOOL_KEY);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_EXT_WRITE_CON, Buffer.concat([head, Buffer.from([1, 0, 1]), key])), true, 1, () => sec.rekey(key));
+    const rest = this.extEcho(r!, APCI.PROPERTY_EXT_WRITE_CON_RESP, head, "the tool key write");
+    if (rest.length < 4 || rest[3] !== 0x00) {
+      throw new KnxError("PROPERTY_EXT_WRITE_REFUSED", `the device refused the new tool key: ${rest.toString("hex") || "no return code"}`);
+    }
   }
   // Whole elements written from `start`, as many per request as the path and the device take.
   async propExtWriteElements(objectType: number, instance: number, pid: number, start: number, elementSize: number, data: Buffer): Promise<void> {

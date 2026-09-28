@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, type AssignIaResult } from "@busforge/knx";
+import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
@@ -173,6 +173,33 @@ export function secureIdentify(
       });
     return { mask, serial: sn.toString("hex"), securityMode };
   }, { toolKey, serial });
+}
+// Take a secure device from its factory key to a tool key of busforge's (activateSecureDevice in
+// @busforge/knx): every session is opened on its own link, under the key being tried. The new key
+// reaches `persistKey` before it is written to the device.
+export async function activateDevice(
+  connection: Connection, ia: string, cert: { fdsk: Buffer; serial: Buffer }, storedKey: Buffer | undefined,
+  persistKey: (key: Buffer) => void, onProgress?: ProgressFn,
+): Promise<Omit<ActivationResult, "toolKey">> {
+  const links = new Map<KnxDevice, { disconnect(): Promise<void> }>();
+  onProgress?.("activate");
+  const r = await activateSecureDevice({
+    async open(key, serial) {
+      const tun = makeTransport(connection);
+      await tun.connect();
+      const dev = new KnxDevice(tun, ia, new SecureSession({ toolKey: key, src: tun.assignedIa, dst: iaToNum(ia), serial }));
+      try { await dev.connect(); }
+      catch (e) { try { await tun.disconnect(); } catch { /* the link may already be gone */ } throw e; }
+      links.set(dev, tun);
+      return dev;
+    },
+    async close(dev) {
+      try { await dev.disconnect(); } catch { /* the link may already be gone */ }
+      try { await links.get(dev)?.disconnect(); } catch { /* the transport may already be gone */ }
+      links.delete(dev);
+    },
+  }, { fdsk: cert.fdsk, serial: cert.serial, storedKey, persistKey });
+  return { outcome: r.outcome };
 }
 export type SecurityModeReading = { state: "on" | "off" } | { state: "unreadable"; detail: string };
 const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "SECURE_ANSWER_REJECTED"]);

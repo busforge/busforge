@@ -373,6 +373,18 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, raw)
   );
   `,
+  // KNX Data Secure device certificates: the factory default setup key (FDSK) and serial from the
+  // label printed on a secure device, SEALED at rest like the tool keys. Kept after activation: a
+  // master reset returns the device to this key, and it is the only way back in.
+  `
+  CREATE TABLE device_certificates (
+    project_id    TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id     TEXT NOT NULL,
+    fdsk          BLOB NOT NULL,
+    serial_number BLOB NOT NULL,
+    PRIMARY KEY (project_id, device_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

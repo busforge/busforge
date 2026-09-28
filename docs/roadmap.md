@@ -130,7 +130,11 @@ started until the capability it depends on is hardware-proven.
   cannot be observed working; the monitor shows it as undecryptable.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
-- **FDSK provisioning** (taking a factory secure device into a project) is designed, not built.
+- **Activation from the device certificate on hardware.** Built and tested against the ETS capture
+  and a fake device (including both interruption points); not yet run on the Jung, which needs a
+  master reset first. No UI yet: `PUT .../certificate` and `POST .../secure-activate` only, and
+  the project delete dialog cannot yet acknowledge `PROJECT_HOLDS_OWN_KEYS` (the API takes
+  `keysExported=1`).
 - **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
   address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
   such a device over; wanted for users, not needed for the bench.

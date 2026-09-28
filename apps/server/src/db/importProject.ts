@@ -9,6 +9,7 @@ import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
 import { putGroupKeys } from "./groupKeys.ts";
+import { putDeviceCertificate } from "./deviceCertificates.ts";
 
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
 // the whole project under a fresh id, restore its referenced catalog application
@@ -64,7 +65,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "deviceCertificates"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   // Validate each security entry's shape so a crafted artifact fails as a clean 400
@@ -74,7 +75,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (typeof s.deviceId !== "string" || typeof s.toolKey !== "string" || typeof s.serialNumber !== "string" || typeof s.sequenceNumber !== "string") {
       throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity entry");
     }
-    if (s.source !== undefined && !["import", "manual", "provisioned"].includes(s.source as string)) {
+    if (s.source !== undefined && !["import", "manual", "pending", "provisioned"].includes(s.source as string)) {
       throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity source");
     }
   }
@@ -83,6 +84,9 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (g.source !== undefined && !["import", "manual", "provisioned"].includes(g.source as string)) {
       throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys source");
     }
+  }
+  for (const c of (d.deviceCertificates as Record<string, unknown>[] | undefined) ?? []) {
+    if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
 }
@@ -161,6 +165,9 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
         sequenceNumber: s.sequenceNumber,
         source: (s.source as SecuritySource) || "import",
       })), masterKey);
+    }
+    for (const c of data.deviceCertificates ?? []) {
+      putDeviceCertificate(db, id, { deviceId: c.deviceId, fdsk: Buffer.from(c.fdsk, "base64"), serialNumber: Buffer.from(c.serialNumber, "base64") }, masterKey);
     }
     if (data.groupKeys?.length) {
       putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as SecuritySource) || "import" })), masterKey);

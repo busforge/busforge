@@ -8,7 +8,9 @@ import { ApiError } from "../errors.ts";
 // at project import from the parsed <Security> elements, by manual deposit, or by
 // provisioning. See docs/knx-secure.md.
 
-export type SecuritySource = "import" | "manual" | "provisioned";
+// "pending": a tool key busforge generated and kept before writing it, not yet confirmed on the
+// device (see activateSecureDevice); "provisioned" once it is.
+export type SecuritySource = "import" | "manual" | "pending" | "provisioned";
 
 // What callers hand in (plaintext key material) and get back (after unsealing).
 export interface DeviceSecurityEntry {
@@ -70,4 +72,13 @@ export function isSecureDevice(db: Database, projectId: string, deviceId: string
 export function listSecureDevices(db: Database, projectId: string): { deviceId: string; source: SecuritySource }[] {
   return db.query("SELECT device_id AS deviceId, source FROM device_security WHERE project_id = ? ORDER BY device_id")
     .all(projectId) as { deviceId: string; source: SecuritySource }[];
+}
+
+// Tool keys only busforge holds (it generated them): losing them means a master reset of the device.
+export function countOwnToolKeys(db: Database, projectId: string): number {
+  return (db.query("SELECT COUNT(*) AS n FROM device_security WHERE project_id = ? AND source IN ('pending', 'provisioned')").get(projectId) as { n: number }).n;
+}
+
+export function setToolKeySource(db: Database, projectId: string, deviceId: string, source: SecuritySource): void {
+  db.prepare("UPDATE device_security SET source = ? WHERE project_id = ? AND device_id = ?").run(source, projectId, deviceId);
 }
