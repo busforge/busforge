@@ -92,8 +92,8 @@ describe("SecureSession Sync (Calimero vectors)", () => {
   test("applySyncResponse verifies the MAC and adopts our next sequence", () => {
     // Calimero encryptSyncResponse vector: random forced to aa..aa, challenge = 3,
     // so the on-wire seq slot is aa..a9 = random XOR challenge. Decoded as the client
-    // (response comes from the device), the MAC must verify.
-    const client = new SecureSession({ toolKey, src: US, dst: DEV });
+    // (response comes from the device), the MAC must verify. The vector's client starts at 1.
+    const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 1n });
     const vector = Buffer.from("43f193aaaaaaaaaaa99c023ad25e146470693e638d5b70cac4", "hex");
     const res = client.applySyncResponse(vector, Buffer.from("000000000003", "hex"));
     expect(res).not.toBeNull();
@@ -101,5 +101,15 @@ describe("SecureSession Sync (Calimero vectors)", () => {
     // The Sync seeds the replay window from the device's declared next sequence, so a
     // frame recorded before this session (seq < deviceSeq) cannot replay into it.
     expect(client.receiveSequence).toBe(res!.deviceSeq);
+  });
+});
+
+describe("where a session's tool sequence starts", () => {
+  test("milliseconds since 2018, so each session starts above the last", async () => {
+    const { toolSequenceNow } = await import("../src/secureSession.ts");
+    expect(toolSequenceNow(Date.UTC(2018, 0, 1) + 5)).toBe(5n);
+    const a = new SecureSession({ toolKey: Buffer.alloc(16), src: 1, dst: 2 }).sequence;
+    await new Promise((r) => setTimeout(r, 5));
+    expect(new SecureSession({ toolKey: Buffer.alloc(16), src: 1, dst: 2 }).sequence).toBeGreaterThan(a);
   });
 });

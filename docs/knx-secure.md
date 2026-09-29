@@ -212,7 +212,10 @@ Jung, 2026-09-28), which the restart check reports as `RESTART_IGNORED`.
 **Individual-address assignment goes out plain.** It is a broadcast and cannot go through a session.
 It is not refused for a secure device: a master reset clears the address with the key, and the
 assignment is proven by talking to the device on its new address. On a device still in secure mode
-the plain programming-mode reset afterwards is likely ignored, which the assignment reports.
+the plain programming-mode reset afterwards is ignored (the Jung, 2026-09-29), which the assignment
+reports; switching it off through the secured session works. The Jung also ignores a master reset
+(A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer, nothing
+reset. Its only way back to the factory key is the physical reset.
 
 ## The gap
 
@@ -311,12 +314,23 @@ then does what ETS does (`activateSecureDevice` in `packages/knx/src/activation.
 5. A new session under the new key must open and report security mode on (`ACTIVATION_UNCONFIRMED`
    otherwise, the key stays on file for the next run).
 
+**Shown on the Jung, 2026-09-29**, after a physical master reset (bus voltage on with the
+programming button held until the LED blinks slowly, release, then hold it again for 5 s until it
+blinks fast; it came back as 15.15.255 in programming mode): address 1.1.204 assigned, activation
+from the certificate (the key imported from ETS written back, so the ETS project stays valid), its
+security-mode read, switch-on and tool-key write byte-identical to ETS's, a secured full download
+verified after its restart, and a read-back with no drift and no gap. Two things only the device
+showed, both fixed: a Sync that went unanswered has to be closed with a T_Disconnect before the next
+key is tried, and the switch-on takes ETS's three octets (reserved, service 0, mode 1); two octets
+are refused with `0xF2`. The Sync sequence now starts at a clock, as ETS's does
+([findings.md](findings.md) §19).
+
 An interruption at any point leaves the device opening under exactly one of the two keys Busforge
 holds. A device that refuses the key write answers under its old key, which the rekeyed session
 cannot read, so that refusal shows as `SECURE_ANSWER_REJECTED` rather than by its return code; a
 rerun converges through the FDSK. A project holding a key only Busforge has (`pending` or
 `provisioned`) is not deleted without `keysExported=1` (`PROJECT_HOLDS_OWN_KEYS`), since deleting it
-locks the device out until a master reset. **Not shown on hardware yet**: it needs a master reset of the Jung first.
+locks the device out until a master reset.
 
 ## The ETS reference capture
 

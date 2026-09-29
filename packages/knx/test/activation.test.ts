@@ -20,7 +20,11 @@ function device(opts: { toolKey?: Buffer; mode?: boolean; keyWrite?: "takes" | "
       return {
         securityMode: async () => state.mode,
         propRead: async () => { log.push("read serial"); return opts.serial ?? SERIAL; },
-        funcPropExtCommand: async () => { log.push("mode on"); state.mode = true; return { returnCode: 0, result: Buffer.from([0]) }; },
+        funcPropExtCommand: async (_t: number, _i: number, _p: number, data: Buffer) => {
+          // The Jung answers 0xF2 to anything but ETS's three octets.
+          if (data.toString("hex") !== "000001") return { returnCode: 0xf2, result: Buffer.from([1]) };
+          log.push("mode on"); state.mode = true; return { returnCode: 0, result: Buffer.from([0]) };
+        },
         writeToolKey: async (k: Buffer) => {
           log.push("write key");
           if (opts.keyWrite === "lost") throw Object.assign(new Error("lost"), { code: "DEVICE_NOT_ANSWERING" });

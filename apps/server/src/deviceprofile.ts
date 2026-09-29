@@ -188,8 +188,15 @@ export async function activateDevice(
       const tun = makeTransport(connection);
       await tun.connect();
       const dev = new KnxDevice(tun, ia, new SecureSession({ toolKey: key, src: tun.assignedIa, dst: iaToNum(ia), serial }));
+      // A Sync that gets no answer still leaves the device's transport connection open, and a device
+      // in factory state then takes the next Sync on a new connection without answering it (the
+      // Jung 400021SE, 2026-09-29): close it with a T_Disconnect before the next key is tried.
       try { await dev.connect(); }
-      catch (e) { try { await tun.disconnect(); } catch { /* the link may already be gone */ } throw e; }
+      catch (e) {
+        try { await dev.disconnect(); } catch { /* the link may already be gone */ }
+        try { await tun.disconnect(); } catch { /* the link may already be gone */ }
+        throw e;
+      }
       links.set(dev, tun);
       return dev;
     },

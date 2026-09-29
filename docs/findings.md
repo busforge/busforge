@@ -542,3 +542,28 @@ T_ACK would have called this download done.
 Two sizes from the same capture: ETS never sends a secured request longer than 40 octets on the
 bench path (after 151-byte frames went unanswered it wrote 22-byte memory chunks and 18-element
 property writes, both exactly 40), and Busforge now holds secured writes to that.
+
+## 19. What a factory-fresh secure device demands of the activation
+
+Activating the Jung 400021SE after a physical master reset (2026-09-29) failed three times before it
+worked, each time on something only the device could show (the second item below is a precaution
+taken on the way, not one of them). None of it was visible against the
+already-secured device, and none of it against the decrypted ETS capture read only for its content.
+
+- **An unanswered Sync leaves a transport connection behind.** Trying the stored key first, then the
+  factory key on a new link, got a T_ACK and no answer, until the failed attempt was closed with a
+  T_Disconnect. This is shown: the same run with only the sequence change below still failed, and
+  with the T_Disconnect added it worked, while a script that always disconnected opened the device
+  under its factory key every time.
+- **The tool's Sync sequence now starts at a clock.** Busforge started every session at 1; ETS starts
+  at a millisecond clock (`0x004024085340`), and Busforge now at milliseconds since 2018-01-01, so the
+  start grows across sessions as replay protection expects. That a factory device ignores a repeated
+  start of 1 was the first suspicion here and was never shown on its own: the run that suggested it
+  also lacked the T_Disconnect.
+- **Switching security mode on takes three octets**, reserved, service 0 and mode 1, exactly as ETS
+  sends them. Two octets (a misreading of the capture, pinned by a test that read it the same way)
+  are refused with return code `0xF2`.
+
+A master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither answered nor
+carried out by this device; its only way back to the factory key is physical: bus voltage on with the
+programming button held (slow blinking), release, hold again for 5 s (fast blinking).

@@ -38,7 +38,8 @@ async function tryOpen(deps: ActivationDeps, key: Buffer, serial: Buffer): Promi
 
 async function switchModeOn(dev: KnxDevice): Promise<void> {
   if (await dev.securityMode()) return;
-  const { returnCode } = await dev.funcPropExtCommand(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_MODE, Buffer.from([0x00, 0x01]));
+  // Reserved octet, service 0 (set mode), mode 1: ETS's bytes. Two octets are refused (0xF2).
+  const { returnCode } = await dev.funcPropExtCommand(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_MODE, Buffer.from([0x00, 0x00, 0x01]));
   if (returnCode !== 0) throw new KnxError("ACTIVATION_REFUSED", `the device refused to switch its security mode on (return code 0x${returnCode.toString(16)})`);
 }
 

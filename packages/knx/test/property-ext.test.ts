@@ -36,9 +36,9 @@ describe("extended property services, byte-for-byte as ETS sends them", () => {
     ]);
     const dev = new KnxDevice(tun, "1.1.204");
     expect(await dev.securityMode()).toBe(false);
-    expect(await dev.funcPropExtCommand(17, 1, 51, Buffer.from([0x00, 0x01]))).toEqual({ returnCode: 0, result: Buffer.from([0x00]) });
+    expect(await dev.funcPropExtCommand(17, 1, 51, Buffer.from([0x00, 0x00, 0x01]))).toEqual({ returnCode: 0, result: Buffer.from([0x00]) });
     await dev.propExtWriteCon(17, 1, 56, Buffer.from(KEY, "hex"));
-    expect(tun.sent).toEqual(["01d500110010330000", "01d40011001033" + "0001", "01ce0011001038010001" + KEY]);
+    expect(tun.sent).toEqual(["01d500110010330000", "01d40011001033" + "000001", "01ce0011001038010001" + KEY]);
   });
 
   test("element 0 addresses the element count (ETS clears PID 54 that way)", async () => {
