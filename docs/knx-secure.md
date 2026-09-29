@@ -248,9 +248,9 @@ the device through the session and verified tables, parameter CRC and security o
 restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
 a device in secure mode ignores. A GA flash that linked a second object to the secured address set
 its flag on the device and verified; its revert restored ETS's load. **Not shown:** the secured group
-address working on the bus. The monitor can now decrypt a secured group telegram (see
-[Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)), but no telegram
-the Jung sent on 0/0/1 has been observed yet; Busforge cannot send one the Jung accepts.
+address working on the bus. The Jung's own telegram on 0/0/1 has since been decrypted by the monitor (see
+[Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)), which shows the
+key Busforge's download left in place works; Busforge cannot send one the Jung accepts.
 
 **Refusals, shown on the same device:** a wrong tool key gets no answer to the Sync
 (`SECURE_SYNC_NO_RESPONSE`); a plain session gets the descriptor `0xFFFF`, which the mask gate
@@ -399,7 +399,14 @@ reconnect is shown as decrypted. One sequence per sender covers all its group ad
 receiving device.
 
 The cipher is covered by xknx's group-address known-answer vectors (`packages/knx/test/secure.test.ts`).
-**Not shown on the bus yet:** a telegram a secure device sent, decrypted by the monitor. The bench Jung
-sends its secured address 0/0/1 from its K1 contact input, which needs a physical contact; it answers
-no GroupValueRead from Busforge, plain or secured (see [findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)).
+**Shown on the Jung, 2026-09-29:** closing its K1 contact (parameterized to toggle on press, nothing
+on release) sent a secured GroupValueWrite on 0/0/1, encrypted on the wire (the logging proxy's
+capture shows only SCF, sequence, ciphertext and MAC). With the ETS project connected the monitor
+showed it as decrypted, "On", with the lock in the web monitor. With a project that holds no key for
+0/0/1 connected instead, the next two closings were recorded as "no key", without a value. Opened
+with the project's key, the three captured frames read On, Off, On at sequences 5604, 5605, 5606,
+the toggle the parameters describe. Not compared with an independent decoder (the ETS group
+monitor). The Jung answers no GroupValueRead from Busforge, plain or secured (see
+[findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)),
+so its own contact is the only stimulus.
 
