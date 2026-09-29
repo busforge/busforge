@@ -49,10 +49,16 @@ started until the capability it depends on is hardware-proven.
   client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
   disconnect race but not this path.
 - **Wait for the interface's `L_Data.con` over TCP.** Tunnelling over TCP has no acknowledgement,
-  so a half-open link shows only as `DEVICE_NOT_ANSWERING` after the device's retries, and a group
-  or broadcast send reports success into nothing ([findings.md](findings.md) §15). Matching the
+  so until the heartbeat notices a half-open link (up to about 90 s) it shows only as
+  `DEVICE_NOT_ANSWERING` after the device's retries, and a group or broadcast send reports success
+  into nothing ([findings.md](findings.md) §15). Matching the
   confirmation by destination and TPDU (not by sequence, see §5.1) with a short, coded timeout
   would restore a liveness signal and make a negative confirmation (`BUS_SEND_FAILED`) real on IP.
+- **Confirm why a long-running server's TCP connects fail on macOS.** On 2026-09-29 the dev server
+  got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. Bun reports
+  any immediate connect failure that way; macOS Local Network privacy is the likely cause but not
+  proven ([findings.md](findings.md) §23). A long-lived Node process next to the server would
+  record the real errno when it recurs.
 - **Measure the longest download to confirm the stop grace period.** A normal shutdown waits for
   a running write, bounded by the container's `stop_grace_period: 30m`. That figure rests on one
   measurement (71 s for a 21.9 KB OpenKNX image) and an estimate for 12-byte `A_Memory_Write`
@@ -70,13 +76,6 @@ started until the capability it depends on is hardware-proven.
   with A_Restart and reads it back ([evidence-contract.md](evidence-contract.md)). A reboot reloads
   the configuration from non-volatile memory, but it is not a power cut: nothing automated removes
   bus power, and on the bench that would also take down the USB interface the bridge drives.
-- **The bridge keeps a tunnel channel whose TCP peer vanished.** A TCP channel is reaped only when
-  its socket closes. On 2026-09-25 a client gave up mid-flash and closed its socket, but the client
-  host's firewall (macOS stealth mode) dropped the bridge's packets instead of answering with a
-  reset, so the bridge kept retransmitting into a connection that no longer existed and held its
-  only channel; every connect was refused with status `0x24` until the bridge was restarted. Linux
-  gives up on such a socket only after its retransmission limit (about 15 minutes). A bound on
-  unacknowledged data (`TCP_USER_TIMEOUT`) or an application-level idle limit would free it sooner.
 - **`tools/readback.ts` cannot read MV-0705 devices.** On 2026-09-24 every MV-0705 device of the
   reference installation refused the tool's parameter read (`device refused byte @0x41e4`), so its
   evidence covers System B devices only. The server's read-back reads them; the tool should use the

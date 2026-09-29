@@ -37,6 +37,7 @@ export class AutoIpTunnel implements KnxTransport {
     const tcp = this.makeTcp(this.host, this.port);
     this.inner = tcp;
     this.wire(tcp);
+    let tcpFailure: KnxError;
     try {
       await tcp.connect();
       return;
@@ -46,11 +47,18 @@ export class AutoIpTunnel implements KnxTransport {
       // (a rejected channel, a protocol error, a timeout after the socket was up) is a real failure
       // the caller must see, not a reason to silently retry on a different transport.
       if (!(e instanceof KnxError) || e.code !== "TUNNEL_CONNECT_FAILED") throw e;
+      tcpFailure = e;
     }
     const udp = this.makeUdp(this.host, this.port);
     this.inner = udp;
     this.wire(udp);
-    try { await udp.connect(); } catch (e) { this.inner = null; throw e; }
+    try { await udp.connect(); } catch (e) {
+      this.inner = null;
+      // Both transports failed. The UDP error keeps its code, but the TCP failure before it is often
+      // the telling one (a UDP timeout says nothing about why TCP could not connect either).
+      if (e instanceof KnxError) throw new KnxError(e.code, `${e.message}; before it, ${tcpFailure.message}`);
+      throw e;
+    }
   }
 
   // Copy the caller-assigned callbacks onto the concrete tunnel just before it connects.

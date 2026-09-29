@@ -454,10 +454,11 @@ client faults, both invisible on the bench:
 With both fixed, a full read-back of the OpenKNX RaumController 1.1.x over the house interface
 completed over `auto` (TCP) (operator observation, no evidence record).
 
-What the TCP client gives up with the acknowledgement: it was the only KNXnet/IP-level sign of a
-half-open link, since TCP has no heartbeat and a socket write does not fail on a dead peer. A
-silent drop now shows as `DEVICE_NOT_ANSWERING` after the device's retries, and a group or
-broadcast send reports success into nothing. Waiting for the interface's `L_Data.con` (matched by
+What the TCP client gives up with the acknowledgement: a per-frame sign of a half-open link, since a
+socket write does not fail on a dead peer. The connection-state heartbeat (which the client runs on
+TCP too, see §23) notices a dead link within about 90 s, but in between a silent drop shows as
+`DEVICE_NOT_ANSWERING` after the device's retries, and a group or broadcast send reports success
+into nothing. Waiting for the interface's `L_Data.con` (matched by
 destination and TPDU, not by sequence) would restore both; it is on [roadmap.md](roadmap.md).
 
 ## 16. OpenKNX reads its flash, not what was just written
@@ -636,3 +637,40 @@ Effect, shown right after: a secured GroupValueRead on 0/0/1 from 1.1.100 (group
 draws a secured GroupValueResponse from the Jung (value 0, contact open), where before the download
 the same frame was ignored (§20). With several senders the order is not shown here (one entry);
 thelsing/knx looks entries up by binary search, so ascending by address is the safe order.
+
+## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
+
+On 2026-09-29 the dev server failed every bus operation for minutes with `TCP connect to
+198.51.100.231:3671 failed: connect ECONNREFUSED`, while `nc` from the same Mac connected to the same
+port and the bridge was listening. Restarting the server fixed it at once. Two things were learned:
+
+**Bun's `ECONNREFUSED` is not a refusal.** Bun 1.3.8 reports every TCP connect that fails at once as
+`ECONNREFUSED` (errno -61). Reproduced on the Mac: with `ulimit -n 64` an exhausted descriptor table
+gives `ECONNREFUSED`, and a connect to `0.0.0.1`, where Node reports `EHOSTUNREACH`, gives
+`ECONNREFUSED` in Bun too. A refused connect in Bun does not stick either: refused-then-listening
+recovers on the next attempt, locally and against the bench host, and 40 tunnel connect/disconnect cycles
+leak no descriptors. The most likely cause of the stuck server is macOS Local Network privacy denying
+the long-lived process LAN access (`EHOSTUNREACH` in Node terms). That is a documented pattern on
+macOS 15 and later (Apple developer forums 776552, 765285): new processes and Apple's own binaries
+(`nc`) are unaffected, and restarting the process ends it. **Not proven here**: the unified log was
+not readable, and the failure has not recurred under a probe yet. ETS runs on the bench host, so "after an
+ETS download" in the first report was most likely coincidence. The client's connect error now says
+that Bun cannot tell these causes apart, instead of passing `ECONNREFUSED` on as the cause.
+
+**The connection-state heartbeat runs on TCP.** Busforge's client armed no heartbeat on TCP and its
+bridge never reaped a quiet TCP channel, on the belief that KNXnet/IP v2 drops the procedure there.
+Both references contradict that: ETS 6 sent a CONNECTIONSTATE_REQUEST over its TCP tunnel to the
+bridge (`06 10 02 07 00 10 01 00 08 02 00 00 00 00 00 00`, capture `ets-plain-redownload.log`), and
+Calimero's `ClientConnection` starts the 60 s heartbeat regardless of transport. Without it, a TCP
+client whose FIN never arrived kept its channel on the bridge indefinitely (three ESTABLISHED
+connections from the Mac with no process behind them, every new tunnel refused with status `0x24`),
+and a Busforge monitor over TCP would have kept showing "connected" over a dead link. Both sides now
+run the procedure on TCP exactly as on UDP.
+
+Shown on hardware the same evening: a raw TCP client that opened a channel and sent nothing kept it
+for 150 s on the old bridge and was dropped at 124 s by the new one (DISCONNECT_REQUEST, then FIN).
+A Busforge TCP tunnel idle for 190 s stayed up against the new bridge and read a device afterwards,
+and stayed up for 190 s against the house's MDT KNX IP interface, which therefore answers the
+heartbeat over TCP (three unanswered requests would have closed it after about 90 s). ETS is not
+affected by the reaper: in every capture it closes its device-management channel within
+milliseconds of reading two properties, and it was never silent for more than 8 s on an open tunnel.

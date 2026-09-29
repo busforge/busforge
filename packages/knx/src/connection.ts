@@ -9,10 +9,22 @@ import { KnxError } from "./errors.ts";
 // connection dead. Without this, a read-only monitor on a quiet bus (nothing to tunnel for
 // minutes) is reaped by a spec-strict gateway (busforge's own bridge drops a channel it has not
 // heard from for 120 s), and from then on every "connected" is a lie while the telegram log
-// silently records nothing.
+// silently records nothing. This holds over TCP as well: ETS 6 and Calimero send the heartbeat on
+// the stream, and a TCP peer that vanished without a FIN leaves a socket that looks open.
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const CONNECTIONSTATE_TIMEOUT_MS = 10_000;
 const CONNECTIONSTATE_TRIES = 3;
+
+// Bun (1.3) reports every TCP connect that fails at once as ECONNREFUSED: a host with no route, macOS
+// denying the process Local Network access, and an exhausted descriptor table all look like a refusal
+// (Node reports EHOSTUNREACH or EMFILE for the same connects). Passing Bun's code on as the cause sent
+// a debugging session to the gateway, which was listening all along.
+const ON_BUN = typeof process !== "undefined" && !!process.versions?.bun;
+function connectErrorCaveat(e: Error): string {
+  return ON_BUN && (e as NodeJS.ErrnoException).code === "ECONNREFUSED"
+    ? " (the Bun runtime cannot tell a refusal from an unreachable host or a denied macOS Local Network access; if the gateway is listening, restart the server process)"
+    : "";
+}
 
 // Minimal surface of dgram.Socket the tunnel uses; injectable for offline tests.
 export interface TunnelSocket {
@@ -66,7 +78,7 @@ function realTcpSocket(): TcpSocket {
 // lives one layer up in KnxDevice.
 export class KnxIpTunnel implements KnxTransport {
   private sock!: TunnelSocket;
-  // Set only in TCP mode; the connection that both carries the channel and is its liveness.
+  // Set only in TCP mode; the connection that carries the channel.
   private tcpSock!: TcpSocket;
   private mode: "udp" | "tcp" = "udp";
   private createTcpSocket: () => TcpSocket = realTcpSocket;
@@ -199,17 +211,16 @@ export class KnxIpTunnel implements KnxTransport {
   }
 
   // The TCP counterpart of connect(). The frame HANDLING (onMessage) is transport-agnostic and is
-  // shared verbatim; only the wire (a byte stream reassembled into frames), the HPAIs (TCP protocol
-  // code, §5.2.1), and the absence of a heartbeat (3/8/2 v2: the CONNECTIONSTATE procedure is not
-  // used on TCP) differ from the UDP path.
+  // shared verbatim; only the wire (a byte stream reassembled into frames) and the HPAIs (TCP
+  // protocol code, §5.2.1) differ from the UDP path.
   private async connectTcp(): Promise<void> {
     this.tcpSock = this.createTcpSocket();
     this.closed = false;
-    // Open the connection first. A refused or unreachable TCP connect is a coded error naming the
-    // cause, not the bare CONNECT timeout a silent UDP gateway would surface.
+    // Open the connection first. A refused or unreachable TCP connect is a coded error, not the bare
+    // CONNECT timeout a silent UDP gateway would surface.
     await new Promise<void>((resolve, reject) => {
       this.tcpSock.connect(this.port, this.ifaceIp, resolve,
-        (e) => reject(new KnxError("TUNNEL_CONNECT_FAILED", `TCP connect to ${this.ifaceIp}:${this.port} failed: ${e.message}`)));
+        (e) => reject(new KnxError("TUNNEL_CONNECT_FAILED", `TCP connect to ${this.ifaceIp}:${this.port} failed: ${e.message}${connectErrorCaveat(e)}`)));
     });
 
     // A byte stream: reassemble it into whole frames and feed each through the SAME dispatch the UDP
@@ -253,7 +264,8 @@ export class KnxIpTunnel implements KnxTransport {
       this.closeSocket();
       throw e;
     }
-    // No heartbeat timer is armed: on TCP the socket's own liveness stands in for CONNECTIONSTATE.
+    this.heartbeatTimer = setInterval(() => { void this.heartbeat(); }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
   }
 
   // One heartbeat round: a CONNECTIONSTATE_REQUEST and its answer, retried per the spec, and if the
@@ -265,8 +277,9 @@ export class KnxIpTunnel implements KnxTransport {
         this.stateWaiter = resolve;
         setTimeout(() => { if (this.stateWaiter === resolve) { this.stateWaiter = null; resolve(false); } }, this.stateTimeoutMs);
       });
-      // A NAT-mode control HPAI, exactly as the CONNECT_REQ sent: answer wherever this packet came from.
-      try { await this.send(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), hpai("0.0.0.0", 0)]))); }
+      // The control HPAI exactly as the CONNECT_REQ sent it: NAT mode on UDP, the zero IPV4_TCP HPAI on TCP.
+      const controlHpai = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
+      try { await this.send(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), controlHpai]))); }
       catch { /* socket gone: the missing answer below is treated as the failure it is */ }
       if (await answered) return; // a positive CONNECTIONSTATE_RESPONSE: the channel is alive
     }

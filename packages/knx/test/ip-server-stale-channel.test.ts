@@ -21,6 +21,7 @@ class FakeConn implements ServerTcpSocket {
   onData(cb: (c: Buffer) => void) { this.dataCb = cb; }
   onClose(cb: () => void) { this.closeCb = cb; }
   end() { /* nothing to flush in the fake */ }
+  destroy() { /* nothing to release in the fake */ }
   sentService(svc: number): boolean { return this.written.some((f) => f.length >= 4 && f.readUInt16BE(2) === svc); }
 }
 

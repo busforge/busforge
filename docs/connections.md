@@ -76,10 +76,12 @@ spec-strict gateway reaps a channel it has not heard from. A read-only bus monit
 because on a quiet bus there is nothing to tunnel and therefore no failing send to reveal the dead
 channel. The telegram log would simply, silently, stop while the status stayed green.
 
-- **On UDP**, the client sends a CONNECTIONSTATE_REQUEST every 60 s and waits up to 10 s for the
-  response, retrying three times. Three unanswered requests mean the tunnel is dead.
-- **On TCP**, no heartbeat is armed: the socket's own liveness stands in for it, and a closed or
-  desynchronised stream is reported directly.
+- On **UDP and TCP** alike, the client sends a CONNECTIONSTATE_REQUEST every 60 s and waits up to
+  10 s for the response, retrying three times. Three unanswered requests mean the tunnel is dead.
+  Over TCP the request carries the zero IPV4_TCP HPAI, byte-equal to what ETS 6 sends (bench capture
+  2026-09-29); Calimero runs the same heartbeat on TCP. The socket alone is not a liveness signal: a
+  peer that vanished without a FIN leaves it looking open.
+- **On TCP**, a closed or desynchronised stream is also reported directly.
 - Either way, an inbound DISCONNECT_REQUEST is **answered** with a DISCONNECT_RESPONSE (so the
   gateway stops retransmitting) and then treated as closure.
 
@@ -245,9 +247,18 @@ On UDP, sequence numbers run in **both** directions: a client's retransmission (
 because its acknowledgement was lost) is acknowledged again but **not put on the bus twice**, because
 a duplicated memory write is exactly the damage this project exists to avoid. A frame out of sequence
 is dropped and not acknowledged. Towards the client a frame is retried once and the channel is then
-dropped, and a channel silent for 120 s is reaped with the client told rather than left to time out.
-TCP channels do neither: the socket carries both guarantees, and a TCP channel ends when its socket
-does.
+dropped. On TCP the stream carries both guarantees, so neither applies there.
+
+On either transport, a channel silent for 120 s (no connection-state request, no tunnelling frame)
+is reaped with the client told rather than left to time out. On TCP the connection is then closed
+once no other channel uses it: a FIN first, and the socket destroyed 5 s later, because a peer that
+vanished (or hangs) never completes the close. A TCP connection that opens no channel at all and
+carries no frame for 120 s (a search or description, then gone) is closed the same way. A frame
+naming a TCP channel counts only on that channel's own connection: another connection cannot keep
+it alive or close it by guessing its id. A TCP channel also ends when its socket does, but that alone is not
+enough: a client whose FIN never arrives (a network change, a sleeping laptop, a firewall that drops
+instead of resetting) leaves a socket that stays open on the bridge, and before the reaper covered
+TCP such a channel held its tunnel address until the bridge was restarted.
 
 A client's `L_Data.req` is answered with an `L_Data.con` **whether or not the bus took it**, with the
 error bit set when it did not. Withholding the confirmation would leave the client on a timeout it

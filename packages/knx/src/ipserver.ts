@@ -55,6 +55,9 @@ const ACK_TIMEOUT_MS = 1000;
 const ACK_TRIES = 2;
 const HEARTBEAT_TIMEOUT_MS = 120_000;
 const REAP_INTERVAL_MS = 10_000;
+// How long a TCP connection the server ends may take to complete its close. A FIN alone leaves the
+// socket to a peer that may never answer it (vanished, or alive but hung), so it is destroyed after.
+const TCP_CLOSE_GRACE_MS = 5_000;
 
 // The socket surface the server uses. Narrow on purpose: it is the test seam, and a fake for it
 // has to be exactly as complicated as the real behaviour we depend on, no more.
@@ -87,6 +90,7 @@ export interface ServerTcpSocket {
   onData(cb: (chunk: Buffer) => void): void;
   onClose(cb: () => void): void;
   end(): void;
+  destroy(): void;
 }
 
 // The TCP listener seam, mirroring ServerSocket so the tests stay socket-free.
@@ -110,6 +114,7 @@ function realTcpListener(): ServerTcpListener {
           onData: (dcb) => { s.on("data", dcb); },
           onClose: (ccb) => { s.on("close", ccb); },
           end: () => { s.end(); },
+          destroy: () => { s.destroy(); },
         });
       });
     },
@@ -174,6 +179,10 @@ export class KnxIpServer {
   private reaper: ReturnType<typeof setInterval> | null = null;
   private me: Endpoint = { address: "0.0.0.0", port: KNXPORT };
   readonly channels = new Map<number, Channel>();
+  // Every accepted TCP connection and when it last carried a frame. The channel reaper cannot see a
+  // connection that never opened a channel (a search or description, then a vanished peer).
+  private readonly tcpConns = new Map<ServerTcpSocket, number>();
+  private tcpCloseGraceMs = TCP_CLOSE_GRACE_MS;
   // Management NAT (the USB single-address limit): device address -> the channel whose connection-
   // oriented conversation with that device is being funnelled through the interface's own address.
   // The bus reply to such a frame is addressed to the interface, not the tunnel, so it is routed
@@ -275,7 +284,9 @@ export class KnxIpServer {
   // dropped with the connection, exactly as a malformed datagram is dropped, never crashing the server.
   private onTcpConnection(sock: ServerTcpSocket): void {
     const parser = new KnxIpStreamParser();
+    this.tcpConns.set(sock, this.now());
     sock.onData((chunk) => {
+      this.tcpConns.set(sock, this.now());
       let frames: Buffer[];
       try { frames = parser.push(chunk); }
       catch (e) {
@@ -288,9 +299,10 @@ export class KnxIpServer {
         catch (e) { this.log(`tcp: dropped a malformed frame: ${e instanceof Error ? e.message : String(e)}`); }
       }
     });
-    // A TCP channel's liveness IS its socket (3/8/2 v2: no CONNECTIONSTATE heartbeat on TCP). When the
-    // connection ends, delete its channel; do NOT send a DISCONNECT into a socket that is already gone.
+    // When the connection ends, delete its channels; do NOT send a DISCONNECT into a socket that is
+    // already gone. A peer that vanished without a FIN never gets here: reap() catches that one.
     sock.onClose(() => {
+      this.tcpConns.delete(sock);
       for (const ch of [...this.channels.values()]) {
         if (ch.tcp === sock && this.channels.delete(ch.id)) this.log(`channel ${ch.id} closed: its TCP connection dropped`);
       }
@@ -362,15 +374,15 @@ export class KnxIpServer {
         this.onDisconnect(body, origin);
         return;
       case SVC.DEVICE_CONFIG_REQ:
-        this.onDeviceConfig(body);
+        this.onDeviceConfig(body, origin);
         return;
       case SVC.DEVICE_CONFIG_ACK:
         return; // the client acknowledging one of our config responses; nothing more to do
       case SVC.TUNNEL_REQ:
-        void this.onTunnelRequest(body);
+        void this.onTunnelRequest(body, origin);
         return;
       case SVC.TUNNEL_ACK:
-        this.onTunnelAck(body);
+        this.onTunnelAck(body, origin);
         return;
       default:
         return; // a service we do not implement: silence is the protocol's answer, not an error
@@ -458,9 +470,9 @@ export class KnxIpServer {
     this.log(`device-management channel ${id} open ${tcp ? "over TCP" : `for ${data.address}:${data.port}`}`);
   }
 
-  private onDeviceConfig(body: Buffer): void {
+  private onDeviceConfig(body: Buffer, origin: Origin): void {
     const id = body[1], seq = body[2];
-    const ch = this.channels.get(id);
+    const ch = this.channelFor(id, origin);
     if (!ch || !ch.mgmt) return;
     ch.lastSeen = this.now();
     this.toData(ch, knxFrame(SVC.DEVICE_CONFIG_ACK, Buffer.from([0x04, id, seq, E_NO_ERROR]))); // the config ACK
@@ -525,32 +537,51 @@ export class KnxIpServer {
     return null;
   }
 
+  // The channel a frame names, if the frame arrived where that channel lives. A TCP channel belongs to
+  // its one connection: a frame naming its id from another connection (or over UDP) must neither keep
+  // it alive nor close it, and a UDP channel is not reachable from a TCP connection either.
+  private channelFor(id: number, origin: Origin): Channel | undefined {
+    const ch = this.channels.get(id);
+    if (!ch) return undefined;
+    if (ch.tcp) return origin.kind === "tcp" && origin.sock === ch.tcp ? ch : undefined;
+    return origin.kind === "udp" ? ch : undefined;
+  }
+
   private onConnectionState(body: Buffer, origin: Origin): void {
     const id = body[0];
-    const ch = this.channels.get(id);
+    const ch = this.channelFor(id, origin);
     if (ch) ch.lastSeen = this.now();
     this.answer(origin, () => parseHpai(body, 2, this.originFrom(origin)), knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])));
   }
 
   private onDisconnect(body: Buffer, origin: Origin): void {
     const id = body[0];
-    const ch = this.channels.get(id);
+    const ch = this.channelFor(id, origin);
     this.answer(origin, () => parseHpai(body, 2, this.originFrom(origin)), knxFrame(SVC.DISCONNECT_RES, Buffer.from([id, ch ? E_NO_ERROR : E_CONNECTION_ID])));
     if (ch) { this.channels.delete(id); this.log(`channel ${id} closed by the client`); }
   }
 
   // A client that stops sending CONNECTIONSTATE_REQUESTs is gone (crashed, unplugged, routed away).
   // Its channel holds one of the tunnel addresses, so leaving it open would eventually starve the
-  // server of addresses and refuse honest clients.
+  // server of addresses and refuse honest clients. TCP channels included: ETS 6 and Calimero send the
+  // heartbeat on the stream, and a client whose FIN never arrived (a network change, a sleeping
+  // laptop) leaves a socket that stays ESTABLISHED here indefinitely.
   private reap(): void {
     const cutoff = this.now() - HEARTBEAT_TIMEOUT_MS;
     for (const ch of [...this.channels.values()]) {
-      // A TCP channel is reaped by its socket's lifetime (onTcpConnection's onClose), never by
-      // heartbeat silence: 3/8/2 v2 does not run the CONNECTIONSTATE procedure over TCP, so a quiet
-      // but connected TCP client has no lastSeen to refresh and must not be dropped for it.
-      if (ch.tcp) continue;
       if (ch.lastSeen < cutoff) this.drop(ch, "no connection-state request for 120 s");
     }
+    for (const [sock, lastFrame] of this.tcpConns) {
+      if (lastFrame >= cutoff || [...this.channels.values()].some((c) => c.tcp === sock)) continue;
+      this.tcpConns.delete(sock);
+      this.closeTcp(sock);
+      this.log("tcp: closed a connection that carried no channel and no frame for 120 s");
+    }
+  }
+
+  private closeTcp(sock: ServerTcpSocket): void {
+    sock.end();
+    setTimeout(() => sock.destroy(), this.tcpCloseGraceMs).unref?.();
   }
 
   private drop(ch: Channel, why: string): void {
@@ -564,14 +595,18 @@ export class KnxIpServer {
     this.channels.delete(ch.id);
     this.toControl(ch, knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch.id, E_NO_ERROR]), this.controlHpai(ch)])));
     this.log(`channel ${ch.id} dropped: ${why}`);
+    // The connection carries nothing once its last channel is gone; closing it frees the socket that
+    // a vanished peer would otherwise hold open forever.
+    const tcp = ch.tcp;
+    if (tcp && ![...this.channels.values()].some((c) => c.tcp === tcp)) { this.tcpConns.delete(tcp); this.closeTcp(tcp); }
   }
 
   // ---- tunnelling: client -> bus ----
 
-  private async onTunnelRequest(body: Buffer): Promise<void> {
+  private async onTunnelRequest(body: Buffer, origin: Origin): Promise<void> {
     const id = body[1];
     const seq = body[2];
-    const ch = this.channels.get(id);
+    const ch = this.channelFor(id, origin);
     if (!ch) return; // no such channel: there is nothing to acknowledge ON
     ch.lastSeen = this.now();
 
@@ -725,8 +760,8 @@ export class KnxIpServer {
     return ch.queue;
   }
 
-  private onTunnelAck(body: Buffer): void {
-    const ch = this.channels.get(body[1]);
+  private onTunnelAck(body: Buffer, origin: Origin): void {
+    const ch = this.channelFor(body[1], origin);
     if (!ch) return;
     ch.lastSeen = this.now();
     if (ch.ack && ch.ack.seq === body[2]) ch.ack.resolve();

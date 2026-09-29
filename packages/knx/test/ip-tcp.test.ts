@@ -125,7 +125,7 @@ describe("KnxIpTunnel over TCP", () => {
 
   test("a TCP connect error surfaces as a coded TUNNEL_CONNECT_FAILED, not a bare timeout", async () => {
     const sock = new FakeTcpSocket();
-    sock.connectError = new Error("connect ECONNREFUSED 192.0.2.10:3671");
+    sock.connectError = Object.assign(new Error("connect ECONNREFUSED 192.0.2.10:3671"), { code: "ECONNREFUSED" });
     const tunnel = KnxIpTunnel.tcp("192.0.2.10", 3671, () => sock);
 
     const err = await tunnel.connect().then(() => null, (e: unknown) => e as Error & { code?: string });
@@ -134,12 +134,59 @@ describe("KnxIpTunnel over TCP", () => {
     expect(err!.code).toBe("TUNNEL_CONNECT_FAILED");
     expect(err!.message).toContain("192.0.2.10:3671");
     expect(err!.message).toContain("ECONNREFUSED");
+    // Bun reports every immediate connect failure as ECONNREFUSED (an unreachable host, macOS denying
+    // Local Network access, fd exhaustion), so the message must not pass that on as the cause.
+    expect(err!.message).toContain("cannot tell a refusal from");
   });
 
-  test("no heartbeat timer is armed in TCP mode (the socket's liveness stands in for it)", async () => {
+  test("a TCP connect error that is not ECONNREFUSED carries no refusal caveat", async () => {
+    const sock = new FakeTcpSocket();
+    sock.connectError = Object.assign(new Error("connect ETIMEDOUT 192.0.2.10:3671"), { code: "ETIMEDOUT" });
+    const tunnel = KnxIpTunnel.tcp("192.0.2.10", 3671, () => sock);
+    const err = await tunnel.connect().then(() => null, (e: unknown) => e as Error);
+    expect(err!.message).toContain("ETIMEDOUT");
+    expect(err!.message).not.toContain("cannot tell a refusal from");
+  });
+
+  // ETS 6 and Calimero both run the 60 s CONNECTIONSTATE heartbeat over TCP. A TCP socket whose peer
+  // vanished without a FIN (a network change, a sleeping laptop) stays open on both ends, so the
+  // socket alone cannot tell a quiet channel from a dead one.
+  test("a heartbeat timer is armed in TCP mode, as ETS and Calimero do", async () => {
     const { tunnel } = await connectedTcp();
-    // The 60 s CONNECTIONSTATE heartbeat procedure is not used on TCP (3/8/2 v2).
-    expect(tunnel["heartbeatTimer"]).toBeNull();
+    expect(tunnel["heartbeatTimer"]).not.toBeNull();
+    await tunnel.disconnect();
+  });
+
+  test("the TCP heartbeat is ETS's CONNECTIONSTATE_REQUEST on the stream, and an answer keeps the tunnel up", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => closed.push(r);
+
+    const round = tunnel["heartbeat"]();
+    await tick();
+    // Byte-equal to ETS 6 over TCP (bench capture 2026-09-29): channel, reserved, IPV4_TCP HPAI.
+    expect([...sock.sent[0]!]).toEqual([
+      0x06, 0x10, 0x02, 0x07, 0x00, 0x10,
+      CHANNEL, 0x00,
+      0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    sock.inject(knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([CHANNEL, 0x00])));
+    await round;
+    expect(closed).toEqual([]);
+    expect(sock.ended).toBe(false);
+    await tunnel.disconnect();
+  });
+
+  test("a TCP gateway that answers no heartbeat is brought down and the socket ended", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    tunnel["stateTimeoutMs"] = 5;
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => closed.push(r);
+
+    await tunnel["heartbeat"]();
+    expect(sock.sent.filter((f) => f.readUInt16BE(2) === SVC.CONNECTIONSTATE_REQ).length).toBe(3);
+    expect(closed.length).toBe(1);
+    expect(sock.ended).toBe(true);
   });
 
   // 3/8/4 v2: no TUNNELLING_ACK over TCP. A real KNX IP interface (MDT SCN-IP000.03) sends none,
@@ -237,12 +284,14 @@ class FakeUdpServerSocket implements ServerSocket {
 class FakeServerConn implements ServerTcpSocket {
   sent: Buffer[] = [];
   ended = false;
+  destroyed = false;
   private dataCb: ((c: Buffer) => void) | null = null;
   private closeCb: (() => void) | null = null;
   write(frame: Buffer): void { this.sent.push(Buffer.from(frame)); }
   onData(cb: (c: Buffer) => void): void { this.dataCb = cb; }
   onClose(cb: () => void): void { this.closeCb = cb; }
   end(): void { this.ended = true; }
+  destroy(): void { this.destroyed = true; }
   feed(m: Buffer): void { this.dataCb!(m); }
   drop(): void { this.closeCb?.(); }
   ofService(svc: number): Buffer[] { return this.sent.filter((f) => f.readUInt16BE(2) === svc); }
@@ -394,13 +443,84 @@ describe("KnxIpServer over TCP", () => {
     expect(conn.ofService(SVC.DISCONNECT_REQ).length).toBe(0);
   });
 
-  test("the 120 s heartbeat reaper never drops a TCP channel", async () => {
+  // The bench bridge once held a TCP channel for over an hour after its client was gone: the client's
+  // FIN never arrived, the socket stayed ESTABLISHED, and every new tunnel got E_NO_MORE_CONNECTIONS.
+  test("a TCP channel silent for 120 s is reaped: DISCONNECT_REQUEST on its socket, then the socket is ended", async () => {
     const rig = await serveTcp();
-    const { ch } = await openTcp(rig);
+    const { conn, ch } = await openTcp(rig);
+    rig.server["tcpCloseGraceMs"] = 1;
 
-    rig.clock.t += 10 * 60_000; // far past the 120 s UDP window
+    rig.clock.t += 121_000;
     rig.server["reap"]();
-    expect(rig.server.channels.has(ch)).toBe(true); // reaped by socket lifetime, not by silence
+    expect(rig.server.channels.has(ch)).toBe(false);
+    expect(conn.ofService(SVC.DISCONNECT_REQ).length).toBe(1);
+    expect(conn.ended).toBe(true);
+    // A FIN alone leaves the socket to a peer that may never answer it; it is destroyed after a grace.
+    await new Promise((r) => setTimeout(r, rig.server["tcpCloseGraceMs"] + 5));
+    expect(conn.destroyed).toBe(true);
+  });
+
+  test("a TCP connection that opens no channel and stays silent for 120 s is closed", async () => {
+    const rig = await serveTcp();
+    const conn = new FakeServerConn();
+    rig.listener.accept(conn);
+    conn.feed(knxFrame(SVC.DESCRIPTION_REQ, hpaiTcp()));
+
+    rig.clock.t += 60_000;
+    rig.server["reap"]();
+    expect(conn.ended).toBe(false);
+    rig.clock.t += 61_000;
+    rig.server["reap"]();
+    expect(conn.ended).toBe(true);
+  });
+
+  test("another connection cannot keep a TCP channel alive or close it by naming its id", async () => {
+    const rig = await serveTcp([IFACE_IA, SECOND_IA]);
+    const a = await openTcp(rig);
+    const b = await openTcp(rig);
+
+    rig.clock.t += 100_000;
+    // b heartbeats and disconnects a's channel id: both are refused as unknown on b's connection.
+    b.conn.feed(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([a.ch, 0x00]), hpaiTcp()])));
+    expect(b.conn.ofService(SVC.CONNECTIONSTATE_RES).at(-1)![7]).toBe(0x21); // E_CONNECTION_ID
+    b.conn.feed(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([a.ch, 0x00]), hpaiTcp()])));
+    expect(rig.server.channels.has(a.ch)).toBe(true);
+    b.conn.feed(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([b.ch, 0x00]), hpaiTcp()])));
+
+    rig.clock.t += 30_000;
+    rig.server["reap"]();
+    expect(rig.server.channels.has(a.ch)).toBe(false); // a stayed silent itself
+    expect(rig.server.channels.has(b.ch)).toBe(true);
+  });
+
+  test("a TCP client that sends connection-state requests keeps its channel past 120 s", async () => {
+    const rig = await serveTcp();
+    const { conn, ch } = await openTcp(rig);
+
+    rig.clock.t += 100_000;
+    conn.feed(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([ch, 0x00]), hpaiTcp()])));
+    expect(conn.ofService(SVC.CONNECTIONSTATE_RES).length).toBe(1);
+    rig.clock.t += 100_000; // 200 s after connect, 100 s after the heartbeat
+    rig.server["reap"]();
+    expect(rig.server.channels.has(ch)).toBe(true);
+    expect(conn.ended).toBe(false);
+  });
+
+  test("reaping one silent channel does not end a connection another live channel still uses", async () => {
+    const rig = await serveTcp([IFACE_IA, SECOND_IA]);
+    const { conn, ch } = await openTcp(rig);
+    conn.feed(connectReqTcp());
+    await tick();
+    const other = conn.ofService(SVC.CONNECT_RES).at(-1)![6]!;
+    expect(other).not.toBe(ch);
+
+    rig.clock.t += 100_000;
+    conn.feed(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([other, 0x00]), hpaiTcp()])));
+    rig.clock.t += 30_000;
+    rig.server["reap"]();
+    expect(rig.server.channels.has(ch)).toBe(false);
+    expect(rig.server.channels.has(other)).toBe(true);
+    expect(conn.ended).toBe(false);
   });
 
   test("a malformed TCP stream drops that connection without crashing the server", async () => {
@@ -455,6 +575,7 @@ describe("KNXnet/IP tunnel over TCP, client and server end to end", () => {
       onData: (cb) => { serverData = cb; },
       onClose: (cb) => { serverClose = cb; },
       end: () => { setTimeout(() => clientClose(), 0); },
+      destroy: () => { setTimeout(() => clientClose(), 0); },
     };
     return { clientSock, serverSock };
   }

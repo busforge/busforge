@@ -118,6 +118,17 @@ describe("AutoIpTunnel", () => {
     expect(udp.connected).toBe(false); // a real bus/protocol failure must not silently retry UDP
   });
 
+  test("when the UDP fallback fails too, the error keeps its code and still names the TCP failure", async () => {
+    const tcp = new StubTunnel(() => { throw new KnxError("TUNNEL_CONNECT_FAILED", "TCP connect to h:3671 failed: connect ECONNREFUSED h:3671"); });
+    const udp = new StubTunnel(() => { throw new KnxError("TUNNEL_CONNECT_TIMEOUT", "connect timeout"); });
+    const t = new AutoIpTunnel("h", 3671, () => tcp, () => udp);
+    const err = await t.connect().then(() => null, (e: unknown) => e as KnxError);
+    expect(err).toBeInstanceOf(KnxError);
+    expect(err!.code).toBe("TUNNEL_CONNECT_TIMEOUT");
+    expect(err!.message).toContain("connect timeout");
+    expect(err!.message).toContain("ECONNREFUSED");
+  });
+
   test("disconnect before a successful connect is a no-op", async () => {
     const t = new AutoIpTunnel("h", 3671, () => new StubTunnel(), () => new StubTunnel());
     await t.disconnect(); // resolves without an inner tunnel to tear down
