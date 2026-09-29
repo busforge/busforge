@@ -6,6 +6,7 @@ import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly } from "../db/deviceparams.ts";
 import { getDeviceSecurity, putDeviceSecurity, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
+import { getGroupKeys } from "../db/groupKeys.ts";
 import { decodeCertificate } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
@@ -425,7 +426,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (seg[4] === "connect" && req.method === "POST") {
       const conn = getProjectConnection(db, id);
       if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
-      await bus.connect(id, conn);
+      await bus.connect(id, conn, getGroupKeys(db, id, state.masterKey));
       return json({ status: bus.status, projectId: id });
     }
     if (seg[4] === "disconnect" && req.method === "POST") {

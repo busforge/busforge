@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, Pause, Play, Trash2 } from "lucide-react";
+import { ArrowDownUp, Lock, Pause, Play, Trash2 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { decodeDpt } from "@busforge/knx/dpt";
 import { type GroupRangeNode, type Telegram } from "../api.ts";
 import { useProject, useBusStatus, useTelegrams } from "../queries.ts";
 import { Button } from "@/components/ui/button";
@@ -11,6 +10,7 @@ import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { GaPill } from "@/components/GaPill.tsx";
 import { cn } from "@/lib/utils";
+import { telegramValue } from "@/lib/telegramValue.ts";
 
 interface GaInfo { name: string; dpt: string; }
 function indexGas(ranges: GroupRangeNode[], into: Map<number, GaInfo>) {
@@ -27,12 +27,27 @@ const kindStyle: Record<string, string> = {
 };
 const time = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour12: false }) + "." + String(ts % 1000).padStart(3, "0");
 
-function KindChip({ kind }: { kind: string }) {
+function KindChip({ telegram }: { telegram: Telegram }) {
+  const { t } = useTranslation();
+  const { kind, security } = telegram;
   return (
-    <span className={cn("inline-flex rounded border px-1.5 py-0.5 text-[10px]", kindStyle[kind] ?? "border-border text-muted-foreground")}>
-      {kind.replace("GroupValue", "")}
+    <span className="inline-flex items-center gap-1">
+      {security && <span title={t(`monitor.secure.${security}`)} data-testid="telegram-secured"><Lock className="size-3 text-muted-foreground" aria-label={t(`monitor.secure.${security}`)} /></span>}
+      {/* A secured telegram that was not opened has no known service; the lock and the value column say why. */}
+      {!(security && security !== "decrypted") && (
+        <span className={cn("inline-flex rounded border px-1.5 py-0.5 text-[10px]", kindStyle[kind] ?? "border-border text-muted-foreground")}>
+          {kind.replace("GroupValue", "")}
+        </span>
+      )}
     </span>
   );
+}
+
+function ValueText({ telegram, dpt, className }: { telegram: Telegram; dpt: string | undefined; className: string }) {
+  const { t } = useTranslation();
+  const shown = telegramValue(telegram, dpt);
+  if ("secureState" in shown) return <span className={cn(className, "font-sans italic text-muted-foreground")}>{t(`monitor.secure.${shown.secureState}`)}</span>;
+  return <span className={cn(className, "text-foreground")} title={`0x${telegram.raw}`}>{shown.value}</span>;
 }
 
 export function MonitorView() {
@@ -124,14 +139,13 @@ export function MonitorView() {
               {displayRows.map((t, i) => {
                 const ga = gaIndex.get(t.dstRaw);
                 const srcName = deviceIndex.get(t.src);
-                const value = decodeDpt(t.raw, ga?.dpt);
                 return (
                   <tr key={i} className="border-t border-border/40 transition-colors hover:bg-secondary/40">
                     <td className="whitespace-nowrap px-3 py-1.5 font-mono text-muted-foreground">{time(t.ts)}</td>
                     <td className="px-3 py-1.5"><DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="max-w-48" /></td>
-                    <td className="px-3 py-1.5"><KindChip kind={t.kind} /></td>
+                    <td className="px-3 py-1.5"><KindChip telegram={t} /></td>
                     <td className="px-3 py-1.5">{ga ? <GaPill projectId={projectId} raw={t.dstRaw} name={ga.name} address={t.dst} className="max-w-56" /> : <GaLabel address={t.dst} fallback={unknownLabel} className="max-w-56" />}</td>
-                    <td className="px-3 py-1.5 font-mono text-foreground" title={`0x${t.raw}`}>{value}</td>
+                    <td className="px-3 py-1.5"><ValueText telegram={t} dpt={ga?.dpt} className="font-mono" /></td>
                   </tr>
                 );
               })}
@@ -143,18 +157,17 @@ export function MonitorView() {
             {displayRows.map((t, i) => {
               const ga = gaIndex.get(t.dstRaw);
               const srcName = deviceIndex.get(t.src);
-              const value = decodeDpt(t.raw, ga?.dpt);
               return (
                 <div key={i} className="flex items-center justify-between gap-3 px-3 py-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <DeviceLabel name={srcName} ia={t.src} fallback={unknownLabel} className="text-sm" />
-                      <KindChip kind={t.kind} />
+                      <KindChip telegram={t} />
                     </div>
                     {ga ? <GaPill projectId={projectId} raw={t.dstRaw} name={ga.name} address={t.dst} className="text-xs" /> : <GaLabel address={t.dst} fallback={unknownLabel} className="text-xs" />}
                     <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{time(t.ts)} · {t.src} → {t.dst}</div>
                   </div>
-                  <span className="shrink-0 font-mono text-xs text-foreground" title={`0x${t.raw}`}>{value}</span>
+                  <ValueText telegram={t} dpt={ga?.dpt} className="shrink-0 font-mono text-xs" />
                 </div>
               );
             })}

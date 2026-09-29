@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { secureEncode, secureDecode, SCF_TOOL_DATA } from "../src/secure.ts";
+import { isSecureApdu, openSecureGroupTpdu, secureEncode, secureDecode, SCF_TOOL_DATA } from "../src/secure.ts";
 
 const key = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
 const src = 0x1101; // 1.1.1
@@ -123,5 +123,43 @@ describe("KNX Data Secure CCM (xknx group-address known-answer vectors)", () => 
   test("the AT bit is load-bearing: decoding the group vector as P2P fails the MAC", () => {
     const body = Buffer.from("10002446cfef4ac085e7092ab062b44d", "hex");
     expect(secureDecode(body, { key: groupKey, src: 0x4009, dst: ga, dstIsGroup: false, tpci: 0x03, aadFor })).toBeNull();
+  });
+});
+
+describe("openSecureGroupTpdu (monitor view of a secured group telegram)", () => {
+  const groupKey = Buffer.from("dfdf23a59fbb40404091d1c162087e8b", "hex");
+  const ga = 0x0400;
+  // xknx test_data_secure_group_receive, the TPDU from the TPCI|APCI on.
+  const tpdu = () => Buffer.from("03f1" + "10" + "002446cfef4a" + "c085e7092a" + "b062b44d", "hex");
+
+  test("recognizes A_Data_Secure and nothing else", () => {
+    expect(isSecureApdu(tpdu())).toBe(true);
+    expect(isSecureApdu(Buffer.from("0081", "hex"))).toBe(false); // GroupValueWrite 1
+    expect(isSecureApdu(Buffer.from("03f0", "hex"))).toBe(false);
+  });
+
+  test("decrypts with the address's key into the inner group APDU and its sequence", () => {
+    const got = openSecureGroupTpdu(0x4009, ga, tpdu(), groupKey);
+    expect(got).toEqual({ state: "decrypted", apdu: Buffer.from("0040742929", "hex"), seq: 0x002446cfef4an });
+  });
+
+  test("no key is its own state, never a value", () => {
+    expect(openSecureGroupTpdu(0x4009, ga, tpdu(), undefined)).toEqual({ state: "noKey" });
+  });
+
+  test("a wrong key or a flipped bit fails authentication", () => {
+    const wrong = Buffer.from(groupKey); wrong[0] ^= 1;
+    expect(openSecureGroupTpdu(0x4009, ga, tpdu(), wrong)).toEqual({ state: "authFailed" });
+    const t = tpdu(); t[t.length - 1] ^= 0x01;
+    expect(openSecureGroupTpdu(0x4009, ga, t, groupKey)).toEqual({ state: "authFailed" });
+    expect(openSecureGroupTpdu(0x4008, ga, tpdu(), groupKey)).toEqual({ state: "authFailed" }); // source is authenticated
+  });
+
+  test("a secured frame this monitor does not decode is unsupported, not guessed", () => {
+    for (const scf of [0x90 /* tool access */, 0x00 /* auth only */, 0x18 /* system broadcast */, 0x12 /* sync req */]) {
+      const t = tpdu(); t[2] = scf;
+      expect(openSecureGroupTpdu(0x4009, ga, t, groupKey)).toEqual({ state: "unsupported" });
+    }
+    expect(openSecureGroupTpdu(0x4009, ga, Buffer.from("03f110", "hex"), groupKey)).toEqual({ state: "unsupported" }); // truncated
   });
 });

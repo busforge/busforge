@@ -385,6 +385,10 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id)
   );
   `,
+  // How a secured group telegram was received (telegram.ts TelegramSecurity); NULL for a plain one.
+  `
+  ALTER TABLE telegrams ADD COLUMN security TEXT;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

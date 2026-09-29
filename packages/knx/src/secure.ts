@@ -161,3 +161,25 @@ function timingEqual(a: Buffer, b: Buffer): boolean {
   for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
   return d === 0;
 }
+
+// A TPDU carrying A_Data_Secure (APCI 0x3F1): the low two bits of octet 0 and all of octet 1.
+export function isSecureApdu(tpdu: Buffer): boolean {
+  return tpdu.length >= 2 && (tpdu[0] & 0x03) === 0x03 && tpdu[1] === 0xf1;
+}
+
+export type SecureGroupOpen =
+  | { state: "decrypted"; apdu: Buffer; seq: bigint }
+  | { state: "noKey" | "authFailed" | "unsupported" };
+
+// A secured group telegram as a passive observer sees it, opened with the key of its destination
+// address. Only S-A_Data with authentication and confidentiality (SCF 0x10), the form ETS loads for a
+// secured group object, is opened; tool access, auth-only, system broadcast and Sync are reported
+// unsupported rather than decoded. Replay is not judged here: that needs per-sender state.
+export function openSecureGroupTpdu(src: number, dst: number, tpdu: Buffer, key: Buffer | undefined): SecureGroupOpen {
+  const body = tpdu.subarray(2);
+  if (body.length < 1 + 6 + MAC_LEN || body[0] !== SCF.AUTH_CONF) return { state: "unsupported" };
+  if (!key) return { state: "noKey" };
+  const got = secureDecode(body, { key, src, dst, dstIsGroup: true, tpci: tpdu[0], aadFor: (scf) => Buffer.from([scf]) });
+  if (!got) return { state: "authFailed" };
+  return { state: "decrypted", apdu: Buffer.from(got.plaintext), seq: BigInt(got.seq.readUIntBE(0, 6)) };
+}

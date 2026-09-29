@@ -19,7 +19,7 @@ import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.t
 import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
 import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
-import { decodeGroupTpdu } from "../src/telegram.ts";
+import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
 const demo = () => parseProject(sampleXml, undefined, "Demo");
@@ -39,9 +39,11 @@ describe("schema/migrations", () => {
     // Simulate an iteration-2 DB: devices without instance_id, at user_version 1.
     const old = new Database(path, { create: true });
     // projects carries the migration-0 columns (incl. interface_ip/port) a real
-    // user_version-1 DB would have, so the later drop-inline-columns migration applies.
+    // user_version-1 DB would have, so the later drop-inline-columns migration applies; telegrams
+    // (also from migration 0) takes the security column.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT, interface_ip TEXT NOT NULL DEFAULT '', interface_port INTEGER NOT NULL DEFAULT 3671);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL);
+      CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       PRAGMA user_version = 1;`);
     old.close();
 
@@ -60,11 +62,12 @@ describe("schema/migrations", () => {
     // raw CREATE UNIQUE INDEX over them would throw and brick startup; the migration must
     // first collapse the duplicate group to one row.
     const old = new Database(path, { create: true });
-    // A minimal connections table is present so the trailing ip_transport ALTER
-    // applies; production has it from the transport-aware migration long before this point.
+    // Minimal connections and telegrams tables are present so the trailing ip_transport and
+    // telegram security ALTERs apply; production has it from the transport-aware migration long before this point.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
@@ -478,6 +481,22 @@ describe("project export", () => {
     expect(getDeviceSecurity(db, "p2", dev, MK2)!.toolKey).toEqual(toolKey);
     // and the original master key cannot open the re-sealed copy (no silent wrong key)
     expect(() => getDeviceSecurity(db, "p2", dev, MK)).toThrow();
+  });
+
+  test("round-trips the security state of recorded telegrams, and imports a log that has none", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x81]), 10));
+    insertTelegram(db, "p1", { ...decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x80]), 20), security: "decrypted" });
+    insertTelegram(db, "p1", undecodedSecureTelegram(0x1232, 1, "noKey", 30));
+    const ex = exportProject(db, "p1", 5000, MK)!;
+    importProjectExport(db, ex, "p2", 6000, MK);
+    expect(recentTelegrams(db, "p2", 10).map((t) => [t.kind, t.raw, t.security])).toEqual([
+      ["GroupValueWrite", "01", undefined], ["GroupValueWrite", "00", "decrypted"], ["Unknown", "", "noKey"],
+    ]);
+    importProjectExport(db, { ...ex, telegrams: ex.telegrams!.map(({ security: _s, ...t }) => t) }, "p3", 7000, MK);
+    expect(recentTelegrams(db, "p3", 10).every((t) => t.security === undefined)).toBe(true);
+    expect(() => validateExport({ ...ex, telegrams: [{ ...ex.telegrams![0], security: "bogus" as never }] })).toThrow(/malformed telegrams/);
   });
 
   test("round-trips Data Secure group keys through export/import, re-sealed under the importing master key", () => {
@@ -927,6 +946,7 @@ describe("connections", () => {
     const old = new Database(path, { create: true });
     old.exec(`CREATE TABLE devices (project_id TEXT, instance_id TEXT, ia TEXT, app_ref TEXT, product_ref TEXT);
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
       INSERT INTO connections (id,name,type,host,port,created_at) VALUES ('c1','GW','ip','1.2.3.4',3671,1000);
       INSERT INTO devices (project_id,instance_id,ia) VALUES ('p','read','1.1.1'),('p','never','1.1.2');

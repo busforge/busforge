@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KnxTransport } from "@busforge/knx";
 import type { Connection } from "../src/db/connections.ts";
+import type { Telegram } from "../src/telegram.ts";
 
 // The server half of the "keep the status honest" guarantee: when a live tunnel goes down on its
 // own (a heartbeat the gateway stopped answering, an inbound DISCONNECT_REQUEST, a USB error), the
@@ -239,4 +240,72 @@ test("close releases the tunnel and refuses every connect that had not opened ye
     expect(bus.status).toBe("disconnected");
     expect(await bus.connect("p", conn).catch((error: unknown) => error)).toMatchObject({ code: "SERVER_SHUTTING_DOWN" });
   } finally { gate.resolve(); makeTransportImpl = factory; }
+});
+
+describe("Bus: secured group telegrams", () => {
+  // xknx test_data_secure_group_receive: 4.0.9 -> 0/4/0, GroupValueResponse 74 29 29.
+  const key = Buffer.from("dfdf23a59fbb40404091d1c162087e8b", "hex");
+  const frame = () => Buffer.from("03f110002446cfef4ac085e7092ab062b44d", "hex");
+  async function monitor(keys: Map<number, Buffer>) {
+    const bus = new Bus(() => 1);
+    const seen: Telegram[] = [];
+    bus.subscribe((t) => seen.push(t));
+    await bus.connect("proj-s", conn, keys);
+    const tunnel = created.at(-1)!;
+    return { bus, seen, deliver: (tpdu: Buffer, src = 0x4009) => tunnel.onCemi!(src, 0x0400, tpdu, true) };
+  }
+
+  test("decrypts with the project's key and shows the inner value", async () => {
+    const { bus, seen, deliver } = await monitor(new Map([[0x0400, key]]));
+    deliver(frame());
+    expect(seen).toEqual([{ ts: 1, src: "4.0.9", dst: "0/4/0", dstRaw: 0x0400, kind: "GroupValueResponse", raw: "742929", security: "decrypted" }]);
+    await bus.disconnect();
+  });
+
+  test("without a key, a wrong key or a tampered frame there is no value", async () => {
+    const none = await monitor(new Map());
+    none.deliver(frame());
+    expect(none.seen[0]).toMatchObject({ kind: "Unknown", raw: "", security: "noKey" });
+    await none.bus.disconnect();
+    const wrong = Buffer.from(key); wrong[3] ^= 0x80;
+    const bad = await monitor(new Map([[0x0400, wrong]]));
+    bad.deliver(frame());
+    expect(bad.seen[0]).toMatchObject({ kind: "Unknown", raw: "", security: "authFailed" });
+    await bad.bus.disconnect();
+  });
+
+  test("the identical frame again shows no second value; a new session has no history", async () => {
+    const { bus, seen, deliver } = await monitor(new Map([[0x0400, key]]));
+    deliver(frame());
+    deliver(frame()); // a replay, or a link-layer repetition: indistinguishable without the repeat flag
+    expect(seen.map((t) => [t.security, t.raw])).toEqual([["decrypted", "742929"], ["replay", ""]]);
+    await bus.disconnect();
+    // A new monitor session starts without history, so the same frame is accepted once more.
+    const again = await monitor(new Map([[0x0400, key]]));
+    again.deliver(frame());
+    expect(again.seen[0].security).toBe("decrypted");
+    await again.bus.disconnect();
+  });
+
+  test("a sequence not above the sender's last accepted one is a replay, without a value", async () => {
+    const { secureEncode } = await import("@busforge/knx");
+    const at = (seq: number, value: number) => Buffer.concat([Buffer.from("03f1", "hex"), secureEncode({
+      key, src: 0x4009, dst: 0x0400, dstIsGroup: true, seq: Buffer.from(seq.toString(16).padStart(12, "0"), "hex"),
+      scf: 0x10, tpci: 0x03, aad: Buffer.from([0x10]), plaintext: Buffer.from([0x00, 0x80 | value]),
+    })]);
+    const { bus, seen, deliver } = await monitor(new Map([[0x0400, key]]));
+    deliver(at(5, 1));
+    deliver(at(3, 0)); // older
+    deliver(at(5, 0)); // same sequence, different content
+    deliver(at(6, 0));
+    expect(seen.map((t) => [t.security, t.raw])).toEqual([["decrypted", "01"], ["replay", ""], ["replay", ""], ["decrypted", "00"]]);
+    await bus.disconnect();
+  });
+
+  test("plain telegrams carry no security state", async () => {
+    const { bus, seen, deliver } = await monitor(new Map([[0x0400, key]]));
+    deliver(Buffer.from("0081", "hex"));
+    expect(seen[0]).toEqual({ ts: 1, src: "4.0.9", dst: "0/4/0", dstRaw: 0x0400, kind: "GroupValueWrite", raw: "01" });
+    await bus.disconnect();
+  });
 });

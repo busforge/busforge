@@ -126,8 +126,11 @@ started until the capability it depends on is hardware-proven.
   (wrong key, missing key, a tampered or replayed answer) were each shown once on the Jung 400021SE
   by hand. The smoke framework provisions projects from the catalog, which carries no keys, so a
   secured spec needs a project imported with its keys; until then there are no evidence records.
-- **Secured group telegrams.** Busforge can neither send nor decrypt one, so a secured group address
-  cannot be observed working; the monitor shows it as undecryptable.
+- **Sending secured group telegrams.** Busforge cannot send one a secure device accepts: the receiver
+  drops a sender missing from its security individual address table (PID 54, [findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)).
+  Needs a decision on entering the tool's address there. The monitor decrypts received ones, but a
+  telegram sent by a secure device has not been observed on the bus yet (needs the Jung's K1 contact).
+- **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
 - **Activation UI.** Certificate entry and activation are API-only (`PUT .../certificate`,

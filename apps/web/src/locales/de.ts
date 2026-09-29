@@ -571,6 +571,13 @@ const de: Messages = {
     colValue: "Wert",
     waiting: "Warte auf Busverkehr…",
     emptyHistory: "Noch keine Telegramme aufgezeichnet. Verbinde dich über die Busanzeige oben rechts, um Live-Verkehr aufzuzeichnen.",
+    secure: {
+      decrypted: "Gesichert, mit dem Gruppenschlüssel des Projekts entschlüsselt",
+      noKey: "gesichert, kein Schlüssel für diese Adresse",
+      authFailed: "gesichert, Authentifizierung fehlgeschlagen",
+      replay: "gesichert, Sequenz schon gesehen (Wiedereinspielung oder Wiederholung)",
+      unsupported: "gesichert, hier nicht dekodierbar",
+    },
   },
   groups: {
     searchPlaceholder: "Gruppenadressen filtern…",

@@ -248,8 +248,9 @@ the device through the session and verified tables, parameter CRC and security o
 restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
 a device in secure mode ignores. A GA flash that linked a second object to the secured address set
 its flag on the device and verified; its revert restored ETS's load. **Not shown:** the secured group
-address working on the bus (Busforge cannot yet send or decrypt a secured group
-telegram).
+address working on the bus. The monitor can now decrypt a secured group telegram (see
+[Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)), but no telegram
+the Jung sent on 0/0/1 has been observed yet; Busforge cannot send one the Jung accepts.
 
 **Refusals, shown on the same device:** a wrong tool key gets no answer to the Sync
 (`SECURE_SYNC_NO_RESPONSE`); a plain session gets the descriptor `0xFFFF`, which the mask gate
@@ -371,3 +372,34 @@ the reference for the security object download and for Busforge's own activation
 - **Key handling:** sealed at rest, never logged, never sent to the client.
 - **No silent skip.** A device that cannot be reached securely (missing key, failed Sync) is
   reported as exactly that. It is never skipped, and it is never quietly retried in the clear.
+
+## Secured group telegrams in the monitor
+
+The bus monitor opens a secured group telegram (A_Data_Secure on a group address) with the key the
+imported project holds for that address, and records how it was received:
+
+| State | Meaning | Value shown |
+|---|---|---|
+| decrypted | the MAC verified with the address's key; the inner GroupValueRead/Response/Write is shown | yes |
+| no key | the project holds no key for this address | no |
+| authentication failed | a key is held, the MAC does not verify (wrong key, altered frame) | no |
+| sequence already seen | the MAC verifies, but the sequence is not above the last one accepted from that sender: a replay, or a link-layer repetition of a frame already shown (the monitor does not see the repeat flag, so it cannot tell them apart) | no |
+| not decodable | a secured frame other than S-A_Data with authentication and confidentiality (tool access, auth-only, system broadcast, Sync) | no |
+
+Only a decrypted telegram carries a service and a value; every other state is stored with an empty
+value, so nothing downstream (the web monitor, an export) can decode ciphertext as if it were one.
+Telegrams recorded before the monitor knew these states have no state and the service `Unknown`
+with the ciphertext as payload; the web monitor shows any `Unknown` telegram as raw octets, never as
+a DPT value.
+The state is stored with the telegram and travels in the `.busforge` export.
+
+Replay is judged per sender against the last sequence the monitor accepted from it **in the current
+monitor connection**. The history starts empty at every connect, so a frame replayed across a
+reconnect is shown as decrypted. One sequence per sender covers all its group addresses, as in the
+receiving device.
+
+The cipher is covered by xknx's group-address known-answer vectors (`packages/knx/test/secure.test.ts`).
+**Not shown on the bus yet:** a telegram a secure device sent, decrypted by the monitor. The bench Jung
+sends its secured address 0/0/1 from its K1 contact input, which needs a physical contact; it answers
+no GroupValueRead from Busforge, plain or secured (see [findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)).
+

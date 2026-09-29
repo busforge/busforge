@@ -1,5 +1,5 @@
-import type { KnxTransport } from "@busforge/knx";
-import { decodeGroupTpdu, type Telegram } from "./telegram.ts";
+import { isSecureApdu, openSecureGroupTpdu, type KnxTransport } from "@busforge/knx";
+import { decodeGroupTpdu, undecodedSecureTelegram, type Telegram } from "./telegram.ts";
 import { makeTransport } from "./transport.ts";
 import { ApiError } from "./errors.ts";
 import type { Connection } from "./db/connections.ts";
@@ -9,6 +9,11 @@ export type BusStatus = "disconnected" | "connecting" | "connected";
 // Owns the live KNXnet/IP tunnel and fans incoming group telegrams out to
 // subscribers (the DB writer and the WebSocket clients). Read-only: it never
 // sends to the bus. One active connection at a time, bound to a project.
+//
+// Secured group telegrams are opened with the active project's group keys. Replay is judged per
+// sender (a receiver keeps one sequence per sender for all its group traffic) against the last
+// sequence accepted from it in this monitor session only: the history starts empty at every
+// connect, so a replay across a reconnect goes unnoticed.
 export class Bus {
   private tunnel: KnxTransport | null = null;
   status: BusStatus = "disconnected";
@@ -19,6 +24,9 @@ export class Bus {
   private managementActive = false;
   private closed = false;
   private transition: Promise<unknown> = Promise.resolve();
+  private groupKeys = new Map<number, Buffer>();
+  private lastSecure = new Map<number, bigint>();
+  // Group keys are read once per connect: a project's keys are fixed at import, nothing changes them later.
 
   constructor(now: () => number = () => Date.now()) { this.now = now; }
 
@@ -48,26 +56,29 @@ export class Bus {
     }
   }
 
-  connect(projectId: string, connection: Connection): Promise<void> {
+  connect(projectId: string, connection: Connection, groupKeys: Map<number, Buffer> = new Map()): Promise<void> {
     if (this.managementActive) return Promise.reject(new ApiError("BUS_BUSY", "a bus operation owns the interface", 409));
     return this.transitionTo(async () => {
       // Checked inside the transition: a connect queued before close() would otherwise open a
       // tunnel after it, and the process would exit without releasing the gateway's channel.
       if (this.closed) throw new ApiError("SERVER_SHUTTING_DOWN", "the server is shutting down and opens no bus connection", 503);
       if (this.activeProjectId !== projectId) await this.closeMonitor();
-      await this.openMonitor(projectId, connection);
+      await this.openMonitor(projectId, connection, groupKeys);
     });
   }
 
-  private async openMonitor(projectId: string, connection: Connection): Promise<void> {
+  private async openMonitor(projectId: string, connection: Connection, groupKeys: Map<number, Buffer>): Promise<void> {
     if (this.status === "connected" || this.status === "connecting") return;
     if (this.tunnel) await this.closeMonitor();
+    this.groupKeys = groupKeys;
+    this.lastSecure = new Map();
     const tunnel = makeTransport(connection);
     this.status = "connecting";
     this.error = null;
     this.activeProjectId = projectId;
     tunnel.onCemi = (src, dst, tpdu, isGroup) => {
-      if (this.tunnel === tunnel && isGroup) this.emit(decodeGroupTpdu(src, dst, tpdu, this.now()));
+      if (this.tunnel !== tunnel || !isGroup) return;
+      this.emit(isSecureApdu(tpdu) ? this.openSecured(src, dst, tpdu) : decodeGroupTpdu(src, dst, tpdu, this.now()));
     };
     // The transport lost the bus underneath us (a heartbeat the gateway stopped answering, an
     // inbound DISCONNECT_REQUEST, a USB error). Reflect that instead of leaving the stale
@@ -99,6 +110,17 @@ export class Bus {
     }
   }
 
+  private openSecured(src: number, dst: number, tpdu: Buffer): Telegram {
+    const opened = openSecureGroupTpdu(src, dst, tpdu, this.groupKeys.get(dst));
+    if (opened.state !== "decrypted") return undecodedSecureTelegram(src, dst, opened.state, this.now());
+    // A sequence already seen is shown without a value: a replay, or a link-layer repetition of a
+    // frame whose value was already shown (the repeat flag is not passed up, so the two look alike).
+    const last = this.lastSecure.get(src);
+    if (last !== undefined && opened.seq <= last) return undecodedSecureTelegram(src, dst, "replay", this.now());
+    this.lastSecure.set(src, opened.seq);
+    return { ...decodeGroupTpdu(src, dst, opened.apdu, this.now()), security: "decrypted" };
+  }
+
   disconnect(): Promise<void> {
     return this.transitionTo(() => this.closeMonitor());
   }
@@ -116,5 +138,7 @@ export class Bus {
     this.status = "disconnected";
     this.activeProjectId = null;
     this.error = null;
+    this.groupKeys = new Map();
+    this.lastSecure = new Map();
   }
 }

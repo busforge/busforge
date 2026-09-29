@@ -571,6 +571,13 @@ const en = {
     colValue: "Value",
     waiting: "Waiting for bus traffic…",
     emptyHistory: "No telegrams recorded yet. Connect from the bus indicator in the top-right to capture live traffic.",
+    secure: {
+      decrypted: "Secured, decrypted with the project's group key",
+      noKey: "secured, no key for this address",
+      authFailed: "secured, authentication failed",
+      replay: "secured, sequence already seen (replay or repetition)",
+      unsupported: "secured, not decodable here",
+    },
   },
   groups: {
     searchPlaceholder: "Filter group addresses…",

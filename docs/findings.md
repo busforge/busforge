@@ -567,3 +567,20 @@ already-secured device, and none of it against the decrypted ETS capture read on
 A master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither answered nor
 carried out by this device; its only way back to the factory key is physical: bus voltage on with the
 programming button held (slow blinking), release, hold again for 5 s (fast blinking).
+
+## 20. A secure device answers no secured group read from a sender it does not list
+
+On 2026-09-29 the bench tunnel (1.1.100) sent the ETS-secured Jung 400021SE two GroupValueReads on its
+secured address 0/0/1, whose object has the read flag: one plain, one secured with the address's key
+from the project (SCF 0x10, a fresh sequence). Neither got an answer. The plain one is expected, the
+object's security flag demands authentication and confidentiality. For the secured one, ETS had
+loaded the device's security individual address table (PID 54) empty, and a receiver keeps the last
+sequence per sender there; a sender it does not list is dropped. That this is the reason is
+consistent with the table's content, not shown by a second experiment (adding 1.1.100 to PID 54
+would be a write to the security object).
+
+What follows for Busforge: it cannot stimulate a secured object from the bus without being entered
+in the device's PID 54. Observing needs no table, a monitor only needs the group key, so the monitor's
+decryption can be shown on the bus only by a telegram the device sends by itself (here, its contact
+input).
+

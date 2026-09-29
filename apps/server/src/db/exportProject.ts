@@ -6,6 +6,7 @@ import { readProjectProperties, type ProjectProperties } from "./projectProps.ts
 import { open } from "../secrets.ts";
 import { listGroupKeyRows } from "./groupKeys.ts";
 import { listDeviceCertificateRows } from "./deviceCertificates.ts";
+import type { TelegramSecurity } from "../telegram.ts";
 
 // A complete, portable, file-independent project artifact: the whole project
 // (every instance table, including the programmed baselines and module instances)
@@ -40,7 +41,7 @@ export interface ProjectExport {
   // Restore points and the recorded bus log. Optional so an artifact from before
   // these were added (a plain .busforge.json) still imports.
   snapshots?: { label: string; kind: string; reason: string; createdAt: number; schemaVersion: number; payload: string }[];
-  telegrams?: { ts: number; src: string; dstRaw: number; kind: string; data: string }[];
+  telegrams?: { ts: number; src: string; dstRaw: number; kind: string; data: string; security?: TelegramSecurity }[];
   // KNX Data Secure tool keys. The keys are carried in CLEARTEXT here (base64),
   // unsealed from the master key, so the project is never separated from its keys.
   // The only protection is the .busforge container password; an unencrypted export
@@ -93,8 +94,9 @@ export function exportProject(db: Database, projectId: string, now: number, mast
   // chronological order so the re-imported project keeps the same history.
   const snapshots = db.query("SELECT label, kind, reason, created_at AS createdAt, schema_version AS schemaVersion, payload FROM snapshots WHERE project_id = ? ORDER BY created_at, rowid")
     .all(projectId) as ProjectExport["snapshots"];
-  const telegrams = db.query("SELECT ts, src, dst_raw AS dstRaw, kind, data FROM telegrams WHERE project_id = ? ORDER BY ts, id")
-    .all(projectId) as ProjectExport["telegrams"];
+  const telegrams = (db.query("SELECT ts, src, dst_raw AS dstRaw, kind, data, security FROM telegrams WHERE project_id = ? ORDER BY ts, id")
+    .all(projectId) as (NonNullable<ProjectExport["telegrams"]>[number] & { security: TelegramSecurity | null })[])
+    .map(({ security, ...t }) => (security ? { ...t, security } : t));
 
   // Tool keys, unsealed from the master key into cleartext base64 for portability
   // (the importing instance re-seals under its own master key). Carried always.

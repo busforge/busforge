@@ -10,6 +10,7 @@ import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
 import { putGroupKeys } from "./groupKeys.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
+import { TELEGRAM_SECURITY, type TelegramSecurity } from "../telegram.ts";
 
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
 // the whole project under a fresh id, restore its referenced catalog application
@@ -67,6 +68,11 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
   for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "deviceCertificates"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
+  }
+  // A recorded telegram's security state must be one the monitor produces: an unknown one would be
+  // shown as if it were decrypted or not.
+  for (const t of (d.telegrams as Record<string, unknown>[] | undefined) ?? []) {
+    if (t.security !== undefined && !TELEGRAM_SECURITY.includes(t.security as TelegramSecurity)) throw new ApiError("BUSFORGE_INVALID", "malformed telegrams");
   }
   // Validate each security entry's shape so a crafted artifact fails as a clean 400
   // (not a generic 500 from Buffer.from(undefined) mid-insert). Key/serial byte lengths
@@ -153,8 +159,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     // artifact is imported twice); telegram ids are autoincremented.
     const insSnap = db.prepare("INSERT INTO snapshots (id, project_id, label, kind, reason, created_at, schema_version, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     for (const s of data.snapshots ?? []) insSnap.run(randomUUID(), id, s.label, s.kind, s.reason, s.createdAt, s.schemaVersion, s.payload);
-    const insTel = db.prepare("INSERT INTO telegrams (project_id, ts, src, dst_raw, kind, data) VALUES (?, ?, ?, ?, ?, ?)");
-    for (const tg of data.telegrams ?? []) insTel.run(id, tg.ts, tg.src, tg.dstRaw, tg.kind, tg.data);
+    const insTel = db.prepare("INSERT INTO telegrams (project_id, ts, src, dst_raw, kind, data, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const tg of data.telegrams ?? []) insTel.run(id, tg.ts, tg.src, tg.dstRaw, tg.kind, tg.data, tg.security ?? null);
 
     // KNX Data Secure tool keys: re-sealed under this instance's master key.
     if (data.deviceSecurity?.length) {

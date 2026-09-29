@@ -87,7 +87,9 @@ export interface SnapshotMeta {
 
 export type BusStatus = "disconnected" | "connecting" | "connected";
 export interface BusState { status: BusStatus; error: string | null; projectId: string | null; }
-export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; }
+// How a secured group telegram was received (absent on a plain one); only "decrypted" carries a value.
+export type TelegramSecurity = "decrypted" | "noKey" | "authFailed" | "replay" | "unsupported";
+export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; security?: TelegramSecurity; }
 
 // Thrown on a non-OK response. `code` is the backend's stable error code (when
 // present) the UI maps to a localized string; `message` is the English fallback.
