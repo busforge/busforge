@@ -100,7 +100,7 @@ what the product cannot know:
 | Field | Meaning |
 |---|---|
 | `device` | `appRef`, `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op |
-| `provision` | `skip-if-present` (the device already answers on its address, unattended) or `require-prog-mode` (the operator presses the programming button) |
+| `provision` | `skip-if-present` (the device already answers on its address, unattended), `require-prog-mode` (the operator presses the programming button) or `import-knxproj` (the project is imported from `device.knxprod`, password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; the only way a KNX Data Secure device's keys reach the server. The run ends with a restore to the file's configuration, also after a failure) |
 | `precondition` | A human-run step printed before provisioning |
 | `configure` | Ordered baseline steps (`set` a parameter, `link` a com-object) that bring the device to a known, linkable state |
 | `behaviours` | The bus-observable functions to prove. Empty means the device is proven to the byte only, which the report states plainly instead of hiding |
@@ -111,6 +111,23 @@ what the product cannot know:
 
 `unsafe` is the one honest exception to "exercise everything claimed". It is declared in the spec
 and visible in the report, which is the difference between an exception and a silent skip.
+
+### KNX Data Secure devices
+
+A spec with `provision: "import-knxproj"` whose device has a tool key in the project file is run
+securely end to end: the server gets the keys from the import, and the runner reads the same file for
+its own bench connections (reboot, load states, firmware), which open a secure session. Neither the
+keys nor the password reach the report or the evidence records. On top of the capabilities and
+behaviours such a run adds:
+
+| Phase | What must hold |
+|---|---|
+| `securedOutput` behaviour | The witness sends a GroupValueRead encrypted with the address's key; the device's own secured response must open with that key and carry a sequence above any seen before from it. Needs the witness's tunnel address among the address's senders in the project |
+| Robustness | No tool key in the project reports `SECURE_KEY_MISSING`; a different tool key `SECURE_SYNC_NO_RESPONSE`, after which the right key still opens a session; a read-back whose secured answers have a bit flipped reports `SECURE_ANSWER_REJECTED`, one whose answers are an earlier answer delivered again `DEVICE_NOT_ANSWERING`. The last two route the server's read-back through a local pass-through (`tools/smoke/faultproxy.ts`) that changes only the device's secured data answers; a check it never acted on fails |
+| Restore | Parameters and links the run changed are set back to the imported file's, written, and then the GA flash dry run must say `unchanged` and a read-back must show no parameter drift |
+
+The saved connection is matched on host and port (`BUSFORGE_BENCH_HOST`, `BUSFORGE_BENCH_PORT`,
+default 3681), since one bench machine can offer several interfaces.
 
 ### The run
 

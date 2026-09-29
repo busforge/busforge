@@ -9,6 +9,7 @@
 // tunnel. The witness may connect ONLY between server bus operations (the bench bridge has one tunnel
 // channel), so every flash here completes and releases the bus BEFORE the witness connects.
 import { findComObject } from "./client.ts";
+import { gaToNum, iaToNum, numToIa } from "../../packages/knx/src/index.ts";
 import type { Witness } from "./witness.ts";
 import type { BehaviourSpec, DeviceSpec, Enable } from "./spec.ts";
 import { setParamChan, linkChan, flashParamsChan, flashGaChan, type ChanCtx } from "./channel.ts";
@@ -17,6 +18,8 @@ export interface BehaviourCtx extends ChanCtx {
   witness: Witness;
   spec: DeviceSpec;
   allocGa: () => string;
+  // The imported project's Data Secure group keys by raw address (import-knxproj provisioning only).
+  groupKeys?: ReadonlyMap<number, Buffer>;
 }
 export interface BehaviourResult {
   kind: string; label: string; state: "pass" | "fail"; detail: string;
@@ -61,6 +64,17 @@ export async function verifyBehaviour(ctx: BehaviourCtx, b: BehaviourSpec): Prom
         if (v === null) return { ...head, state: "fail", detail: b.kind === "heartbeat" ? `no telegram on ${ga} within ${b.windowMs}ms` : `no GroupValueResponse on ${ga}`, gas: { object: ga } };
         if (b.expectValue && v !== b.expectValue) return { ...head, state: "fail", detail: `${ga} = 0x${v}, expected 0x${b.expectValue}`, gas: { object: ga } };
         return { ...head, state: "pass", detail: `${ga} answered 0x${v}`, gas: { object: ga } };
+      } finally { await ctx.witness.close(); }
+    }
+    if (b.kind === "securedOutput") {
+      const key = ctx.groupKeys?.get(gaToNum(b.ga));
+      if (!key) return { ...head, state: "fail", detail: `${b.ga} has no key in the imported project; a securedOutput needs a secured address`, gas: { object: b.ga } };
+      await ctx.witness.connect();
+      try {
+        const v = await ctx.witness.securedGroupRead(b.ga, key, iaToNum(ctx.spec.device.ia));
+        if (v === null) return { ...head, state: "fail", detail: `no authentic secured GroupValueResponse on ${b.ga} from ${ctx.spec.device.ia} (is ${numToIa(ctx.witness.tunnelIa)} a sender of ${b.ga} in the device's security table?)`, gas: { object: b.ga } };
+        if (b.expectValue && v !== b.expectValue) return { ...head, state: "fail", detail: `${b.ga} = 0x${v}, expected 0x${b.expectValue}`, gas: { object: b.ga } };
+        return { ...head, state: "pass", detail: `${b.ga} answered 0x${v}, secured and authentic`, gas: { object: b.ga } };
       } finally { await ctx.witness.close(); }
     }
     // inputToOutput

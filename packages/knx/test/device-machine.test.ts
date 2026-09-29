@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice } from "../src/device.ts";
+import { KnxDevice, SYNC_GAP_MS } from "../src/device.ts";
 import { SecureSession } from "../src/secureSession.ts";
 import { parseApdu, APCI } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
@@ -290,6 +290,32 @@ describe("KnxDevice request machine (frame level)", () => {
     const err = await dev.connect().catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("SECURE_SYNC_NO_RESPONSE");
   }, 10_000); // the Sync waits 3 s for an answer
+
+  // The Jung 400021SE ignores a Sync request less than about a second after the previous one to it
+  // (docs/findings.md §21). A second session to the same device keeps the gap; another device does not wait.
+  test("secure: a second Sync to the same device waits out the gap, another device's does not", async () => {
+    const tun = new FakeTransport();
+    const syncs: { dst: number; t: number }[] = [];
+    const session = (dst: number) => new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst, serial: Buffer.alloc(6, 2) });
+    // Answer every Sync at once with a frame that is not a valid Sync response: the connect fails
+    // immediately (SECURE_SYNC_FAILED) instead of timing out, so the send times are the gap alone.
+    let target = DEV;
+    tun.handler = (tpdu) => {
+      if (tpdu[1] !== 0xf1) return;
+      syncs.push({ dst: target, t: Date.now() });
+      tun.onCemi?.(target, tun.assignedIa, Buffer.from("43f193" + "00".repeat(22), "hex"), false);
+    };
+    const t0 = Date.now();
+    await new KnxDevice(tun, "1.2.11", session(DEV)).connect().catch(() => undefined);
+    target = 0x120c;
+    await new KnxDevice(tun, "1.2.12", session(0x120c)).connect().catch(() => undefined);
+    target = DEV;
+    await new KnxDevice(tun, "1.2.11", session(DEV)).connect().catch(() => undefined);
+    expect(syncs.map((x) => x.dst)).toEqual([DEV, 0x120c, DEV]);
+    expect(syncs[0].t - t0).toBeLessThan(200);
+    expect(syncs[1].t - syncs[0].t).toBeLessThan(200); // another device: no wait
+    expect(syncs[2].t - syncs[0].t).toBeGreaterThanOrEqual(SYNC_GAP_MS - 5);
+  }, 10_000);
 });
 
 // restart() is the step that makes a download STICK, and the only one whose success is inferred

@@ -166,6 +166,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
     } else if (it.kind === "comObject") {
       const key = stripRef(app.id, it.comObject.refId);
       it.comObject.gaRaw = links.get(key)?.[0] ?? null;
+      it.comObject.gaRaws = links.get(key) ?? [];
       it.comObject.changed = changed.links.has(key);
     }
   }

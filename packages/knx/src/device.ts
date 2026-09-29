@@ -164,6 +164,21 @@ function assertAddressable(addr: number, len: number, what: string): void {
   }
 }
 
+// The shortest time between two Sync requests to one device. The Jung 400021SE drops a Sync that
+// arrives within about a second of the previous one (docs/findings.md §21: 900 ms ignored, 1000 ms
+// answered), so every session a KnxDevice opens to a device it synced with shortly before over the
+// same transport waits. Sessions over different transports (a new tunnel per server operation) are
+// not coordinated here.
+export const SYNC_GAP_MS = 1200;
+const lastSync = new WeakMap<KnxTransport, Map<number, number>>();
+async function waitForSyncGap(tun: KnxTransport, dst: number): Promise<void> {
+  const byDst = lastSync.get(tun) ?? new Map<number, number>();
+  lastSync.set(tun, byDst);
+  const wait = (byDst.get(dst) ?? 0) + SYNC_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  byDst.set(dst, Date.now());
+}
+
 export class KnxDevice {
   private dst: number;
   private seq = 0;
@@ -215,6 +230,7 @@ export class KnxDevice {
     const challenge = randomBytes(6);
     this.rawInbox = [];
     try {
+      await waitForSyncGap(this.tun, this.dst);
       await this.tun.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
       const rsp = await this.rawNext();
       await this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res

@@ -608,8 +608,9 @@ ETS with a slower interface stays outside the window is not known. On the bench,
 now holds back a Sync.req until 1.2 s after the last one, and ETS can download the device again.
 
 Busforge runs one Sync per session, and its activation's second Sync (under the new key) follows
-several writes, so it has not met this; any path that opens two secure sessions to the same device
-back to back must keep the gap.
+several writes, so it had not met this. `KnxDevice` now keeps 1.2 s between two Syncs to the same
+device over one transport (`SYNC_GAP_MS`); sessions over separate transports (a new tunnel per server
+operation) are not coordinated, which the pauses between operations have covered so far.
 
 ## 22. How ETS loads a secured sender into a receiver's PID 54, and what it buys
 

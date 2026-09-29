@@ -43,7 +43,12 @@ export type BehaviourSpec =
   // to a known-opposite value first and observing it CHANGE is what proves the input caused the
   // effect. A one-shot "write 01, read 01" passes on a stuck-on output (green ≠ device-correct); at
   // least two steps to different values are required, and the runner refuses a spec that gives fewer.
-  | { kind: "inputToOutput"; label: string; inObjRefId: string; outObjRefId: string; enable?: Enable; steps: { write: string; expect: string }[]; inGa?: string; outGa?: string };
+  | { kind: "inputToOutput"; label: string; inObjRefId: string; outObjRefId: string; enable?: Enable; steps: { write: string; expect: string }[]; inGa?: string; outGa?: string }
+  // A readable object on a SECURED group address (Data Secure): the witness sends a GroupValueRead
+  // encrypted with the address's key from its tunnel address, and requires the device's own secured
+  // GroupValueResponse, opened with the same key. Observe-only: the address and its key come from the
+  // imported project, and the witness's address must be one of the address's senders there.
+  | { kind: "securedOutput"; label: string; ga: string; expectValue?: string };
 
 // The seeded Layer-1 fuzzer policy: the space it may draw from, and what it must never touch.
 export interface FuzzPolicy {
@@ -69,11 +74,15 @@ export interface DeviceSpec {
     productRef: string;  // ditto
     ia: string;          // target individual address on the bench bus
     mask: string;        // expected mask, asserted against FlashResult.mask
-    knxprod?: string;    // optional import path; absent = the product must already be in the catalog
+    knxprod?: string;    // provision "import-knxproj": the ETS project file (repo-relative); otherwise an optional import path
   };
   // "skip-if-present": if the device already answers on its IA, skip assign-ia (unattended).
   // "require-prog-mode": the operator presses the programming button (semi-attended).
-  provision: "skip-if-present" | "require-prog-mode";
+  // "import-knxproj": the project is imported from `device.knxprod` with the password in
+  // BUSFORGE_SMOKE_KNXPROJ_PASSWORD, which is how a Data Secure device's keys reach the server; the
+  // device must already answer on its IA. The run ends by restoring the imported configuration on the
+  // device and proving it (dry runs `unchanged`), so the ETS project stays valid for it.
+  provision: "skip-if-present" | "require-prog-mode" | "import-knxproj";
   // A named precondition printed before provisioning (e.g. an OpenKNX console erase). Human-run.
   precondition?: string;
   // The baseline configuration that brings the device to a known, linkable state (params that reveal

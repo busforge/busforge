@@ -122,10 +122,10 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Secure smoke spec.** The secured full download, parameter flash and GA flash and the negatives
-  (wrong key, missing key, a tampered or replayed answer) were each shown once on the Jung 400021SE
-  by hand. The smoke framework provisions projects from the catalog, which carries no keys, so a
-  secured spec needs a project imported with its keys; until then there are no evidence records.
+- **An aborted secure parameter flash.** One smoke run on the Jung broke off mid parameter flash with
+  `DEVICE_NOT_ANSWERING` after the parameter object was unloaded; the device kept no application
+  until a full download. Not reproduced with the same seed. Needs the cause (a capture of a failing
+  run) and a decision on recovering the device automatically.
 - **Senders on a secured address shared by several devices.** Which devices ETS lists in a receiver's
   PID 54 when more than one device is linked to a secured address is not shown (the bench has one
   secure device on it); Busforge refuses such an address (`SECURE_SENDERS_UNPROVEN`). Needs an ETS

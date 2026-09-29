@@ -59,6 +59,22 @@ export class Client {
   setAddress(pid: string, did: string, ia: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/devices/${did}/address`, { ia }); }
   getConfig(pid: string, did: string, lang = "de") { return this.call<DeviceConfigView>("GET", `/api/projects/${pid}/devices/${did}/config?lang=${lang}`); }
   setParam(pid: string, did: string, paramRefId: string, value: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/params`, { paramRefId, value, lang: "de" }); }
+  // Import a .knxproj as a new project (the only way a project gets its Data Secure keys). The file is
+  // sent as multipart, like the web import; the password never leaves this call.
+  async importProject(bytes: Uint8Array, fileName: string, password: string): Promise<{ id: string; unresolvedSenders?: number; secureDevicesWithoutSerial?: number }> {
+    const form = new FormData();
+    form.set("file", new File([new Uint8Array(bytes)], fileName));
+    form.set("password", password);
+    const res = await fetch(this.base + "/api/projects/import", { method: "POST", body: form });
+    const json = await res.json() as { id?: string; error?: { code?: string; message?: string } };
+    if (!res.ok || !json.id) throw new ApiError(res.status, json.error?.code ?? "HTTP_" + res.status, json.error?.message ?? "import failed");
+    return json as { id: string };
+  }
+  projectDevices(pid: string) { return this.call<{ devices: { id: string; ia: string; name: string }[] }>("GET", `/api/projects/${pid}`).then((p) => p.devices); }
+  createConnection(c: { name: string; type: "ip"; host: string; port: number; ipTransport: "tcp" | "udp" | "auto" }) { return this.call<{ id: string }>("POST", "/api/connections", c); }
+  deleteConnection(id: string) { return this.call<unknown>("DELETE", `/api/connections/${id}`); }
+  // Set an object's links outright (an empty list unlinks it); the restore after a run uses it.
+  setLinks(pid: string, did: string, comObjRefId: string, gaRaws: number[]) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws, lang: "de" }); }
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.submitAndWait<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>(pid, `/api/projects/${pid}/devices/${did}/assign-ia`, "assign-ia"); }

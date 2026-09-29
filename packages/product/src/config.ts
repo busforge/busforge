@@ -51,6 +51,7 @@ export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags;
   gaRaw?: number | null; // current GA link, filled in by the server from stored links
+  gaRaws?: number[];     // every linked GA, in link order (gaRaw is the first); filled in by the server
   changed?: boolean; // GA link differs from the programmed baseline; filled in by the server
 }
 // The minimal resolved facts the com-object-table (L3) build needs for one reached
