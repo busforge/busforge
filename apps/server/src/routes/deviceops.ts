@@ -1,5 +1,5 @@
 import { parseAppConfig, comObjectTableChanges, type AppConfig, type ModuleInstance } from "@busforge/product";
-import { getProjectConnection } from "../db/projects.ts";
+import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
@@ -7,7 +7,8 @@ import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, 
 import { getDeviceSecurity, putDeviceSecurity, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
-import { decodeCertificate } from "@busforge/knx";
+import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
+import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
@@ -433,7 +434,66 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       if (bus.activeProjectId === id) await bus.disconnect();
       return json({ status: "disconnected" });
     }
+    // POST /api/projects/:id/bus/group {ga, service: "write"|"read", value?: hex}
+    if (seg[4] === "group" && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as { ga?: unknown; service?: unknown; value?: unknown };
+      return json(await sendGroupTelegram(state, id, body));
+    }
   }
 
   return null;
+}
+
+// A GroupValueWrite or GroupValueRead the user sends, handed to the interface over the monitor
+// connection (whether it reached the bus is not confirmed; see Bus.sendGroup). The value's form
+// follows the address's datapoint type: DPT 1-3 travel in the six bits of the APCI octet, every other
+// type after it; for an address without a type a value that fits both forms is refused.
+//
+// On a secured address it is encrypted with the address's key, and only if the tunnel sends from an
+// address the project lists as a sender of it: a receiver drops a secured telegram from anyone else
+// (docs/findings.md §20), so sending it would only look like it worked. A secured telegram longer
+// than a standard frame is refused: extended frames on this path are not implemented.
+async function sendGroupTelegram(state: AppState, projectId: string, body: { ga?: unknown; service?: unknown; value?: unknown }): Promise<{ handedToInterface: true; secured: boolean }> {
+  const ga = typeof body.ga === "number" ? body.ga : NaN;
+  const meta = Number.isInteger(ga) && ga >= 1 && ga <= 0xffff ? getGaMeta(state.db, projectId, ga) : null;
+  if (!meta) throw new ApiError("GA_NOT_FOUND", "group address not found", 404);
+  let apdu: Buffer;
+  if (body.service === "read") apdu = groupValueRead();
+  else if (body.service === "write") {
+    const hex = typeof body.value === "string" ? body.value : "";
+    if (!/^([0-9a-fA-F]{2}){1,14}$/.test(hex)) throw new ApiError("GROUP_VALUE_INVALID", "a group value is 1 to 14 bytes of hex");
+    const v = Buffer.from(hex, "hex");
+    const main = parseInt(meta.dpt, 10);
+    const fitsCompact = v.length === 1 && v[0] <= 0x3f;
+    let compact: boolean;
+    if ([1, 2, 3].includes(main)) {
+      if (!fitsCompact) throw new ApiError("GROUP_VALUE_INVALID", `a DPT ${main} value is 6 bits (00 to 3f)`);
+      compact = true;
+    } else if (Number.isFinite(main)) compact = false;
+    else if (fitsCompact) throw new ApiError("GROUP_VALUE_AMBIGUOUS", "this group address has no datapoint type, and the value fits both the 6-bit and the byte form; give the address a type first");
+    else compact = false;
+    apdu = compact ? Buffer.from([0x00, 0x80 | v[0]]) : Buffer.concat([Buffer.from([0x00, 0x80]), v]);
+  } else throw new ApiError("GROUP_SERVICE_INVALID", "service must be write or read");
+
+  const src = state.bus.senderIa(projectId);
+  const key = getGroupKeys(state.db, projectId, state.masterKey).get(ga);
+  if (!key) {
+    await state.bus.sendGroup(projectId, ga, apdu);
+    return { handedToInterface: true, secured: false };
+  }
+  // A standard frame carries at most 16 TPDU octets; the secure envelope adds SECURE_APDU_OVERHEAD.
+  if (apdu.length + SECURE_APDU_OVERHEAD > 16) {
+    throw new ApiError("SECURE_VALUE_TOO_LONG", "a secured telegram of this length needs an extended frame, which sending does not support yet; only values up to 6 bits (DPT 1-3) can be sent secured");
+  }
+  const from = numToIa(src);
+  if (!(sendersByGroup(state.db, projectId).get(ga) ?? []).includes(from)) {
+    throw new ApiError("SECURE_SENDER_NOT_LISTED", `${numToGa(ga)} is secured and ${from}, the address this connection sends from, is not one of its senders; add it and download the devices on the address first`, 409);
+  }
+  const seq = Buffer.alloc(6);
+  seq.writeUIntBE(Number(nextSendSequence(state.db, projectId, from, toolSequenceNow())), 0, 6);
+  const secured = Buffer.concat([Buffer.from([0x03, 0xf1]), secureEncode({
+    key, src, dst: ga, dstIsGroup: true, seq, scf: SCF.AUTH_CONF, tpci: 0x03, aad: Buffer.from([SCF.AUTH_CONF]), plaintext: apdu,
+  })]);
+  await state.bus.sendGroup(projectId, ga, secured);
+  return { handedToInterface: true, secured: true };
 }

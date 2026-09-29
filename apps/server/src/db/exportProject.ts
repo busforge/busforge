@@ -5,6 +5,7 @@ import { readSpaces } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 import { open } from "../secrets.ts";
 import { listGroupKeyRows } from "./groupKeys.ts";
+import { listGroupSenders, listSendSequences } from "./groupSenders.ts";
 import { listDeviceCertificateRows } from "./deviceCertificates.ts";
 import type { TelegramSecurity } from "../telegram.ts";
 
@@ -49,6 +50,8 @@ export interface ProjectExport {
   // so artifacts from before secure support still import. See docs/knx-secure.md.
   deviceSecurity?: { deviceId: string; toolKey: string; serialNumber: string; sequenceNumber: string; source: string }[];
   groupKeys?: { raw: number; key: string; source: string }[];
+  groupSenders?: { gaRaw: number; ia: string; source: string }[];
+  sendSequences?: { ia: string; last: string }[];
   deviceCertificates?: { deviceId: string; fdsk: string; serialNumber: string }[];
 }
 
@@ -126,6 +129,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     telegrams,
     deviceSecurity,
     groupKeys,
+    groupSenders: listGroupSenders(db, projectId),
+    sendSequences: listSendSequences(db, projectId),
     deviceCertificates,
   };
 }

@@ -389,6 +389,24 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE telegrams ADD COLUMN security TEXT;
   `,
+  // Senders of a group address besides its linked objects (groupSenders.ts): the bus interfaces a
+  // project assigns to it, which a secure receiver lists in PID 54. And the last secured group
+  // sequence each sender used from this project, so the next telegram is always fresh.
+  `
+  CREATE TABLE group_senders (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ga_raw     INTEGER NOT NULL,
+    ia         TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    PRIMARY KEY (project_id, ga_raw, ia)
+  );
+  CREATE TABLE send_sequences (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    ia         TEXT NOT NULL,
+    last       TEXT NOT NULL,
+    PRIMARY KEY (project_id, ia)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

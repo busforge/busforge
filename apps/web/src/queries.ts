@@ -175,6 +175,19 @@ export const useGaDevices = (id: string, raw: number, enabled: boolean) => {
   return useQuery({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 });
 };
 
+// Add or remove an assigned sender of a group address; refreshes that address's overlay.
+export const useGaSenders = (id: string, raw: number) => {
+  const qc = useQueryClient();
+  const done = () => void qc.invalidateQueries({ queryKey: ["gaDevices", id, raw] });
+  return {
+    add: useMutation({ mutationFn: (ia: string) => api.addGaSender(id, raw, ia), onSuccess: done }),
+    remove: useMutation({ mutationFn: (ia: string) => api.removeGaSender(id, raw, ia), onSuccess: done }),
+  };
+};
+
+export const useSendGroup = (id: string) =>
+  useMutation({ mutationFn: (v: { ga: number; service: "write" | "read"; value?: string }) => api.sendGroup(id, v.ga, v.service, v.value) });
+
 // Invalidate everything that a device edit can change: its config view and the
 // project (per-device change counts live there). Edits request the current UI
 // language so the returned view's catalogue text matches what is on screen.

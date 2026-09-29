@@ -34,11 +34,11 @@ export interface VersionInfo { version: string; commit: string; builtAt: string 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
 export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
-export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; baggageUnreadable?: boolean; }
+export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; baggageUnreadable?: boolean; }
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
 // .knxproj (the UI falls back to the picked file's last-modified date).
-export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; }
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 // One com-object of an application program's COMPLETE declaration (not gated by
@@ -66,7 +66,9 @@ export interface GaComObj {
 }
 // Which devices use a group address, split into senders (transmit) and receivers
 // (write), plus the address's readable range path.
-export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; }
+// interfaceSenders: the individual addresses the project assigns as senders besides the linked
+// objects (a tunnelling channel); a secured address's receivers list them in their security table.
+export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; secured: boolean; interfaceSenders: { ia: string; source: "import" | "busforge" }[]; }
 
 export type TaskKind = "read" | "flash-params" | "flash-ga" | "assign-ia" | "download" | "secure-activate";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
@@ -235,6 +237,15 @@ export const api = {
   // Which devices use a group address (senders/receivers) + its readable path.
   gaDevices: (id: string, raw: number, lang?: string): Promise<GaDevicesView> =>
     fetch(`/api/projects/${id}/group-addresses/${raw}/devices${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<GaDevicesView>(r)),
+
+  addGaSender: (id: string, raw: number, ia: string): Promise<GaDevicesView> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}/senders`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ia }) }).then((r) => jsonOrThrow<GaDevicesView>(r)),
+  removeGaSender: (id: string, raw: number, ia: string): Promise<GaDevicesView> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}/senders/${encodeURIComponent(ia)}`, { method: "DELETE" }).then((r) => jsonOrThrow<GaDevicesView>(r)),
+  // A GroupValueWrite (value as hex) or GroupValueRead, handed to the interface over the project's
+  // monitor connection; the interface's confirmation is not read.
+  sendGroup: (id: string, ga: number, service: "write" | "read", value?: string): Promise<{ handedToInterface: true; secured: boolean }> =>
+    fetch(`/api/projects/${id}/bus/group`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ga, service, value }) }).then((r) => jsonOrThrow<{ handedToInterface: true; secured: boolean }>(r)),
 
   // --- group-address structure editing. All return the refreshed project. ---
   createGroupRange: (id: string, parentId: number | null, name: string, number: number): Promise<Project> =>

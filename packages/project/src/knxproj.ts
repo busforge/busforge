@@ -38,7 +38,22 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const xml0 = inner ? textOf(inner, "0.xml") : textOf(outer, "0.xml");
   const projectXml = (inner && tryTextOf(inner, "project.xml")) ?? tryTextOf(outer, "project.xml");
 
-  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer));
+  const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
+  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs));
+}
+
+// BusInterface Id -> AddressIndex, as the application programs declare them. It says which of a
+// device's addresses a bus interface (a tunnelling channel) uses; see parseSecureSenders.
+export function busInterfaceIndexes(programXmls: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const xml of programXmls) {
+    for (const m of xml.matchAll(/<BusInterface\b[^>]*>/g)) {
+      const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+      const index = /\bAddressIndex="(\d+)"/.exec(m[0])?.[1];
+      if (id && index !== undefined) out.set(id, Number(index));
+    }
+  }
+  return out;
 }
 
 // Map ProductRefId -> catalogue product name from the manufacturer Hardware.xml

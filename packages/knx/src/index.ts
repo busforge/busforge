@@ -11,7 +11,7 @@ export * from "./flash.ts";
 export * from "./grouptable-read.ts";
 export * from "./loadrunner.ts";
 export { isSecureApdu, openSecureGroupTpdu, type SecureGroupOpen, secureEncode, secureDecode, SCF, SCF_TOOL_DATA, SECURE_APDU_OVERHEAD, type SecureFields } from "./secure.ts";
-export { SecureSession } from "./secureSession.ts";
+export { SecureSession, toolSequenceNow } from "./secureSession.ts";
 export { decodeCertificate, encodeCertificate, type DeviceCertificate } from "./certificate.ts";
 export { activateSecureDevice, type ActivationDeps, type ActivationInput, type ActivationResult } from "./activation.ts";
 export { KnxError } from "./errors.ts";

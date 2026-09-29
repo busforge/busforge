@@ -16,7 +16,8 @@ import type { Telegram } from "../src/telegram.ts";
 // out during these tests so no socket is opened; the Bus assigns its own onClosed onto the instance
 // during connect().
 class FakeTransport implements KnxTransport {
-  readonly assignedIa = 0;
+  assignedIa = 0;
+  sent: Buffer[] = [];
   onCemi: KnxTransport["onCemi"] = null;
   onRawCemi: KnxTransport["onRawCemi"] = null;
   onClosed: KnxTransport["onClosed"] = null;
@@ -25,7 +26,7 @@ class FakeTransport implements KnxTransport {
   disconnectResult: Promise<void> = Promise.resolve();
   disconnectCalls = 0;
   async connect() { this.connectCalls++; await this.connectResult; }
-  async sendCemi() {}
+  async sendCemi(cemi: Buffer) { this.sent.push(Buffer.from(cemi)); }
   async disconnect() { this.disconnectCalls++; await this.disconnectResult; }
 }
 
@@ -88,6 +89,10 @@ describe("Bus liveness", () => {
 
 const { createState, handleApi } = await import("../src/app.ts");
 const { createProject, setProjectConnection } = await import("../src/db/projects.ts");
+const { putGroupKeys } = await import("../src/db/groupKeys.ts");
+const { putGroupSenders } = await import("../src/db/groupSenders.ts");
+const { createGroupAddress, createGroupRange } = await import("../src/db/groupedit.ts");
+const { openSecureGroupTpdu } = await import("@busforge/knx");
 const { createConnection } = await import("../src/db/connections.ts");
 
 for (const type of ["usb", "ip"] as const) {
@@ -309,3 +314,121 @@ describe("Bus: secured group telegrams", () => {
     await bus.disconnect();
   });
 });
+
+describe("sending group telegrams through the monitor connection", () => {
+  const key = Buffer.alloc(16, 0x5a);
+  async function setup(opts: { secured?: boolean; sender?: string } = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "bus-send-"));
+    const state = createState({ dbPath: ":memory:", dataDir: dir });
+    createProject(state.db, "p", "Test", 0);
+    createConnection(state.db, "c", conn, 0);
+    setProjectConnection(state.db, "p", "c");
+    const main = createGroupRange(state.db, "p", null, "M", 0);
+    const mid = createGroupRange(state.db, "p", main, "S", 0);
+    createGroupAddress(state.db, "p", mid, 1, "Switch", "1.001");
+    createGroupAddress(state.db, "p", mid, 2, "Temperature", "9.001");
+    createGroupAddress(state.db, "p", mid, 3, "Unknown", "");
+    if (opts.secured) putGroupKeys(state.db, "p", [{ raw: 1, key, source: "import" }, { raw: 2, key, source: "import" }], state.masterKey);
+    if (opts.sender) putGroupSenders(state.db, "p", [{ gaRaw: 1, ia: opts.sender, source: "import" }]);
+    const seen: Telegram[] = [];
+    state.bus.subscribe((t) => seen.push(t));
+    const send = async (body: unknown) => {
+      const res = (await handleApi(new Request("http://x/api/projects/p/bus/group", { method: "POST", body: JSON.stringify(body) }), state))!;
+      return { status: res.status, body: await res.json() as Record<string, unknown> };
+    };
+    const connect = async () => {
+      await handleApi(new Request("http://x/api/projects/p/bus/connect", { method: "POST" }), state);
+      const t = created.at(-1)!; t.assignedIa = 0x1164; return t;
+    };
+    const close = async () => { await state.bus.disconnect(); state.db.close(); rmSync(dir, { recursive: true, force: true }); };
+    return { state, seen, send, connect, close };
+  }
+  const tpduOf = (cemi: Buffer) => cemi.subarray(9);
+
+  test("refuses while the monitor is not connected", async () => {
+    const s = await setup();
+    expect(await s.send({ ga: 1, service: "write", value: "01" })).toMatchObject({ status: 409, body: { error: { code: "BUS_NOT_CONNECTED" } } });
+    await s.close();
+  });
+
+  test("a plain write goes out from the tunnel's address; the monitor shows only what the bus carried", async () => {
+    const s = await setup();
+    const t = await s.connect();
+    expect(await s.send({ ga: 1, service: "write", value: "01" })).toMatchObject({ status: 200, body: { handedToInterface: true, secured: false } });
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].readUInt16BE(4)).toBe(0x1164);
+    expect(tpduOf(t.sent[0]).toString("hex")).toBe("0081");
+    // The interface's confirmation is not read, so the telegram is not recorded as seen on the bus.
+    expect(s.seen).toEqual([]);
+    await s.close();
+  });
+
+  test("the value form follows the address's datapoint type", async () => {
+    const s = await setup();
+    const t = await s.connect();
+    await s.send({ ga: 2, service: "write", value: "0c1a" }); // 9.001: two octets after the APCI
+    await s.send({ ga: 2, service: "write", value: "20" });   // a 1-byte value to a non-switching type stays a byte
+    expect(t.sent.map((c) => tpduOf(c).toString("hex"))).toEqual(["00800c1a", "008020"]);
+    expect(await s.send({ ga: 1, service: "write", value: "40" })).toMatchObject({ status: 400, body: { error: { code: "GROUP_VALUE_INVALID" } } }); // 6 bits only
+    expect(await s.send({ ga: 3, service: "write", value: "01" })).toMatchObject({ status: 400, body: { error: { code: "GROUP_VALUE_AMBIGUOUS" } } });
+    await s.send({ ga: 3, service: "write", value: "0102" }); // longer than 6 bits: only one form
+    expect(tpduOf(t.sent.at(-1)!).toString("hex")).toBe("00800102");
+    await s.close();
+  });
+
+  test("an address that is not in the project, or not a number, is refused", async () => {
+    const s = await setup();
+    await s.connect();
+    expect(await s.send({ ga: 99, service: "read" })).toMatchObject({ status: 404, body: { error: { code: "GA_NOT_FOUND" } } });
+    expect(await s.send({ ga: "1", service: "read" })).toMatchObject({ status: 404, body: { error: { code: "GA_NOT_FOUND" } } });
+    expect(await s.send({ ga: true, service: "read" })).toMatchObject({ status: 404 });
+    await s.close();
+  });
+
+  test("a read goes out as GroupValueRead", async () => {
+    const s = await setup();
+    const t = await s.connect();
+    await s.send({ ga: 1, service: "read" });
+    expect(tpduOf(t.sent[0]).toString("hex")).toBe("0000");
+    await s.close();
+  });
+
+  test("a secured address is refused unless the tunnel's address is one of its senders", async () => {
+    const s = await setup({ secured: true, sender: "1.2.50" });
+    const t = await s.connect();
+    expect(await s.send({ ga: 1, service: "write", value: "01" })).toMatchObject({ status: 409, body: { error: { code: "SECURE_SENDER_NOT_LISTED" } } });
+    expect(t.sent).toHaveLength(0);
+    await s.close();
+  });
+
+  test("a secured write is encrypted with the address's key at a fresh sequence each time", async () => {
+    const s = await setup({ secured: true, sender: "1.1.100" });
+    const t = await s.connect();
+    await s.send({ ga: 1, service: "write", value: "01" });
+    await s.send({ ga: 1, service: "write", value: "00" });
+    const opened = t.sent.map((c) => openSecureGroupTpdu(0x1164, 1, tpduOf(c), key));
+    expect(opened.map((o) => o.state)).toEqual(["decrypted", "decrypted"]);
+    const [a, b] = opened as { apdu: Buffer; seq: bigint }[];
+    expect([a.apdu.toString("hex"), b.apdu.toString("hex")]).toEqual(["0081", "0080"]);
+    expect(b.seq).toBeGreaterThan(a.seq);
+    await s.close();
+  });
+
+  test("a secured value that does not fit a standard frame is refused, not sent oversized", async () => {
+    const s = await setup({ secured: true, sender: "1.1.100" });
+    const t = await s.connect();
+    putGroupSenders(s.state.db, "p", [{ gaRaw: 2, ia: "1.1.100", source: "import" }]);
+    expect(await s.send({ ga: 2, service: "write", value: "0c1a" })).toMatchObject({ status: 400, body: { error: { code: "SECURE_VALUE_TOO_LONG" } } });
+    expect(t.sent).toHaveLength(0);
+    await s.close();
+  });
+
+  test("a value that does not fit the address is refused", async () => {
+    const s = await setup();
+    await s.connect();
+    expect(await s.send({ ga: 1, service: "write", value: "zz" })).toMatchObject({ status: 400, body: { error: { code: "GROUP_VALUE_INVALID" } } });
+    expect(await s.send({ ga: 1, service: "flip" })).toMatchObject({ status: 400, body: { error: { code: "GROUP_SERVICE_INVALID" } } });
+    await s.close();
+  });
+});
+

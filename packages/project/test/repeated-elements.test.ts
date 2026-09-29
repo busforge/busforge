@@ -26,7 +26,7 @@ const twoLinesTwoRanges = `<?xml version="1.0"?>
             </DeviceInstance>
           </Line>
           <Line Id="L-2" Address="2" Name="Line 2">
-            <DeviceInstance Id="D-2" Address="22" Name="Dev 2" ProductRefId="M-0048_H-1_P-b" Hardware2ProgramRefId="M-0048_H-1_HP-b">
+            <DeviceInstance Id="D-2" Address="22" Name="Dev 2" ProductRefId="M-0048_H-1_P-b" Hardware2ProgramRefId="M-0048_H-1_HP-b" SerialNumber="AAECAwQF">
               <ParameterInstanceRefs>
                 <ParameterInstanceRef RefId="M-0048_A-1_P-9_R-9" Value="42"/>
               </ParameterInstanceRefs>
@@ -82,7 +82,7 @@ describe("a document whose path crosses a repeated element (an ARRAY, not an obj
 
   test("a secure device in the second line is still seen as secure", () => {
     expect(p.deviceSecurity).toEqual([
-      { deviceId: "D-2", toolKey: "dG9vbA==", serialNumber: "", sequenceNumber: "5" },
+      { deviceId: "D-2", toolKey: "dG9vbA==", serialNumber: "AAECAwQF", sequenceNumber: "5" },
     ]);
   });
 

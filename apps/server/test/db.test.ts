@@ -17,6 +17,7 @@ import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../src/db/importProject.ts";
 import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
+import { putGroupSenders, listGroupSenders, addGroupSender, removeGroupSender, sendersByGroup, nextSendSequence } from "../src/db/groupSenders.ts";
 import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
 import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
@@ -512,6 +513,66 @@ describe("project export", () => {
     expect(() => getGroupKeys(db, "p2", MK)).toThrow();
   });
 });
+
+describe("secured senders", () => {
+  test("stores, lists, adds and removes the senders of a group address", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    addGroupSender(db, "p1", 1, "1.2.50");
+    addGroupSender(db, "p1", 2, "1.1.100");
+    expect(listGroupSenders(db, "p1")).toEqual([
+      { gaRaw: 1, ia: "1.2.50", source: "busforge" }, { gaRaw: 1, ia: "1.1.100", source: "import" }, { gaRaw: 2, ia: "1.1.100", source: "busforge" },
+    ]);
+    expect(sendersByGroup(db, "p1")).toEqual(new Map([[1, ["1.2.50", "1.1.100"]], [2, ["1.1.100"]]]));
+    expect(removeGroupSender(db, "p1", 1, "1.2.50")).toBe(true);
+    expect(removeGroupSender(db, "p1", 1, "1.2.50")).toBe(false);
+    expect(sendersByGroup(db, "p1").get(1)).toEqual(["1.1.100"]);
+  });
+
+  test("refuses an address that is not an individual address", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    expect(() => addGroupSender(db, "p1", 1, "1/1/100")).toThrow(/individual address/);
+    expect(() => addGroupSender(db, "p1", 1, "1.1.256")).toThrow(/individual address/);
+    expect(() => addGroupSender(db, "p1", 70000, "1.1.1")).toThrow(/group address/);
+    expect(() => addGroupSender(db, "p1", 1, "0.0.0")).toThrow(/individual address/);
+  });
+
+  test("removing takes the same address written differently", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    addGroupSender(db, "p1", 1, "1.1.100");
+    expect(removeGroupSender(db, "p1", 1, "01.1.100")).toBe(true);
+  });
+
+  test("the send sequence never repeats and never falls behind the clock", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    expect(nextSendSequence(db, "p1", "1.1.100", 500n)).toBe(500n);
+    expect(nextSendSequence(db, "p1", "1.1.100", 400n)).toBe(501n); // clock went back: still ahead of the last
+    expect(nextSendSequence(db, "p1", "1.1.100", 900n)).toBe(900n);
+    expect(nextSendSequence(db, "p1", "1.1.101", 10n)).toBe(10n); // per sender
+  });
+
+  test("round-trips senders and send sequences through export/import", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    nextSendSequence(db, "p1", "1.1.100", 777n);
+    const ex = exportProject(db, "p1", 5000, MK_SENDERS)!;
+    expect(ex.groupSenders).toEqual([{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    expect(ex.sendSequences).toEqual([{ ia: "1.1.100", last: "777" }]);
+    importProjectExport(db, ex, "p2", 6000, MK_SENDERS);
+    expect(listGroupSenders(db, "p2")).toEqual([{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    expect(nextSendSequence(db, "p2", "1.1.100", 1n)).toBe(778n);
+    expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1, ia: "x", source: "import" }] })).toThrow(/groupSenders/);
+    expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1.5, ia: "1.1.1", source: "import" }] })).toThrow(/groupSenders/);
+    expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1, ia: "99.99.999", source: "import" }] })).toThrow(/groupSenders/);
+    expect(() => validateExport({ ...ex, sendSequences: [{ ia: "1.1.100", last: "281474976710656" }] })).toThrow(/sendSequences/);
+  });
+});
+const MK_SENDERS = Buffer.alloc(32, 9);
 
 describe("device security persistence", () => {
   const MK = Buffer.alloc(32, 3);

@@ -1,3 +1,4 @@
+import { putGroupSenders } from "../src/db/groupSenders.ts";
 import { test, expect, describe, mock, afterAll } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -658,6 +659,36 @@ describe("a Data Secure device: its table writes carry the security object", () 
       expect(seen.security?.groupKeys).toEqual(new Map([[1, groupKey]]));
     });
   }
+
+  test("the project's assigned senders and the addresses other devices use reach the profile", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    putGroupSenders(state.db, projectId, [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, 'other', 'O-1_R-1', 0, 9)").run(projectId);
+    let seen: { security?: { senders?: ReadonlyMap<number, readonly number[]>; linkedElsewhere?: ReadonlySet<number> } } = {};
+    gaFlashImpl = async (o) => { seen = o; return flashed(true); };
+    try { await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
+    finally { gaFlashImpl = realGaFlash; }
+    expect(seen.security?.senders).toEqual(new Map([[1, [0x1164]]]));
+    expect(seen.security?.linkedElsewhere).toEqual(new Set([9]));
+  });
+
+  test("a device without a tool key that is linked to a secured address is refused, not written plain", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, m0162);
+    putGroupKeys(state.db, projectId, [{ raw: 1, key: groupKey, source: "import" }], state.masterKey);
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'O-1_R-1', 0, 1)").run(projectId, deviceId);
+    let reached = false;
+    gaFlashImpl = async () => { reached = true; return flashed(true); };
+    downloadImpl = async () => { reached = true; return flashed(true); };
+    try {
+      for (const route of ["flash-ga?dry=1", "download?dry=1"]) {
+        const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+        expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_WITHOUT_DEVICE_KEY" } });
+      }
+    } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
+    expect(reached).toBe(false);
+  });
 
   test("a plain device is written without either", async () => {
     const state = freshState();

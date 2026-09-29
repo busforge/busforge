@@ -126,10 +126,14 @@ started until the capability it depends on is hardware-proven.
   (wrong key, missing key, a tampered or replayed answer) were each shown once on the Jung 400021SE
   by hand. The smoke framework provisions projects from the catalog, which carries no keys, so a
   secured spec needs a project imported with its keys; until then there are no evidence records.
-- **Sending secured group telegrams.** Busforge cannot send one a secure device accepts: the receiver
-  drops a sender missing from its security individual address table (PID 54, [findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)).
-  Needs a decision on entering the tool's address there. The monitor decrypts received ones (shown on
-  the Jung).
+- **Senders on a secured address shared by several devices.** Which devices ETS lists in a receiver's
+  PID 54 when more than one device is linked to a secured address is not shown (the bench has one
+  secure device on it); Busforge refuses such an address (`SECURE_SENDERS_UNPROVEN`). Needs an ETS
+  capture with two secure devices on one secured address (the GVS AMMA on the bench is secure-capable).
+- **Sending: confirmation, extended frames, a shared sender address.** The interface's L_Data.con is
+  not read, so a sent telegram is reported as handed to the interface, not as on the bus. Secured
+  values longer than 6 bits are refused (no extended frame). A sender address also used by another
+  tool is not coordinated with that tool's sequence.
 - **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
@@ -143,9 +147,9 @@ started until the capability it depends on is hardware-proven.
 - **Secure a group address Busforge creates.** Group keys arrive only with a project import, so an
   address created in Busforge is plain, and linking it to a secure device's object programs that
   object as plain.
-- **A plain device linked to a secured group address** is not refused. ETS keeps such a project
-  consistent, but an edit in Busforge can produce it; the plain device then sends and expects plain
-  telegrams on an address the secure devices only accept secured.
+- **A plain device linked to a secured group address** is refused for GA flash and full download
+  (`SECURE_GA_WITHOUT_DEVICE_KEY`). ETS keeps such a project; whether and how it programs that device
+  is not established.
 - **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
   store's `manual` and `provisioned` sources are currently unreachable.
 - **Individual-address assignment has no secure path.** It is a broadcast operation and cannot use

@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey } from "./model.ts";
+import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey, SecureSender } from "./model.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
@@ -52,7 +52,7 @@ export const manufacturerOf = (ref: string): number => {
   return m ? parseInt(m[1], 16) : 0;
 };
 
-export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map()): Project {
+export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const doc = p.parse(xml0) as XmlNode;
 
@@ -72,9 +72,12 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(doc, d.id, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
-  const deviceSecurity = devices.map((d) => parseDeviceSecurity(doc, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
+  const securities = devices.map((d) => parseDeviceSecurity(doc, d.id));
+  const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
+  const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
+  const { secureSenders, unresolvedSenders } = parseSecureSenders(doc, devices, busInterfaceIndex);
 
-  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, groupKeys, unresolvedLinks, malformedDevices };
+  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
 }
 
 // The project's group-address style, as a level count. ETS stores GroupAddressStyle on
@@ -102,18 +105,51 @@ function parseGroupAddressLevels(projectInfo: XmlNode | undefined, installation:
 // (present only once ETS secure-commissioned it); the 6-byte device serial used for the
 // Sync request is the DeviceInstance's own SerialNumber attribute. SequenceNumber here is
 // the group/data counter, kept for completeness; tool-access programming syncs its own.
-function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | undefined {
+//
+// ETS generates a tool key as soon as a secure device is added, before it has ever reached the
+// device; such a device has no SerialNumber yet, and without one no Sync can be run against it. It
+// is reported as "noSerial" (counted by the caller) instead of stored with a key nothing can use.
+function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | "noSerial" | undefined {
   const dev = findDeviceInstance(doc, deviceId);
   const sec = dev?.Security;
   // A non-secure device has no <Security> child; a stray Security="Off" attribute
   // parses to a string, not an object, so the ToolKey lookup safely yields nothing.
   if (!isNode(sec) || sec.ToolKey === undefined) return undefined;
+  if (!text(dev?.SerialNumber)) return "noSerial";
   return {
     deviceId,
     toolKey: text(sec.ToolKey),
     serialNumber: text(dev?.SerialNumber),
     sequenceNumber: text(sec.SequenceNumber),
   };
+}
+
+// Bus interfaces assigned to group addresses: <BusInterface RefId><Connectors><Connector
+// GroupAddressRefId> under a DeviceInstance. The interface's address is the device's own at
+// AddressIndex 0, otherwise its AdditionalAddresses entry at AddressIndex (1-based, in document
+// order, as ETS 6.4.1 lists a router's tunnelling channels). AddressIndex is declared by the
+// application program, so an interface whose program is not at hand is counted, not guessed.
+function parseSecureSenders(doc: XmlNode, devices: Device[], busInterfaceIndex: ReadonlyMap<string, number>): { secureSenders: SecureSender[]; unresolvedSenders: number } {
+  const gaIdToRaw = new Map<string, number>();
+  buildGaIdMap(doc, gaIdToRaw);
+  const secureSenders: SecureSender[] = [];
+  let unresolvedSenders = 0;
+  for (const d of devices) {
+    const dev = findDeviceInstance(doc, d.id);
+    const extra = kids(node(dev?.AdditionalAddresses)?.Address).map((a) => Number(attr(a.Address)));
+    const [area, line] = d.ia.split(".");
+    for (const bi of kids(node(dev?.BusInterfaces)?.BusInterface)) {
+      const refId = text(bi.RefId);
+      for (const c of kids(node(bi.Connectors)?.Connector)) {
+        const gaRaw = gaIdToRaw.get(text(c.GroupAddressRefId).split("_").pop()!);
+        const index = busInterfaceIndex.get(refId);
+        const address = index === 0 ? Number(d.ia.split(".")[2]) : index !== undefined ? extra.at(index - 1) : undefined;
+        if (gaRaw === undefined || address === undefined || !Number.isInteger(address)) { unresolvedSenders++; continue; }
+        secureSenders.push({ gaRaw, ia: `${area}.${line}.${address}`, deviceId: d.id, busInterfaceRefId: refId });
+      }
+    }
+  }
+  return { secureSenders, unresolvedSenders };
 }
 
 // Map the prefix-stripped GroupAddress id ("GA-189") to its 16-bit address, so

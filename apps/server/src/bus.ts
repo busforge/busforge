@@ -1,4 +1,4 @@
-import { isSecureApdu, openSecureGroupTpdu, type KnxTransport } from "@busforge/knx";
+import { isSecureApdu, openSecureGroupTpdu, cemiLDataGroup, type KnxTransport } from "@busforge/knx";
 import { decodeGroupTpdu, undecodedSecureTelegram, type Telegram } from "./telegram.ts";
 import { makeTransport } from "./transport.ts";
 import { ApiError } from "./errors.ts";
@@ -7,8 +7,9 @@ import type { Connection } from "./db/connections.ts";
 export type BusStatus = "disconnected" | "connecting" | "connected";
 
 // Owns the live KNXnet/IP tunnel and fans incoming group telegrams out to
-// subscribers (the DB writer and the WebSocket clients). Read-only: it never
-// sends to the bus. One active connection at a time, bound to a project.
+// subscribers (the DB writer and the WebSocket clients). It sends only the group
+// telegrams a user asks for (sendGroup), never management. One active connection
+// at a time, bound to a project.
 //
 // Secured group telegrams are opened with the active project's group keys. Replay is judged per
 // sender (a receiver keeps one sequence per sender for all its group traffic) against the last
@@ -119,6 +120,23 @@ export class Bus {
     if (last !== undefined && opened.seq <= last) return undecodedSecureTelegram(src, dst, "replay", this.now());
     this.lastSecure.set(src, opened.seq);
     return { ...decodeGroupTpdu(src, dst, opened.apdu, this.now()), security: "decrypted" };
+  }
+
+  // The individual address the monitor connection sends from (the tunnel's), for the project that
+  // owns it; refused when that project's monitor is not connected.
+  senderIa(projectId: string): number {
+    if (this.activeProjectId !== projectId || this.status !== "connected" || !this.tunnel) {
+      throw new ApiError("BUS_NOT_CONNECTED", "connect the bus monitor of this project first; group telegrams are sent over its connection", 409);
+    }
+    return this.tunnel.assignedIa;
+  }
+
+  // Hand a group telegram to the interface over the monitor connection. The interface's L_Data.con
+  // is not read, so this does not know the telegram reached the bus, and it is not recorded in the
+  // monitor as if it had: what the bus carried shows up there only as the devices' answers.
+  async sendGroup(projectId: string, dst: number, tpdu: Buffer): Promise<void> {
+    const src = this.senderIa(projectId);
+    await this.tunnel!.sendCemi(cemiLDataGroup(src, dst, tpdu));
   }
 
   disconnect(): Promise<void> {

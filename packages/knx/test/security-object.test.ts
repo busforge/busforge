@@ -16,6 +16,8 @@ const ETS = {
   groupKey: "01ce00110010350100010001" + KEY,
   complete: "01d4001100100502000000000000000000",
   unload: "01d4001100100504000000000000000000",
+  // ETS 6.4.1, 2026-09-29, after 1.1.100 (a router's tunnelling channel) was assigned to 0/0/1.
+  sender1164: "01ce00110010360100011164000000000000",
 };
 
 // A security object that answers each extended service the way the Jung does: a write-con with
@@ -62,7 +64,7 @@ describe("the security object load, against ETS's secured download", () => {
   test("the bracket sends ETS's events and table writes, and the flags land element for element", async () => {
     const tun = new SecurityObjectDevice();
     const dev = new KnxDevice(tun, "1.1.204");
-    await runLoadPlan(dev, [securityUnload, ...planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS })]);
+    await runLoadPlan(dev, [securityUnload, ...planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.alloc(0) })]);
     const s = tun.sent;
     expect(s.slice(0, 4)).toEqual([ETS.unload, ETS.load, ETS.clearIaTable, ETS.groupKey]);
     expect(s[s.length - 1]).toBe(ETS.complete);
@@ -77,16 +79,27 @@ describe("the security object load, against ETS's secured download", () => {
     expect(got.equals(FLAGS)).toBe(true);
   });
 
+  test("a listed sender is written after the table is cleared, frame for frame as ETS does it", async () => {
+    const tun = new SecurityObjectDevice();
+    await runLoadPlan(new KnxDevice(tun, "1.1.204"), planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.from("1164000000000000", "hex") }));
+    expect(tun.sent.slice(0, 4)).toEqual([ETS.load, ETS.clearIaTable, ETS.sender1164, ETS.groupKey]);
+  });
+
+  test("sender entries split at whole 8-byte elements within the secured budget", () => {
+    const runs = elementRuns(1, 8, Buffer.alloc(8 * 5), transferChunks(233, true).propWrite);
+    expect(runs.map((r) => r.count)).toEqual([2, 2, 1]);
+  });
+
   test("a load event that does not reach its state stops the bracket", async () => {
     const tun = new SecurityObjectDevice({ 1: 3, 2: 1, 4: 0 }); // LOAD leaves the object in ERROR
-    const err = await runLoadPlan(new KnxDevice(tun, "1.1.204"), planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: FLAGS })).catch((e: unknown) => e);
+    const err = await runLoadPlan(new KnxDevice(tun, "1.1.204"), planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: FLAGS, senders: Buffer.alloc(0) })).catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("LOAD_STATE_UNEXPECTED");
     expect(tun.sent).toEqual([ETS.load]);
   });
 });
 
 describe("where the security object sits in a System B plan", () => {
-  const sec = { groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS };
+  const sec = { groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.alloc(0) };
   const ops = (plan: { op: string; event?: number; lsm?: number }[]) => plan.map((st) => st.op === "securityLsm" ? `sec${st.event}` : st.lsm !== undefined ? `${st.op}${st.lsm}` : st.op);
 
   test("full download: unloaded with the other objects, loaded after every memory write and before the app id stamp", () => {

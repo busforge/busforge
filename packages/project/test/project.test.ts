@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../src/zip.ts";
 import { parseProject } from "../src/parse.ts";
-import { loadKnxproj, deriveWinzipPassword, extractAppPrograms, appProgramId } from "../src/knxproj.ts";
+import { loadKnxproj, deriveWinzipPassword, extractAppPrograms, appProgramId, busInterfaceIndexes } from "../src/knxproj.ts";
 
 const fix = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n));
 const xml0 = readFileSync(join(import.meta.dir, "fixtures", "sample-0.xml"), "utf8");
@@ -152,6 +152,16 @@ describe("0.xml parser", () => {
     expect(Buffer.from(p.deviceSecurity[0].serialNumber, "base64")).toHaveLength(6);
   });
 
+  test("a secure device ETS never commissioned (a tool key, no serial) is counted, not imported with a key it cannot use", () => {
+    const secured = xml0.replace(
+      'Hardware2ProgramRefId="M-0048_H-1_HP-1">',
+      'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" />',
+    );
+    const p = parseProject(secured, undefined, "fallback");
+    expect(p.deviceSecurity).toEqual([]);
+    expect(p.secureDevicesWithoutSerial).toBe(1);
+  });
+
   test("leaves deviceSecurity empty for a project with no secure devices", () => {
     expect(parseProject(xml0, undefined, "fallback").deviceSecurity).toEqual([]);
   });
@@ -167,6 +177,48 @@ describe("0.xml parser", () => {
     // The address model never carries the key to a client.
     expect(JSON.stringify(p.groupAddresses)).not.toContain("EBESExQV");
     expect(parseProject(xml0, undefined, "fallback").groupKeys).toEqual([]);
+  });
+});
+
+describe("secured senders (a bus interface assigned to a group address)", () => {
+  // The shape ETS 6.4.1 writes when a tunnelling channel of an IP router is made a sender of a
+  // secured address (bench export 2026-09-29): the connector sits on the device's BusInterface, and
+  // the channel's address is the device's AdditionalAddresses entry at the BusInterface's AddressIndex.
+  const router = `<DeviceInstance Id="P-TEST-0_DI-7" Address="0" ProductRefId="M-0083_H-9_P-9" Hardware2ProgramRefId="M-0083_H-9_HP-9">
+                  <AdditionalAddresses><Address Address="100" Name="" /><Address Address="254" Name="" /></AdditionalAddresses>
+                  <BusInterfaces>
+                    <BusInterface RefId="M-0083_A-9_BI-1" Password="x"><Connectors><Connector GroupAddressRefId="P-TEST-0_GA-2" /></Connectors></BusInterface>
+                    <BusInterface RefId="M-0083_A-9_BI-2" Password="x" />
+                  </BusInterfaces>
+                </DeviceInstance>`;
+  const withRouter = xml0.replace("</Segment>", `${router}</Segment>`);
+
+  test("resolves the connector to the channel's individual address and the group address", () => {
+    const p = parseProject(withRouter, undefined, "fallback", new Map(), new Map([["M-0083_A-9_BI-1", 1], ["M-0083_A-9_BI-2", 2]]));
+    expect(p.secureSenders).toEqual([{ gaRaw: 2, ia: "1.1.100", deviceId: "P-TEST-0_DI-7", busInterfaceRefId: "M-0083_A-9_BI-1" }]);
+    expect(p.unresolvedSenders).toBe(0);
+  });
+
+  test("a bus interface whose address index is unknown is counted, never guessed", () => {
+    const p = parseProject(withRouter, undefined, "fallback");
+    expect(p.secureSenders).toEqual([]);
+    expect(p.unresolvedSenders).toBe(1);
+  });
+
+  test("address index 0 is the device's own address", () => {
+    const p = parseProject(withRouter, undefined, "fallback", new Map(), new Map([["M-0083_A-9_BI-1", 0]]));
+    expect(p.secureSenders.map((s) => s.ia)).toEqual(["1.1.0"]);
+  });
+
+  test("a project without bus interfaces has no senders", () => {
+    const p = parseProject(xml0, undefined, "fallback");
+    expect(p.secureSenders).toEqual([]);
+    expect(p.unresolvedSenders).toBe(0);
+  });
+
+  test("the address index comes from the application's BusInterface declaration", () => {
+    const app = `<BusInterfaces><BusInterface Id="M-0083_A-9_BI-1" AddressIndex="1" AccessType="Tunneling" /><BusInterface Id="M-0083_A-9_BI-2" AddressIndex="2" /></BusInterfaces>`;
+    expect(busInterfaceIndexes([app])).toEqual(new Map([["M-0083_A-9_BI-1", 1], ["M-0083_A-9_BI-2", 2]]));
   });
 });
 

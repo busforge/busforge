@@ -11,6 +11,7 @@ import { exportProject } from "../db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
+import { putGroupSenders } from "../db/groupSenders.ts";
 import { putDeviceSecurity, countOwnToolKeys } from "../db/deviceSecurity.ts";
 import { putGroupKeys } from "../db/groupKeys.ts";
 import { resolveAppXml, importGaps } from "../deviceservice.ts";
@@ -87,6 +88,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       if (project.groupKeys.length) {
         putGroupKeys(db, id, project.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: "import" as const })), state.masterKey);
       }
+      if (project.secureSenders.length) putGroupSenders(db, id, project.secureSenders.map((s) => ({ gaRaw: s.gaRaw, ia: s.ia, source: "import" as const })));
     })();
     // Surface what did NOT fully import: devices whose application program was not in
     // the archive (they import as un-configurable husks) and group-address links that

@@ -17,3 +17,8 @@ test("a secured telegram that was not decrypted shows its state, never a decoded
 test("a telegram of unknown service shows its raw octets, not a DPT value (older secured rows have no state)", () => {
   expect(telegramValue({ ...base, kind: "Unknown", raw: "10002446cfef4ac085" }, "1.001")).toEqual({ value: "0x10002446cfef4ac085" });
 });
+
+test("a GroupValueRead carries no value and shows none", () => {
+  expect(telegramValue({ ...base, kind: "GroupValueRead", raw: "00" }, "1.001")).toEqual({ value: "" });
+  expect(telegramValue({ ...base, kind: "GroupValueRead", raw: "00", security: "decrypted" }, "1.001")).toEqual({ value: "" });
+});

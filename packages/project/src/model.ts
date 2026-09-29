@@ -51,6 +51,11 @@ export interface DeviceSecurity { deviceId: string; toolKey: string; serialNumbe
 // A Data Secure group address's key (base64, 16 bytes), from its <GroupAddress Key> attribute.
 export interface GroupKey { raw: number; key: string; }
 
+// An individual address the project lets send on a group address outside the devices' own objects:
+// a bus interface (a tunnelling channel of an IP interface or router) assigned to the address. For a
+// secured address this is who a receiving device lists in its security individual address table.
+export interface SecureSender { gaRaw: number; ia: string; deviceId: string; busInterfaceRefId: string; }
+
 export interface TopologyLine {
   address: number;
   name: string;
@@ -116,6 +121,9 @@ export interface Project {
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
   deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
   groupKeys: GroupKey[]; // Data-Secure group keys from 0.xml (only secured group addresses)
+  secureSenders: SecureSender[]; // bus interfaces assigned to group addresses (0.xml BusInterface Connectors)
+  unresolvedSenders: number;      // such assignments whose interface address could not be resolved (surfaced, never guessed)
+  secureDevicesWithoutSerial: number; // secure devices ETS holds a tool key for but never commissioned (no serial): imported without it
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
 }

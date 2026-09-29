@@ -584,3 +584,54 @@ in the device's PID 54. Observing needs no table, a monitor only needs the group
 decryption can be shown on the bus only by a telegram the device sends by itself (here, its contact
 input).
 
+
+## 21. The Jung ignores a Sync request that comes less than a second after the previous one
+
+A re-download of the ETS-secured Jung 400021SE from ETS 6.4.1 failed every time on the bench
+(2026-09-29, four attempts: two partial, two full application downloads, with and without an added
+secured sender). The decrypted capture was the same each time: a Sync answered, a secured descriptor
+read and a secured serial read answered, then a second S-A_Sync_Req that the device never answered,
+after which ETS gave up (its later attempts use another key and its own sequence, which the device
+also ignores). No write left ETS; the device stayed as it was. The first commissioning (ticket 28)
+worked because it needs only one Sync.
+
+A replica of ETS's frames from a script (same connectionless secured services, same control bytes,
+the same plain reads in between, direct to the bridge and through the logging proxy) was answered
+every time, until it also matched ETS's **pace**. Measured with the second Sync.req sent a fixed time
+after the first (each gap run at least twice): 800 and 900 ms no answer, 1000, 1200, 1500 ms and
+longer answered. ETS 6 sends its second Sync about 0.8 s after the first, just inside the window.
+
+So the Jung drops a Sync.req that arrives within about a second of the previous one; the bridge, the
+proxy, the tool key, the device's sequence state and the secured-sender assignment are not the cause
+(an earlier note here blamed the re-download path and the bench bridge; both were wrong). Whether
+ETS with a slower interface stays outside the window is not known. On the bench, the capture proxy
+now holds back a Sync.req until 1.2 s after the last one, and ETS can download the device again.
+
+Busforge runs one Sync per session, and its activation's second Sync (under the new key) follows
+several writes, so it has not met this; any path that opens two secure sessions to the same device
+back to back must keep the gap.
+
+## 22. How ETS loads a secured sender into a receiver's PID 54, and what it buys
+
+With the Sync spacing in place (§21), ETS 6.4.1 downloaded the Jung 400021SE after an MDT IP Router
+Secure's tunnelling channel (set to 1.1.100) had been made a sender of the secured 0/0/1 (drag the
+address onto the channel in Topology). The partial download completed (2026-09-29, capture
+`ets-pid54-sender-reference.log` on the bench, decrypted with the project's tool key). Its security
+object bracket, in order (A_PropertyExtValue_WriteCon to object type 17, instance 1):
+
+| Write | Bytes after the object/PID header | Meaning |
+|---|---|---|
+| PID 54, start 0, 1 element | `0000` | clear the table (element 0 is the count) |
+| PID 54, start 1, 1 element | `1164 000000000000` | entry 1: sender 1.1.100, last sequence 0 |
+| PID 53, start 1, 1 element | `0001` + 16-byte key | key of address-table index 1 |
+| PID 61, start 1 | one flag per object, 18 elements per write | as in the first commissioning |
+
+So a PID 54 entry is 8 bytes, the sender's individual address then its last accepted sequence, and
+ETS starts a newly listed sender at sequence 0 (any first telegram is fresh). The device confirmed each
+write with a count of 1. The Jung itself, the only other device on 0/0/1 and its sender, is not listed
+in its own table.
+
+Effect, shown right after: a secured GroupValueRead on 0/0/1 from 1.1.100 (group key, SCF 0x10) now
+draws a secured GroupValueResponse from the Jung (value 0, contact open), where before the download
+the same frame was ignored (§20). With several senders the order is not shown here (one entry);
+thelsing/knx looks entries up by binary search, so ascending by address is the safe order.

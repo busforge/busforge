@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, Lock, Pause, Play, Trash2 } from "lucide-react";
+import { ArrowDownUp, Lock, Pause, Play, Send, Trash2 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { type GroupRangeNode, type Telegram } from "../api.ts";
-import { useProject, useBusStatus, useTelegrams } from "../queries.ts";
+import { useProject, useBusStatus, useTelegrams, useSendGroup } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
@@ -11,11 +11,12 @@ import { GaLabel } from "@/components/GaLabel.tsx";
 import { GaPill } from "@/components/GaPill.tsx";
 import { cn } from "@/lib/utils";
 import { telegramValue } from "@/lib/telegramValue.ts";
+import { errMsg } from "@/lib/apiError";
 
-interface GaInfo { name: string; dpt: string; }
+interface GaInfo { name: string; dpt: string; address: string; }
 function indexGas(ranges: GroupRangeNode[], into: Map<number, GaInfo>) {
   for (const r of ranges) {
-    for (const g of r.addresses) into.set(g.raw, { name: g.name, dpt: g.dpt });
+    for (const g of r.addresses) into.set(g.raw, { name: g.name, dpt: g.dpt, address: g.address });
     indexGas(r.children, into);
   }
 }
@@ -122,6 +123,8 @@ export function MonitorView() {
         </div>
       </div>
 
+      {status === "connected" && <SendPanel projectId={projectId} gas={gaIndex} />}
+
       <Card className="overflow-hidden py-0">
         <div ref={listRef} className="max-h-[65vh] overflow-y-auto">
           {/* Table on wide screens. */}
@@ -184,3 +187,36 @@ export function MonitorView() {
     </div>
   );
 }
+
+// Send a GroupValueWrite or GroupValueRead over the monitor's connection. The value is raw hex (for a
+// switch, 01 = on, 00 = off); a secured address is encrypted by the server, which refuses when this
+// connection's address is not one of the address's senders. The telegram is handed to the interface;
+// it appears in the table only through what the devices answer.
+function SendPanel({ projectId, gas }: { projectId: string; gas: Map<number, GaInfo> }) {
+  const { t } = useTranslation();
+  const options = useMemo(() => [...gas.entries()].sort(([a], [b]) => a - b), [gas]);
+  const [ga, setGa] = useState<number | null>(null);
+  const [value, setValue] = useState("01");
+  const send = useSendGroup(projectId);
+  const target = ga ?? options[0]?.[0] ?? null;
+  if (target === null) return null;
+  const go = (service: "write" | "read") => send.mutate({ ga: target, service, value: service === "write" ? value.trim() : undefined });
+  return (
+    <Card className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="monitor-send">
+      <Send className="size-3.5 text-muted-foreground" />
+      <select value={target} onChange={(e) => setGa(Number(e.target.value))} className="h-8 min-w-0 max-w-72 rounded-md border bg-background px-2 text-xs" aria-label={t("monitor.sendGa")} data-testid="monitor-send-ga">
+        {options.map(([raw, g]) => <option key={raw} value={raw}>{g.address} {g.name}</option>)}
+      </select>
+      <input value={value} onChange={(e) => setValue(e.target.value)} className="h-8 w-24 rounded-md border bg-background px-2 font-mono text-xs" aria-label={t("monitor.sendValue")} placeholder="01" data-testid="monitor-send-value" />
+      <Button size="sm" variant="outline" onClick={() => go("write")} disabled={send.isPending} data-testid="monitor-send-write">{t("monitor.sendWrite")}</Button>
+      <Button size="sm" variant="outline" onClick={() => go("read")} disabled={send.isPending} data-testid="monitor-send-read">{t("monitor.sendRead")}</Button>
+      {send.error && <span className="text-xs text-destructive" data-testid="monitor-send-error">{errMsg(t, send.error)}</span>}
+      {send.data && !send.error && (
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" data-testid="monitor-send-done">
+          {send.data.secured && <Lock className="size-3" />} {t(send.data.secured ? "monitor.handedSecured" : "monitor.handed")}
+        </span>
+      )}
+    </Card>
+  );
+}
+

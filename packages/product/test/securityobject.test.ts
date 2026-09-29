@@ -42,3 +42,34 @@ describe("the security object a device's links imply", () => {
     expect(() => buildSecurityObject([{ comObjNum: 3, gaRaws: [1] }], 2, new Map([[1, K1]]))).toThrow(/outside/);
   });
 });
+
+describe("the security individual address table (PID 54) a device's links imply", () => {
+  const JUNG = 0x11cc, TUNNEL = 0x1164;
+  const none = { byGa: new Map<number, number[]>(), ownIa: JUNG, linkedElsewhere: new Set<number>() };
+
+  test("the ETS reference: 1.1.100 assigned to 0/0/1, one entry, address then a zero sequence", () => {
+    const t = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, byGa: new Map([[1, [TUNNEL]]]) });
+    expect(t.senders.toString("hex")).toBe("1164" + "000000000000");
+  });
+
+  test("the senders of every secured address the device uses, once each, ascending, never itself", () => {
+    const byGa = new Map([[1, [0x1205, TUNNEL]], [5, [TUNNEL, JUNG]], [7, [0x1101]]]);
+    const t = buildSecurityObject([{ comObjNum: 1, gaRaws: [1] }, { comObjNum: 2, gaRaws: [5] }, { comObjNum: 3, gaRaws: [7] }], 3, new Map([[1, K1], [5, K5]]), { ...none, byGa });
+    // 7 is plain: its sender is not listed. JUNG is the device itself.
+    expect(t.senders.toString("hex")).toBe("1164000000000000" + "1205000000000000");
+  });
+
+  test("no senders is an empty table, as ETS loads it for a device alone on its secured address", () => {
+    const t = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), none);
+    expect(t.senders).toHaveLength(0);
+    expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]])).senders).toHaveLength(0);
+  });
+
+  test("a secured address another device is linked to is refused: which of them ETS lists is not known", () => {
+    expect(() => buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, linkedElsewhere: new Set([1]) }))
+      .toThrow(/another device/);
+    // A plain address shared with another device is none of the table's business.
+    expect(() => buildSecurityObject([{ comObjNum: 2, gaRaws: [7] }], 3, new Map([[1, K1]]), { ...none, linkedElsewhere: new Set([7]) })).not.toThrow();
+  });
+});
+

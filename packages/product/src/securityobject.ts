@@ -1,4 +1,4 @@
-import { GROUP_KEY_ENTRY, type SecurityObjectTables } from "@busforge/knx";
+import { GROUP_KEY_ENTRY, SENDER_ENTRY, type SecurityObjectTables } from "@busforge/knx";
 import type { ComObjectLink } from "./grouptables.ts";
 import { ProductError } from "./errors.ts";
 
@@ -19,7 +19,18 @@ export const GO_SECURED = 0x03;
 //
 // An object linked to both secured and plain addresses has no single flag that is right for both,
 // so it is refused rather than given one.
-export function buildSecurityObject(links: ComObjectLink[], comObjCount: number, groupKeys: ReadonlyMap<number, Buffer>): SecurityObjectTables {
+//
+// The security individual address table lists who may send the device secured group telegrams:
+// the senders the project assigns to each secured address it uses (a tunnelling channel, as ETS
+// 6.4.1 loads it: the address, then a last sequence of 0), once each, ascending (thelsing/knx looks
+// entries up by binary search), never the device itself. Whether ETS also lists other DEVICES on a
+// shared secured address is not shown, so a secured address another device is linked to is refused.
+export interface SecuritySenders {
+  byGa: ReadonlyMap<number, readonly number[]>; // group address -> assigned sender individual addresses
+  ownIa: number;
+  linkedElsewhere: ReadonlySet<number>;         // group addresses another device of the project is linked to
+}
+export function buildSecurityObject(links: ComObjectLink[], comObjCount: number, groupKeys: ReadonlyMap<number, Buffer>, senders?: SecuritySenders): SecurityObjectTables {
   const goFlags = Buffer.alloc(comObjCount);
   for (const l of links) {
     const secured = l.gaRaws.filter((g) => groupKeys.has(g));
@@ -42,5 +53,14 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
     groupKeyTable.writeUInt16BE(index, i * GROUP_KEY_ENTRY);
     key.copy(groupKeyTable, i * GROUP_KEY_ENTRY + 2);
   });
-  return { groupKeys: groupKeyTable, goFlags };
+  const listed = new Set<number>();
+  for (const { g } of secured) {
+    if (senders?.linkedElsewhere.has(g)) {
+      throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is also linked to another device; which of its senders a receiver must list is not established, so its security object is not loaded`);
+    }
+    for (const ia of senders?.byGa.get(g) ?? []) if (ia !== senders!.ownIa) listed.add(ia);
+  }
+  const senderTable = Buffer.alloc(listed.size * SENDER_ENTRY);
+  [...listed].sort((a, b) => a - b).forEach((ia, i) => senderTable.writeUInt16BE(ia, i * SENDER_ENTRY));
+  return { groupKeys: groupKeyTable, goFlags, senders: senderTable };
 }

@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
+import { iaToNum, numToGa } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
 import { getDeviceSecurity, isSecureDevice } from "./db/deviceSecurity.ts";
+import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupSenders.ts";
 import { getGroupKeys } from "./db/groupKeys.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
 import { resolveDcaModule } from "./dca.ts";
@@ -31,10 +33,24 @@ export function secureCredsFor(state: AppState, projectId: string, deviceId: str
 }
 
 // What a write of a device's group tables needs when the device runs Data Secure: the session
-// credentials, and the project's group keys its security object is loaded with. Empty otherwise.
+// credentials, the project's group keys its security object is loaded with, the senders the project
+// assigns to each group address, and which addresses other devices of the project are linked to.
+// Empty otherwise.
 export function secureTablesFor(state: AppState, projectId: string, deviceId: string): { secure?: SecureCreds; security?: SecureTablesCtx } {
   const secure = secureCredsFor(state, projectId, deviceId);
-  return secure ? { secure, security: { groupKeys: getGroupKeys(state.db, projectId, state.masterKey) } } : {};
+  if (!secure) {
+    // Without a tool key the tables would go out plain, and a secured address would reach the device
+    // with no key and no security flag: it would talk plaintext where its peers expect security.
+    const keys = getGroupKeys(state.db, projectId, state.masterKey);
+    const secured = [...getDeviceLinks(state.db, projectId, deviceId).values()].flat().find((g) => keys.has(g));
+    if (secured !== undefined) {
+      throw new ApiError("SECURE_GA_WITHOUT_DEVICE_KEY", `this device is linked to the secured group address ${numToGa(secured)} but the project holds no tool key for it (not a secure device, or one ETS never commissioned); its tables are not written plain`, 409);
+    }
+    return {};
+  }
+  const senders = new Map([...sendersByGroup(state.db, projectId)].map(([ga, ias]) => [ga, ias.map(iaToNum)]));
+  const linkedElsewhere = new Set((state.db.query("SELECT DISTINCT ga_raw AS g FROM device_links WHERE project_id = ? AND device_id <> ?").all(projectId, deviceId) as { g: number }[]).map((r) => r.g));
+  return { secure, security: { groupKeys: getGroupKeys(state.db, projectId, state.masterKey), senders, linkedElsewhere } };
 }
 
 // Resolve a device's application-program XML: from the shared catalog, falling
@@ -56,12 +72,14 @@ export function resolveAppXml(state: AppState, projectId: string, appRef: string
 // only success signal: devices whose application program was missing from the archive
 // (they import but cannot be opened, configured, or flashed), group-address link tokens
 // that referenced an address not in the tree (silently dropped during parse), and
-// DeviceInstances the parser dropped as unkeyable/unaddressable (missing Id or address).
-export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number } {
+// DeviceInstances the parser dropped as unkeyable/unaddressable (missing Id or address), bus
+// interfaces assigned to a group address whose own address could not be resolved, and secure devices
+// ETS never commissioned, imported without their tool key.
+export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number; unresolvedSenders: number; secureDevicesWithoutSerial: number } {
   const devicesWithoutProgram = project.devices
     .filter((d) => !programs.has(appProgramId(d.appRef)))
     .map((d) => ({ ia: d.ia, name: d.name }));
-  return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks, malformedDevices: project.malformedDevices };
+  return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks, malformedDevices: project.malformedDevices, unresolvedSenders: project.unresolvedSenders, secureDevicesWithoutSerial: project.secureDevicesWithoutSerial };
 }
 
 // Load and cache a device's parsed application program from the catalog.
@@ -227,6 +245,10 @@ export interface GaDevicesView {
   address: string; name: string; dpt: string; path: string[];
   senders: GaComObj[];
   receivers: GaComObj[];
+  // Whether the project holds a Data Secure key for the address, and the individual addresses it
+  // assigns as senders besides the linked objects (bus interfaces; groupSenders.ts).
+  secured: boolean;
+  interfaceSenders: { ia: string; source: SenderSource }[];
 }
 
 // A device's com-objects keyed by their stored (stripped) ref id, carrying the
@@ -291,7 +313,9 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
     }
   }
   const byIa = (a: GaComObj, b: GaComObj) => a.ia.localeCompare(b.ia, undefined, { numeric: true });
-  return { address: meta.address, name: meta.name, dpt: meta.dpt, path: meta.path, senders: senders.sort(byIa), receivers: receivers.sort(byIa) } satisfies GaDevicesView;
+  const secured = getGroupKeys(db, projectId, state.masterKey).has(raw);
+  const interfaceSenders = listGroupSenders(db, projectId).filter((s) => s.gaRaw === raw).map(({ ia, source }) => ({ ia, source }));
+  return { address: meta.address, name: meta.name, dpt: meta.dpt, path: meta.path, senders: senders.sort(byIa), receivers: receivers.sort(byIa), secured, interfaceSenders } satisfies GaDevicesView;
 }
 
 // Choose which stored com-object links to program into the device's association

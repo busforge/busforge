@@ -232,7 +232,7 @@ Busforge does the same (`planSecurityObjectLoad` in `packages/knx/src/flash.ts`,
 | Property | What is written |
 |---|---|
 | PID 5 | the load state, driven with `A_FunctionPropertyExtCommand` (unload with the other objects, then load and load completed after all memory) |
-| PID 54 | element 0 (the count of the individual-address table) set to 0 |
+| PID 54 | the security individual address table: element 0 (its count) set to 0, then from element 1 one 8-byte entry per assigned sender (see [Senders](#senders-of-a-secured-group-address)), its individual address then a last sequence of 0, ascending |
 | PID 53 | the group key table: one 18-byte entry per secured address the device is linked to, the address's 1-based position in the device's address table then the key, ascending |
 | PID 61 | one flag byte per group object from object 1: `0x03` (authentication and confidentiality) for an object on a secured address, `0x00` otherwise |
 
@@ -248,9 +248,58 @@ the device through the session and verified tables, parameter CRC and security o
 restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
 a device in secure mode ignores. A GA flash that linked a second object to the secured address set
 its flag on the device and verified; its revert restored ETS's load. **Not shown:** the secured group
-address working on the bus. The Jung's own telegram on 0/0/1 has since been decrypted by the monitor (see
-[Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)), which shows the
-key Busforge's download left in place works; Busforge cannot send one the Jung accepts.
+address working on the bus. It has since been shown both ways: the Jung's own telegram on 0/0/1
+decrypted by the monitor (see [Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)),
+and a secured read Busforge sent answered by the Jung (see [Senders](#senders-of-a-secured-group-address)).
+
+### Senders of a secured group address
+
+A receiver drops a secured group telegram from a sender its security individual address table (PID
+54) does not list ([findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)).
+ETS lists the individual addresses assigned as senders of a secured address the device is linked
+to: in ETS 6 a tunnelling channel of an IP interface or router, with the address dragged onto it in
+the topology. The project file records that as `<BusInterface RefId><Connectors><Connector
+GroupAddressRefId>` under the interface's DeviceInstance; the channel's address is the device's own at
+the BusInterface's `AddressIndex` 0 (declared by its application program), otherwise its
+`AdditionalAddresses` entry at that index.
+
+Busforge imports these assignments from the `.knxproj` and lets the group-address overlay add and
+remove them (`group_senders`, `apps/server/src/db/groupSenders.ts`). A secure device's GA flash and
+full download load them into PID 54, once each, ascending, never the device itself (shown for the GA
+flash; the full download builds the same object, but has not written a non-empty table on hardware).
+A sender's sequence in the table is the device's own receive state and is not compared by the dry run
+or the verify. An assignment whose interface address cannot be resolved is counted in the import
+result, never guessed.
+
+Refused rather than guessed:
+
+- **A secured address another device of the project is linked to** (`SECURE_SENDERS_UNPROVEN`):
+  whether ETS lists the other devices as senders is not established. Every stored link counts,
+  including the kept link of an object its parameters currently hide.
+- **A device without a tool key linked to a secured address** (`SECURE_GA_WITHOUT_DEVICE_KEY`): a
+  plain device, or a secure one ETS never commissioned (imported without its key, counted in the
+  import result); writing its tables would put the address on it without key or flag.
+
+Sending: the monitor's send panel (and `POST /api/projects/:id/bus/group`) hands a GroupValueWrite or
+GroupValueRead to the interface over the monitor connection. The interface's confirmation is not
+read, so the telegram is not recorded in the monitor as if the bus had carried it; the devices'
+answers are. The value's form follows the address's datapoint type (DPT 1-3 in the six APCI bits,
+others after it; without a type, a value that fits both forms is refused). On a secured address it
+is encrypted with the address's key (S-A_Data, SCF 0x10) at a sequence persisted per sender
+(`send_sequences`, never below the clock-derived tool-sequence start), and only if the connection's
+own address is one of the address's senders (`SECURE_SENDER_NOT_LISTED` otherwise: the device would
+drop it silently). A secured telegram longer than a standard frame (anything but a 6-bit value) is
+refused (`SECURE_VALUE_TOO_LONG`): extended frames are not implemented on this path. Another tool
+sending from the same address keeps its own counter; if that counter is ahead of Busforge's, the
+receivers drop Busforge's telegrams without a word.
+
+**Shown on the Jung, 2026-09-29:** ETS 6.4.1 with 1.1.100 assigned to 0/0/1 loaded PID 54 with the
+single entry `1164 000000000000` ([findings §22](findings.md#22-how-ets-loads-a-secured-sender-into-a-receivers-pid-54-and-what-it-buys));
+Busforge imported that project and its GA flash dry run found the Jung `unchanged`. With the sender
+removed in Busforge, a GA flash emptied PID 54 (verified), the Jung then ignored a secured read from
+1.1.100, and Busforge refused to send one. Added back and flashed (verified, dry run `unchanged` against
+ETS's load again), a secured GroupValueRead sent from the monitor's send panel drew the Jung's secured
+GroupValueResponse, both decrypted in the monitor.
 
 **Refusals, shown on the same device:** a wrong tool key gets no answer to the Sync
 (`SECURE_SYNC_NO_RESPONSE`); a plain session gets the descriptor `0xFFFF`, which the mask gate

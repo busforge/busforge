@@ -71,17 +71,22 @@ export async function securityLsmEvent(dev: KnxDevice, event: number): Promise<v
 // What a secured download loads into the security object: the group key table (18-byte entries of
 // address-table index + key, ascending by index) and one security flag byte per group object from
 // object 1.
-export interface SecurityObjectTables { groupKeys: Buffer; goFlags: Buffer; }
+// senders: the security individual address table (PID 54) entries, each the sender's individual
+// address then its last accepted sequence (a new sender starts at 0).
+export interface SecurityObjectTables { groupKeys: Buffer; goFlags: Buffer; senders: Buffer; }
 export const GROUP_KEY_ENTRY = 18;
+export const SENDER_ENTRY = 8;
 
 // The security object's bracket as ETS runs it inside a secured download (Jung 400021SE,
-// 2026-09-28): after the memory writes, LOAD, clear the individual-address table (element 0, the
-// count, set to 0), write the group key table and the per-object flags, LOAD_COMPLETED. Its UNLOAD
-// goes with the other objects' unloads before anything is written (securityUnload).
+// 2026-09-28 and 2026-09-29): after the memory writes, LOAD, clear the individual-address table
+// (element 0, the count, set to 0), write its sender entries from element 1, the group key table and
+// the per-object flags, LOAD_COMPLETED. Its UNLOAD goes with the other objects' unloads before
+// anything is written (securityUnload).
 export function planSecurityObjectLoad(t: SecurityObjectTables): LoadStep[] {
   return [
     { op: "securityLsm", event: LSM.LOAD },
     { op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 0, elementSize: 2, data: Buffer.alloc(2) },
+    ...(t.senders.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 1, elementSize: SENDER_ENTRY, data: t.senders } as LoadStep] : []),
     ...(t.groupKeys.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GROUP_KEY_TABLE, start: 1, elementSize: GROUP_KEY_ENTRY, data: t.groupKeys } as LoadStep] : []),
     { op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags },
     { op: "securityLsm", event: LSM.LOAD_COMPLETED },

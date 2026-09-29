@@ -2,6 +2,7 @@ import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddres
 import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
 import { buildGaDevicesView } from "../deviceservice.ts";
+import { addGroupSender, removeGroupSender } from "../db/groupSenders.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -15,6 +16,23 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const raw = Number(decodeURIComponent(seg[4]));
     if (!Number.isInteger(raw)) return err("GA_NOT_FOUND", "group address not found", 404);
     return json(buildGaDevicesView(state, id, raw, url.searchParams.get("lang") ?? undefined));
+  }
+
+  // /api/projects/:id/group-addresses/:raw/senders  (POST {ia})  and  .../senders/:ia  (DELETE)
+  // The individual addresses the project assigns as senders of the address (a tunnelling channel).
+  // For a secured address they go into its receivers' security tables with their next GA flash.
+  if (seg[3] === "group-addresses" && seg[5] === "senders" && (seg.length === 6 || seg.length === 7)) {
+    const raw = Number(decodeURIComponent(seg[4]));
+    if (!Number.isInteger(raw) || !groupAddressExists(db, id, raw)) return err("GA_NOT_FOUND", "group address not found", 404);
+    if (seg.length === 6 && req.method === "POST") {
+      const body = (await req.json().catch(() => ({}))) as { ia?: unknown };
+      addGroupSender(db, id, raw, text(body.ia));
+      return json(buildGaDevicesView(state, id, raw));
+    }
+    if (seg.length === 7 && req.method === "DELETE") {
+      if (!removeGroupSender(db, id, raw, decodeURIComponent(seg[6]))) return err("SENDER_NOT_FOUND", "that address is not a sender of this group address", 404);
+      return json(buildGaDevicesView(state, id, raw));
+    }
   }
 
   // --- group-address structure editing -------------------------------------

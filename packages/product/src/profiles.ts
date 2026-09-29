@@ -1,4 +1,4 @@
-import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -152,12 +152,19 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
 // group key table by its element count, and the flags of objects 1..`flagCount`. The device reads
 // its group keys back only inside the secured session this runs in.
 async function readSecurityObject(dev: KnxDevice, flagCount: number): Promise<SecurityObjectTables> {
-  const n = (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 0, 1)).readUInt16BE(0);
+  const count = async (pid: number) => (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, pid, 0, 1)).readUInt16BE(0);
+  const n = await count(SECURITY_PID.GROUP_KEY_TABLE);
   const groupKeys = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
   const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, flagCount, 1);
-  return { groupKeys, goFlags };
+  const m = await count(SECURITY_PID.SECURITY_IA_TABLE);
+  const senders = m ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_IA_TABLE, 1, m, SENDER_ENTRY) : Buffer.alloc(0);
+  return { groupKeys, goFlags, senders };
 }
-const sameSecurityObject = (a: SecurityObjectTables, b: SecurityObjectTables) => a.groupKeys.equals(b.groupKeys) && a.goFlags.equals(b.goFlags);
+// A sender entry's last sequence is the device's own receive state, advanced by every telegram it
+// accepts from that sender; only the listed addresses are configuration.
+const senderAddresses = (t: Buffer) => { const out: number[] = []; for (let i = 0; i + SENDER_ENTRY <= t.length; i += SENDER_ENTRY) out.push(t.readUInt16BE(i)); return out.join(","); };
+const sameSecurityObject = (a: SecurityObjectTables, b: SecurityObjectTables) =>
+  a.groupKeys.equals(b.groupKeys) && a.goFlags.equals(b.goFlags) && senderAddresses(a.senders) === senderAddresses(b.senders);
 
 // Only System B's secured tables are loaded the way ETS does it (planSecurityObjectLoad); on any
 // other memory model the security object would be left behind the tables it belongs to.
@@ -367,7 +374,15 @@ export interface FullDownloadCtx {
 }
 // A Data Secure device's group-address tables come with its security object (group keys and
 // per-object flags), which every write of those tables reloads.
-export interface SecureTablesCtx { groupKeys: ReadonlyMap<number, Buffer>; }
+// senders: per group address, the individual addresses the project assigns as its senders (the
+// device's security individual address table); linkedElsewhere: the group addresses another device
+// of the project is linked to. Both absent means no assigned senders.
+export interface SecureTablesCtx {
+  groupKeys: ReadonlyMap<number, Buffer>;
+  senders?: ReadonlyMap<number, readonly number[]>;
+  linkedElsewhere?: ReadonlySet<number>;
+}
+const secureSenders = (sec: SecureTablesCtx, ia: string) => ({ byGa: sec.senders ?? new Map(), ownIa: iaToNum(ia), linkedElsewhere: sec.linkedElsewhere ?? new Set<number>() });
 export interface GaFlashCtx {
   deviceId: string; // used in backup file names
   ia: string;
@@ -530,7 +545,7 @@ export class SystemBProfile extends DeviceProfile {
     // device that does not reboot lost the download; other firmware persists at LoadCompleted and
     // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
     const requireReboot = !persistsOnLoadCompleted(cfg);
-    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys) : undefined;
+    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const plan = planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
     }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security);
@@ -797,7 +812,7 @@ export class SystemBProfile extends DeviceProfile {
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
-    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys) : undefined;
+    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
     const cur = await readGroupTables(dev, undefined, false);
@@ -819,7 +834,8 @@ export class SystemBProfile extends DeviceProfile {
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + comObj.length,
       diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj) // 0 iff all three match
-        + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags) : 0),
+        + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
+          + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
       ...(tablesLoaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: prefix,
       backups: [

@@ -9,6 +9,7 @@ import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
 import { putGroupKeys } from "./groupKeys.ts";
+import { putGroupSenders, putSendSequences, isIndividualAddress, MAX_SEQUENCE, type SenderSource } from "./groupSenders.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
 import { TELEGRAM_SECURITY, type TelegramSecurity } from "../telegram.ts";
 
@@ -66,7 +67,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   }
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "deviceCertificates"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   // A recorded telegram's security state must be one the monitor produces: an unknown one would be
@@ -90,6 +91,15 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (g.source !== undefined && !["import", "manual", "provisioned"].includes(g.source as string)) {
       throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys source");
     }
+  }
+  const isIa = (v: unknown) => typeof v === "string" && isIndividualAddress(v);
+  for (const g of (d.groupSenders as Record<string, unknown>[] | undefined) ?? []) {
+    if (!Number.isInteger(g.gaRaw) || (g.gaRaw as number) < 1 || (g.gaRaw as number) > 0xffff || !isIa(g.ia) || !["import", "busforge"].includes(g.source as string)) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed groupSenders entry");
+    }
+  }
+  for (const q of (d.sendSequences as Record<string, unknown>[] | undefined) ?? []) {
+    if (!isIa(q.ia) || typeof q.last !== "string" || !/^\d{1,15}$/.test(q.last) || BigInt(q.last) > MAX_SEQUENCE) throw new ApiError("BUSFORGE_INVALID", "malformed sendSequences entry");
   }
   for (const c of (d.deviceCertificates as Record<string, unknown>[] | undefined) ?? []) {
     if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
@@ -175,6 +185,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const c of data.deviceCertificates ?? []) {
       putDeviceCertificate(db, id, { deviceId: c.deviceId, fdsk: Buffer.from(c.fdsk, "base64"), serialNumber: Buffer.from(c.serialNumber, "base64") }, masterKey);
     }
+    if (data.groupSenders?.length) putGroupSenders(db, id, data.groupSenders.map((g) => ({ gaRaw: g.gaRaw, ia: g.ia, source: g.source as SenderSource })));
+    if (data.sendSequences?.length) putSendSequences(db, id, data.sendSequences);
     if (data.groupKeys?.length) {
       putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as SecuritySource) || "import" })), masterKey);
     }
