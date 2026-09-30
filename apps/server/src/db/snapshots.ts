@@ -119,9 +119,16 @@ export function deleteSnapshot(db: Database, projectId: string, id: string): boo
 // payload. The programmed baselines are deliberately left untouched, so the
 // post-restore change indicators still reflect drift against the device.
 export function restoreSnapshot(db: Database, projectId: string, id: string, now: number): { ok: boolean; gaStructureRestored: boolean } {
-  const row = db.query("SELECT payload FROM snapshots WHERE id = ? AND project_id = ?")
-    .get(id, projectId) as { payload: string } | null;
+  const row = db.query("SELECT payload, schema_version AS schemaVersion FROM snapshots WHERE id = ? AND project_id = ?")
+    .get(id, projectId) as { payload: string; schemaVersion: number } | null;
   if (!row) return { ok: false, gaStructureRestored: false };
+  // A restore point from a newer busforge (carried in a .busforge artifact) may hold configuration
+  // this version does not know, which the restore below would drop without a word. Older ones are
+  // restorable because every payload change so far only added optional fields; a change that is not
+  // additive has to upgrade older payloads here, keyed on their schema version.
+  if (row.schemaVersion > SCHEMA_VERSION) {
+    throw new ApiError("SNAPSHOT_SCHEMA_NEWER", `this restore point was taken by a newer busforge (schema ${row.schemaVersion}, this one runs ${SCHEMA_VERSION}); restoring it could drop configuration this version does not know`, 409);
+  }
   const payload = JSON.parse(row.payload) as SnapshotPayload;
   // Snapshots taken before GA-structure capture carry no group ranges/addresses, so the
   // restore leaves the current structure in place. Report that so the caller can tell the

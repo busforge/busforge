@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
 import type { Levels } from "@busforge/knx";
@@ -11,7 +11,35 @@ import { getConnection, type Connection } from "./connections.ts";
 // deeper than the visible name/address.
 export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string; secure: boolean };
 
-export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
+export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
+
+// The file a project was imported from, so a project can be traced back to it. Deliberately not a
+// ProjectProperty: a restore point must neither carry nor roll it back. A project re-imported
+// from a .busforge artifact keeps the source that artifact carries (the original .knxproj), and names
+// the artifact itself only when it carries none.
+export interface ImportSource { kind: "knxproj" | "busforge"; name: string; sha256: string; bytes: number }
+
+// The upload's file name as the client sent it, reduced to what the export validator accepts: no
+// control or bidi-override characters (they would spoof the name where it is shown), at most 255.
+export const SOURCE_NAME_MAX = 255;
+const unsafeNameChar = (c: number) => c < 0x20 || c === 0x7f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
+export function importSourceOf(kind: ImportSource["kind"], name: string, bytes: Buffer): ImportSource {
+  let clean = "";
+  for (let i = 0; i < name.length; i++) if (!unsafeNameChar(name.charCodeAt(i))) clean += name[i];
+  clean = clean.slice(0, SOURCE_NAME_MAX);
+  return { kind, name: clean, sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+}
+
+export function setProjectSource(db: Database, projectId: string, src: ImportSource): void {
+  db.prepare("UPDATE projects SET source_kind = ?, source_name = ?, source_sha256 = ?, source_bytes = ? WHERE id = ?")
+    .run(src.kind, src.name, src.sha256, src.bytes, projectId);
+}
+
+export function getProjectSource(db: Database, projectId: string): ImportSource | null {
+  const r = db.query("SELECT source_kind AS kind, source_name AS name, source_sha256 AS sha256, source_bytes AS bytes FROM projects WHERE id = ?")
+    .get(projectId) as ImportSource | null;
+  return r && r.sha256 ? r : null;
+}
 
 // Count location spaces by category for the dashboard's location axis. "rooms" is
 // every space that is not a building or a floor (Room, Corridor, DistributionBoard,
@@ -153,6 +181,7 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
 export function listProjects(db: Database): ProjectSummary[] {
   const rows = db.query(`
     SELECT p.id, p.name, p.imported_at AS importedAt,
+      p.source_kind AS sourceKind, p.source_name AS sourceName, p.source_sha256 AS sourceSha256, p.source_bytes AS sourceBytes,
       (SELECT COUNT(*) FROM devices d WHERE d.project_id = p.id) AS deviceCount,
       (SELECT COUNT(*) FROM group_addresses g WHERE g.project_id = p.id) AS gaCount,
       (SELECT COUNT(*) FROM snapshots s WHERE s.project_id = p.id) AS snapshotCount,
@@ -160,8 +189,10 @@ export function listProjects(db: Database): ProjectSummary[] {
       (SELECT COUNT(*) FROM spaces s WHERE s.project_id = p.id AND s.type = 'Floor') AS floorCount,
       (SELECT COUNT(*) FROM spaces s WHERE s.project_id = p.id AND s.type NOT IN ('Building', 'Floor')) AS roomCount
     FROM projects p ORDER BY p.imported_at DESC
-  `).all() as ProjectSummary[];
-  return rows;
+  `).all() as (Omit<ProjectSummary, "source"> & { sourceKind: ImportSource["kind"]; sourceName: string; sourceSha256: string; sourceBytes: number })[];
+  return rows.map(({ sourceKind, sourceName, sourceSha256, sourceBytes, ...p }) => ({
+    ...p, source: sourceSha256 ? { kind: sourceKind, name: sourceName, sha256: sourceSha256, bytes: sourceBytes } : null,
+  }));
 }
 
 export function getProject(db: Database, id: string): StoredProject | null {

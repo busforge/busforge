@@ -88,7 +88,8 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 
 | Included | Not included |
 |---|---|
-| project properties (name, referenced connection) | the original file path and import timestamp (local-only metadata) |
+| project properties (name, referenced connection) | the import timestamp (local-only metadata) |
+| the file the project was first imported from: kind, name, SHA-256 and size (not the file itself) | |
 | devices, group ranges, group addresses, building structure | the derived browsable product rows, which are rebuilt from the devices on import |
 | live parameter values and links | |
 | the **programmed baselines** for both, so drift survives the move | |
@@ -99,8 +100,13 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | the recorded bus log | |
 | KNX Data Secure tool keys | |
 
-Several fields are optional in the schema (building structure, restore points, bus log, tool keys)
-purely so artifacts written before those features existed still import.
+Several fields are optional in the schema (building structure, restore points, bus log, tool keys,
+source) purely so artifacts written before those features existed still import. A re-imported project
+keeps the source its artifact carries, the file the project was first imported from; an artifact
+without one (a project created in Busforge, or an older export) is recorded as the source itself. The project list shows the
+source file's name, with its kind, size and SHA-256 on hover, so a project can be traced back to the
+file. The name is the one the upload carried, without control or bidi-override characters and cut at
+255 characters.
 
 > **Tool keys ride in the clear.** A project must never be separated from the keys that let it talk
 > to its own secure devices, so the archive always carries them, unsealed from this installation's

@@ -598,6 +598,45 @@ describe("busforge re-import (export round-trip)", () => {
     expect((await (await handleApi(req("/api/projects"), state))!.json()) as any[]).toHaveLength(1); // only the real import
   });
 
+  test("a project records the file it was imported from, and a re-import keeps that source", async () => {
+    const state = freshState();
+    const a = await importCfg(state);
+    const sha = new Bun.CryptoHasher("sha256").update(cfgFixture).digest("hex");
+    const source = { kind: "knxproj", name: "ConfigDemo.knxproj", sha256: sha, bytes: cfgFixture.length };
+    const listed = () => handleApi(req("/api/projects"), state).then((r) => r!.json() as Promise<{ id: string; source: unknown }[]>);
+    expect((await listed()).find((p) => p.id === a.id)!.source).toEqual(source);
+
+    const { bytes } = await exportArtifact(state, a.id);
+    const form = new FormData();
+    form.set("file", new File([bytes], "p.busforge"));
+    const b = (await (await handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state))!.json()) as { id: string };
+    expect((await listed()).find((p) => p.id === b.id)!.source).toEqual(source);
+
+    // An artifact without a source (a project created in busforge, or an older export) names itself.
+    const artifact = JSON.parse(new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(bytes)))) as Record<string, unknown>;
+    delete artifact.source;
+    const c = (await (await reimport(state, artifact))!.json()) as { id: string };
+    expect((await listed()).find((p) => p.id === c.id)!.source).toMatchObject({ kind: "busforge", name: "p.busforge.json" });
+
+    const bad = (await reimport(state, { ...artifact, source: { kind: "knxproj", name: "x", sha256: "nothex", bytes: 1 } }))!;
+    expect(bad.status).toBe(400);
+  });
+
+  test("a long or spoofing upload name is stored so that its own export imports again", async () => {
+    const state = freshState();
+    const form = new FormData();
+    form.set("file", new File([cfgFixture], "evil\u202Ejorp\u0007" + "x".repeat(400) + ".knxproj"));
+    form.set("password", "tester12");
+    const a = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as { id: string };
+    const src = ((await (await handleApi(req("/api/projects"), state))!.json()) as { id: string; source: { name: string } }[]).find((p) => p.id === a.id)!.source;
+    expect(src.name.length).toBe(255);
+    expect(src.name.startsWith("eviljorpxxx")).toBe(true);
+    const { bytes } = await exportArtifact(state, a.id);
+    const again = new FormData();
+    again.set("file", new File([bytes], "p.busforge"));
+    expect((await handleApi(req("/api/projects/import-busforge", { method: "POST", body: again }), state))!.status).toBe(201);
+  });
+
   test("export then re-import recreates an independent, equivalent project", async () => {
     const state = freshState();
     const a = await importCfg(state);

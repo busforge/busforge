@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { loadKnxproj, extractAppPrograms, extractCatalogProducts, readBaggage } from "@busforge/project";
-import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs } from "../db/projects.ts";
+import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs, importSourceOf, setProjectSource } from "../db/projects.ts";
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
 import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
@@ -67,10 +67,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
 
     // Everything is stored in the DB; no project files are written at import. The
     // raw .knxproj is not kept (app programs live in the catalog, baggage in the
-    // DB), so an import is one atomic transaction with nothing to clean up on
-    // failure. source_file is left empty (only legacy projects have a file).
+    // DB), only its name, hash and size (the source_* columns), so an import is one
+    // atomic transaction with nothing to clean up on failure. The legacy on-disk
+    // path column source_file stays empty.
     db.transaction(() => {
       insertProject(db, id, project, "", state.now());
+      setProjectSource(db, id, importSourceOf("knxproj", file instanceof File ? file.name : "project.knxproj", bytes));
       for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
       for (const p of catalog) putCatalogProduct(db, p);
       for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
@@ -132,7 +134,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const data = await unpackBusforge(bytes, password); // sniffs gzip/encrypted/legacy; throws a coded ApiError
     validateExport(data); // throws a coded ImportError on a bad shape/version
     const id = randomUUID();
-    importProjectExport(db, data, id, state.now(), state.masterKey);
+    importProjectExport(db, data, id, state.now(), state.masterKey, importSourceOf("busforge", file instanceof File ? file.name : "project.busforge", bytes));
     // Report husk devices (app program not in the artifact) the same way /import does, so a
     // re-import never propagates the loss silently as "N devices imported".
     return json({ id, name: data.project.name, deviceCount: data.devices.length, gaCount: data.groupAddresses.length, ...busforgeGaps(data) }, 201);

@@ -32,6 +32,7 @@ const de: Messages = {
     exportProject: "Projekt exportieren",
   },
   projects: {
+    source: "Ursprünglich importiert aus {{name}} ({{kind}}, {{bytes}} Bytes, SHA-256 {{sha256}})",
     heading: "Projekte",
     buildings: "Gebäude",
     floors: "Geschosse",
@@ -179,6 +180,7 @@ const de: Messages = {
     USB_LINK_LAYER_UNAVAILABLE: "Das USB-Interface lässt sich nicht in den Modus schalten, in dem es Telegramme auf den Bus legt. In diesem Zustand nimmt es Frames an und sendet keinen davon, deshalb lehnt Busforge seine Nutzung ab.",
     DEVICE_NOT_PROGRAMMED: "In dieses Gerät wurde noch nie eine Applikation geladen, es gibt also nichts auszulesen. Es braucht zuerst einen vollständigen Download.",
     CATALOG_MULTI_APP_XML: "Diese Produktdatenbank enthält mehrere Applikationsprogramme in einem XML-Dokument. Busforge kann nur ein Dokument mit genau einem Programm platzieren und lehnt ab, statt allen Produkten dieselbe Applikation zu geben.",
+    SNAPSHOT_SCHEMA_NEWER: "Dieser Wiederherstellungspunkt stammt von einem neueren Busforge. Ihn hier wiederherzustellen könnte Konfiguration verwerfen, die diese Version nicht kennt; zuerst Busforge aktualisieren.",
     IA_INVALID: "Das ist keine gültige physikalische Adresse. Format: Bereich.Linie.Gerät, zum Beispiel 1.2.32.",
     IA_TAKEN: "Ein anderes Gerät in diesem Projekt benutzt diese Adresse bereits.",
     IA_REQUIRED: "Eine physikalische Adresse ist erforderlich.",

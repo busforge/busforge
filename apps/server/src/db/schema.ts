@@ -407,6 +407,14 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, ia)
   );
   `,
+  // Where a project came from: the imported file's name, SHA-256 and size, and whether it was a
+  // .knxproj or a .busforge artifact. Empty for projects created in busforge or imported before.
+  `
+  ALTER TABLE projects ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';
+  ALTER TABLE projects ADD COLUMN source_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE projects ADD COLUMN source_sha256 TEXT NOT NULL DEFAULT '';
+  ALTER TABLE projects ADD COLUMN source_bytes INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

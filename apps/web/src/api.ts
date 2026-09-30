@@ -31,7 +31,9 @@ export interface Gateway { name: string; ip: string; port: number; ia: string; m
 // Build/version info for the footer: git-describe version, commit sha, ISO build time
 // (null for a local dev build).
 export interface VersionInfo { version: string; commit: string; builtAt: string | null; }
-export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; }
+// The file a project was imported from; null for a project created in busforge or imported before this was kept.
+export interface ImportSource { kind: "knxproj" | "busforge"; name: string; sha256: string; bytes: number }
+export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
 export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; baggageUnreadable?: boolean; }

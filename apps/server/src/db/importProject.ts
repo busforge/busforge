@@ -4,7 +4,7 @@ import { appProgramId } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage } from "./baggage.ts";
-import { insertSpaces } from "./projects.ts";
+import { insertSpaces, setProjectSource, SOURCE_NAME_MAX, type ImportSource } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
@@ -101,6 +101,13 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   for (const q of (d.sendSequences as Record<string, unknown>[] | undefined) ?? []) {
     if (!isIa(q.ia) || typeof q.last !== "string" || !/^\d{1,15}$/.test(q.last) || BigInt(q.last) > MAX_SEQUENCE) throw new ApiError("BUSFORGE_INVALID", "malformed sendSequences entry");
   }
+  if (d.source !== undefined) {
+    const src = d.source as Record<string, unknown> | null;
+    if (!src || typeof src !== "object" || !["knxproj", "busforge"].includes(src.kind as string) || typeof src.name !== "string" || src.name.length > SOURCE_NAME_MAX
+      || typeof src.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(src.sha256) || !Number.isSafeInteger(src.bytes) || (src.bytes as number) < 0) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed source");
+    }
+  }
   for (const c of (d.deviceCertificates as Record<string, unknown>[] | undefined) ?? []) {
     if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
   }
@@ -122,13 +129,16 @@ export function busforgeGaps(data: ProjectExport): { devicesWithoutProgram: { ia
 
 // Recreate the project from a validated artifact under id `id`. One transaction.
 // masterKey re-seals the imported tool keys under THIS instance's key.
-export function importProjectExport(db: Database, data: ProjectExport, id: string, now: number, masterKey: Buffer): void {
+// `artifact` is the .busforge file itself, recorded as the source when the artifact carries none.
+export function importProjectExport(db: Database, data: ProjectExport, id: string, now: number, masterKey: Buffer, artifact?: ImportSource): void {
   db.transaction(() => {
     // Insert the bare row, then apply the shared project properties (name +
     // connection reference, FK-safe) the same way snapshot restore does.
     db.prepare("INSERT INTO projects (id, name, imported_at, source_file) VALUES (?, ?, ?, '')")
       .run(id, data.project.name, now);
     applyProjectProperties(db, id, data.project);
+    const source = data.source ?? artifact;
+    if (source) setProjectSource(db, id, source);
 
     const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
     // An artifact from before the gap count carries a link baseline whose gaps were never

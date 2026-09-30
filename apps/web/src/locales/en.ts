@@ -30,6 +30,7 @@ const en = {
     exportProject: "Export project",
   },
   projects: {
+    source: "First imported from {{name}} ({{kind}}, {{bytes}} bytes, SHA-256 {{sha256}})",
     heading: "Projects",
     buildings: "Buildings",
     floors: "Floors",
@@ -179,6 +180,7 @@ const en = {
     USB_LINK_LAYER_UNAVAILABLE: "The USB interface would not switch into the mode that puts telegrams on the bus. In that state it accepts frames and sends none of them, so Busforge refuses to use it.",
     DEVICE_NOT_PROGRAMMED: "This device has never had an application loaded, so there is nothing to read back from it. It needs a full download first.",
     CATALOG_MULTI_APP_XML: "This product database holds several application programs in one XML document. Busforge can only place a single-program document, so it refuses rather than give every product the same application.",
+    SNAPSHOT_SCHEMA_NEWER: "This restore point was taken by a newer Busforge. Restoring it here could drop configuration this version does not know; update Busforge first.",
     IA_INVALID: "That is not a valid individual address. Use area.line.device, for example 1.2.32.",
     IA_TAKEN: "Another device in this project already uses that address.",
     IA_REQUIRED: "An individual address is required.",

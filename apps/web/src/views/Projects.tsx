@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { api, ApiError, type ProjectSummary, type AnalyzeResult } from "../api.ts";
+import { api, ApiError, type ProjectSummary, type AnalyzeResult, type ImportSource } from "../api.ts";
 import { qk, useProjects, useVersion } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,9 +34,9 @@ const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateSty
 // group addresses, restore points) as filled badges, and the LOCATION axis
 // (buildings, floors, rooms) as outline badges set apart by a divider. The
 // location group is hidden when the project has no building structure.
-function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCount, floorCount, roomCount, date }: {
+function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCount, floorCount, roomCount, date, source }: {
   name: string; deviceCount: number; gaCount: number; snapshotCount: number;
-  buildingCount: number; floorCount: number; roomCount: number; date: number;
+  buildingCount: number; floorCount: number; roomCount: number; date: number; source?: ImportSource | null;
 }) {
   const { t } = useTranslation();
   const hasLocation = buildingCount > 0 || floorCount > 0 || roomCount > 0;
@@ -60,7 +60,14 @@ function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCo
           </>
         )}
       </div>
-      <div className="mt-2 font-mono text-[11px] text-muted-foreground">{fmtDate(date)}</div>
+      <div className="mt-2 flex min-w-0 gap-1.5 font-mono text-[11px] text-muted-foreground">
+        <span className="shrink-0">{fmtDate(date)}</span>
+        {source && (
+          <span className="truncate" title={t("projects.source", { name: source.name, kind: `.${source.kind}`, sha256: source.sha256, bytes: source.bytes.toLocaleString() })} data-testid="project-source">
+            · {source.name}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -156,7 +163,7 @@ export function ProjectsScreen() {
           {projects.map((p) => (
             <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
               <CardContent className="flex items-start justify-between gap-3">
-                <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} buildingCount={p.buildingCount} floorCount={p.floorCount} roomCount={p.roomCount} date={p.importedAt} />
+                <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} buildingCount={p.buildingCount} floorCount={p.floorCount} roomCount={p.roomCount} date={p.importedAt} source={p.source} />
                 <ProjectCardMenu
                   onRename={() => setRenameTarget(p)}
                   onExport={() => setExportTarget(p)}

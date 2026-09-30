@@ -108,7 +108,11 @@ recreation with the same instance id.
 
 Forward-only. `MIGRATIONS` is an append-only array of SQL strings; `PRAGMA user_version` records how
 many have run, and each runs in its own transaction. **Never edit an existing entry**, add a new
-one. `SCHEMA_VERSION` is the array length and is stamped into every restore point at capture.
+one. `SCHEMA_VERSION` is the array length and is stamped into every restore point at capture. A
+restore point from a newer schema (one carried in a `.busforge` from a newer Busforge) is refused
+(`SNAPSHOT_SCHEMA_NEWER`), because its configuration may hold what this version would drop. Older ones
+restore: every change to the payload so far only added optional fields. A change that is not additive
+has to upgrade older payloads in `restoreSnapshot`, keyed on the stamped version.
 
 ## Restore points
 

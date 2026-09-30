@@ -167,10 +167,6 @@ started until the capability it depends on is hardware-proven.
 - **A placed catalog device has no "never programmed" state.** Its all-defaults configuration
   against an empty baseline reads as clean, so it does not appear in the "to program" filter even
   though nothing has ever been written to it. The flash itself still sends the full image.
-- **Restore points stamp a `schema_version` that nothing acts on.** Restoring across an
-  incompatible structural migration is neither warned about nor refused.
-- **No provenance record of an import.** The source file is not kept, and no hash of it is stored,
-  so a project cannot be traced back to the file it came from.
 - **No size guard on plugin baggage blobs** stored in the database.
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
 

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appProgramId, type SpaceNode } from "@busforge/project";
 import { getAppProgram } from "./catalog.ts";
-import { readSpaces } from "./projects.ts";
+import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 import { open } from "../secrets.ts";
 import { listGroupKeyRows } from "./groupKeys.ts";
@@ -53,6 +53,9 @@ export interface ProjectExport {
   groupSenders?: { gaRaw: number; ia: string; source: string }[];
   sendSequences?: { ia: string; last: string }[];
   deviceCertificates?: { deviceId: string; fdsk: string; serialNumber: string }[];
+  // The file the project was first imported from (see ImportSource). Optional: absent for a project
+  // created in busforge, and in artifacts from before it was carried.
+  source?: ImportSource;
 }
 
 const paramRows = (db: Database, table: string, projectId: string) =>
@@ -107,12 +110,14 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     .all(projectId) as { deviceId: string; toolKey: Uint8Array; serialNumber: Uint8Array; sequenceNumber: string; source: string }[])
     .map((r) => ({ deviceId: r.deviceId, toolKey: open(Buffer.from(r.toolKey), masterKey).toString("base64"), serialNumber: Buffer.from(r.serialNumber).toString("base64"), sequenceNumber: r.sequenceNumber, source: r.source }));
 
+  const source = getProjectSource(db, projectId);
   const groupKeys = listGroupKeyRows(db, projectId).map((r) => ({ raw: r.raw, key: open(r.key, masterKey).toString("base64"), source: r.source }));
   const deviceCertificates = listDeviceCertificateRows(db, projectId).map((r) => ({ deviceId: r.deviceId, fdsk: open(r.fdsk, masterKey).toString("base64"), serialNumber: r.serialNumber.toString("base64") }));
 
   return {
     busforgeExport: EXPORT_VERSION,
     exportedAt: now,
+    ...(source ? { source } : {}),
     project,
     devices,
     groupRanges,

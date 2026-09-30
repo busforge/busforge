@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
-import { openDb } from "../src/db/schema.ts";
+import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
@@ -798,6 +798,17 @@ describe("snapshots", () => {
     expect(cfg.deviceLinks).toContainEqual({ deviceId: dev, comObjRefId: "O-1_R-1", slot: 0, gaRaw: 1 });
   });
 
+  test("refuses a restore point taken by a newer schema, and restores an older one", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const snap = createSnapshot(db, "p1", { kind: "manual", label: "x", reason: "manual" }, 1000)!;
+    db.prepare("UPDATE snapshots SET schema_version = ? WHERE id = ?").run(SCHEMA_VERSION + 1, snap.id);
+    expect(() => restoreSnapshot(db, "p1", snap.id, 2000)).toThrow(expect.objectContaining({ code: "SNAPSHOT_SCHEMA_NEWER" }));
+    expect(listSnapshots(db, "p1")).toHaveLength(1); // refused before its undo point was taken
+    db.prepare("UPDATE snapshots SET schema_version = 1 WHERE id = ?").run(snap.id);
+    expect(restoreSnapshot(db, "p1", snap.id, 2000).ok).toBe(true);
+  });
+
   test("captures and restores the connection reference (shared project properties)", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
@@ -1005,7 +1016,8 @@ describe("connections", () => {
     // A connections table one version BEFORE the ip_transport column, holding a saved IP
     // connection. Opening it must add the column and backfill the legacy row to 'auto'.
     const old = new Database(path, { create: true });
-    old.exec(`CREATE TABLE devices (project_id TEXT, instance_id TEXT, ia TEXT, app_ref TEXT, product_ref TEXT);
+    old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY);
+      CREATE TABLE devices (project_id TEXT, instance_id TEXT, ia TEXT, app_ref TEXT, product_ref TEXT);
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
