@@ -53,11 +53,9 @@ started until the capability it depends on is hardware-proven.
   any immediate connect failure that way; macOS Local Network privacy is the likely cause but not
   proven ([findings.md](findings.md) §23). A long-lived Node process next to the server would
   record the real errno when it recurs.
-- **Measure the longest download to confirm the stop grace period.** A normal shutdown waits for
-  a running write, bounded by the container's `stop_grace_period: 30m`. That figure rests on one
-  measurement (71 s for a 21.9 KB OpenKNX image) and an estimate for 12-byte `A_Memory_Write`
-  frames; no large MV-0705 download has been timed. Read the durations of real writes from
-  the `tasks` table (`finished_at - started_at`) and tighten or raise the period.
+- **Time a large MV-0705 download against the stop grace period.** The 30-minute
+  `stop_grace_period` has a margin of about eight over the longest of 686 recorded writes (229 s,
+  [deployment.md](deployment.md)); the only MV-0705 device timed has a small image (19 s).
 
 ## Verification
 
@@ -133,17 +131,15 @@ started until the capability it depends on is hardware-proven.
   refuse a secure device's GA flash and full download.
 - **An interrupted activation on hardware.** Losing the answer to the tool-key write (the key is
   stored as pending first) is tested against a fake device only.
-- **Edit a device's individual address in the UI.** A placed device gets the next free address;
-  changing it in the project is API-only (`PUT .../address`).
-- **Refresh the stored sequence numbers.** A secured device's sequence number is taken from the
-  project at import and never updated. It seeds other devices' PID 54 entries for it; a sender whose
-  real counter is lower (a device reset since, or a project older than the device) is rejected by
-  them until its counter passes that value. ETS has the same dependency on its project.
-- **A device Busforge activated has no sequence number** in the project (the activation does not
-  learn one), so another device on one of its secured addresses is refused (`SECURE_SENDERS_UNPROVEN`).
+- **A stored sequence number is only as fresh as the last session with the device.** Busforge
+  records the last sequence a device sent after every session with it, as ETS does; a device another
+  tool has talked to since keeps the older value until the next one (lower than the device's, which
+  receivers accept). Secured group telegrams
+  the monitor decrypts could refresh it as well; they do not today.
 - **A receiver whose sender list changed is not flagged.** Linking another device's transmitting
-  object to a secured address changes the PID 54 of every device on it; Busforge, like ETS, shows those
-  receivers as unchanged until their tables are written.
+  object to a secured address, or changing that device's individual address, changes the PID 54 of
+  every device on it; Busforge, like ETS, shows those receivers as unchanged until their tables are
+  written.
 - **A link token that does not resolve at import shifts the sending address.** Unresolved `Links`
   entries are dropped before the order is stored, so a second address can take the first (sending)
   slot; the import counts them, the PID 54 sender rule trusts the stored order.

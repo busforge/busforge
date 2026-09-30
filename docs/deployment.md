@@ -106,11 +106,15 @@ Docker's default grace period is 10 seconds, far shorter than a download, after 
 `docker kill`, still ends the process mid-write. The next start then reports that write as
 `interrupted` with the device state unknown, and replays nothing.
 
-**Why 30 minutes.** The longest timed download is 71 s, for a 21.9 KB OpenKNX image on the bench
-(smoke report of 2026-07-20). A device written with `A_Memory_Write` takes 12 bytes per frame, so
-an image of that size is roughly 1,800 writes plus the read-back, each a confirmed round trip on
-TP, with a per-frame retry budget of a few seconds. That is estimated at minutes, not
-measured; 30 minutes leaves room for a slow line and retries. The grace period only costs time when
+**Why 30 minutes.** The `tasks` table of the development instance held 686 finished writes on
+2026-09-30 (downloads, parameter and group-address flashes on the bench and on the installation bus,
+TP through a KNXnet/IP interface or the bench bridge). The longest took 229 s (a parameter flash of a
+Steinel True Presence), the longest full download 211 s (the ABB US/U 4.2); a group-address flash at
+most 145 s. That is a margin of about eight. What is not measured is a large MV-0705 image: the only
+MV-0705 device timed, the MDT BE-02001, downloads in 19 s. A device written with `A_Memory_Write`
+takes 12 bytes per frame, each a confirmed round trip with a per-frame retry budget of a few seconds,
+so a slow line and retries can stretch a download well past the measured ones; 30 minutes leaves
+room for that. The grace period only costs time when
 a write is actually running. Every write's start and end are recorded in the `tasks` table, so the
 bound can be checked against real downloads. A deploy pipeline that replaces the container must wait
 at least as long; the NAS deploy job allows 45 minutes.

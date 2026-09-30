@@ -114,11 +114,18 @@ as data.** A replayed frame is transport-acknowledged but not delivered.
 
 ### Sequence numbers and Sync
 
-There are **two independent 48-bit counters** per peer, tool access and data/group. Each side rejects
-any frame whose sequence is not strictly greater than the last it accepted.
+Every sender numbers its secured frames with a 48-bit counter, and every receiver rejects a frame
+whose sequence is not strictly greater than the last it accepted from that sender. A tool's counter
+(ours, for tool access) and a device's own sending counter are separate.
 
-**The project file's `SequenceNumber` is the data/group counter, not tool access.** For programming,
-a stored tool-access value is never trusted; it is obtained live:
+**The project file's `SequenceNumber` is the device's own sending counter, not the tool's.** ETS sets
+it to the last sequence it saw the device send, answers in a tool-access session included
+([findings.md](findings.md) §22), and so does Busforge (see [Senders](#senders-of-a-secured-group-address)).
+That rests on a device answering tool access from the counter it sends group telegrams from, which is
+shown for the Jung 400021SE only (PID 59 of its security object, its sending counter, read `0x011028`;
+the last answer of its next session carried `0x011030`); a device with a separate tool-answer counter
+would get the wrong value, in ETS as in Busforge. Our own tool-access counter is never taken from storage; it is
+obtained live:
 
 1. At session start, send an S-A_Sync_Req: the payload is a random 48-bit challenge, the target's
    6-byte serial goes in the body and in the AAD, and the sequence slot carries the current counter.
@@ -293,8 +300,13 @@ Refused rather than guessed:
 
 - **Another device on a secured address that does not transmit on it, or whose sequence number the
   project does not hold** (`SECURE_SENDERS_UNPROVEN`): whether ETS lists it is not shown. Another
-  secured device with a transmitting object on the address is listed like ETS does it, with its
-  project sequence ([findings.md](findings.md) §22). "Transmitting" means the communication and transmit
+  secured device with a transmitting object on the address is listed like ETS does it, with the
+  sequence the key store holds for it ([findings.md](findings.md) §22): the project's at import,
+  replaced after every server session with that device (read, flash, identify, activation) by the
+  last sequence the device was seen to send in it, as ETS does, so an activated device has one after
+  its activation. Only the project the session ran under is updated; the smoke runner's own sessions
+  record nothing. The master reset of 2026-09-30 did not rewind the Jung 400021SE's counter
+  (`0x010C40` in the ETS session before it, `0x011028` after it and one activation and download). "Transmitting" means the communication and transmit
   flags on an object whose first (sending) address this is, in the device's active configuration. An
   object that only answers reads there (read flag, no transmit flag) sends secured responses too, but
   does not count; such a device is refused. A linked object

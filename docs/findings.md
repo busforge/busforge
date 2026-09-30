@@ -653,6 +653,15 @@ The Jung was downloaded although ETS showed it as needing nothing: ETS does not 
 sender list changed. Whether a device whose objects on the address only receive is listed as well is
 not shown (both devices here transmit on it).
 
+**Where ETS's value comes from.** It is the last sequence ETS saw that device send. The GVS answered
+the last request of its own download (13:37:12) with sequence `0x0AB9AE`, the value ETS wrote into the
+Jung's table 47 s later. The Jung's Sync response declared `0x010BCD` as its next sequence and its first
+answer used it; that is the value in the GVS's table. So ETS takes a device's tool-access answers to
+come from the counter it sends group telegrams from. On the Jung that holds: its sending counter, PID 59
+of the security object, read `0x011028` on 2026-09-30 evening, and the last answer of its next session
+carried `0x011030`. For the GVS it is not compared. Busforge records
+the same value after each session (`SecureSession.peerSequence`, the key store's `seq_group`).
+
 ## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
 
 On 2026-09-29 the dev server failed every bus operation for minutes with `TCP connect to

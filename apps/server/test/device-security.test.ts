@@ -6,7 +6,7 @@ import { openDb } from "../src/db/schema.ts";
 import { createProject } from "../src/db/projects.ts";
 import { createState } from "../src/app.ts";
 import { seal, open, getMasterKey } from "../src/secrets.ts";
-import { putDeviceSecurity, getDeviceSecurity, listSecureDevices } from "../src/db/deviceSecurity.ts";
+import { putDeviceSecurity, getDeviceSecurity, listSecureDevices, setDeviceSequence } from "../src/db/deviceSecurity.ts";
 
 const KEY = Buffer.alloc(32, 7); // fixed, synthetic master key
 const OTHER = Buffer.alloc(32, 9);
@@ -110,6 +110,17 @@ describe("device_security store", () => {
     expect(() => getDeviceSecurity(db, "proj", "DI-1", OTHER)).toThrow();
   });
 
+  test("the sequence last seen from a device replaces the project's, even a lower one (a reset device)", () => {
+    const db = setup();
+    putDeviceSecurity(db, "proj", [{ deviceId: "DI-1", toolKey, serialNumber: serial, sequenceNumber: "68557", source: "import" }], KEY);
+    setDeviceSequence(db, "proj", "DI-1", 0x011028n);
+    expect(getDeviceSecurity(db, "proj", "DI-1", KEY)!.sequenceNumber).toBe("69672");
+    setDeviceSequence(db, "proj", "DI-1", 12n);
+    expect(getDeviceSecurity(db, "proj", "DI-1", KEY)!.sequenceNumber).toBe("12");
+    setDeviceSequence(db, "proj", "DI-none", 5n);
+    expect(getDeviceSecurity(db, "proj", "DI-none", KEY)).toBeNull();
+  });
+
   test("upsert replaces an existing entry", () => {
     const db = setup();
     putDeviceSecurity(db, "proj", [{ deviceId: "DI-1", toolKey, serialNumber: serial, sequenceNumber: "1", source: "import" }], KEY);
@@ -146,6 +157,27 @@ describe("master-key startup guard", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a secured session's credentials", () => {
+  test("record the sequence the device was seen to send into the device's own entry", async () => {
+    const { secureCredsFor } = await import("../src/deviceservice.ts");
+    const dataDir = mkdtempSync(join(tmpdir(), "bf-seq-"));
+    try {
+      const state = createState({ dbPath: ":memory:", dataDir });
+      createProject(state.db, "proj", "P", 1);
+      putDeviceSecurity(state.db, "proj", [
+        { deviceId: "DI-1", toolKey, serialNumber: serial, sequenceNumber: "", source: "provisioned" },
+        { deviceId: "DI-2", toolKey, serialNumber: serial, sequenceNumber: "9", source: "import" },
+      ], state.masterKey);
+      secureCredsFor(state, "proj", "DI-1")!.onPeerSequence!(0x011030n);
+      expect(getDeviceSecurity(state.db, "proj", "DI-1", state.masterKey)!.sequenceNumber).toBe("69680");
+      expect(getDeviceSecurity(state.db, "proj", "DI-2", state.masterKey)!.sequenceNumber).toBe("9");
+      expect(secureCredsFor(state, "proj", "DI-none")).toBeUndefined();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
     }
   });
 });

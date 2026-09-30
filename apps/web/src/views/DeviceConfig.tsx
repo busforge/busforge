@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,7 @@ import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
 import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
 import { CommissionDialog } from "./CommissionDialog.tsx";
 import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
+import { AddressDialog } from "./AddressDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -118,6 +119,7 @@ export function DeviceConfig() {
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [commissionOpen, setCommissionOpen] = useState(false);
   const [secureOpen, setSecureOpen] = useState(false);
+  const [addressOpen, setAddressOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -519,6 +521,9 @@ export function DeviceConfig() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
+                <MapPin className="size-4" /> {t("address.menu")}
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
                 <Repeat2 className="size-4" /> {t("replace.menu")}
               </DropdownMenuItem>
@@ -554,6 +559,15 @@ export function DeviceConfig() {
         <CommissionDialog
           open={commissionOpen} onOpenChange={setCommissionOpen}
           projectId={projectId} device={device} onCommissioned={afterFlash}
+        />
+      )}
+
+      {device && (
+        <AddressDialog
+          open={addressOpen} onOpenChange={setAddressOpen}
+          projectId={projectId} device={device}
+          onSaved={() => qc.invalidateQueries({ queryKey: qk.project(projectId) })}
+          onAssign={() => setCommissionOpen(true)}
         />
       )}
 

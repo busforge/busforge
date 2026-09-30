@@ -46,9 +46,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "address" && req.method === "PUT") {
-    const body = (await req.json().catch(() => ({}))) as { ia?: string };
-    if (!body.ia) return err("IA_REQUIRED", "an individual address is required");
-    return json(setDeviceAddress(db, id, decodeURIComponent(seg[4]), body.ia));
+    const body = (await req.json().catch(() => ({}))) as { ia?: unknown };
+    const ia = text(body.ia);
+    if (!ia) return err("IA_REQUIRED", "an individual address is required");
+    return json(setDeviceAddress(db, id, decodeURIComponent(seg[4]), ia));
   }
 
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {

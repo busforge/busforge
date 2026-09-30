@@ -5,7 +5,7 @@ import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BA
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
-import { getDeviceSecurity, isSecureDevice } from "./db/deviceSecurity.ts";
+import { getDeviceSecurity, isSecureDevice, setDeviceSequence } from "./db/deviceSecurity.ts";
 import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupSenders.ts";
 import { getGroupKeys } from "./db/groupKeys.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
@@ -29,7 +29,7 @@ type StoredModules = ReturnType<typeof getDeviceModules>;
 // device has a stored tool key, every bus session (read or flash) is run securely.
 export function secureCredsFor(state: AppState, projectId: string, deviceId: string): SecureCreds | undefined {
   const sec = getDeviceSecurity(state.db, projectId, deviceId, state.masterKey);
-  return sec ? { toolKey: sec.toolKey, serial: sec.serialNumber } : undefined;
+  return sec ? { toolKey: sec.toolKey, serial: sec.serialNumber, onPeerSequence: (seq) => setDeviceSequence(state.db, projectId, deviceId, seq) } : undefined;
 }
 
 // What a write of a device's group tables needs when the device runs Data Secure: the session

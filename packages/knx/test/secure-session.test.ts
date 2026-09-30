@@ -66,6 +66,20 @@ describe("SecureSession round-trip (two parties, shared tool key)", () => {
     expect(device.unwrap(second)).toEqual({ status: "ok", apdu: Buffer.from("0301", "hex") }); // seq 5 delivered
   });
 
+  test("the peer's sequence is the last one it was seen to use, none before any authentic frame", () => {
+    const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 4n });
+    const device = new SecureSession({ toolKey, src: DEV, dst: US });
+    expect(device.peerSequence).toBeNull();
+    const first = client.wrapManagement(Buffer.from("0300", "hex"), 0); // seq 4
+    const tampered = Buffer.from(first);
+    tampered[tampered.length - 1] ^= 0xff;
+    device.unwrap(tampered);
+    expect(device.peerSequence).toBeNull();
+    device.unwrap(first);
+    device.unwrap(Buffer.from(first)); // a replay does not move it
+    expect(device.peerSequence).toBe(4n);
+  });
+
   test("a failed MAC does not advance the replay window", () => {
     const client = new SecureSession({ toolKey, src: US, dst: DEV, seq: 4n });
     const device = new SecureSession({ toolKey, src: DEV, dst: US });
@@ -101,6 +115,8 @@ describe("SecureSession Sync (Calimero vectors)", () => {
     // The Sync seeds the replay window from the device's declared next sequence, so a
     // frame recorded before this session (seq < deviceSeq) cannot replay into it.
     expect(client.receiveSequence).toBe(res!.deviceSeq);
+    // Everything below its declared next sequence the device has used.
+    expect(client.peerSequence).toBe(res!.deviceSeq - 1n);
   });
 });
 

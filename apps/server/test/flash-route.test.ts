@@ -655,7 +655,7 @@ describe("a Data Secure device: its table writes carry the security object", () 
       try {
         await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`);
       } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
-      expect(seen.secure).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) });
+      expect(seen.secure).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2), onPeerSequence: expect.any(Function) });
       expect(seen.security?.groupKeys).toEqual(new Map([[1, groupKey]]));
     });
   }
@@ -710,7 +710,7 @@ describe("a Data Secure device: its table writes carry the security object", () 
     paramFlashImpl = async (o) => { creds = o.secure; return flashed(true); };
     try { await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`)); }
     finally { paramFlashImpl = realParamFlash; }
-    expect(creds).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) });
+    expect(creds).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2), onPeerSequence: expect.any(Function) });
   });
 
   test("a parameter change that needs the com-object table rewritten is promoted to a download, as on a plain device", async () => {

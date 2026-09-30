@@ -75,6 +75,11 @@ export class SecureSession {
   get sequence(): bigint { return this.seq; }
   // The lowest sequence unwrap will still accept from the peer (for tests/diagnostics).
   get receiveSequence(): bigint { return this.recvSeq; }
+  // The highest sequence the peer has provably used (its authenticated frames, or the Sync answer's
+  // declared next sequence minus one), null before any. ETS records the same value as the device's
+  // sequence number for other devices' PID 54 entries: the devices shown answer tool access from the
+  // counter they send group telegrams from (docs/findings.md §22).
+  get peerSequence(): bigint | null { return this.recvSeq > 0n ? this.recvSeq - 1n : null; }
   // Adopt a sequence learned from a Sync response (only ever move forward).
   setSequence(n: bigint): void { if (n > this.seq) this.seq = n; }
 

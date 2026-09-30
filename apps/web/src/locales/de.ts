@@ -351,6 +351,15 @@ const de: Messages = {
     done: "Produkt ausgetauscht. Das neue Gerät braucht noch eine Erstinbetriebnahme.",
     failed: "Produkt konnte nicht ausgetauscht werden",
   },
+  address: {
+    menu: "Physikalische Adresse ändern…",
+    title: "Physikalische Adresse von {{device}}",
+    description: "Legt die Adresse fest, die dieses Gerät im Projekt haben soll. Auf den Bus geht nichts: Ein Gerät, das schon am Bus ist, behält seine Adresse, bis ihm die neue vergeben wird, und dafür braucht es seine Programmiertaste (In Betrieb nehmen). Bis dahin geht jeder Lese- und Schreibzugriff an die neue Adresse und findet dort kein Gerät oder eines, das dieses Projekt nicht kennt.",
+    label: "Physikalische Adresse",
+    save: "Speichern",
+    saved: "Gespeichert: {{to}} im Projekt (bisher {{from}}). Ein Gerät, das schon am Bus ist, behält seine Adresse, bis ihm {{to}} vergeben wird.",
+    assign: "Jetzt vergeben…",
+  },
   // Erstinbetriebnahme-Dialog: physikalische Adresse an das Gerät im
   // Programmiermodus vergeben, dann die komplette Konfiguration laden. Schreibt auf den Bus.
   secureActivate: {

@@ -4,7 +4,7 @@ import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly } from "../db/deviceparams.ts";
-import { getDeviceSecurity, putDeviceSecurity, setToolKeySource } from "../db/deviceSecurity.ts";
+import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
@@ -207,14 +207,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
-    const sec = getDeviceSecurity(db, id, deviceId, state.masterKey);
+    const secure = secureCredsFor(state, id, deviceId);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
-      async (progress) => {
-        return secureIdentify(conn, dev.ia, sec ? { toolKey: sec.toolKey, serial: sec.serialNumber } : undefined, progress);
-      },
+      async (progress) => secureIdentify(conn, dev.ia, secure, progress),
     );
     return json({ ia: dev.ia, ...result });
   }
@@ -257,7 +255,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         const result = await activateDevice(conn, dev.ia, { fdsk: cert.fdsk, serial: cert.serialNumber }, stored?.toolKey, (key) => {
           generated = !stored;
           putDeviceSecurity(db, id, [{ deviceId, toolKey: key, serialNumber: cert.serialNumber, sequenceNumber: stored?.sequenceNumber ?? "", source: stored?.source ?? "pending" }], state.masterKey);
-        }, progress);
+        }, progress, (seq) => setDeviceSequence(db, id, deviceId, seq));
         if (generated || stored?.source === "pending") setToolKeySource(db, id, deviceId, "provisioned");
         return result;
       },

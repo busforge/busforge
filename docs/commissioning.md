@@ -78,6 +78,14 @@ either.
 
 ### Using it
 
+The address the project holds for a device is set in the device menu, **Change individual
+address…** (or `PUT .../devices/<device-id>/address` with `{"ia":"1.1.5"}`). That changes the project
+only: a device already on the bus keeps the address it holds, and every read and write goes to the new
+one and finds nothing there until it is assigned. The dialog therefore offers the assignment right
+after saving; it opens the commissioning dialog, whose download step is optional. An address another
+device of the project holds is refused (`IA_TAKEN`). Other secured devices list this one's address in
+their PID 54, and are not flagged when it changes (see the roadmap).
+
 ```bash
 P=http://localhost:3000/api/projects/<project-id>
 

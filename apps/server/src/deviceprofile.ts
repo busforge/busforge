@@ -29,8 +29,18 @@ export {
 
 // Credentials for a KNX Data Secure session: the device\'s tool key + serial, from
 // the key store. When supplied, the whole session (connect/Sync/read/flash) speaks
-// Data Secure transparently.
-export interface SecureCreds { toolKey: Buffer; serial: Buffer; }
+// Data Secure transparently. onPeerSequence receives the last sequence the device was seen to send
+// in the session, whatever its outcome.
+export interface SecureCreds { toolKey: Buffer; serial: Buffer; onPeerSequence?: (sequence: bigint) => void; }
+
+// Hand a finished session's peer sequence to its owner, also after a refusal: it was authenticated
+// under the device's own key, so it is that device's counter. The operation's own outcome stands.
+function reportPeerSequence(session: SecureSession | undefined, onPeerSequence: ((sequence: bigint) => void) | undefined): void {
+  const seq = session?.peerSequence;
+  if (seq == null || !onPeerSequence) return;
+  try { onPeerSequence(seq); }
+  catch (e) { console.error(`[secure] could not record the device's sequence ${seq}:`, e); }
+}
 
 // The mask gate. A device in Data Secure mode answers a plain descriptor read with 0xFFFF, so that
 // answer in a session without a tool key means the key is missing, not that the device is wrong.
@@ -78,6 +88,8 @@ async function withDeviceSession<T>(
     try { await dev.disconnect(); } catch { /* teardown: the device link may already be gone */ }
     try { await tun.disconnect(); } catch { /* teardown: the transport may already be gone */ }
     throw e;
+  } finally {
+    reportPeerSequence(session, secure?.onPeerSequence);
   }
 }
 
@@ -184,15 +196,16 @@ export interface DeviceIdentity { secure: boolean; mask: string; serial: string 
 // reaches `persistKey` before it is written to the device.
 export async function activateDevice(
   connection: Connection, ia: string, cert: { fdsk: Buffer; serial: Buffer }, storedKey: Buffer | undefined,
-  persistKey: (key: Buffer) => void, onProgress?: ProgressFn,
+  persistKey: (key: Buffer) => void, onProgress?: ProgressFn, onPeerSequence?: (sequence: bigint) => void,
 ): Promise<Omit<ActivationResult, "toolKey">> {
-  const links = new Map<KnxDevice, { disconnect(): Promise<void> }>();
+  const links = new Map<KnxDevice, { tun: { disconnect(): Promise<void> }; session: SecureSession }>();
   onProgress?.("activate");
   const r = await activateSecureDevice({
     async open(key, serial) {
       const tun = makeTransport(connection);
       await tun.connect();
-      const dev = new KnxDevice(tun, ia, new SecureSession({ toolKey: key, src: tun.assignedIa, dst: iaToNum(ia), serial }));
+      const session = new SecureSession({ toolKey: key, src: tun.assignedIa, dst: iaToNum(ia), serial });
+      const dev = new KnxDevice(tun, ia, session);
       // A Sync that gets no answer still leaves the device's transport connection open, and a device
       // in factory state then takes the next Sync on a new connection without answering it (the
       // Jung 400021SE, 2026-09-29): close it with a T_Disconnect before the next key is tried.
@@ -202,13 +215,16 @@ export async function activateDevice(
         try { await tun.disconnect(); } catch { /* the link may already be gone */ }
         throw e;
       }
-      links.set(dev, tun);
+      links.set(dev, { tun, session });
       return dev;
     },
     async close(dev) {
+      const link = links.get(dev);
       try { await dev.disconnect(); } catch { /* the link may already be gone */ }
-      try { await links.get(dev)?.disconnect(); } catch { /* the transport may already be gone */ }
+      try { await link?.tun.disconnect(); } catch { /* the transport may already be gone */ }
       links.delete(dev);
+      // Whatever key a session ran under, the device answered from its one sending counter.
+      reportPeerSequence(link?.session, onPeerSequence);
     },
   }, { fdsk: cert.fdsk, serial: cert.serial, storedKey, persistKey });
   return { outcome: r.outcome };

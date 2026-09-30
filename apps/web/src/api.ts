@@ -294,6 +294,10 @@ export const api = {
   // Write the device's project address into the physical device in programming mode.
   assignIa: (id: string, deviceId: string): Promise<AssignIaResult> =>
     awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/assign-ia`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r))),
+  setDeviceAddress: (id: string, deviceId: string, ia: string): Promise<{ id: string; ia: string }> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/address`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ia }),
+    }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
   // Store the device certificate printed on a KNX Data Secure device (serial + factory key), sealed.
   // Nothing is sent to the device.
   putDeviceCertificate: (id: string, deviceId: string, certificate: string): Promise<{ serial: string }> =>

@@ -351,6 +351,15 @@ const en = {
     done: "Product replaced. The new device still needs to be commissioned.",
     failed: "Could not replace the product",
   },
+  address: {
+    menu: "Change individual address…",
+    title: "Individual address of {{device}}",
+    description: "Sets the address this device should hold in the project. Nothing is sent to the bus: a device already there keeps whatever address it holds until the new one is assigned to it, which needs its programming button (Commission). Until then every read and write goes to the new address, and finds no device there, or a device this project does not know.",
+    label: "Individual address",
+    save: "Save",
+    saved: "Saved: {{to}} in the project (was {{from}}). A device already on the bus keeps the address it holds until {{to}} is assigned to it.",
+    assign: "Assign now…",
+  },
   // Commission dialog: assign the individual address to the device in
   // programming mode, then download the complete configuration. Bus writes.
   secureActivate: {

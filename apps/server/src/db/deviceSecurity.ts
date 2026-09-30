@@ -17,7 +17,7 @@ export interface DeviceSecurityEntry {
   deviceId: string;
   toolKey: Buffer;        // 16-byte AES-128
   serialNumber: Buffer;   // 6-byte device serial (for the Sync request)
-  sequenceNumber: string; // group/data counter from the project (NOT tool access)
+  sequenceNumber: string; // the device's own sending counter (decimal): the project's value, then the last one seen from it
   source: SecuritySource;
 }
 
@@ -81,4 +81,11 @@ export function countOwnToolKeys(db: Database, projectId: string): number {
 
 export function setToolKeySource(db: Database, projectId: string, deviceId: string, source: SecuritySource): void {
   db.prepare("UPDATE device_security SET source = ? WHERE project_id = ? AND device_id = ?").run(source, projectId, deviceId);
+}
+
+// Record the last sequence a secured device was seen to send (SecureSession.peerSequence), replacing
+// the project's value as ETS does when it talks to the device. A device without a stored entry is
+// left alone.
+export function setDeviceSequence(db: Database, projectId: string, deviceId: string, sequence: bigint): void {
+  db.prepare("UPDATE device_security SET seq_group = ? WHERE project_id = ? AND device_id = ?").run(sequence.toString(), projectId, deviceId);
 }
