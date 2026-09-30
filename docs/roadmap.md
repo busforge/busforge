@@ -31,6 +31,13 @@ started until the capability it depends on is hardware-proven.
   verifies and runs, and comes back from its next restart with the application in ERROR
   ([status.md](status.md)). An ETS capture of that device gives the exact bytes; the fix is then a
   hardware restart test, not a read-back.
+- **A surgical parameter flash wants to change a byte the full download left.** On the Jung 400021SE
+  after a verified secured full download (no project changes since, read-back with no drift), the
+  parameter-flash dry run still reports one differing byte: offset `0x1E14` of the parameter segment,
+  `00` on the device, `01` in the flash's target (owned). The flash's target owns the default member
+  of an idle union (`ownIdleUnionDefaults`), which the full-download image may not write; which of the
+  two is right needs an ETS capture of this device's parameter download. Until then a parameter flash
+  there writes that byte.
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared load
   procedures is executed; devices whose procedure declares image-property stamps the engine cannot
   compute are refused (`LOAD_STEP_UNSUPPORTED`) rather than flashed with a partial recipe.
