@@ -312,6 +312,16 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
   });
 
+  test("a never-programmed device of a family that cannot full-download keeps its surgical flash, which ends the state", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
+    paramFlashImpl = async () => flashed(true);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(np()).toBe(0);
+  });
+
   test("param flash, family that cannot full-download -> plain COM_OBJECT_TABLE_STALE (no download offered)", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
@@ -353,6 +363,26 @@ describe("a memory-less module parameter that shapes the com-object table", () =
     import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0004_A-7072-21-99A7-O000A.xml.gz",
   ))).toString("utf8");
   const CHANNEL_FUNCTION = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142";
+
+  test("a never-programmed device: surgical flashes are refused, only a verified download clears it", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    for (const route of ["flash", "flash-ga", "flash?dry=1"]) {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error.code).toBe("NEVER_PROGRAMMED_USE_DOWNLOAD");
+    }
+    downloadImpl = async () => flashed(false);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/download`));
+    expect(np()).toBe(1); // not verified: nothing adopted
+    downloadImpl = async () => flashed(true);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/download`));
+    expect(np()).toBe(0);
+  });
 
   test("a download adopts it, and switching it back promotes the parameter flash to a download", async () => {
     const state = freshState();
@@ -585,7 +615,7 @@ describe("programming jobs outlive the request that submitted them", () => {
     const { projectId, deviceId } = await m0081Project(state);
     const gate = Promise.withResolvers<void>();
     const started = Promise.withResolvers<void>();
-    paramFlashImpl = async () => { started.resolve(); await gate.promise; return flashed(true); };
+    paramFlashImpl = async (opts) => { opts.beforeWrite?.(); started.resolve(); await gate.promise; return flashed(true); };
     const running = (await (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!.json()) as any;
     await started.promise;
     const refused = (await post(state, `/api/projects/${projectId}/tasks/${running.id}/cancel`))!;
@@ -603,6 +633,41 @@ describe("programming jobs outlive the request that submitted them", () => {
     expect((await state.queue.wait(running.id))!.state).toBe("done");
     const finished = (await post(state, `/api/projects/${projectId}/tasks/${running.id}/cancel`))!;
     expect(await finished.json()).toMatchObject({ error: { code: "TASK_ALREADY_FINISHED" } });
+  });
+
+  test("a write is cancelled while it only reads the device, and never reaches its first write", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    const reading = Promise.withResolvers<void>();
+    const readDone = Promise.withResolvers<void>();
+    let wrote = false;
+    let signalSeen: AbortSignal | undefined;
+    paramFlashImpl = async (opts) => {
+      signalSeen = opts.signal;
+      reading.resolve();
+      await readDone.promise; // the backup and compare
+      opts.beforeWrite?.();
+      wrote = true;
+      return flashed(true);
+    };
+    const running = (await (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!.json()) as { id: string; cancellable: boolean };
+    await reading.promise;
+    expect(state.queue.get(running.id)).toMatchObject({ state: "running", cancellable: true });
+    expect(await (await post(state, `/api/projects/${projectId}/tasks/${running.id}/cancel`))!.json()).toEqual({ cancelled: "running" });
+    expect(signalSeen?.aborted).toBe(true);
+    readDone.resolve();
+    expect(await state.queue.wait(running.id)).toMatchObject({ state: "cancelled", cancellable: false, baselineCommitted: false });
+    expect(wrote).toBe(false);
+  });
+
+  test("a dry run reaches the profile with the task's signal, and no write gate", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    let seen: { signal?: AbortSignal; beforeWrite?: () => void } = {};
+    paramFlashImpl = async (opts) => { seen = opts; return { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" }; };
+    await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+    expect(seen.signal).toBeInstanceOf(AbortSignal);
+    expect(seen.beforeWrite).toBeUndefined();
   });
 
   test("a restart reports unfinished work as interrupted or not started, and replays none of it", async () => {

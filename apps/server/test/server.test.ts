@@ -6,6 +6,7 @@ import { decodeGroupTpdu } from "../src/telegram.ts";
 import { Bus } from "../src/bus.ts";
 import { createState, handleApi, mergeLinkBaseline, selectFlashLinks, importGaps, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
+import { replaceParamBase } from "../src/db/deviceparams.ts";
 import { readGroupTables, KnxIpTunnel, KnxError } from "@busforge/knx";
 import { classify } from "../src/deviceprofile.ts";
 import { parseAppConfig } from "@busforge/product";
@@ -456,6 +457,37 @@ describe("blank projects + catalog (device placement)", () => {
       body: JSON.stringify({ appRef: prod.appRef, productRef: prod.productRef }),
     }), state))!.json()) as any;
     expect(added2.ia).toBe("1.1.2");
+  });
+
+  test("a placed device is never programmed until a baseline is adopted, and that travels through export", async () => {
+    const state = freshState();
+    await importConfig(state);
+    const imported = ((await (await handleApi(req("/api/projects"), state))!.json()) as { id: string }[])[0];
+    const importedDevice = ((await (await handleApi(req(`/api/projects/${imported.id}`), state))!.json()) as any).devices[0];
+    expect(importedDevice.changes.neverProgrammed).toBe(false); // an imported device: ETS programmed it
+    const catalog = (await (await handleApi(req("/api/catalog/products"), state))!.json()) as any[];
+    const prod = catalog.find((p) => p.appRef === "M-TEST_H-1_HP-1");
+    const blank = (await (await handleApi(req("/api/projects", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Fresh" }),
+    }), state))!.json()) as any;
+    const device = (await (await handleApi(req(`/api/projects/${blank.id}/devices`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appRef: prod.appRef, productRef: prod.productRef }),
+    }), state))!.json()) as any;
+    const changes = async (pid: string) => ((await (await handleApi(req(`/api/projects/${pid}`), state))!.json()) as any).devices[0].changes;
+    expect(await changes(blank.id)).toEqual({ params: 0, links: 0, neverProgrammed: true });
+
+    // It survives an export and re-import.
+    const { bytes } = await exportArtifact(state, blank.id);
+    const form = new FormData();
+    form.set("file", new File([bytes], "p.busforge"));
+    const again = (await (await handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state))!.json()) as { id: string };
+    expect((await changes(again.id)).neverProgrammed).toBe(true);
+
+    // A baseline adopted from a read-back or a surgical flash does not end it (only a verified full
+    // download does, see flash-route.test.ts).
+    replaceParamBase(state.db, blank.id, device.id, new Map());
+    expect((await changes(blank.id)).neverProgrammed).toBe(true);
   });
 
   test("create with no name -> 400; place unknown product -> 404", async () => {

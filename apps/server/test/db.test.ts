@@ -226,7 +226,7 @@ describe("projects", () => {
   test("fresh import reports no per-device changes", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    for (const d of getProject(db, "p1")!.devices) expect(d.changes).toEqual({ params: 0, links: 0 });
+    for (const d of getProject(db, "p1")!.devices) expect(d.changes).toEqual({ params: 0, links: 0, neverProgrammed: false });
   });
 
   test("tracks parameter changes and resets on flash", () => {

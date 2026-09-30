@@ -26,6 +26,51 @@ describe("TaskQueue", () => {
     expect(order).toEqual([1, 11, 2, 22]); // job 2 starts only after job 1 finishes
   });
 
+  test("a running write is cancellable only when it opted in and has not entered its writes", async () => {
+    const q = new TaskQueue(() => 0);
+    const go = Promise.withResolvers<void>();
+    const inWrites = Promise.withResolvers<void>();
+    const plain = q.submit({ ...meta("a"), kind: "assign-ia", writes: true }, async () => { await go.promise; });
+    const gated = q.submit({ ...meta("b"), kind: "download", writes: true, cancelBeforeWrite: true }, async (_p, _s, _c, enterWrites) => {
+      enterWrites(); inWrites.resolve(); await go.promise;
+    });
+    await Bun.sleep(0);
+    expect(q.get(plain.id)).toMatchObject({ state: "running", cancellable: false });
+    expect(q.cancel(plain.id)).toBeNull();
+    go.resolve();
+    await inWrites.promise;
+    expect(q.get(gated.id)).toMatchObject({ state: "running", cancellable: false });
+    expect(q.cancel(gated.id)).toBeNull();
+    expect((await q.wait(gated.id))!.state).toBe("done");
+  });
+
+  test("a shutdown stops a write that is still reading, and waits for one that writes", async () => {
+    const q = new TaskQueue(() => 0);
+    const reading = Promise.withResolvers<void>();
+    let reachedWrite = false;
+    const t = q.submit({ ...meta("a"), kind: "download", writes: true, cancelBeforeWrite: true }, async (_p, signal, _c, enterWrites) => {
+      reading.resolve();
+      await new Promise<void>((r) => signal.addEventListener("abort", () => r()));
+      enterWrites();
+      reachedWrite = true;
+    });
+    await reading.promise;
+    await q.shutdown();
+    expect((await q.wait(t.id))!.state).toBe("cancelled");
+    expect(reachedWrite).toBe(false);
+  });
+
+  test("a cancel accepted while a job wrote nothing stands even if the job then finishes", async () => {
+    const q = new TaskQueue(() => 0);
+    const go = Promise.withResolvers<void>();
+    const running = Promise.withResolvers<void>();
+    const t = q.submit(meta("a"), async () => { running.resolve(); await go.promise; return 42; });
+    await running.promise;
+    expect(q.cancel(t.id)).toBe("running");
+    go.resolve();
+    expect((await q.wait(t.id))!.state).toBe("cancelled");
+  });
+
   test("a failing job rejects but does not stall the queue", async () => {
     const q = new TaskQueue(() => 0);
     const j1 = q.enqueue(meta("d1"), async () => { throw new Error("boom"); });
@@ -261,7 +306,7 @@ describe("SqliteTaskStore", () => {
 
   test("closes unfinished tasks at startup with what is known about each", () => {
     const { db, store: s } = store();
-    const base = { projectId: "p1", deviceName: "x", ia: "1.1.1", snapshotId: null, phase: null, done: 0, total: 0, error: null, errorCode: null, outcome: null, result: null, queuedAt: 1, startedAt: 1, finishedAt: null };
+    const base = { projectId: "p1", deviceName: "x", ia: "1.1.1", snapshotId: null, phase: null, done: 0, total: 0, error: null, errorCode: null, outcome: null, result: null, queuedAt: 1, startedAt: 1, finishedAt: null, cancellable: false };
     s.save({ ...base, id: "queued", deviceId: "a", kind: "download", writes: true, state: "queued", baselineCommitted: false });
     s.save({ ...base, id: "writing", deviceId: "b", kind: "download", writes: true, state: "running", baselineCommitted: false });
     s.save({ ...base, id: "committed", deviceId: "c", kind: "flash-params", writes: true, state: "running", baselineCommitted: true, result: { kind: "flashed", verified: true } });

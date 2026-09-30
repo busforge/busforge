@@ -17,7 +17,7 @@ const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params"
 const pct = (t: Task) => (t.total > 0 ? Math.round((t.done / t.total) * 100) : null);
 const dotColor = (s: BusStatus) => (s === "connected" ? "bg-ok" : s === "connecting" ? "bg-primary" : "bg-muted-foreground");
 // A flash mid-write would corrupt the device, so only queued tasks and running reads can be cancelled.
-const cancellable = (t: Task) => t.state === "queued" || (t.state === "running" && t.kind === "read");
+const cancellable = (t: Task) => t.cancellable;
 
 // Combined header widget for the bus: shows the connection status when idle, the
 // running operation (with live progress) when busy, and a popover that holds the

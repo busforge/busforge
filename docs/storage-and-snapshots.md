@@ -99,6 +99,15 @@ link or newly added override remains distinguishable from the programmed snapsho
 otherwise unwritten fields retain their previous baseline, even when absent from a sparse submission.
 Full-download adoption of parameters and links is atomic. Dry-run requests never adopt a baseline.
 
+An empty baseline says nothing about whether the device was ever written, so a device placed from
+the catalog, or whose product was replaced, carries `devices.never_programmed`. It shows as **Never
+programmed** and counts as "to program" until a verified full download clears it: only that shows the
+device holds this project's application, parameters and tables. A surgical flash is refused on such a
+device (`NEVER_PROGRAMMED_USE_DOWNLOAD`, the flash dialog offers the download), and a read-back leaves
+the flag as it is (it does not check which application the device runs). A family that cannot be
+downloaded in full is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export; restore points do not carry it, being device
+state. Devices from before the column existed read as programmed.
+
 Each device also carries a local `programming_token`, regenerated on insertion and address/product/
 application updates. It is not part of the portable device identity. Queued programming refuses a
 changed token before executing or adopting results, including same-product replacement and

@@ -173,7 +173,7 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
   if (!ia) throw new ApiError("NO_FREE_IA", "no free individual address in area 1");
   const instanceId = `BF-${randomUUID()}`;
   db.prepare(
-    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, '')",
+    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1)",
   ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer);
   return { id: instanceId, ia };
 }
@@ -217,7 +217,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
   const secureIds = new Set((db.query("SELECT device_id AS id FROM device_security WHERE project_id = ?").all(id) as { id: string }[]).map((r) => r.id));
   const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
     ...d,
-    changes: changes.get(d.id) ?? { params: 0, links: 0 },
+    changes: changes.get(d.id) ?? { params: 0, links: 0, neverProgrammed: false },
     searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
     secure: secureIds.has(d.id),
   }));

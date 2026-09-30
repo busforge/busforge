@@ -103,7 +103,7 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0 WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1 WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
@@ -123,10 +123,18 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
   })();
 }
 
-export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string } | null {
-  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string } | null;
-  return r ?? null;
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string; neverProgrammed: boolean } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken, never_programmed AS np FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string; np: number } | null;
+  if (!r) return null;
+  const { np, ...d } = r;
+  return { ...d, neverProgrammed: np === 1 };
+}
+
+// Only a verified full download shows the device holds this project's whole configuration (its
+// application, parameters, com-object and group tables); a surgical flash or a read-back does not.
+export function clearNeverProgrammed(db: Database, projectId: string, deviceId: string): void {
+  db.prepare("UPDATE devices SET never_programmed = 0 WHERE project_id = ? AND instance_id = ?").run(projectId, deviceId);
 }
 
 export function getSourceFile(db: Database, projectId: string): string | null {
@@ -140,13 +148,16 @@ export function getSourceFile(db: Database, projectId: string): string | null {
 
 // Per-device change counts for a whole project: how many parameters differ from
 // their baseline, and how many com-objects have a differing GA-link set.
-export interface DeviceChanges { params: number; links: number; }
+// neverProgrammed: no configuration of this project has been verified on the device since it was
+// placed or its product replaced, so it needs a full download whatever its configuration.
+export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean }
 export function getProjectChanges(db: Database, projectId: string): Map<string, DeviceChanges> {
   const out = new Map<string, DeviceChanges>();
-  const bump = (id: string, k: keyof DeviceChanges, n: number) => {
-    const c = out.get(id) ?? { params: 0, links: 0 };
-    c[k] = n; out.set(id, c);
-  };
+  const entry = (id: string) => { const c = out.get(id) ?? { params: 0, links: 0, neverProgrammed: false }; out.set(id, c); return c; };
+  const bump = (id: string, k: "params" | "links", n: number) => { entry(id)[k] = n; };
+  for (const r of db.query("SELECT instance_id AS id FROM devices WHERE project_id = ? AND never_programmed = 1").all(projectId) as { id: string }[]) {
+    entry(r.id).neverProgrammed = true;
+  }
   // Symmetric difference of (param, value) rows, counted as distinct params. A
   // plain JOIN would miss a param edited from its default: 0.xml is sparse, so
   // such a param has no baseline row and editing it inserts a live-only row.

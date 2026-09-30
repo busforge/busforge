@@ -164,9 +164,6 @@ started until the capability it depends on is hardware-proven.
 - **Persist the parsed product model** in the catalog instead of the raw application-program XML,
   so a device page does not re-parse on every open. Deferred until one unified parser existed,
   which it now does.
-- **A placed catalog device has no "never programmed" state.** Its all-defaults configuration
-  against an empty baseline reads as clean, so it does not appear in the "to program" filter even
-  though nothing has ever been written to it. The flash itself still sends the full image.
 - **No size guard on plugin baggage blobs** stored in the database.
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
 
@@ -175,8 +172,6 @@ started until the capability it depends on is hardware-proven.
 - **Hidden preserved links in the replace-device flow.** The server demands a total mapping over
   all stored links; the dialog only offers rows for visible ones, so a device with a link hidden by
   parameter visibility is a dead end (an honest refusal, but no way forward).
-- **Cancel the read-only phase of a bus task.** A long read blocks the queue with no way out. The
-  transport already accepts an abort signal; it is not threaded through.
 - **Channel headings that stay a raw template.** Placeholder substitution from a parameter is
   implemented and works on every bundled application, but one large application was observed
   rendering identical headings for all its channels. Reproduce it before changing anything.

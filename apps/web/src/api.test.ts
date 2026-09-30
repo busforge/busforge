@@ -4,7 +4,7 @@ import { awaitTask, ApiError, type Task } from "./api.ts";
 const base: Task = {
   id: "t1", projectId: "p", deviceId: "d", deviceName: "Dev", ia: "1.1.1", kind: "download", writes: true, snapshotId: null,
   state: "queued", phase: null, done: 0, total: 0, error: null, errorCode: null, result: null, baselineCommitted: false,
-  queuedAt: 0, startedAt: null, finishedAt: null,
+  queuedAt: 0, startedAt: null, finishedAt: null, cancellable: true,
 };
 const realFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = realFetch; });

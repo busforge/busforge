@@ -282,9 +282,10 @@ async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>
 // current and future profile instead of by convention in four hand-rolled copies.
 async function runFlashOp(
   dev: KnxDevice, mask: string,
-  ctx: { dryRun: boolean; persistBackups: PersistBackups },
+  ctx: { dryRun: boolean; persistBackups: PersistBackups } & WriteGate,
   op: FlashOp,
 ): Promise<FlashResult> {
+  if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
   // Persisting the device's current state is the FIRST step, structurally before any
   // write; the hook is injected (the server stores files on disk) so this layer stays
   // filesystem-free and the ordering is testable with a plain recording stub.
@@ -294,6 +295,8 @@ async function runFlashOp(
   }
   if (op.diffBytes === 0 && !op.loadIncomplete) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup };
+  // Everything before this line only read the device; from here on the write runs to its end.
+  ctx.beforeWrite?.();
   await op.write();
   await reconnectAfterRestart(dev);
   const verified = await verifyAfterRestart(dev, op.verify);
@@ -335,7 +338,12 @@ export interface ReadStateCtx {
 // BEFORE any write reaches the device.
 export type PersistBackups = (files: { file: string; bytes: Buffer }[], representative: string) => string;
 
-export interface ParamFlashCtx {
+// A flash reads the device before it writes anything. `signal` cancels that read-only part;
+// `beforeWrite` runs once, right before the first write, and may throw to stop there (a task cancelled
+// in time). After it the write is never interrupted by the signal.
+export interface WriteGate { signal?: AbortSignal; beforeWrite?: () => void }
+
+export interface ParamFlashCtx extends WriteGate {
   deviceId: string; // used in backup file names
   appXml: string;
   params: Map<string, string>;
@@ -351,7 +359,7 @@ export interface ParamFlashCtx {
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
 // because the com-object table it writes has to agree with the association table it writes.
-export interface FullDownloadCtx {
+export interface FullDownloadCtx extends WriteGate {
   deviceId: string;
   ia: string; // the device's individual address; the System 7 address table stores it, so the plan needs it
   appXml: string;
@@ -384,7 +392,7 @@ export interface SecureTablesCtx {
   otherDevices?: ReadonlyMap<number, readonly OtherDevice[]>;
 }
 const secureSenders = (sec: SecureTablesCtx, ia: string) => ({ byGa: sec.senders ?? new Map(), ownIa: iaToNum(ia), otherDevices: sec.otherDevices ?? new Map<number, OtherDevice[]>() });
-export interface GaFlashCtx {
+export interface GaFlashCtx extends WriteGate {
   deviceId: string; // used in backup file names
   ia: string;
   links: ComObjectLink[];
@@ -624,7 +632,7 @@ export class SystemBProfile extends DeviceProfile {
       const backupTotal = segs.reduce((n, s) => n + s.size, 0);
       let backupDone = 0;
       for (const s of segs) {
-        const bytes = await dev.memRead(s.at, s.size, undefined, (d) => ctx.onProgress?.("backup", backupDone + d, backupTotal));
+        const bytes = await dev.memRead(s.at, s.size, undefined, (d) => ctx.onProgress?.("backup", backupDone + d, backupTotal), ctx.signal);
         backupDone += s.size;
         backups.push({ file: `${ctx.deviceId}-full-${stamp}-${s.what}.bin`, bytes });
       }
@@ -752,7 +760,7 @@ export class SystemBProfile extends DeviceProfile {
     // there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
     // needs a full download, which is a different operation (docs/commissioning.md).
     const addr = await loadedTableAddr(dev, LSM, "parameter segment");
-    const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t));
+    const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
@@ -961,7 +969,7 @@ export class System7Profile extends DeviceProfile {
     const stamp = Date.now();
     let read = 0;
     for (const t of targets) {
-      const onDev = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("backup", read + d, totalBytes));
+      const onDev = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("backup", read + d, totalBytes), ctx.signal);
       read += t.size;
       current.set(t.id, onDev);
     }
@@ -1186,7 +1194,7 @@ export class System7Profile extends DeviceProfile {
       const backTotal = cfg.absoluteSegments.reduce((n, s) => n + s.size, 0);
       let backDone = 0;
       for (const seg of cfg.absoluteSegments) {
-        const bytes = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("backup", backDone + d, backTotal));
+        const bytes = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("backup", backDone + d, backTotal), ctx.signal);
         backDone += seg.size;
         backups.push({ file: `${ctx.deviceId}-abs-${seg.id.split("_").pop()}-${stamp}.bin`, bytes });
       }

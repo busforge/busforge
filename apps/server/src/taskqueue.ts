@@ -47,6 +47,9 @@ export interface Task {
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  // Whether a cancel is accepted now: queued, a running task that writes nothing, or a running write
+  // still in the read-only part before its first write (see TaskMeta.cancelBeforeWrite).
+  cancellable: boolean;
 }
 
 // The bits of a bus-operation result the task list carries. `kind` is the operation's own verdict
@@ -69,6 +72,7 @@ export type ProgressFn = (phase: string, done?: number, total?: number) => void;
 export type CommitFn = (result: unknown, adopt: () => void) => void;
 
 export class CancelledError extends Error {
+  readonly code = "TASK_CANCELLED";
   constructor() { super("task cancelled"); this.name = "CancelledError"; }
 }
 
@@ -80,7 +84,15 @@ export interface TaskMeta {
   kind: TaskKind;
   writes: boolean;
   snapshotId?: string | null;
+  // A write whose job calls enterWrites right before its first write to the device: until then it
+  // only reads, and a cancel stops it there. Without it a running write is never cancellable.
+  cancelBeforeWrite?: boolean;
 }
+
+// Called by a job right before its first write. Throws when the task was cancelled in time; after it
+// returns, the task is no longer cancellable.
+export type EnterWritesFn = () => void;
+type JobFn<T> = (progress: ProgressFn, signal: AbortSignal, commit: CommitFn, enterWrites: EnterWritesFn) => Promise<T>;
 
 export interface TaskStore {
   save(task: Task): void;
@@ -117,6 +129,8 @@ export class TaskQueue {
   private live = new Map<string, Task>();
   private settled = new Map<string, Promise<unknown>>();
   private controllers = new Map<string, AbortController>();
+  // Per live task: whether a cancel is accepted right now (recomputed on each ask).
+  private canCancel = new Map<string, () => boolean>();
   private tail: Promise<unknown> = Promise.resolve();
   private draining: Promise<void> | null = null;
   constructor(
@@ -128,14 +142,14 @@ export class TaskQueue {
   // Append a job; it starts once all earlier jobs have finished. The returned
   // promise resolves/rejects with the job's own result, independent of siblings.
   // `run` receives an AbortSignal it may honor to support cancellation.
-  enqueue<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal, commit: CommitFn) => Promise<T>): Promise<T> {
+  enqueue<T>(meta: TaskMeta, run: JobFn<T>): Promise<T> {
     return this.start(meta, run).result;
   }
 
   // Append a job and return its task at once, for a caller that collects the outcome later by id.
   // Nothing waits on the job's promise, so its failure lives only in the task, never as an
   // unhandled rejection.
-  submit<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal, commit: CommitFn) => Promise<T>): Task {
+  submit<T>(meta: TaskMeta, run: JobFn<T>): Task {
     const { task, result } = this.start(meta, run);
     result.catch(() => {});
     return { ...task };
@@ -154,30 +168,38 @@ export class TaskQueue {
     }
   }
 
-  private start<T>(meta: TaskMeta, run: (progress: ProgressFn, signal: AbortSignal, commit: CommitFn) => Promise<T>): { task: Task; result: Promise<T> } {
+  private start<T>(meta: TaskMeta, run: JobFn<T>): { task: Task; result: Promise<T> } {
     this.refuseAdmission();
     if (meta.writes) this.refuseConcurrentWrite(meta.projectId, meta.deviceId);
     const task: Task = {
       id: randomUUID(), ...meta, snapshotId: meta.snapshotId ?? null, state: "queued", phase: null, done: 0, total: 0,
       error: null, errorCode: null, outcome: null, result: null, baselineCommitted: false,
-      queuedAt: this.now(), startedAt: null, finishedAt: null,
+      queuedAt: this.now(), startedAt: null, finishedAt: null, cancellable: true,
     };
+    let writing = false;
+    const refreshCancellable = () => {
+      task.cancellable = task.state === "queued" || (task.state === "running" && (!task.writes || (!!meta.cancelBeforeWrite && !writing)));
+    };
+    this.canCancel.set(task.id, () => { refreshCancellable(); return task.cancellable; });
     const controller = new AbortController();
     this.controllers.set(task.id, controller);
     this.live.set(task.id, task);
     try { this.store.save(task); }
-    catch (e) { this.live.delete(task.id); this.controllers.delete(task.id); throw e; }
+    catch (e) { this.live.delete(task.id); this.controllers.delete(task.id); this.canCancel.delete(task.id); throw e; }
 
     const result = this.tail.then(async () => {
       // Cancelled while still waiting in the queue: skip without running.
       if (task.state === "cancelled" || controller.signal.aborted) {
         if (task.state !== "cancelled") { task.state = "cancelled"; task.finishedAt = this.now(); }
+        task.cancellable = false;
+        this.canCancel.delete(task.id);
         this.controllers.delete(task.id); // this path skips the run try/finally below
         this.close(task);
         throw new CancelledError();
       }
       task.state = "running";
       task.startedAt = this.now();
+      refreshCancellable();
       // Progress is recorded for a restart to report where a job stopped. Failing to record it must
       // not abort a write mid-bracket, which would do the device far more harm than a stale phase.
       const progress: ProgressFn = (phase, done = 0, total = 0) => {
@@ -199,8 +221,15 @@ export class TaskQueue {
         this.store.save(task);
         const r = await this.exclusive(() => {
           if (controller.signal.aborted) throw new CancelledError();
-          return run(progress, controller.signal, commit);
+          const enterWrites: EnterWritesFn = () => {
+            if (controller.signal.aborted) throw new CancelledError();
+            writing = true;
+            refreshCancellable();
+          };
+          return run(progress, controller.signal, commit, enterWrites);
         });
+        // A cancel the task accepted while it wrote nothing stands, even when the job ran to its end.
+        if (controller.signal.aborted && !writing) throw new CancelledError();
         task.result = task.writes ? r ?? null : null;
         task.outcome = outcomeOf(r);
         // A write the device did not confirm is not a success. The routes already refuse to adopt
@@ -216,11 +245,13 @@ export class TaskQueue {
         }
         return r;
       } catch (e) {
-        if (controller.signal.aborted) { task.state = "cancelled"; task.error = null; }
+        if (controller.signal.aborted && !writing) { task.state = "cancelled"; task.error = null; }
         else { task.state = "error"; task.error = (e as Error).message; task.errorCode = errorCode(e) ?? null; }
         throw e;
       } finally {
         task.finishedAt = this.now();
+        task.cancellable = false;
+        this.canCancel.delete(task.id);
         this.controllers.delete(task.id);
         this.close(task);
         // The one line that says what a bus operation did. Without it the server logged nothing at
@@ -249,7 +280,7 @@ export class TaskQueue {
       this.cancelQueued(task);
       return "queued";
     }
-    if (task.state === "running" && task.kind === "read") {
+    if (task.state === "running" && this.canCancel.get(taskId)?.()) {
       controller?.abort();
       return "running";
     }
@@ -258,6 +289,7 @@ export class TaskQueue {
 
   private cancelQueued(task: Task, code: string | null = null, why: string | null = null): void {
     task.state = "cancelled";
+    task.cancellable = false;
     task.errorCode = code;
     task.error = why;
     task.finishedAt = this.now();
@@ -277,6 +309,8 @@ export class TaskQueue {
         if (task.writes) {
           const settled = this.settled.get(task.id);
           if (!settled) throw new Error(`running write ${task.id} has no completion to wait for`);
+          // A write still reading the device is stopped before its first write; it still settles.
+          if (this.canCancel.get(task.id)?.()) this.controllers.get(task.id)?.abort();
           writes.push(settled);
         }
         else this.controllers.get(task.id)?.abort();

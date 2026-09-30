@@ -13,7 +13,9 @@ export type {
   DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult,
 };
 
-export interface DeviceChanges { params: number; links: number; }
+// neverProgrammed: no configuration of this project has been verified on the device since it was
+// placed or its product replaced.
+export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
@@ -80,6 +82,8 @@ export interface Task {
   kind: TaskKind; writes: boolean; snapshotId: string | null; state: TaskState; phase: string | null; done: number; total: number;
   error: string | null; errorCode: string | null; result: unknown; baselineCommitted: boolean;
   queuedAt: number; startedAt: number | null; finishedAt: number | null;
+  // Whether the server accepts a cancel now: queued, writing nothing, or a write still only reading.
+  cancellable: boolean;
 }
 export const taskActive = (t: Task) => t.state === "queued" || t.state === "running";
 

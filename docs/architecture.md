@@ -124,10 +124,14 @@ concurrent request, the server queues it (`apps/server/src/taskqueue.ts`):
   `assign-ia`, `download`.
 - Each job reports a phase and chunk-level progress (`connect`, `backup`, `params`, `links`,
   `write`, `verify`, and the address-assignment phases), which the header indicator shows live.
-- **Cancelling a queued task is always allowed.** Cancelling a *running* task is allowed only for
-  a read, which is read-only and aborts cleanly between memory chunks. A running write is refused
-  with `TASK_WRITE_NOT_CANCELLABLE`: aborting mid-bracket can leave the device reset. A running
-  dry run is refused with `TASK_NOT_CANCELLABLE` (it writes nothing, but does not stop early).
+- **Cancelling a queued task is always allowed.** A *running* task that writes nothing (a read, a
+  dry run) is cancelled too; it stops between memory chunks. A running flash or download reads the
+  device first (backup, compare) and can be cancelled until its first write: the flash calls the
+  task's write gate right before it (`WriteGate.beforeWrite` in `@busforge/product`), which throws
+  if the task was cancelled and makes the task uncancellable otherwise. From then on, and for every
+  other running write (an address assignment, an activation), a cancel is refused with
+  `TASK_WRITE_NOT_CANCELLABLE`: aborting mid-bracket can leave the device reset. The task list
+  carries `cancellable`, so the UI offers the button exactly when the server accepts it.
 - The queue is also an honesty rail. When a finished flash reports `verified: false`, the task is
   forced into the error state with `FLASH_UNVERIFIED` instead of being reported as done.
 
@@ -174,7 +178,8 @@ loses nothing.
 
 - **A normal shutdown drains the running write.** On `SIGTERM`/`SIGINT`/`SIGHUP` the queue refuses
   new work (`SERVER_SHUTTING_DOWN`, HTTP 503), cancels queued tasks as `TASK_NOT_STARTED`, aborts a
-  running read, does not wait for a dry run, and waits for the running write to end, read-back and baseline commit included.
+  running read or dry run, stops a flash or download still in its read-only part, and waits for a
+  running write that has started writing to end, read-back and baseline commit included.
   Then the monitor tunnel closes, a new monitor connection is refused, and the process exits. A repeated signal does not skip the wait;
   only `SIGKILL` does, and that is the `interrupted` case above. The container's stop grace period
   that makes this hold under `docker stop` is in [deployment.md](deployment.md#stopping-and-updating).

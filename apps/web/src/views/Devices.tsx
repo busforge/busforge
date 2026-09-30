@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
-const isChanged = (d: Device) => total(d.changes) > 0;
+const isChanged = (d: Device) => total(d.changes) > 0 || !!d.changes?.neverProgrammed;
 
 // Numeric individual-address order (area.line.device), matching how ETS sorts the
 // device tree. A plain string sort would put "1.1.10" before "1.1.9".

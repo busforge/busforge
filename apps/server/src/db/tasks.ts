@@ -16,6 +16,8 @@ const fromRow = (r: TaskRow): Task => {
     phase: r.phase, done: r.done, total: r.total, error: r.error, errorCode: r.error_code,
     outcome: outcomeOf(result), result, baselineCommitted: r.baseline_committed === 1,
     queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at,
+    // A stored row is a task of an earlier process, or one this process no longer runs.
+    cancellable: false,
   };
 };
 

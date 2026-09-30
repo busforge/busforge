@@ -77,9 +77,10 @@ A stop must not cut a device write short. A download interrupted mid-transfer ca
 reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the server:
 
 1. refuses new bus operations (`503 SERVER_SHUTTING_DOWN`),
-2. cancels every queued task without running it (`TASK_NOT_STARTED`), aborts a running read and
-   does not wait for a running dry run (neither writes anything),
-3. waits for the running write to finish, its read-back and baseline commit included,
+2. cancels every queued task without running it (`TASK_NOT_STARTED`), and aborts a running read or
+   dry run (neither writes anything),
+3. stops a running flash or download that is still reading the device, before its first write, and
+   otherwise waits for the running write to finish, its read-back and baseline commit included,
 4. closes the monitor tunnel, refusing any new monitor connection, and exits.
 
 With no write running it exits at once. A second signal does not skip the wait; the log names the

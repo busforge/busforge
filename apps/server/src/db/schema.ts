@@ -415,6 +415,12 @@ const MIGRATIONS: string[] = [
   ALTER TABLE projects ADD COLUMN source_sha256 TEXT NOT NULL DEFAULT '';
   ALTER TABLE projects ADD COLUMN source_bytes INTEGER NOT NULL DEFAULT 0;
   `,
+  // A device placed from the catalog, or whose product was replaced, on which no configuration of the
+  // project has been verified yet. Its empty baseline would otherwise read as "no changes". Rows from
+  // before are left at 0.
+  `
+  ALTER TABLE devices ADD COLUMN never_programmed INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration
