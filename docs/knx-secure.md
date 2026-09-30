@@ -291,9 +291,15 @@ result, never guessed.
 
 Refused rather than guessed:
 
-- **A secured address another device of the project is linked to** (`SECURE_SENDERS_UNPROVEN`):
-  whether ETS lists the other devices as senders is not established. Every stored link counts,
-  including the kept link of an object its parameters currently hide.
+- **Another device on a secured address that does not transmit on it, or whose sequence number the
+  project does not hold** (`SECURE_SENDERS_UNPROVEN`): whether ETS lists it is not shown. Another
+  secured device with a transmitting object on the address is listed like ETS does it, with its
+  project sequence ([findings.md](findings.md) §22). "Transmitting" means the communication and transmit
+  flags on an object whose first (sending) address this is, in the device's active configuration. An
+  object that only answers reads there (read flag, no transmit flag) sends secured responses too, but
+  does not count; such a device is refused. A linked object
+  that is hidden by its parameters, or does not resolve in its application program, is refused as
+  well, never left out; a link of a device the project no longer holds is ignored.
 - **A device without a tool key linked to a secured address** (`SECURE_GA_WITHOUT_DEVICE_KEY`): a
   plain device, or a secure one ETS never commissioned (imported without its key, counted in the
   import result); writing its tables would put the address on it without key or flag.

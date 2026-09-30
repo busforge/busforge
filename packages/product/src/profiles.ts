@@ -13,7 +13,7 @@ import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
-import { buildSecurityObject } from "./securityobject.ts";
+import { buildSecurityObject, type OtherDevice } from "./securityobject.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
 // done/total counters (unit-agnostic; memory reads report bytes). Structurally identical
@@ -265,10 +265,10 @@ interface FlashOp {
 async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>): Promise<boolean> {
   try { return await verify(); }
   catch (e) {
-    // A garbled secured frame, or the device closing the link, while it comes back up is no verdict
-    // on the write either.
+    // A garbled secured frame, the device closing the link, or an interface reporting the device did
+    // not acknowledge (still booting) is no verdict on the write either.
     const code = (e as { code?: string }).code;
-    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED") throw e;
+    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED" && code !== "BUS_SEND_FAILED") throw e;
     try { await dev.disconnect(); } catch { /* the link may already be gone */ }
     await reconnectAfterRestart(dev, { initialMs: 5000 });
     return verify();
@@ -375,15 +375,15 @@ export interface FullDownloadCtx {
 }
 // A Data Secure device's group-address tables come with its security object (group keys and
 // per-object flags), which every write of those tables reloads.
-// senders: per group address, the individual addresses the project assigns as its senders (the
-// device's security individual address table); linkedElsewhere: the group addresses another device
-// of the project is linked to. Both absent means no assigned senders.
+// senders: per group address, the individual addresses the project assigns as its senders;
+// otherDevices: per group address, the other devices of the project linked to it (both feed the
+// device's security individual address table, see buildSecurityObject). Both absent means none.
 export interface SecureTablesCtx {
   groupKeys: ReadonlyMap<number, Buffer>;
   senders?: ReadonlyMap<number, readonly number[]>;
-  linkedElsewhere?: ReadonlySet<number>;
+  otherDevices?: ReadonlyMap<number, readonly OtherDevice[]>;
 }
-const secureSenders = (sec: SecureTablesCtx, ia: string) => ({ byGa: sec.senders ?? new Map(), ownIa: iaToNum(ia), linkedElsewhere: sec.linkedElsewhere ?? new Set<number>() });
+const secureSenders = (sec: SecureTablesCtx, ia: string) => ({ byGa: sec.senders ?? new Map(), ownIa: iaToNum(ia), otherDevices: sec.otherDevices ?? new Map<number, OtherDevice[]>() });
 export interface GaFlashCtx {
   deviceId: string; // used in backup file names
   ia: string;

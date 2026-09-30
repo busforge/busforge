@@ -73,7 +73,24 @@ export async function writeIndividualAddress(tun: KnxTransport, ia: string): Pro
 // but happens not to answer right now (rebooting, wedged) is indistinguishable from an empty
 // address. ETS has the same blind spot. It is why the post-write check below proves the identity
 // of the device that moved, rather than settling for "something answers there now".
-async function addressAnswers(tun: KnxTransport, ia: string): Promise<boolean> {
+//
+// `lineAlive`: a device has just answered over this transport, so the line carries frames. An
+// interface that confirms a frame negatively (BUS_SEND_FAILED: no device acknowledged it, the ABB
+// KNX-USB stick) then says nobody is at `ia`, but only when that holds on every one of
+// NACK_TRIES connection attempts, as silence must hold on every request try: a present device that
+// is busy through the interface's own repetitions once is not an empty address. Without the proof
+// of a live line it could as well be a dead line.
+const NACK_TRIES = 3;
+async function addressAnswers(tun: KnxTransport, ia: string, lineAlive: boolean): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    try { return await addressAnswersOnce(tun, ia); }
+    catch (e) {
+      if (!(lineAlive && e instanceof KnxError && e.code === "BUS_SEND_FAILED")) throw e;
+      if (i === NACK_TRIES - 1) return false; // never acknowledged: absent
+    }
+  }
+}
+async function addressAnswersOnce(tun: KnxTransport, ia: string): Promise<boolean> {
   const dev = new KnxDevice(tun, ia);
   try {
     await dev.connect();
@@ -132,7 +149,7 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
 
   if (previous !== ia) {
     onProgress?.("check-free");
-    if (await addressAnswers(tun, ia)) {
+    if (await addressAnswers(tun, ia, true)) { // the programming-mode probe just got an answer
       throw new KnxError("IA_ALREADY_IN_USE",
         `another device already answers on ${ia}; assigning it would put two devices with the same address on the bus. Refusing.`);
     }
@@ -152,7 +169,7 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
       `${ia} was written but the device did not take it (${where}); it may still hold ${previous}. Read the bus before continuing.`);
   }
   // ...and it is reachable there for real management, not just for the broadcast probe.
-  if (!(await addressAnswers(tun, ia))) {
+  if (!(await addressAnswers(tun, ia, true))) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
       `${ia} was written and the device reports it, but it does not answer management there. Read the bus before continuing.`);
   }
@@ -251,7 +268,7 @@ export async function assignAddressBySerial(tun: KnxTransport, serial: string, i
 
   if (previous !== ia) {
     onProgress?.("check-free");
-    if (await addressAnswers(tun, ia)) {
+    if (await addressAnswers(tun, ia, true)) { // the device just answered the serial-number read
       throw new KnxError("IA_ALREADY_IN_USE",
         `another device already answers on ${ia}; assigning it would put two devices with the same address on the bus. Refusing.`);
     }
@@ -267,7 +284,7 @@ export async function assignAddressBySerial(tun: KnxTransport, serial: string, i
     throw new KnxError("IA_WRITE_UNVERIFIED",
       `${ia} was written but the device with serial ${serial} reports ${now ?? "nothing"}; it may still hold ${previous}. Read the bus before continuing.`);
   }
-  if (!(await addressAnswers(tun, ia))) {
+  if (!(await addressAnswers(tun, ia, true))) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
       `${ia} was written and the device reports it, but it does not answer management there. Read the bus before continuing.`);
   }

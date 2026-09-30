@@ -36,6 +36,15 @@ So the write never runs blind:
 5. prog-mode off  write PID_PROGMODE = 0, so the device does not also answer the NEXT assignment
 ```
 
+An address counts as free when nothing answers there: silence, or, from an interface that
+confirms each frame (the bench's ABB KNX-USB stick behind the bridge, and over TCP since
+Busforge waits for the confirmation), a negative `L_Data.con`, meaning no device acknowledged
+the frame. The negative confirmation is read that way only when every one of three connection
+attempts gets it (a present device that is busy through the interface's own repetitions once is
+not an empty address), and only because a device answered the probe of step 1 moments before, so
+the line demonstrably carries frames; without that it could as well be a dead line, and it fails
+the assignment.
+
 A write that was not verified is not an assignment, it is a hope. Step 4 is the difference,
 and it is why the result carries an explicit `verified` flag.
 
@@ -99,7 +108,9 @@ flag flipped) leaves a kept-from-device table stale, so the surgical flash refus
 (`COM_OBJECT_TABLE_STALE`). Where the family can commission from scratch, that refusal
 carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`) and the UI offers the full
 download instead, run on the device's existing address, with no programming-mode press and no
-address reassignment. So the same edit ETS would apply by re-downloading the whole device is
+address reassignment. The flash dialog offers the same for a device that has its address but never
+had an application loaded (`DEVICE_NOT_PROGRAMMED`), for example one just activated for KNX Data
+Secure after a master reset; the backend refuses it where the family cannot commission. So the same edit ETS would apply by re-downloading the whole device is
 applied here the same way, instead of being turned away.
 
 ## What a first-time download has to get right

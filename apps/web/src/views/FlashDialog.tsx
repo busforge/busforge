@@ -95,9 +95,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const firstError = list.find((x) => x.p.error)?.p.error;
   const rawError = firstError instanceof Error ? firstError.message : "";
   const isConnError = !!firstError && /timeout|connect|tunnel|unreachable|ECONN|EHOST|network/i.test(rawError);
-  // A surgical flash refused because the change rewrites the com-object table: the backend says a
-  // full download is the way to apply it (only offered where the family can commission).
-  const needsDownload = list.some((x) => x.p.error instanceof ApiError && x.p.error.code === "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+  // A surgical flash refused because the change rewrites the com-object table, or because the device
+  // never had an application loaded: a full download is the way (the backend refuses it where the
+  // family cannot commission).
+  const needsDownload = list.some((x) => x.p.error instanceof ApiError && (x.p.error.code === "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD" || x.p.error.code === "DEVICE_NOT_PROGRAMMED"));
 
   async function flash() {
     if (busyRef.current) return;

@@ -20,15 +20,22 @@ export const GO_SECURED = 0x03;
 // An object linked to both secured and plain addresses has no single flag that is right for both,
 // so it is refused rather than given one.
 //
-// The security individual address table lists who may send the device secured group telegrams:
-// the senders the project assigns to each secured address it uses (a tunnelling channel, as ETS
-// 6.4.1 loads it: the address, then a last sequence of 0), once each, ascending (thelsing/knx looks
-// entries up by binary search), never the device itself. Whether ETS also lists other DEVICES on a
-// shared secured address is not shown, so a secured address another device is linked to is refused.
+// The security individual address table lists who may send the device secured group telegrams, once
+// each, ascending (thelsing/knx looks entries up by binary search), never the device itself, each
+// with the last sequence number accepted from it:
+// - the senders the project assigns to each secured address it uses (a tunnelling channel), with 0;
+// - every other secured device with an object that transmits on such an address, with the
+//   SequenceNumber the project holds for that device.
+// Both as ETS 6.4.1 loads them (the Jung 400021SE and the GVS AMMA on one secured address,
+// 2026-09-30). Another device linked to a secured address only by objects that do not transmit, or
+// without a sequence in the project, is not shown and is refused.
+// unresolved: why the device cannot be classed as a sender or not (its application or object does not
+// resolve, or the linked object is hidden); such a device is refused, never left out.
+export interface OtherDevice { ia: number; transmits: boolean; sequence: bigint | null; unresolved?: string | null }
 export interface SecuritySenders {
-  byGa: ReadonlyMap<number, readonly number[]>; // group address -> assigned sender individual addresses
+  byGa: ReadonlyMap<number, readonly number[]>;        // group address -> assigned sender individual addresses
   ownIa: number;
-  linkedElsewhere: ReadonlySet<number>;         // group addresses another device of the project is linked to
+  otherDevices: ReadonlyMap<number, readonly OtherDevice[]>; // group address -> the other devices linked to it
 }
 export function buildSecurityObject(links: ComObjectLink[], comObjCount: number, groupKeys: ReadonlyMap<number, Buffer>, senders?: SecuritySenders): SecurityObjectTables {
   const goFlags = Buffer.alloc(comObjCount);
@@ -53,14 +60,27 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
     groupKeyTable.writeUInt16BE(index, i * GROUP_KEY_ENTRY);
     key.copy(groupKeyTable, i * GROUP_KEY_ENTRY + 2);
   });
-  const listed = new Set<number>();
+  const listed = new Map<number, bigint>();
   for (const { g } of secured) {
-    if (senders?.linkedElsewhere.has(g)) {
-      throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is also linked to another device; which of its senders a receiver must list is not established, so its security object is not loaded`);
+    for (const ia of senders?.byGa.get(g) ?? []) if (ia !== senders!.ownIa && !listed.has(ia)) listed.set(ia, 0n);
+    const seen = new Set<number>();
+    for (const o of senders?.otherDevices.get(g) ?? []) {
+      if (o.ia === senders!.ownIa) {
+        throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is linked to another device with this device's own individual address; refusing to decide which of them to list`);
+      }
+      if (seen.has(o.ia)) throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is linked to two devices with the same individual address; refusing to pick one`);
+      seen.add(o.ia);
+      const why = o.unresolved ?? (!o.transmits ? "that does not transmit on it (no transmitting object with it as sending address)" : o.sequence === null ? "whose sequence number the project does not hold" : o.sequence >= 2n ** 48n ? "whose sequence number does not fit 48 bits" : null);
+      if (why) {
+        throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is also linked to another device ${o.unresolved ? `(${why})` : why}; whether a receiver lists it is not established, so its security object is not loaded`);
+      }
+      listed.set(o.ia, o.sequence!);
     }
-    for (const ia of senders?.byGa.get(g) ?? []) if (ia !== senders!.ownIa) listed.add(ia);
   }
   const senderTable = Buffer.alloc(listed.size * SENDER_ENTRY);
-  [...listed].sort((a, b) => a - b).forEach((ia, i) => senderTable.writeUInt16BE(ia, i * SENDER_ENTRY));
+  [...listed].sort(([a], [b]) => a - b).forEach(([ia, seq], i) => {
+    senderTable.writeUInt16BE(ia, i * SENDER_ENTRY);
+    senderTable.writeUIntBE(Number(seq), i * SENDER_ENTRY + 2, 6);
+  });
   return { groupKeys: groupKeyTable, goFlags, senders: senderTable };
 }

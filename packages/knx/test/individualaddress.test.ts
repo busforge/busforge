@@ -27,7 +27,10 @@ class SimBus implements KnxTransport {
   broadcastWrites: string[] = [];
   progModeWrites = 0;
 
-  constructor(public devices: SimDevice[]) {}
+  // `negativeCon`: a frame to an address no device acknowledges comes back as a negative
+  // L_Data.con (the ABB KNX-USB stick behind the bench bridge, 2026-09-30) instead of silence.
+  constructor(public devices: SimDevice[], public negativeCon = false) {}
+  nacks = 0;
   async connect() {}
   async disconnect() {}
 
@@ -56,6 +59,7 @@ class SimBus implements KnxTransport {
 
     // Connection-oriented management: only a device that exists at the destination answers.
     const dev = this.deviceAt(dst);
+    if (!dev && this.negativeCon) { this.nacks++; throw new KnxError("BUS_SEND_FAILED", "negative L_Data.con"); } // T_Connect included, as a USB interface confirms it
     if (!dev) return; // silence: the request times out, which is how a free address looks
     if (dev.deafFor > 0) { dev.deafFor--; return; } // present, but not answering right now
     const t = tpdu[0];
@@ -152,6 +156,14 @@ describe("assigning an individual address", () => {
     const err = await assignIndividualAddress(bus, NEW_IA, fast).then(() => null, (e) => e);
     expect((err as KnxError).code).toBe("IA_ALREADY_IN_USE");
     expect(bus.broadcastWrites).toEqual([]);
+  });
+
+  test("an interface that confirms a frame to an empty address negatively still finds it free", async () => {
+    const bus = new SimBus([new SimDevice("15.15.255", true)], true);
+    const r = await assignIndividualAddress(bus, NEW_IA, fast);
+    expect(r.verified).toBe(true);
+    expect(bus.broadcastWrites).toEqual([NEW_IA]);
+    expect(bus.nacks).toBeGreaterThanOrEqual(3); // free only after every attempt went unacknowledged
   });
 
   test("re-assigning a device its OWN current address is not a collision with itself", async () => {

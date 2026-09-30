@@ -660,17 +660,19 @@ describe("a Data Secure device: its table writes carry the security object", () 
     });
   }
 
-  test("the project's assigned senders and the addresses other devices use reach the profile", async () => {
+  test("the project's assigned senders and the other devices on its secured addresses reach the profile", async () => {
     const state = freshState();
     const { projectId, deviceId } = await secureProject(state);
     putGroupSenders(state.db, projectId, [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
-    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, 'other', 'O-1_R-1', 0, 9)").run(projectId);
-    let seen: { security?: { senders?: ReadonlyMap<number, readonly number[]>; linkedElsewhere?: ReadonlySet<number> } } = {};
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'O-1_R-1', 0, 1)").run(projectId, deviceId);
+    // A link of a device the project no longer holds names no one who could send.
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, 'gone', 'O-1_R-1', 0, 1)").run(projectId);
+    let seen: { security?: { senders?: ReadonlyMap<number, readonly number[]>; otherDevices?: ReadonlyMap<number, readonly unknown[]> } } = {};
     gaFlashImpl = async (o) => { seen = o; return flashed(true); };
     try { await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
     finally { gaFlashImpl = realGaFlash; }
     expect(seen.security?.senders).toEqual(new Map([[1, [0x1164]]]));
-    expect(seen.security?.linkedElsewhere).toEqual(new Set([9]));
+    expect(seen.security?.otherDevices).toEqual(new Map());
   });
 
   test("a device without a tool key that is linked to a secured address is refused, not written plain", async () => {

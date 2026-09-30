@@ -119,10 +119,10 @@ started until the capability it depends on is hardware-proven.
   (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md) §25) leaves the
   device without an application until the user starts a full download. Busforge does not repeat or
   finish the bracket by itself.
-- **Senders on a secured address shared by several devices.** Which devices ETS lists in a receiver's
-  PID 54 when more than one device is linked to a secured address is not shown (the bench has one
-  secure device on it); Busforge refuses such an address (`SECURE_SENDERS_UNPROVEN`). Needs an ETS
-  capture with two secure devices on one secured address (the GVS AMMA on the bench is secure-capable).
+- **Another device that only receives on a secured address.** ETS lists another secured device that
+  transmits on the address in a receiver's PID 54 ([findings.md](findings.md) §22); whether it also
+  lists one whose objects there only receive is not shown, and Busforge refuses it
+  (`SECURE_SENDERS_UNPROVEN`). Needs a capture with such a device.
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured
@@ -131,9 +131,24 @@ started until the capability it depends on is hardware-proven.
 - **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
-- **Activation with a generated key on hardware.** The device-menu dialog stores the certificate and
-  activates; the path with no key on file (Busforge generates and stores one) has run against a fake
-  device only, and no activation has yet run through the dialog on hardware.
+- **An interrupted activation on hardware.** Losing the answer to the tool-key write (the key is
+  stored as pending first) is tested against a fake device only.
+- **Edit a device's individual address in the UI.** A placed device gets the next free address;
+  changing it in the project is API-only (`PUT .../address`).
+- **Refresh the stored sequence numbers.** A secured device's sequence number is taken from the
+  project at import and never updated. It seeds other devices' PID 54 entries for it; a sender whose
+  real counter is lower (a device reset since, or a project older than the device) is rejected by
+  them until its counter passes that value. ETS has the same dependency on its project.
+- **A device Busforge activated has no sequence number** in the project (the activation does not
+  learn one), so another device on one of its secured addresses is refused (`SECURE_SENDERS_UNPROVEN`).
+- **A receiver whose sender list changed is not flagged.** Linking another device's transmitting
+  object to a secured address changes the PID 54 of every device on it; Busforge, like ETS, shows those
+  receivers as unchanged until their tables are written.
+- **A link token that does not resolve at import shifts the sending address.** Unresolved `Links`
+  entries are dropped before the order is stored, so a second address can take the first (sending)
+  slot; the import counts them, the PID 54 sender rule trusts the stored order.
+- **Project-level com-object flag overrides** are not parsed; whether an object transmits comes from
+  the application program, which matters for the PID 54 sender rule.
 - **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
   address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
   such a device over; wanted for users, not needed for the bench.

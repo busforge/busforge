@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildSecurityObject, GO_SECURED } from "../src/securityobject.ts";
+import { buildSecurityObject, GO_SECURED, type OtherDevice } from "../src/securityobject.ts";
 
 const K1 = Buffer.alloc(16, 0x11), K5 = Buffer.alloc(16, 0x55);
 
@@ -45,7 +45,7 @@ describe("the security object a device's links imply", () => {
 
 describe("the security individual address table (PID 54) a device's links imply", () => {
   const JUNG = 0x11cc, TUNNEL = 0x1164;
-  const none = { byGa: new Map<number, number[]>(), ownIa: JUNG, linkedElsewhere: new Set<number>() };
+  const none = { byGa: new Map<number, number[]>(), ownIa: JUNG, otherDevices: new Map<number, OtherDevice[]>() };
 
   test("the ETS reference: 1.1.100 assigned to 0/0/1, one entry, address then a zero sequence", () => {
     const t = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, byGa: new Map([[1, [TUNNEL]]]) });
@@ -65,11 +65,28 @@ describe("the security individual address table (PID 54) a device's links imply"
     expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]])).senders).toHaveLength(0);
   });
 
-  test("a secured address another device is linked to is refused: which of them ETS lists is not known", () => {
-    expect(() => buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, linkedElsewhere: new Set([1]) }))
-      .toThrow(/another device/);
+  // ETS 6.4.1, 2026-09-30 (capture ets-gvs-secure-2026-09-30.log, decrypted): the Jung 400021SE
+  // (1.1.204, object 253 transmits on 0/0/1) and the GVS AMMA (1.1.203, object 3 transmits on it,
+  // object 2 receives), both secured, 1.1.100 assigned as a sender. Each device's PID 54 lists the
+  // tunnel with sequence 0 and the other device with its SequenceNumber from the project.
+  const GVS = 0x11cb;
+  test("the ETS reference: another secured device on the address is listed with its project sequence", () => {
+    const byGa = new Map([[1, [TUNNEL]]]);
+    const jung = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { byGa, ownIa: JUNG, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 0x0ab9aen }]]]) });
+    expect(jung.senders.toString("hex")).toBe("1164" + "000000000000" + "11cb" + "0000000ab9ae");
+    const gvs = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [1] }], 3, new Map([[1, K1]]), { byGa, ownIa: GVS, otherDevices: new Map([[1, [{ ia: JUNG, transmits: true, sequence: 0x010bcdn }]]]) });
+    expect(gvs.senders.toString("hex")).toBe("1164" + "000000000000" + "11cc" + "000000010bcd");
+  });
+
+  test("another device that only receives on the address, or has no sequence, is refused: not shown", () => {
+    const tbl = (o: OtherDevice) => () => buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [o]]]) });
+    expect(tbl({ ia: GVS, transmits: false, sequence: 5n })).toThrow(/another device/);
+    expect(tbl({ ia: GVS, transmits: true, sequence: null })).toThrow(/another device/);
+    expect(tbl({ ia: GVS, transmits: true, sequence: 5n, unresolved: "its linked object #3 is hidden by its parameters" })).toThrow(/hidden/);
+    expect(tbl({ ia: GVS, transmits: true, sequence: 2n ** 48n })).toThrow(/48 bits/);
+    expect(tbl({ ia: JUNG, transmits: true, sequence: 5n })).toThrow(/own individual address/);
+    expect(() => buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 1n }, { ia: GVS, transmits: true, sequence: 2n }]]]) })).toThrow(/same individual address/);
     // A plain address shared with another device is none of the table's business.
-    expect(() => buildSecurityObject([{ comObjNum: 2, gaRaws: [7] }], 3, new Map([[1, K1]]), { ...none, linkedElsewhere: new Set([7]) })).not.toThrow();
+    expect(() => buildSecurityObject([{ comObjNum: 2, gaRaws: [7] }], 3, new Map([[1, K1]]), { ...none, otherDevices: new Map([[7, [{ ia: GVS, transmits: false, sequence: null }]]]) })).not.toThrow();
   });
 });
-

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { iaToNum, numToGa } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -34,7 +34,7 @@ export function secureCredsFor(state: AppState, projectId: string, deviceId: str
 
 // What a write of a device's group tables needs when the device runs Data Secure: the session
 // credentials, the project's group keys its security object is loaded with, the senders the project
-// assigns to each group address, and which addresses other devices of the project are linked to.
+// assigns to each group address, and the other devices of the project linked to its secured addresses.
 // Empty otherwise.
 export function secureTablesFor(state: AppState, projectId: string, deviceId: string): { secure?: SecureCreds; security?: SecureTablesCtx } {
   const secure = secureCredsFor(state, projectId, deviceId);
@@ -48,9 +48,78 @@ export function secureTablesFor(state: AppState, projectId: string, deviceId: st
     }
     return {};
   }
+  const groupKeys = getGroupKeys(state.db, projectId, state.masterKey);
   const senders = new Map([...sendersByGroup(state.db, projectId)].map(([ga, ias]) => [ga, ias.map(iaToNum)]));
-  const linkedElsewhere = new Set((state.db.query("SELECT DISTINCT ga_raw AS g FROM device_links WHERE project_id = ? AND device_id <> ?").all(projectId, deviceId) as { g: number }[]).map((r) => r.g));
-  return { secure, security: { groupKeys: getGroupKeys(state.db, projectId, state.masterKey), senders, linkedElsewhere } };
+  // Per secured address of this device, the other devices linked to it, each as a sender with the
+  // sequence number the project holds for it, or with the reason it cannot be classed as one. Only an
+  // object's first (sending) address counts as transmitting, and only while the object is in its
+  // device's active configuration; a link of a device the project no longer holds is no one.
+  const otherDevices = new Map<number, OtherDevice[]>();
+  const own = new Set([...getDeviceLinks(state.db, projectId, deviceId).values()].flat().filter((g) => groupKeys.has(g)));
+  if (own.size === 0) return { secure, security: { groupKeys, senders, otherDevices } };
+  const rows = state.db.query("SELECT device_id AS deviceId, com_obj_ref_id AS refId, slot, ga_raw AS g FROM device_links WHERE project_id = ? AND device_id <> ?")
+    .all(projectId, deviceId) as { deviceId: string; refId: string; slot: number; g: number }[];
+  const devices = new Map<string, OtherDeviceModel | null>();
+  const deviceInfo = (id: string): OtherDeviceModel | null => {
+    if (devices.has(id)) return devices.get(id)!;
+    const dev = getDeviceForFlash(state.db, projectId, id);
+    let info: OtherDeviceModel | null = null;
+    if (dev) {
+      const seq = getDeviceSecurity(state.db, projectId, id, state.masterKey)?.sequenceNumber ?? "";
+      info = { ia: iaToNum(dev.ia), sequence: /^\d+$/.test(seq) ? BigInt(seq) : null, objs: null, active: new Set(), failure: null };
+      try {
+        const app = loadApp(state, projectId, id);
+        const view = app ? buildDeviceConfig(app, getDeviceParams(state.db, projectId, id), undefined, getDeviceModules(state.db, projectId, id)) : null;
+        if (app && view) {
+          info.objs = comObjsByKey(app, view);
+          for (const bl of view.blocks) for (const it of bl.items) if (it.kind === "comObject") info.active.add(stripRef(app.id, it.comObject.refId));
+        }
+      } catch (e) {
+        info.failure = `its configuration could not be built (${e instanceof Error ? e.message : String(e)})`;
+      }
+    }
+    devices.set(id, info);
+    return info;
+  };
+  const found = new Map<number, Map<string, OtherDevice>>();
+  for (const r of rows) {
+    if (!own.has(r.g)) continue;
+    const d = deviceInfo(r.deviceId);
+    if (!d) continue;
+    const byDevice = found.get(r.g) ?? new Map<string, OtherDevice>();
+    found.set(r.g, byDevice);
+    byDevice.set(r.deviceId, classifyOtherLink(byDevice.get(r.deviceId) ?? { ia: d.ia, transmits: false, sequence: d.sequence, unresolved: null }, d, r));
+  }
+  for (const [g, byDevice] of found) otherDevices.set(g, [...byDevice.values()]);
+  return { secure, security: { groupKeys, senders, otherDevices } };
+}
+
+// What the sender rule knows about another device of the project linked to a secured address.
+export interface OtherDeviceModel {
+  ia: number;
+  sequence: bigint | null;
+  objs: Map<string, { number: number; flags: ComObjFlags }> | null; // null: no application program
+  active: Set<string>;   // keys of the objects in its active configuration
+  failure: string | null; // its configuration could not be built
+}
+// Fold one link of that device to the secured address into what is known about it. It transmits
+// there when a visible object with the communication and transmit flags has this address first
+// (its sending address). Anything that cannot be decided is recorded as unresolved, and the first
+// reason stays: such a device is refused, never left out.
+export function classifyOtherLink(cur: OtherDevice, d: OtherDeviceModel, link: { refId: string; slot: number }): OtherDevice {
+  const why = (): string | null => {
+    if (d.failure) return d.failure;
+    if (!d.objs) return "its application program is not available";
+    const co = d.objs.get(link.refId);
+    if (!co) return `its linked object ${link.refId} is not in its application program`;
+    if (!d.active.has(link.refId)) return `its linked object #${co.number} is hidden by its parameters`;
+    if (co.flags.transmit && link.slot === 0 && !co.flags.comm) return `its linked object #${co.number} transmits with its communication flag off`;
+    return null;
+  };
+  const reason = cur.unresolved ?? why();
+  const co = d.objs?.get(link.refId);
+  const transmits = cur.transmits || (reason === null && !!co && co.flags.transmit && co.flags.comm && link.slot === 0);
+  return { ...cur, transmits, unresolved: reason };
 }
 
 // Resolve a device's application-program XML: from the shared catalog, falling

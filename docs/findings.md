@@ -606,9 +606,9 @@ ETS with a slower interface stays outside the window is not known. On the bench,
 now holds back a Sync.req until 1.2 s after the last one, and ETS can download the device again.
 
 Busforge runs one Sync per session, and its activation's second Sync (under the new key) follows
-several writes, so it had not met this. `KnxDevice` now keeps 1.2 s between two Syncs to the same
-device over one transport (`SYNC_GAP_MS`); sessions over separate transports (a new tunnel per server
-operation) are not coordinated, which the pauses between operations have covered so far.
+several writes, so it had not met this. `KnxDevice` keeps 1.2 s between two Syncs to the same
+device (`SYNC_GAP_MS`), across transports: two previews of the flash dialog back to back, each on
+its own tunnel, met the window on 2026-09-30 (the second got `SECURE_SYNC_NO_RESPONSE`).
 
 ## 22. How ETS loads a secured sender into a receiver's PID 54, and what it buys
 
@@ -634,6 +634,24 @@ Effect, shown right after: a secured GroupValueRead on 0/0/1 from 1.1.100 (group
 draws a secured GroupValueResponse from the Jung (value 0, contact open), where before the download
 the same frame was ignored (§20). With several senders the order is not shown here (one entry);
 thelsing/knx looks entries up by binary search, so ascending by address is the safe order.
+
+**Two secure devices on one secured address (2026-09-30).** ETS 6.4.1 secure-commissioned the bench's
+GVS AMMA (1.1.203) from its certificate and linked its switching object (receives) and its status
+object (transmits) to 0/0/1, beside the Jung (object 253 transmits on it), then downloaded both
+partially (capture `ets-gvs-secure-2026-09-30.log`, decrypted with the exported project's keys). Each
+PID 54 was cleared and then written with two elements in one request:
+
+| Receiver | Entry 1 | Entry 2 |
+|---|---|---|
+| GVS 1.1.203 | `1164 000000000000` (1.1.100, sequence 0) | `11cc 000000010bcd` (the Jung) |
+| Jung 1.1.204 | `1164 000000000000` | `11cb 0000000ab9ae` (the GVS) |
+
+So ETS listed the other secured device that transmits on the address (one pair of devices shown),
+ascending by address, never the device itself, and started it not at 0 but at the `SequenceNumber`
+the project holds for that device: `0x0AB9AE` is the GVS's value in the exported project. An interface sender still starts at 0.
+The Jung was downloaded although ETS showed it as needing nothing: ETS does not flag a receiver whose
+sender list changed. Whether a device whose objects on the address only receive is listed as well is
+not shown (both devices here transmit on it).
 
 ## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
 

@@ -293,25 +293,30 @@ describe("KnxDevice request machine (frame level)", () => {
 
   // The Jung 400021SE ignores a Sync request less than about a second after the previous one to it
   // (docs/findings.md §21). A second session to the same device keeps the gap; another device does not wait.
-  test("secure: a second Sync to the same device waits out the gap, another device's does not", async () => {
+  test("secure: a second Sync to the same device waits out the gap, over any transport; another device's does not", async () => {
     const tun = new FakeTransport();
     const syncs: { dst: number; t: number }[] = [];
     const session = (dst: number) => new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst, serial: Buffer.alloc(6, 2) });
     // Answer every Sync at once with a frame that is not a valid Sync response: the connect fails
     // immediately (SECURE_SYNC_FAILED) instead of timing out, so the send times are the gap alone.
-    let target = DEV;
-    tun.handler = (tpdu) => {
+    const A = 0x1171, B = 0x1172; // addresses no other test syncs with
+    let target = A;
+    const answerSyncs = (t: FakeTransport) => (tpdu: Buffer) => {
       if (tpdu[1] !== 0xf1) return;
       syncs.push({ dst: target, t: Date.now() });
-      tun.onCemi?.(target, tun.assignedIa, Buffer.from("43f193" + "00".repeat(22), "hex"), false);
+      t.onCemi?.(target, t.assignedIa, Buffer.from("43f193" + "00".repeat(22), "hex"), false);
     };
+    tun.handler = answerSyncs(tun);
     const t0 = Date.now();
-    await new KnxDevice(tun, "1.2.11", session(DEV)).connect().catch(() => undefined);
-    target = 0x120c;
-    await new KnxDevice(tun, "1.2.12", session(0x120c)).connect().catch(() => undefined);
-    target = DEV;
-    await new KnxDevice(tun, "1.2.11", session(DEV)).connect().catch(() => undefined);
-    expect(syncs.map((x) => x.dst)).toEqual([DEV, 0x120c, DEV]);
+    await new KnxDevice(tun, "1.1.113", session(A)).connect().catch(() => undefined);
+    target = B;
+    await new KnxDevice(tun, "1.1.114", session(B)).connect().catch(() => undefined);
+    target = A;
+    // Over a second transport, as the server opens one per operation: the gap still holds.
+    const tun2 = new FakeTransport();
+    tun2.handler = answerSyncs(tun2);
+    await new KnxDevice(tun2, "1.1.113", session(A)).connect().catch(() => undefined);
+    expect(syncs.map((x) => x.dst)).toEqual([A, B, A]);
     expect(syncs[0].t - t0).toBeLessThan(200);
     expect(syncs[1].t - syncs[0].t).toBeLessThan(200); // another device: no wait
     expect(syncs[2].t - syncs[0].t).toBeGreaterThanOrEqual(SYNC_GAP_MS - 5);
