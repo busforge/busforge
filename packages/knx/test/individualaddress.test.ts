@@ -15,7 +15,9 @@ class SimDevice {
   // `deafFor`: ignore this many point-to-point frames before answering. That is what a device
   // busy, rebooting, or behind a burst of line noise looks like, and it is how the pre-check can
   // miss a device that IS on the target address.
-  constructor(public ia: string, public progMode: boolean, public takesWrite = true, public deafFor = 0) {}
+  // `closes`: answer every numbered frame with a T_Disconnect, as a device in another tool's
+  // connection (or one that missed our T_Connect) does.
+  constructor(public ia: string, public progMode: boolean, public takesWrite = true, public deafFor = 0, public closes = false) {}
 }
 
 class SimBus implements KnxTransport {
@@ -59,6 +61,7 @@ class SimBus implements KnxTransport {
     const t = tpdu[0];
     if (t === 0x80) { this.deliver(dst, this.assignedIa, Buffer.from([0xc2]), false); return; } // T_Connect -> T_ACK
     if (t === 0x81) return;                                                                     // T_Disconnect
+    if (dev.closes) { this.deliver(dst, this.assignedIa, Buffer.from([0x81]), false); return; }
     const seq = (t >> 2) & 0x0f;
     this.deliver(dst, this.assignedIa, Buffer.from([0xc2 | (seq << 2)]), false);                // T_ACK the request
     if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) {
@@ -140,6 +143,13 @@ describe("assigning an individual address", () => {
     const bus = new SimBus([new SimDevice("15.15.255", true), new SimDevice(NEW_IA, false)]);
     const err = await assignIndividualAddress(bus, NEW_IA, fast).then(() => null, (e) => e);
     expect(err).toBeInstanceOf(KnxError);
+    expect((err as KnxError).code).toBe("IA_ALREADY_IN_USE");
+    expect(bus.broadcastWrites).toEqual([]);
+  });
+
+  test("REFUSES an address whose device closes the connection instead of answering: it is there", async () => {
+    const bus = new SimBus([new SimDevice("15.15.255", true), new SimDevice(NEW_IA, false, true, 0, true)]);
+    const err = await assignIndividualAddress(bus, NEW_IA, fast).then(() => null, (e) => e);
     expect((err as KnxError).code).toBe("IA_ALREADY_IN_USE");
     expect(bus.broadcastWrites).toEqual([]);
   });

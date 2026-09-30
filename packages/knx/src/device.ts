@@ -184,6 +184,7 @@ export class KnxDevice {
   private seq = 0;
   private ackResolve: (() => void) | null = null;
   private respResolve: ((p: ParsedApdu) => void) | null = null;
+  private peerClosed: (() => void) | null = null;
   // During the Sync handshake, raw frames are diverted here (the Sync response is not
   // a normal secure data frame, so it bypasses the request machinery).
   private rawInbox: Buffer[] | null = null;
@@ -197,6 +198,9 @@ export class KnxDevice {
 
   private onCemi(src: number, _dst: number, tpdu: Buffer, isGroup: boolean) {
     if (isGroup || src !== this.dst) return;
+    // T_Connect/T_Disconnect from the device: unnumbered control frames, never acknowledged and
+    // never an answer. A T_Disconnect ends the request in flight.
+    if ((tpdu[0] & 0xc0) === 0x80) { if ((tpdu[0] & 0x03) === 0x01) this.peerClosed?.(); return; }
     if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
     const outer = parseApdu(tpdu);
     if (outer.control) { if (outer.seq === this.seq) this.ackResolve?.(); return; }
@@ -269,6 +273,10 @@ export class KnxDevice {
   // `afterWrap` runs once the request is framed for the wire and before it is sent, so an answer
   // that races the send is already taken under whatever it sets up.
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void): Promise<ParsedApdu | null> {
+    try { return await this.requestTries(build, expectResponse, tries, afterWrap); }
+    finally { this.peerClosed = null; }
+  }
+  private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void): Promise<ParsedApdu | null> {
     // Whether the last try was acknowledged and then got only unauthentic answers: the device
     // answered and was not believed, which is a different failure from silence.
     let rejectedAfterAck = false;
@@ -284,6 +292,8 @@ export class KnxDevice {
       const respP = expectResponse
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
+      let closedByDevice = false;
+      this.peerClosed = () => { closedByDevice = true; ackTimeout(); respTimeout(); };
       const tpdu = this.onWire(build(this.seq));
       afterWrap?.();
       try {
@@ -298,9 +308,13 @@ export class KnxDevice {
       }
       setTimeout(ackTimeout, 1500);
       setTimeout(respTimeout, 2000);
-      if (!(await ackP)) continue;
-      if (!expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
+      const acked = await ackP;
+      if (!acked && !closedByDevice) continue;
+      if (acked && !expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
       const r = await respP;
+      // A device that closes its transport connection takes no further numbered frame, so asking
+      // again is pointless. It is present, so this is not DEVICE_NOT_ANSWERING (silence).
+      if (r === null && closedByDevice) throw new KnxError("DEVICE_CLOSED_CONNECTION", "the device closed the connection without answering");
       if (r === null) { rejectedAfterAck = this.unauthentic > 0; continue; }
       this.seq = (this.seq + 1) & 0x0f;
       return r;
@@ -403,8 +417,12 @@ export class KnxDevice {
   }
   // Whether Data Secure is switched on: the security object's PID_SECURITY_MODE, service 0, answers
   // [service, mode]. A device without the object, or any other answer, is an error, not "off".
+  // Return code 0xFC is access denied: the Jung 400021SE in secure mode answers a plain read so.
   async securityMode(): Promise<boolean> {
     const { returnCode, result } = await this.funcPropExtStateRead(OBJECT_TYPE_SECURITY, 1, PID_SECURITY_MODE, Buffer.from([0x00, 0x00]));
+    if (returnCode === 0xfc) {
+      throw new KnxError("SECURITY_MODE_DENIED", "the device refused to show its security mode (access denied); a device in secure mode answers a request without its tool key so");
+    }
     if (returnCode !== 0x00 || result.length < 2 || result[0] !== 0x00 || result[1] > 1) {
       throw new KnxError("SECURITY_MODE_UNREADABLE", `the security object answered ${Buffer.concat([Buffer.from([returnCode]), result]).toString("hex")} to a read of its security mode`);
     }
@@ -712,6 +730,24 @@ export class KnxDevice {
     await this.tun.sendCemi(cemiLData(this.me, this.dst,
       this.onWire(apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])))));
     this.seq = (this.seq + 1) & 0x0f;
+  }
+}
+
+// The security mode as the device states it. "denied" is a device that will not show it without
+// its tool key; "unreadable" one that answered in no form understood here, or not at all (not every
+// device has a security object). A failure of the link itself is thrown, never reported as either.
+// After a device timeout the transport sequence is not advanced: keep this a session's last request.
+export type SecurityModeReading = { state: "on" | "off" } | { state: "denied" | "unreadable"; detail: string };
+const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "SECURE_ANSWER_REJECTED"]);
+export async function readSecurityMode(dev: KnxDevice): Promise<SecurityModeReading> {
+  try {
+    return { state: (await dev.securityMode()) ? "on" : "off" };
+  } catch (e) {
+    const code = (e as { code?: string }).code ?? "";
+    const detail = e instanceof Error ? e.message : String(e);
+    if (code === "SECURITY_MODE_DENIED") return { state: "denied", detail };
+    if (DEVICE_SIDE_SECURITY_MODE_FAILURES.has(code)) return { state: "unreadable", detail };
+    throw e;
   }
 }
 

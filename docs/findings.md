@@ -674,3 +674,26 @@ and stayed up for 190 s against the house's MDT KNX IP interface, which therefor
 heartbeat over TCP (three unanswered requests would have closed it after about 90 s). ETS is not
 affected by the reaper: in every capture it closes its device-management channel within
 milliseconds of reading two properties, and it was never silent for more than 8 s on an open tunnel.
+
+## 24. A device may close the connection instead of answering
+
+A plain `A_FunctionPropertyExtState_Read` of PID 51 (security mode, object type 17) on the four bench
+devices (2026-09-30) got four different answers. The GVS AMMA with Secure, never activated, answered
+return code 0, mode 0. The Jung 400021SE in secure mode answered return code `0xFC` (access denied),
+and a plain serial read with no element. The ABB US/U 4.2 did not acknowledge the request at all.
+The MDT BE-02001.02 acknowledged each of the three tries on the transport layer, never answered, and
+about six seconds after the first sent a `T_Disconnect` (`0x81`).
+
+Busforge had taken that `T_Disconnect` for an answer: its request machine only recognised the
+numbered control frames (`T_ACK`/`T_NAK`, `0xC0` and above), so `0x81` was parsed as a data frame
+with service `0x100`, acknowledged with a `T_ACK`, and reported as "answered with service 0x100".
+Why the MDT closed is not shown: six seconds is also the transport layer's connection timeout, so
+it may have closed an idle connection rather than refused the service.
+
+A device's `T_Connect`/`T_Disconnect` is now never acknowledged or delivered, and a `T_Disconnect`
+ends the request in flight as `DEVICE_CLOSED_CONNECTION` without asking again: a closed connection
+takes no further numbered frame. It is deliberately not `DEVICE_NOT_ANSWERING`, which callers read as
+silence: a device that closes is present. The address check before an individual-address write
+counts it as taken (a device in another tool's connection answers a stranger's frame this way), and
+the read after a restart reconnects and reads once more, as it does after silence.
+

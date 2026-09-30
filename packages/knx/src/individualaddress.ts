@@ -81,6 +81,9 @@ async function addressAnswers(tun: KnxTransport, ia: string): Promise<boolean> {
     return true;
   } catch (e) {
     if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return false; // silence: absent
+    // A T_Disconnect answering our request: a device is there (in another tool's connection, or
+    // one that missed our T_Connect), so the address is taken.
+    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return true;
     throw e; // a transport failure is not evidence of a free address
   } finally {
     try { await dev.disconnect(); } catch { /* nothing was connected */ }

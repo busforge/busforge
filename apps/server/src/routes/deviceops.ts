@@ -200,24 +200,23 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(buildDeviceView(state, id, deviceId, body.lang, { readback: rb }));
   }
 
-  // /api/projects/:id/devices/:deviceId/secure-identify -> read a Data Secure device's
-  // real identity (descriptor + serial) over the secure channel, using its stored tool
-  // key. Replaces the opaque MV-FFFF a plain read returns. Read-only.
+  // /api/projects/:id/devices/:deviceId/secure-identify -> read a device's identity (descriptor +
+  // serial) and its security mode. With a stored tool key over the secure channel, which replaces the
+  // opaque MV-FFFF a plain read returns; without one plainly (`secure: false`). Read-only.
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "secure-identify" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const sec = getDeviceSecurity(db, id, deviceId, state.masterKey);
-    if (!sec) return err("DEVICE_NOT_SECURE", "this device has no stored tool key (not a Data Secure device, or its keys were not imported)");
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const result = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress) => {
-        return secureIdentify(conn, dev.ia, sec.toolKey, sec.serialNumber, progress);
+        return secureIdentify(conn, dev.ia, sec ? { toolKey: sec.toolKey, serial: sec.serialNumber } : undefined, progress);
       },
     );
-    return json({ ia: dev.ia, secure: true, ...result });
+    return json({ ia: dev.ia, ...result });
   }
 
   // /api/projects/:id/devices/:deviceId/certificate  -> store the device certificate printed on a

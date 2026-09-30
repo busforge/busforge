@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, type AssignIaResult, type ActivationResult } from "@busforge/knx";
+import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
@@ -150,30 +150,35 @@ export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: strin
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.readState(dev, mask, opts), opts.secure);
 }
 
-// Securely identify a KNX Data Secure device: open the secure session (T_Connect + Sync)
-// with the device\'s tool key and read its real device descriptor and serial. This is
-// what makes a secure device (opaque MV-FFFF to plain reads) recognisable. Read-only; no
-// mask gate (identification is what learns the mask). Hardware-verified on an MDT IP interface. See docs/knx-secure.md.
-export function secureIdentify(
-  connection: Connection, ia: string, toolKey: Buffer, serial: Buffer,
-  onProgress?: ProgressFn,
-): Promise<{ mask: string; serial: string; securityMode: SecurityModeReading }> {
-  return withDeviceSession(connection, ia, null, onProgress, async (dev, mask) => {
-    const sn = await dev.propRead(0, 11); // device object (0), serial-number property (PID 11)
-    // The security object's own statement; shown on the Jung 400021SE. A device that does not
-    // answer it (not shown on the MDT IP interfaces) is reported as such, not as on or off; a
-    // failure of the link itself still fails the identification. Keep this the session's last
-    // request: after a device timeout the transport sequence is not advanced.
-    const securityMode: SecurityModeReading = await dev.securityMode()
-      .then((on): SecurityModeReading => ({ state: on ? "on" : "off" }))
-      .catch((e): SecurityModeReading => {
-        const code = (e as { code?: string }).code;
-        if (!DEVICE_SIDE_SECURITY_MODE_FAILURES.has(code ?? "")) throw e;
-        return { state: "unreadable", detail: e instanceof Error ? e.message : String(e) };
-      });
-    return { mask, serial: sn.toString("hex"), securityMode };
-  }, { toolKey, serial });
+// Identify a device and read its security mode: its device descriptor, serial and the security
+// object's own statement (readSecurityMode). With the device's tool key the session is secured, which
+// is what makes a secure device (opaque MV-FFFF to plain reads) recognisable; without one it is plain.
+// A secure Sync that gets no answer is checked plainly: a device that states its security mode is off
+// is not activated (factory state), which is refused as such instead of as a possibly wrong key.
+// Read-only; no mask gate (identification is what learns the mask). See docs/knx-secure.md.
+export async function secureIdentify(
+  connection: Connection, ia: string, secure: SecureCreds | undefined, onProgress?: ProgressFn,
+): Promise<DeviceIdentity> {
+  const identify = (creds?: SecureCreds) => withDeviceSession(connection, ia, null, onProgress, async (dev, mask) => {
+    // Device object (0), serial-number property (PID 11). A device in secure mode answers a plain
+    // read with no element (the Jung 400021SE): no serial then, never an empty one.
+    const sn = await dev.propRead(0, 11);
+    const securityMode = await readSecurityMode(dev);
+    return { secure: creds !== undefined, mask, serial: sn.length > 0 ? sn.toString("hex") : null, securityMode };
+  }, creds);
+  if (!secure) return identify();
+  try {
+    return await identify(secure);
+  } catch (e) {
+    if ((e as { code?: string }).code !== "SECURE_SYNC_NO_RESPONSE") throw e;
+    const plain = await identify().catch(() => null);
+    if (plain?.securityMode.state === "off") {
+      throw new ApiError("SECURE_MODE_OFF", "the device did not answer the secure session request, and read without a key it states its security mode is off: it is not activated (factory state, for example after a master reset); activate it from its device certificate", 400);
+    }
+    throw e;
+  }
 }
+export interface DeviceIdentity { secure: boolean; mask: string; serial: string | null; securityMode: SecurityModeReading }
 // Take a secure device from its factory key to a tool key of busforge's (activateSecureDevice in
 // @busforge/knx): every session is opened on its own link, under the key being tried. The new key
 // reaches `persistKey` before it is written to the device.
@@ -208,8 +213,6 @@ export async function activateDevice(
   }, { fdsk: cert.fdsk, serial: cert.serial, storedKey, persistKey });
   return { outcome: r.outcome };
 }
-export type SecurityModeReading = { state: "on" | "off" } | { state: "unreadable"; detail: string };
-const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "SECURE_ANSWER_REJECTED"]);
 
 // Give a device its physical address. Unlike every other operation here this one CANNOT use
 // withDeviceSession: the device is reached by broadcast, precisely because it may not have a

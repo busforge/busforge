@@ -187,12 +187,30 @@ credentials, and read-back, parameter flash, group-address flash and full downlo
 device's stored key, so a device with a key on file is driven securely automatically. A device
 recognised as secure gets a badge in the device list.
 
-One dedicated endpoint exists, `secure-identify`: it opens a secure session with no mask gate (the
-identification is what learns the mask) and returns the real device descriptor and serial. It is the
-proof that the envelope works against a device that answers `0xFFFF` to everything plain. It is
-reachable over the API and has no button in the UI today. It also reports the device's security
-mode (PID 51 of the security interface object, through `A_FunctionPropertyExtState_Read`), or that
-the device did not answer it; it never guesses "off".
+One dedicated endpoint exists, `secure-identify`: it opens a session with no mask gate (the
+identification is what learns the mask) and returns the device descriptor, the serial and the
+device's security mode (PID 51 of the security interface object, through
+`A_FunctionPropertyExtState_Read`). It is reachable over the API and has no button in the UI today.
+
+- **With a tool key on file** the session is secured (`secure: true`). This is the proof that the
+  envelope works against a device that answers `0xFFFF` to everything plain.
+- **Without one** it reads plainly (`secure: false`), exactly as ETS probes PID 51 in a plain download.
+- **A stored key whose Sync gets no answer** is checked plainly once: a device that then states its
+  mode is off is not activated (factory state, for example after a master reset) and is refused as
+  `SECURE_MODE_OFF`; anything else leaves the `SECURE_SYNC_NO_RESPONSE`, where a wrong key and a
+  device that ignores the request look alike.
+
+The mode is reported as the device states it, never guessed:
+
+| `securityMode.state` | Device answer | Seen on (bench, 2026-09-30) |
+|---|---|---|
+| `on` | return code 0, mode 1 | Jung 400021SE, secured session |
+| `off` | return code 0, mode 0 | GVS AMMA with Secure, plain, never activated |
+| `denied` | return code `0xFC` (access denied) | Jung 400021SE in secure mode, plain read (raw probe) |
+| `unreadable` | no answer, another service, or a closed connection | ABB US/U 4.2 (silent), MDT BE-02001.02 (closes the connection) |
+
+A device in secure mode also answers a plain serial read with no element; the serial is then `null`,
+not empty.
 
 **A secured frame is 13 octets longer than the plain one it carries** (its own TPCI/APCI pair, SCF,
 sequence and MAC). Every per-request data size therefore shrinks by 13 inside a session

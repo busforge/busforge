@@ -265,9 +265,10 @@ interface FlashOp {
 async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>): Promise<boolean> {
   try { return await verify(); }
   catch (e) {
-    // A garbled secured frame while the device comes back up is no verdict on the write either.
+    // A garbled secured frame, or the device closing the link, while it comes back up is no verdict
+    // on the write either.
     const code = (e as { code?: string }).code;
-    if (code !== "DEVICE_NOT_ANSWERING" && code !== "SECURE_ANSWER_REJECTED") throw e;
+    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED") throw e;
     try { await dev.disconnect(); } catch { /* the link may already be gone */ }
     await reconnectAfterRestart(dev, { initialMs: 5000 });
     return verify();
