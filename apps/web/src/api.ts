@@ -198,7 +198,10 @@ export const api = {
 
   getProject: (id: string): Promise<Project> => fetch(`/api/projects/${id}`).then((r) => jsonOrThrow<Project>(r)),
 
-  deleteProject: (id: string): Promise<{ ok: true }> => fetch(`/api/projects/${id}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
+  // keysExported acknowledges that the tool keys only Busforge holds were exported first
+  // (PROJECT_HOLDS_OWN_KEYS otherwise).
+  deleteProject: (id: string, keysExported = false): Promise<{ ok: true }> =>
+    fetch(`/api/projects/${id}${keysExported ? "?keysExported=1" : ""}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
   renameProject: (id: string, name: string): Promise<{ id: string; name: string }> =>
     fetch(`/api/projects/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) }).then((r) => jsonOrThrow<{ id: string; name: string }>(r)),
 
@@ -291,6 +294,16 @@ export const api = {
   // Write the device's project address into the physical device in programming mode.
   assignIa: (id: string, deviceId: string): Promise<AssignIaResult> =>
     awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/assign-ia`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r))),
+  // Store the device certificate printed on a KNX Data Secure device (serial + factory key), sealed.
+  // Nothing is sent to the device.
+  putDeviceCertificate: (id: string, deviceId: string, certificate: string): Promise<{ serial: string }> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/certificate`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificate }),
+    }).then((r) => jsonOrThrow<{ serial: string }>(r)),
+  // Take the device from its factory key to a tool key (the one on file, or one Busforge generates
+  // and stores before writing it). A device that already holds the key on file is left alone.
+  secureActivate: (id: string, deviceId: string): Promise<{ outcome: "activated" | "already-active" }> =>
+    awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/secure-activate`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r))),
   // Commission the device from nothing: application id + parameter image +
   // com-object table + group tables in one bracket (dry=true only previews).
   downloadDevice: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "download", dry, onTask),

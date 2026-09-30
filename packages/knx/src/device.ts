@@ -299,6 +299,10 @@ export class KnxDevice {
       try {
         await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
       } catch (e) {
+        // A link to the interface that stalled or closed takes no retry: the frame may be stuck in
+        // it, and a repetition would queue behind it.
+        const code = (e as { code?: string }).code;
+        if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
         // A negative L_Data.con (BUS_SEND_FAILED) or a tunnel ack timeout means the frame did not
         // reach the device this time. On a device that intermittently misses its L2-ACK window
         // (a busy single-core app), that is exactly what a retry is for. Retry until the budget is

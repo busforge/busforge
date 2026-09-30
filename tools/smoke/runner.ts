@@ -112,17 +112,22 @@ async function rebootOnBench(host: string, ia: string, mask: string, creds: Cred
 // - no tool key in the project        -> SECURE_KEY_MISSING
 // - a different tool key              -> SECURE_SYNC_NO_RESPONSE, and the right key still works after
 // - every secured answer bit-flipped  -> SECURE_ANSWER_REJECTED (the MAC no longer matches)
-// - an earlier answer delivered again -> DEVICE_NOT_ANSWERING (an old sequence number is dropped)
+// - an earlier answer delivered again -> DEVICE_NOT_ANSWERING (an old sequence number is dropped), or
+//                                        DEVICE_CLOSED_CONNECTION: the device's real answer never got
+//                                        our acknowledgement, and the Jung closed the connection
+//                                        (2026-09-30); either way the replay was not used
 // The last two run the server's own read-back through a local pass-through (faultproxy.ts).
 type Robustness = NonNullable<RunResult["negatives"]>;
 async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: string; benchConnId: string; pid: string; did: string; creds: NonNullable<Creds>; log: (m: string) => void }): Promise<Robustness> {
   const out: Robustness = [];
   const port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681);
-  const expectCode = async (name: string, want: string, run: () => Promise<unknown>) => {
-    try { await run(); out.push({ name, state: "fail", detail: `succeeded; expected ${want}` }); }
+  const expectCode = async (name: string, want: string | readonly string[], run: () => Promise<unknown>) => {
+    const wanted: readonly string[] = typeof want === "string" ? [want] : want;
+    try { await run(); out.push({ name, state: "fail", detail: `succeeded; expected ${wanted.join(" or ")}` }); }
     catch (e) {
       const code = e instanceof ApiError || e instanceof KnxError ? e.code : String(e);
-      out.push({ name, state: code === want ? "pass" : "fail", detail: code === want ? `reported ${code}` : `got ${code}, expected ${want}` });
+      const ok = code !== undefined && wanted.includes(code);
+      out.push({ name, state: ok ? "pass" : "fail", detail: ok ? `reported ${code}` : `got ${code}, expected ${wanted.join(" or ")}` });
     }
     o.log(`${name}: ${out.at(-1)!.detail}`);
   };
@@ -154,7 +159,7 @@ async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: str
   const via = await o.client.createConnection({ name: `smoke pass-through ${local}`, type: "ip", host: "127.0.0.1", port: local, ipTransport: "tcp" });
   try {
     await o.client.attachConnection(o.pid, via.id);
-    for (const [mode, name, want] of [["corrupt", "corrupted answer", "SECURE_ANSWER_REJECTED"], ["duplicate", "duplicated answer", "DEVICE_NOT_ANSWERING"]] as const) {
+    for (const [mode, name, want] of [["corrupt", "corrupted answer", "SECURE_ANSWER_REJECTED"], ["duplicate", "duplicated answer", ["DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION"]]] as const) {
       proxy.setMode(mode);
       await expectCode(name, want, () => o.client.readBack(o.pid, o.did));
       // A check the pass-through never acted on proves nothing about the answer handling.

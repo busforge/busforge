@@ -59,6 +59,10 @@ const en = {
     delete: "Delete",
     deleted: "Deleted {{name}}",
     deleteFailed: "Delete failed",
+    ownKeysTitle: '"{{name}}" holds keys only Busforge has',
+    ownKeysBody: "Busforge generated the KNX Data Secure tool key of at least one device in this project, and no other tool knows it. Deleting the project deletes the key: those devices then accept no tool until a master reset. Export the project first and keep the export.",
+    ownKeysAck: "I have exported this project and keep the export.",
+    ownKeysExport: "Export…",
   },
   import: {
     title: "Import a project",
@@ -224,6 +228,8 @@ const en = {
     BRIDGE_NO_LOCAL_ADDRESS: "This host has no external IPv4 address, so the bridge has none to advertise. Clients would discover it and then be unable to reach it.",
     DEVICE_NOT_ANSWERING: "The device is not answering on the bus. Check that it is powered, on the line, and at the expected address.",
     DEVICE_CLOSED_CONNECTION: "The device closed the connection instead of answering. It is on the bus, but it did not take this request (it may be in a connection with another tool).",
+    TUNNEL_CON_TIMEOUT: "The KNX interface did not confirm the telegram. The network link to the interface stalled or the interface is stuck; whether the device answered is unknown. Retry once the link is back.",
+    TUNNEL_CLOSED: "The connection to the KNX interface closed before the telegram was confirmed.",
     DEVICE_READ_REFUSED: "The device refused a memory read. It may be busy or in an unexpected state; try again.",
     FLASH_VERIFY_MISMATCH: "The device did not store what was written (read-back mismatch). The flash was stopped; the device is left recoverable.",
     PROPERTY_WRITE_REFUSED: "The device did not accept a load-control property the download has to write. The download was stopped; a full download restores the device.",
@@ -347,6 +353,18 @@ const en = {
   },
   // Commission dialog: assign the individual address to the device in
   // programming mode, then download the complete configuration. Bus writes.
+  secureActivate: {
+    menu: "Activate KNX Data Secure…",
+    title: "Activate KNX Data Secure on {{device}}",
+    description: "Writes to the real device at {{ia}}: switches its security mode on and gives it a tool key. The key on file is used; without one, Busforge generates a key and stores it before writing it. Only a device in factory state (never activated, or after a master reset) accepts this; afterwards every operation on it runs secured.",
+    certificate: "Device certificate",
+    certificateHint: "The 36 characters (A-Z, 2-7) printed on the device or its label, dashes optional. Leave empty to use the certificate already stored for this device.",
+    writes: "Nothing has been sent to the device yet.",
+    running: "Activating: opening a session under the factory key, switching security on, writing the tool key, confirming under the new key…",
+    activate: "Activate",
+    activated: "Activated: the device runs KNX Data Secure and was confirmed under its new tool key.",
+    alreadyActive: "Nothing written: the device already holds the tool key on file and its security mode is on.",
+  },
   commission: {
     menu: "Commission…",
     title: "Commission {{device}}",

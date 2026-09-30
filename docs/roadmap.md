@@ -48,12 +48,6 @@ started until the capability it depends on is hardware-proven.
   fixed 2026-09-27, TCP to it now works, see [connections.md](connections.md).) Suspect the
   client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
   disconnect race but not this path.
-- **Wait for the interface's `L_Data.con` over TCP.** Tunnelling over TCP has no acknowledgement,
-  so until the heartbeat notices a half-open link (up to about 90 s) it shows only as
-  `DEVICE_NOT_ANSWERING` after the device's retries, and a group or broadcast send reports success
-  into nothing ([findings.md](findings.md) §15). Matching the
-  confirmation by destination and TPDU (not by sequence, see §5.1) with a short, coded timeout
-  would restore a liveness signal and make a negative confirmation (`BUS_SEND_FAILED`) real on IP.
 - **Confirm why a long-running server's TCP connects fail on macOS.** On 2026-09-29 the dev server
   got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. Bun reports
   any immediate connect failure that way; macOS Local Network privacy is the likely cause but not
@@ -121,25 +115,25 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **An aborted secure parameter flash.** One smoke run on the Jung broke off mid parameter flash with
-  `DEVICE_NOT_ANSWERING` after the parameter object was unloaded; the device kept no application
-  until a full download. Not reproduced with the same seed. Needs the cause (a capture of a failing
-  run) and a decision on recovering the device automatically.
+- **Recover a device an interrupted flash left unloaded.** A flash cut off inside its load bracket
+  (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md) §25) leaves the
+  device without an application until the user starts a full download. Busforge does not repeat or
+  finish the bracket by itself.
 - **Senders on a secured address shared by several devices.** Which devices ETS lists in a receiver's
   PID 54 when more than one device is linked to a secured address is not shown (the bench has one
   secure device on it); Busforge refuses such an address (`SECURE_SENDERS_UNPROVEN`). Needs an ETS
   capture with two secure devices on one secured address (the GVS AMMA on the bench is secure-capable).
-- **Sending: confirmation, extended frames, a shared sender address.** The interface's L_Data.con is
-  not read, so a sent telegram is reported as handed to the interface, not as on the bus. Secured
+- **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
+  L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
+  (over TCP and USB it is). Secured
   values longer than 6 bits are refused (no extended frame). A sender address also used by another
   tool is not coordinated with that tool's sequence.
 - **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
-- **Activation UI.** Certificate entry and activation are API-only (`PUT .../certificate`,
-  `POST .../secure-activate`), and the project delete dialog cannot yet acknowledge
-  `PROJECT_HOLDS_OWN_KEYS` (the API takes `keysExported=1`). The activation with a key Busforge
-  generates (none on file) has run against a fake device only.
+- **Activation with a generated key on hardware.** The device-menu dialog stores the certificate and
+  activates; the path with no key on file (Busforge generates and stores one) has run against a fake
+  device only, and no activation has yet run through the dialog on hardware.
 - **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
   address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
   such a device over; wanted for users, not needed for the bench.

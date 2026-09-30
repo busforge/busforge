@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { KnxIpTunnel, type TcpSocket } from "../src/connection.ts";
 import { KnxIpServer, type ServerSocket, type ServerTcpSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import type { KnxTransport } from "../src/transport.ts";
+import { KnxError } from "../src/errors.ts";
 import {
   KnxIpStreamParser, SVC, CEMI, knxFrame, hpai, hpaiTcp, iaToNum, cemiLData, type Endpoint,
 } from "../src/frame.ts";
@@ -70,7 +71,15 @@ class FakeTcpSocket implements TcpSocket {
   connect(_port: number, _ip: string, onConnect: () => void, onError: (e: Error) => void): void {
     if (this.connectError) onError(this.connectError); else onConnect();
   }
-  write(frame: Buffer): void { this.sent.push(Buffer.from(frame)); }
+  // A gateway confirms every tunnelled frame with an L_Data.con; `autoCon` plays that gateway.
+  autoCon = true;
+  write(frame: Buffer): void {
+    this.sent.push(Buffer.from(frame));
+    if (this.autoCon && frame.readUInt16BE(2) === SVC.TUNNEL_REQ) {
+      const con = Buffer.from(frame.subarray(10)); con[0] = CEMI.LDATA_CON;
+      queueMicrotask(() => this.dataCb?.(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, frame[7]!, 0x00, 0x00]), con]))));
+    }
+  }
   onData(cb: (c: Buffer) => void): void { this.dataCb = cb; }
   onClose(cb: () => void): void { this.closeCb = cb; }
   end(): void { this.ended = true; }
@@ -191,7 +200,7 @@ describe("KnxIpTunnel over TCP", () => {
 
   // 3/8/4 v2: no TUNNELLING_ACK over TCP. A real KNX IP interface (MDT SCN-IP000.03) sends none,
   // so waiting for one failed every TCP operation against it with TUNNEL_ACK_TIMEOUT.
-  test("sendCemi writes one TUNNELLING_REQUEST and completes without waiting for an ACK", async () => {
+  test("sendCemi writes one TUNNELLING_REQUEST and completes on the confirmation, without waiting for an ACK", async () => {
     const { sock, tunnel } = await connectedTcp();
     const cemi = cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80]));
 
@@ -202,6 +211,70 @@ describe("KnxIpTunnel over TCP", () => {
       0x04, CHANNEL, 0x00, 0x00,
       ...cemi,
     ]);
+  });
+
+  test("a send completes on the gateway's L_Data.con, which names the frame without its source", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    const cemi = cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x43, 0x00]));
+    let done = false;
+    const p = tunnel.sendCemi(cemi).then(() => { done = true; });
+    await tick();
+    expect(done).toBe(false);
+    const con = Buffer.from(cemi); con[0] = CEMI.LDATA_CON; con[2] |= 0x00; con.writeUInt16BE(CLIENT_IA, 4); // the gateway's source
+    sock.inject(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, CHANNEL, 0x00, 0x00]), con])));
+    await p;
+    expect(done).toBe(true);
+  });
+
+  test("a negative L_Data.con is BUS_SEND_FAILED, and no confirmation at all is the interface's fault, not the device's", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    tunnel["conTimeoutMs"] = 20;
+    const cemi = cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x43, 0x00]));
+    const neg = tunnel.sendCemi(cemi).catch((e: unknown) => e);
+    await tick();
+    const con = Buffer.from(cemi); con[0] = CEMI.LDATA_CON; con[2] |= 0x01;
+    sock.inject(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, CHANNEL, 0x00, 0x00]), con])));
+    expect((await neg as KnxError).code).toBe("BUS_SEND_FAILED");
+    const silent = await tunnel.sendCemi(cemi).catch((e: unknown) => e);
+    expect((silent as KnxError).code).toBe("TUNNEL_CON_TIMEOUT");
+  });
+
+  test("a confirmation that arrives after its frame timed out does not confirm the next identical frame", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    tunnel["conTimeoutMs"] = 20;
+    const cemi = cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x43, 0x00]));
+    expect(((await tunnel.sendCemi(cemi).catch((e: unknown) => e)) as KnxError).code).toBe("TUNNEL_CON_TIMEOUT");
+    const second = tunnel.sendCemi(cemi).catch((e: unknown) => e);
+    await tick();
+    const con = Buffer.from(cemi); con[0] = CEMI.LDATA_CON;
+    sock.inject(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, CHANNEL, 0x00, 0x00]), con]))); // the first frame's, late
+    expect(((await second) as KnxError).code).toBe("TUNNEL_CON_TIMEOUT");
+  });
+
+  test("a transport-layer control frame (T_ACK) is sent without waiting for a confirmation", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    await tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0xc2])));
+    expect(sock.sent.length).toBe(1);
+  });
+
+  test("a send on a closed tunnel fails at once as closed", async () => {
+    const { tunnel } = await connectedTcp();
+    await tunnel.disconnect();
+    const e = await tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x80]))).catch((x: unknown) => x);
+    expect((e as KnxError).code).toBe("TUNNEL_CLOSED");
+  });
+
+  test("a send still waiting for its confirmation fails when the connection drops", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    const p = tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x43, 0x00]))).catch((e: unknown) => e);
+    await tick();
+    sock.drop();
+    expect((await p as KnxError).code).toBe("TUNNEL_CLOSED");
   });
 
   test("each send advances the sequence counter and none is retransmitted", async () => {

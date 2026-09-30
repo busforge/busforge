@@ -61,6 +61,10 @@ const de: Messages = {
     delete: "Löschen",
     deleted: "{{name}} gelöscht",
     deleteFailed: "Löschen fehlgeschlagen",
+    ownKeysTitle: '"{{name}}" enthält Schlüssel, die nur Busforge hat',
+    ownKeysBody: "Busforge hat den KNX-Data-Secure-Tool-Key mindestens eines Geräts in diesem Projekt erzeugt, und kein anderes Werkzeug kennt ihn. Löschen des Projekts löscht den Key: Diese Geräte nehmen dann bis zu einem Master-Reset kein Werkzeug mehr an. Exportiere das Projekt zuerst und bewahre den Export auf.",
+    ownKeysAck: "Ich habe dieses Projekt exportiert und bewahre den Export auf.",
+    ownKeysExport: "Exportieren…",
   },
   import: {
     title: "Projekt importieren",
@@ -224,6 +228,8 @@ const de: Messages = {
     BRIDGE_NO_LOCAL_ADDRESS: "Dieser Host hat keine externe IPv4-Adresse, also hat die Bridge keine, die sie ankündigen könnte. Clients würden sie finden und dann nicht erreichen.",
     DEVICE_NOT_ANSWERING: "Das Gerät antwortet nicht auf dem Bus. Prüfe, ob es mit Strom versorgt, an der Linie und unter der erwarteten Adresse erreichbar ist.",
     DEVICE_CLOSED_CONNECTION: "Das Gerät hat die Verbindung geschlossen, statt zu antworten. Es ist am Bus, hat diese Anfrage aber nicht angenommen (vielleicht ist es gerade mit einem anderen Werkzeug verbunden).",
+    TUNNEL_CON_TIMEOUT: "Die KNX-Schnittstelle hat das Telegramm nicht bestätigt. Die Netzwerkverbindung zur Schnittstelle stockte, oder die Schnittstelle hängt; ob das Gerät geantwortet hat, ist unbekannt. Erneut versuchen, sobald die Verbindung wieder steht.",
+    TUNNEL_CLOSED: "Die Verbindung zur KNX-Schnittstelle wurde geschlossen, bevor das Telegramm bestätigt war.",
     DEVICE_READ_REFUSED: "Das Gerät hat einen Speicher-Lesezugriff verweigert. Es ist evtl. beschäftigt oder in einem unerwarteten Zustand; versuche es erneut.",
     FLASH_VERIFY_MISMATCH: "Das Gerät hat nicht das Geschriebene gespeichert (Rücklese-Abweichung). Das Flashen wurde gestoppt; das Gerät bleibt wiederherstellbar.",
     PROPERTY_WRITE_REFUSED: "Das Gerät hat eine Ladesteuerungs-Eigenschaft, die der Download schreiben muss, nicht angenommen. Der Download wurde gestoppt; ein vollständiger Download stellt das Gerät wieder her.",
@@ -347,6 +353,18 @@ const de: Messages = {
   },
   // Erstinbetriebnahme-Dialog: physikalische Adresse an das Gerät im
   // Programmiermodus vergeben, dann die komplette Konfiguration laden. Schreibt auf den Bus.
+  secureActivate: {
+    menu: "KNX Data Secure aktivieren…",
+    title: "KNX Data Secure auf {{device}} aktivieren",
+    description: "Schreibt in das echte Gerät unter {{ia}}: schaltet seinen Sicherheitsmodus ein und gibt ihm einen Tool-Key. Verwendet wird der hinterlegte Key; ohne einen erzeugt Busforge einen und speichert ihn, bevor er geschrieben wird. Nur ein Gerät im Werkszustand (nie aktiviert oder nach einem Master-Reset) nimmt das an; danach läuft jede Operation mit ihm gesichert.",
+    certificate: "Gerätezertifikat",
+    certificateHint: "Die 36 Zeichen (A-Z, 2-7), die auf dem Gerät oder seinem Etikett stehen, Bindestriche optional. Leer lassen, um das für dieses Gerät bereits gespeicherte Zertifikat zu verwenden.",
+    writes: "An das Gerät wurde noch nichts gesendet.",
+    running: "Aktiviere: Sitzung unter dem Werksschlüssel öffnen, Security einschalten, Tool-Key schreiben, unter dem neuen Key bestätigen…",
+    activate: "Aktivieren",
+    activated: "Aktiviert: Das Gerät läuft mit KNX Data Secure und wurde unter seinem neuen Tool-Key bestätigt.",
+    alreadyActive: "Nichts geschrieben: Das Gerät hat bereits den hinterlegten Tool-Key, und sein Sicherheitsmodus ist an.",
+  },
   commission: {
     menu: "In Betrieb nehmen…",
     title: "{{device}} in Betrieb nehmen",

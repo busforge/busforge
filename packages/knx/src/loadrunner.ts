@@ -150,6 +150,8 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
           }
         }
         if (lastErr) {
+          // A stalled or closed link to the interface says nothing about the device.
+          if (lastErr instanceof KnxError && (lastErr.code === "TUNNEL_CON_TIMEOUT" || lastErr.code === "TUNNEL_CLOSED")) throw lastErr;
           throw new KnxError("DEVICE_NOT_ANSWERING",
             `the device stopped answering after a segment write and did not come back within ${Math.round((tries * (delayMs + 4500)) / 1000)} s; it may be committing its flash, or it may have reset`);
         }

@@ -76,6 +76,8 @@ function realTcpSocket(): TcpSocket {
 // requests both directions, acknowledged over UDP only) and surfaces incoming cEMI L_Data
 // (source IA + raw TPDU) to a listener. The connection-oriented KNX transport
 // lives one layer up in KnxDevice.
+type ConWaiter = { key: string; promise: Promise<void>; resolve: () => void; reject: (e: Error) => void };
+
 export class KnxIpTunnel implements KnxTransport {
   private sock!: TunnelSocket;
   // Set only in TCP mode; the connection that carries the channel.
@@ -88,6 +90,15 @@ export class KnxIpTunnel implements KnxTransport {
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
   // Per-send wait for a tunnelling ACK over UDP; an instance field so a test can shorten it.
   private ackTimeoutMs = 1500;
+  // TCP: the sends waiting for the gateway's L_Data.con, oldest first, and how long each may wait (an
+  // instance field so a test can shorten it). Over TCP the confirmation is the only sign that a frame
+  // left the gateway; a stream that stalls (lost segments in retransmission back-off, 2026-09-30 on
+  // the bench's Wi-Fi) otherwise looks exactly like a device that stopped answering.
+  private conWaiters: ConWaiter[] = [];
+  private conTimeoutMs = 3000;
+  // Frames whose confirmation timed out: a confirmation that turns up later is theirs, never the
+  // confirmation of an identical frame sent after them (a repeated request, a repeated group write).
+  private lateCons: string[] = [];
   // Set the moment teardown begins. A datagram that lands between DISCONNECT_REQ and the socket
   // actually closing must not be answered: the ACK would be written into a socket that is gone, and
   // the channel it would ACK on no longer exists. Without it, every ordinary disconnect logged a
@@ -298,6 +309,7 @@ export class KnxIpTunnel implements KnxTransport {
   private reap(reason: string) {
     if (this.closed) return;
     this.closed = true;
+    this.failCons(new KnxError("TUNNEL_CLOSED", `the tunnel closed before the gateway confirmed the frame: ${reason}`));
     this.stopHeartbeat();
     this.closeSocket();
     this.onClosed?.(reason);
@@ -343,6 +355,7 @@ export class KnxIpTunnel implements KnxTransport {
       // from this code. Passing a .con on as an incoming telegram reports our own outgoing frames
       // to the upper layer as if a device had sent them. (The USB transport has always filtered
       // this correctly; the IP client did not.)
+      if (cemi[0] === CEMI.LDATA_CON) { this.onCon(cemi); return; }
       if (cemi[0] !== CEMI.LDATA_IND) return;
       this.onRawCemi?.(Buffer.from(cemi));
       const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
@@ -353,12 +366,20 @@ export class KnxIpTunnel implements KnxTransport {
   // KNXnet/IP-layer send of a cEMI. Over UDP it waits for the tunnelling ACK and retransmits on a
   // timeout (up to `tries`, the spec's recovery for a lost datagram). Over TCP (3/8/4 v2) there is no
   // TUNNELLING_ACK: a real KNX IP interface never sends one, so the frame is written exactly once and
-  // the send is complete. A retransmission could only duplicate a memory write.
+  // the send completes on the interface's L_Data.con (matched by content, see conKey). A
+  // retransmission could only duplicate a memory write.
   async sendCemi(cemi: Buffer, tries = 3): Promise<void> {
     if (this.mode === "tcp") {
+      if (this.closed) throw new KnxError("TUNNEL_CLOSED", "the tunnel is closed");
       const seq = this.txSeq;
       this.txSeq = (seq + 1) & 0xff;
-      await this.send(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi])));
+      // Transport-layer control frames (T_Connect, T_Disconnect, T_ACK) carry no request; waiting
+      // for their confirmation would only hold back the answer the T_ACK acknowledges.
+      const control = (cemi[2 + (cemi[1] ?? 0) + 7] ?? 0) & 0x80;
+      const w = control ? null : this.awaitCon(cemi);
+      try { await this.send(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi]))); }
+      catch (e) { if (w) { this.dropCon(w); w.promise.catch(() => undefined); } throw e; }
+      if (w) await w.promise;
       return;
     }
     for (let i = 0; i < tries; i++) {
@@ -371,11 +392,54 @@ export class KnxIpTunnel implements KnxTransport {
     throw new KnxError("TUNNEL_ACK_TIMEOUT", "tunnelling ack timeout");
   }
 
+  // A confirmation names the frame it confirms by everything but its source (a gateway fills in a
+  // source of 0.0.0) and the control field (the gateway sets the confirm bit in it).
+  private static conKey(cemi: Buffer): string {
+    const p = 2 + (cemi[1] ?? 0);
+    return cemi.subarray(p + 4).toString("hex");
+  }
+  private awaitCon(cemi: Buffer): ConWaiter {
+    const key = KnxIpTunnel.conKey(cemi);
+    let resolve!: () => void, reject!: (e: Error) => void;
+    const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+    const w: ConWaiter = { key, promise, resolve: () => { clearTimeout(t); resolve(); }, reject: (e) => { clearTimeout(t); reject(e); } };
+    const t = setTimeout(() => {
+      if (!this.dropCon(w)) return;
+      this.lateCons.push(key);
+      if (this.lateCons.length > 16) this.lateCons.shift();
+      reject(new KnxError("TUNNEL_CON_TIMEOUT", `the interface at ${this.ifaceIp}:${this.port} did not confirm the frame within ${this.conTimeoutMs} ms: the link to the interface stalled, or the interface is stuck; whether the device answered is unknown`));
+    }, this.conTimeoutMs);
+    this.conWaiters.push(w);
+    return w;
+  }
+  private dropCon(w: ConWaiter): boolean {
+    const i = this.conWaiters.indexOf(w);
+    if (i < 0) return false;
+    this.conWaiters.splice(i, 1);
+    return true;
+  }
+  private onCon(cemi: Buffer): void {
+    const key = KnxIpTunnel.conKey(cemi);
+    const late = this.lateCons.indexOf(key);
+    if (late >= 0) { this.lateCons.splice(late, 1); return; }
+    const w = this.conWaiters.find((x) => x.key === key);
+    if (!w) return;
+    this.dropCon(w);
+    const ctrl1 = cemi[2 + (cemi[1] ?? 0)] ?? 0;
+    if (ctrl1 & 0x01) w.reject(new KnxError("BUS_SEND_FAILED", "the KNX interface reports that the telegram did not reach the bus (negative L_Data.con); the line is dead, disconnected, or no device acknowledged the frame"));
+    else w.resolve();
+  }
+  private failCons(e: Error): void {
+    const ws = this.conWaiters; this.conWaiters = []; this.lateCons = [];
+    for (const w of ws) w.reject(e);
+  }
+
   async disconnect() {
     // Stop answering FIRST. The DISCONNECT_REQ below still goes out, but anything that arrives from
     // here on belongs to a channel that is ending, and ACKing it would mean writing into a socket
     // this method is about to close.
     this.closed = true;
+    this.failCons(new KnxError("TUNNEL_CLOSED", "the tunnel was closed before the gateway confirmed the frame"));
     this.stopHeartbeat();
     const controlHpai = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
     try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), controlHpai]))); } catch { /* teardown: the gateway may be gone; the channel is closed either way */ }

@@ -131,9 +131,10 @@ export class Bus {
     return this.tunnel.assignedIa;
   }
 
-  // Hand a group telegram to the interface over the monitor connection. The interface's L_Data.con
-  // is not read, so this does not know the telegram reached the bus, and it is not recorded in the
-  // monitor as if it had: what the bus carried shows up there only as the devices' answers.
+  // Hand a group telegram to the interface over the monitor connection. Over TCP the send waits for
+  // the interface's L_Data.con (a negative one is BUS_SEND_FAILED); over UDP only for the tunnelling
+  // ACK, so there it is not known that the telegram reached the bus. Either way it is not recorded in
+  // the monitor as if it had: what the bus carried shows up there only as the devices' answers.
   async sendGroup(projectId: string, dst: number, tpdu: Buffer): Promise<void> {
     const src = this.senderIa(projectId);
     await this.tunnel!.sendCemi(cemiLDataGroup(src, dst, tpdu));

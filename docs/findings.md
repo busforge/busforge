@@ -195,12 +195,11 @@ rather than burning past the device's ~6 s connection timeout and killing the se
 
 ## 5. Transport gotchas you must get right
 
-1. **Do not block on the KNXnet/IP `L_Data.con`** (the decisive one). It carries the
+1. **Do not match the KNXnet/IP `L_Data.con` by sequence** (the decisive one). It carries the
    **server** sequence counter, not the client's, so naive matching never succeeds, every
    send stalls for its full timeout, and that starves response handling. Over UDP the
-   `TunnelingAck` provides flow control; over TCP there is none at the KNXnet/IP level (§15), and
-   the device's own T_ACK paces every management frame. Treat the bus confirmation as
-   fire-and-forget.
+   `TunnelingAck` provides flow control and the confirmation is not awaited; over TCP Busforge waits
+   for it, matched by destination and TPDU (§25).
 2. **Stamp the source address.** Outgoing `L_Data` may carry `0.0.0` expecting the interface
    to substitute the tunnel address. Some interfaces do not do this for connection-oriented
    frames, so device replies never route back. Set the source to the assigned tunnel address
@@ -456,10 +455,8 @@ completed over `auto` (TCP) (operator observation, no evidence record).
 
 What the TCP client gives up with the acknowledgement: a per-frame sign of a half-open link, since a
 socket write does not fail on a dead peer. The connection-state heartbeat (which the client runs on
-TCP too, see §23) notices a dead link within about 90 s, but in between a silent drop shows as
-`DEVICE_NOT_ANSWERING` after the device's retries, and a group or broadcast send reports success
-into nothing. Waiting for the interface's `L_Data.con` (matched by
-destination and TPDU, not by sequence) would restore both; it is on [roadmap.md](roadmap.md).
+TCP too, see §23) notices a dead link within about 90 s. In between, the client now waits for the
+interface's `L_Data.con` on every send, matched by destination and TPDU, not by sequence (§25).
 
 ## 16. OpenKNX reads its flash, not what was just written
 
@@ -696,4 +693,40 @@ takes no further numbered frame. It is deliberately not `DEVICE_NOT_ANSWERING`, 
 silence: a device that closes is present. The address check before an individual-address write
 counts it as taken (a device in another tool's connection answers a stranger's frame this way), and
 the read after a restart reconnects and reads once more, as it does after silence.
+
+## 25. A secured parameter flash that "stopped answering" was a stalled TCP stream
+
+The secure smoke spec on the Jung 400021SE broke off twice in a parameter flash with
+`DEVICE_NOT_ANSWERING`: on 2026-09-29 (seed 3986290679, after the parameter object was unloaded, so
+the device kept no application until a full download) and on 2026-09-30 with the same seed, this time
+in the read-back after the restart. The 2026-09-30 run went through a logging proxy on the Mac:
+
+- Every secured read of the verify loop was answered within about 300 ms, up to one request that the
+  bridge still confirmed (`L_Data.con`) at 12:30:28.637. After it nothing came back on that TCP
+  stream: no T_ACK, no answer, and no confirmation for the two repetitions.
+- The bridge on the bench host held that stream afterwards with 349 unsent bytes queued towards the Mac
+  (`FIN-WAIT-1`), which is where the Jung's answer was.
+- Busforge disconnected and reconnected at once. The bridge still held the dead channel and has one
+  tunnel address, so every reconnect was refused with `0x24` until it reaped the channel at
+  12:32:32, 120 s after its last heartbeat. Every later step of the run failed on that refusal.
+- The same seed then passed in full. Polling the bridge's TCP state every 250 ms during that run
+  showed a lost segment on the Wi-Fi path between the bench host and the Mac that TCP resent after about
+  200 ms. A few losses in a row put TCP into retransmission back-off (0.2, 0.4, 0.8, 1.6, 3.2 s),
+  longer than the device request's three tries of about 2 s each.
+
+So the device was not the cause, and neither was Data Secure: a stream that stalls for a few seconds
+cut off a long run of management requests. Not shown: that the 2026-09-29 abort had the same cause
+(no transport data was recorded then; the symptom is the same).
+
+Busforge had no way to tell the two apart, because over TCP it did not wait for the interface's
+confirmation (§15). It now does, matched by destination and TPDU, and a missing confirmation within
+3 s is `TUNNEL_CON_TIMEOUT` ("the link to the interface stalled, or the interface is stuck; whether
+the device answered is unknown") instead of `DEVICE_NOT_ANSWERING`. It is not retried (a repetition
+would queue behind the stuck frame), and the load runner and the reconnect after a restart pass it on
+rather than report the device as silent. What does not change: a new tunnel opened before the bridge
+has reaped the dead channel is still refused (`0x24`) for up to 120 s, because the bench bridge has one
+tunnel address. Shown on hardware: the confirmation matched on the bench bridge and on the house's MDT
+KNX IP interface (reads and a secured smoke run). Not shown: `TUNNEL_CON_TIMEOUT` on a real stall,
+which needs the stall to recur. An interrupted flash still leaves the device where the bracket stood;
+recovering it is a full download, started by the user.
 

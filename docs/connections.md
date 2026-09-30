@@ -69,6 +69,17 @@ receives; a real KNX IP interface (MDT SCN-IP000.03) sends none, and waiting for
 operation with `TUNNEL_ACK_TIMEOUT`. Busforge's own bridge still acknowledges a TCP client's
 requests, which the client ignores. Over UDP the acknowledge-and-retransmit loop runs as before.
 
+What takes the acknowledgement's place over TCP is the interface's `L_Data.con`. Each send waits for
+it, matched by destination and TPDU (never by sequence: a gateway numbers the confirmations with its
+own counter, and it fills in a source of `0.0.0` and sets bits in the control field). A negative
+confirmation is `BUS_SEND_FAILED`, as on USB. No confirmation within 3 s is `TUNNEL_CON_TIMEOUT`: the
+link to the interface stalled or the interface is stuck, and whether the device answered is unknown.
+Without it a stalled stream looked exactly like a device that stopped answering
+([findings.md](findings.md) §25). A stalled or closed link is not retried. Transport-layer control
+frames (T_Connect, T_Disconnect, T_ACK) are sent without waiting. Confirmations matched on the bench
+bridge and the house's MDT KNX IP interface; the timeout and a negative confirmation are
+tested against a scripted gateway only.
+
 ### Liveness: the client keeps its own status honest
 
 A tunnel can die under a client that never notices: the gateway reboots, the network drops, or a

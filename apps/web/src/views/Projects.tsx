@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { api, type ProjectSummary, type AnalyzeResult } from "../api.ts";
+import { api, ApiError, type ProjectSummary, type AnalyzeResult } from "../api.ts";
 import { qk, useProjects, useVersion } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -95,13 +95,25 @@ export function ProjectsScreen() {
 
   const open = (id: string) => { void navigate({ to: "/projects/$projectId/devices", params: { projectId: id } }); };
 
+  // A project holding tool keys only Busforge has is deleted only after an explicit
+  // acknowledgement that it was exported: those devices are locked out otherwise.
+  const [keysTarget, setKeysTarget] = useState<ProjectSummary | null>(null);
+  const [keysExported, setKeysExported] = useState(false);
   const del = useMutation({
-    mutationFn: (id: string) => api.deleteProject(id),
-    onSuccess: (_r, id) => {
+    mutationFn: ({ id, keysExported }: { id: string; keysExported: boolean }) => api.deleteProject(id, keysExported),
+    onSuccess: (_r, { id }) => {
       void qc.invalidateQueries({ queryKey: qk.projects });
       toast.message(t("projects.deleted", { name: projects.find((p) => p.id === id)?.name ?? "project" }));
     },
-    onError: (e) => toast.error(t("projects.deleteFailed"), { description: errMsg(t, e) }),
+    onError: (e, { id }) => {
+      const target = projects.find((p) => p.id === id);
+      if (e instanceof ApiError && e.code === "PROJECT_HOLDS_OWN_KEYS" && target) {
+        setKeysExported(false);
+        setKeysTarget(target);
+        return;
+      }
+      toast.error(t("projects.deleteFailed"), { description: errMsg(t, e) });
+    },
   });
 
   return (
@@ -179,8 +191,36 @@ export function ProjectsScreen() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => { const target = pendingDelete; setPendingDelete(null); if (target) del.mutate(target.id); }}
+              onClick={() => { const target = pendingDelete; setPendingDelete(null); if (target) del.mutate({ id: target.id, keysExported: false }); }}
               className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete"
+            >
+              {t("projects.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!keysTarget} onOpenChange={(o) => !o && setKeysTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <KeyRound className="size-4 text-amber-500" /> {t("projects.ownKeysTitle", { name: keysTarget?.name })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("projects.ownKeysBody")}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={keysExported} onChange={(e) => setKeysExported(e.target.checked)} data-testid="keys-exported" />
+            <span>{t("projects.ownKeysAck")}</span>
+          </label>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <Button variant="outline" onClick={() => { const target = keysTarget; setKeysTarget(null); if (target) setExportTarget(target); }} data-testid="own-keys-export">
+              <Download className="size-4" /> {t("projects.ownKeysExport")}
+            </Button>
+            <AlertDialogAction
+              disabled={!keysExported}
+              onClick={() => { const target = keysTarget; setKeysTarget(null); if (target) del.mutate({ id: target.id, keysExported: true }); }}
+              className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete-own-keys"
             >
               {t("projects.delete")}
             </AlertDialogAction>

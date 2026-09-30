@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -20,6 +20,7 @@ import {
 import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
 import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
 import { CommissionDialog } from "./CommissionDialog.tsx";
+import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -116,6 +117,7 @@ export function DeviceConfig() {
   const [revertOpen, setRevertOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [commissionOpen, setCommissionOpen] = useState(false);
+  const [secureOpen, setSecureOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -524,6 +526,9 @@ export function DeviceConfig() {
               <DropdownMenuItem onClick={() => setCommissionOpen(true)} disabled={!!caps && !caps.fullDownload} data-testid="commission-device">
                 <RadioTower className="size-4" /> {t("commission.menu")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSecureOpen(true)} data-testid="secure-activate-device">
+                <ShieldCheck className="size-4" /> {t("secureActivate.menu")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -549,6 +554,14 @@ export function DeviceConfig() {
         <CommissionDialog
           open={commissionOpen} onOpenChange={setCommissionOpen}
           projectId={projectId} device={device} onCommissioned={afterFlash}
+        />
+      )}
+
+      {device && (
+        <SecureActivateDialog
+          open={secureOpen} onOpenChange={setSecureOpen}
+          projectId={projectId} device={device}
+          onActivated={() => void qc.invalidateQueries({ queryKey: qk.project(projectId) })}
         />
       )}
 
