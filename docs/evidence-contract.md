@@ -106,14 +106,17 @@ factual hint, never a test state:
 
 | Relation to a tested Product | Shown as |
 |---|---|
-| same Hardware and same application program version | "same KNX Hardware and application program as P-1, which was tested"; technically eligible, untested |
+| same Hardware and same application program version | state `derived`: "same KNX Hardware and application program as P-1, which was tested"; never counted as tested |
 | other Hardware, same application program version | "same application program as P-1, which was tested"; technically eligible, untested |
 | same application program, other version (`A-0072-30` vs `A-0072-31`) | no hint; technically eligible at most |
 | same mask or manufacturer only | no hint; technically eligible if `capabilities()` says so |
 
 Technically eligible Products may be programmed after an explicit notice that they are untested.
-Whether the first relation may ever count as tested is an open decision, recorded on the
-[roadmap](roadmap.md); until it is made, it does not.
+The first relation gets its own state, `derived` (decided 2026-10-01): the same Hardware running the
+same application program version is likely to behave the same, which is worth showing apart from a
+Product nothing is known about, but the catalog does not prove shared electronics and firmware. It
+sits between technically eligible and tested, never raises a cell to `pass`, and does not count
+toward qualification. Not implemented yet (see the [roadmap](roadmap.md)).
 
 A record whose `appProgramId` or `productRef` is unknown cannot back any cell. Historical records
 without a Product stay readable, but they raise nothing.

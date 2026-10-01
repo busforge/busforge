@@ -11,16 +11,8 @@ started until the capability it depends on is hardware-proven.
   one channel changed. The plan is to author the new com-object table, diff it and the new
   parameter image against the device, and write only the diverging segments in one load bracket.
   Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
-  part, and it needs a bus-behaviour proof, not just a byte match.
-- **Baselines written before 2026-09-28 lack every module-instance parameter.** Until then a
-  verified download or parameter flash never adopted a module device's `…_M-k_MI-n_…` parameters
-  into the baseline ([findings.md](findings.md) §17). For a memory-less one that shapes the
-  com-object table (the Jung's "Kanalfunktion"), such a baseline still implies the default, so
-  switching back to the default looks like no change and the surgical flash is not promoted to a
-  download. A read-back cannot repair it: a memory-less parameter is not on the device. Today the
-  remedy is one full download of each module device Busforge programmed before the fix; the
-  robust one is a migration that marks those baselines as unknown and refuses a table-relevant
-  surgical flash until that download.
+  part, and it needs a bus-behaviour proof, not just a byte match. *Decided 2026-10-01: build it,
+  after the open hardware checks.*
 - **Observe a transmit-only object after a System 7 group-address flash.** The flash rewrites the
   com-object table byte-equal to ETS; the behaviour that depends on the link bit (an object with
   no read flag transmitting after it is linked) has not been observed on the bus
@@ -66,15 +58,11 @@ started until the capability it depends on is hardware-proven.
 
 ## Verification
 
-- **Decide whether a Product may inherit evidence from its KNX Hardware.** Evidence is per Product
-  today. An order-number variant of a tested Hardware running the same application program gets
-  only a hint in the compatibility matrix ([evidence-contract.md](evidence-contract.md)). Counting
-  it as tested needs a reason to believe the variants share electronics and firmware, which the
-  catalog alone does not give.
-- **Persistence across a bus power loss.** The smoke runner's persistence step restarts the device
-  with A_Restart and reads it back ([evidence-contract.md](evidence-contract.md)). A reboot reloads
-  the configuration from non-volatile memory, but it is not a power cut: nothing automated removes
-  bus power, and on the bench that would also take down the USB interface the bridge drives.
+- **Show a derived state for a Product whose Hardware and application program were tested on
+  another Product.** *Decided 2026-10-01:* evidence stays per Product and such a Product never
+  counts as tested, but it gets its own state, `derived`, between technically eligible and tested
+  ([evidence-contract.md](evidence-contract.md)). Not implemented: it belongs to the compatibility
+  matrix (release-readiness ticket 18).
 - **`tools/readback.ts` cannot read MV-0705 devices.** On 2026-09-24 every MV-0705 device of the
   reference installation refused the tool's parameter read (`device refused byte @0x41e4`), so its
   evidence covers System B devices only. The server's read-back reads them; the tool should use the
@@ -99,7 +87,7 @@ started until the capability it depends on is hardware-proven.
 
 - **Prove a non-TP device.** Powerline, RF and IP masks share the codec and load procedure but
   have never been exercised on that medium. One read-back on real hardware promotes the whole
-  row from extrapolation to proof.
+  row from extrapolation to proof. Parked: no such device is available.
 - **Re-programming a device that is running its application: answered, and it works.** On
   the OpenKNX RaumController took three full downloads, each reporting `verified`, two on
   the bench and one onto the device in service in a house. It answered point-to-point management
@@ -115,6 +103,7 @@ started until the capability it depends on is hardware-proven.
   download and once by ETS partial download; after each, read back, observe the linked object
   on the bus, cut bus power, and check the device is still configured and logged no watchdog
   restart. Revert between runs. Recovery is a full download, which is proven on this product.
+  Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
 
@@ -123,7 +112,8 @@ started until the capability it depends on is hardware-proven.
 - **Recover a device an interrupted flash left unloaded.** A flash cut off inside its load bracket
   (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md) §25) leaves the
   device without an application until the user starts a full download. Busforge does not repeat or
-  finish the bracket by itself.
+  finish the bracket by itself. *Decided 2026-10-01: no automatic resume; the UI offers the full
+  download right away when a flash broke off inside its bracket.*
 - **Another device that only receives on a secured address.** ETS lists another secured device that
   transmits on the address in a receiver's PID 54 ([findings.md](findings.md) §22); whether it also
   lists one whose objects there only receive is not shown, and Busforge refuses it
@@ -154,15 +144,18 @@ started until the capability it depends on is hardware-proven.
   the application program, which matters for the PID 54 sender rule.
 - **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
   address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
-  such a device over; wanted for users, not needed for the bench.
+  such a device over; wanted for users, not needed for the bench. *Decided 2026-10-01: build it.*
 - **Secure a group address Busforge creates.** Group keys arrive only with a project import, so an
   address created in Busforge is plain, and linking it to a secure device's object programs that
-  object as plain.
+  object as plain. *Decided 2026-10-01: build it (Busforge generates the group key); first observe in
+  ETS how it fills the receivers' PID 54 for a new secured address.*
 - **A plain device linked to a secured group address** is refused for GA flash and full download
   (`SECURE_GA_WITHOUT_DEVICE_KEY`). ETS keeps such a project; whether and how it programs that device
-  is not established.
+  is not established. *Decided 2026-10-01: reproduce it in ETS, then build what ETS does; refused
+  until then.*
 - **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
-  store's `manual` and `provisioned` sources are currently unreachable.
+  store's `manual` source is currently unreachable. *Decided 2026-10-01: build it, in the device menu;
+  the key is checked with a Sync against the device before it is stored.*
 - **Individual-address assignment has no secure path.** It is a broadcast operation and cannot use
   a device session, so a secure device cannot be addressed this way.
 
@@ -171,7 +164,11 @@ started until the capability it depends on is hardware-proven.
 - **Persist the parsed product model** in the catalog instead of the raw application-program XML,
   so a device page does not re-parse on every open. Deferred until one unified parser existed,
   which it now does.
-- **No size guard on plugin baggage blobs** stored in the database.
+- **No size guard on plugin baggage blobs** stored in the database. *Decided 2026-10-01: refuse an
+  import with a blob over 32 MB or more than 128 MB of baggage per project.*
+- **Seed "never programmed" from the ETS project.** ETS leaves `ApplicationProgramLoaded` off a
+  device it never downloaded; such a device imports as programmed today. *Decided 2026-10-01: seed the
+  flag from it*, accepting that a device another tool programmed then also reads as never programmed.
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
 
 ## Product and UI
@@ -188,7 +185,7 @@ started until the capability it depends on is hardware-proven.
   knows management on it will not work on a USB stick that only answers to its own address.
 - **Two identical USB interfaces cannot be told apart by the server.** The saved connection keeps
   a serial and a device path, but only the vendor and product id are passed on when the transport
-  is opened.
+  is opened. Testable: two identical USB sticks are available.
 - **DCA-replacement plugins, phase 2**: writing a device-specific configuration back, instead of
   the read-only view that exists today.
 - Remaining parity gaps in the configuration view (HSV colour and picture parameters are shown
