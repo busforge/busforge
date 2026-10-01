@@ -128,8 +128,6 @@ started until the capability it depends on is hardware-proven.
 - **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
-- **An interrupted activation on hardware.** Losing the answer to the tool-key write (the key is
-  stored as pending first) is tested against a fake device only.
 - **A stored sequence number is only as fresh as the last session with the device.** Busforge
   records the last sequence a device sent after every session with it, as ETS does; a device another
   tool has talked to since keeps the older value until the next one (lower than the device's, which
