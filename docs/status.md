@@ -273,9 +273,9 @@ report a device family as working on the strength of a passing test suite.
   both LSM styles (MDT and ABB partial-download captures). On a device holding a correct table
   that equals ETS's bytes; on one whose table another tool left wrong, the other bytes stay wrong.
   The M-0081 (house device 1.1.x) now gets that bit rewritten too, which no capture of that
-  product covers. A freshly linked read-capable object was proven to work on hardware; a
-  **transmit-only object**, the case that depends on the linked bit, has not been observed on the
-  bus. A property-mapped application that names no com-object table segment keeps the device's
+  product covers. A freshly linked read-capable object was proven to work on hardware, and so was
+  a **transmit-only object** linked by a GA flash alone (MDT BE-02001, see
+  [findings.md](findings.md) §7); on the memory-mapped ABB the latter is not shown. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.
 - **KNX Data Secure is shown on one device.** The smoke spec `jung-400021se-secure` (both channels,
  ) covers the secured full download, parameter and GA flash, read-back, persistence, a

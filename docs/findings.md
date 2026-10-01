@@ -304,9 +304,16 @@ styles (MDT BE-02001.02 property-mapped: the whole table; ABB US/U 4.2 memory-ma
 changed config bytes; 2026-09-26). Where the application names the L3 segment, the System 7 GA
 flash reads the table the device holds, changes only each object's linked bit and writes
 L3+L1+L2 in one bracket. On a device holding the table its last full download wrote, that is
-ETS's bytes. The System B deadness itself has not been reproduced on System 7:
-that needs a **transmit-only object with no read flag**. Proof state in [status.md](status.md),
-the open item in [roadmap.md](roadmap.md).
+ETS's bytes.
+
+**And on System 7 such an object comes alive (MDT BE-02001.02, 2026-10-01).** Input A set to
+"switch / toggle when closing" gives object 1, "Status for toggle": no read flag, transmit flag, and
+with the device-wide "Status for toggle: request" the device sends a GroupValueRead on it after every
+start. A full download with the object unlinked, then a restart: no group telegram from the device. A
+GA flash that linked only that object to 0/0/250 (9 bytes differed: the linked bit and the group
+tables), then a restart from a separate witness connection: `1.1.56 -> 0/0/250 GroupValueRead` 2.3 s
+later. So an object linked purely by the System 7 GA flash transmits, which is what the linked bit
+decides. Not shown on the memory-mapped ABB US/U 4.2.
 
 **The general lesson:** flash exactly the segments that diverge from the device, at segment
 granularity, and do not fall back to a full download for a change that only moves L1/L2/L3.

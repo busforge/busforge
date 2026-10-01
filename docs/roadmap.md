@@ -13,10 +13,6 @@ started until the capability it depends on is hardware-proven.
   Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
   part, and it needs a bus-behaviour proof, not just a byte match. *Decided 2026-10-01: build it,
   after the open hardware checks.*
-- **Observe a transmit-only object after a System 7 group-address flash.** The flash rewrites the
-  com-object table byte-equal to ETS; the behaviour that depends on the link bit (an object with
-  no read flag transmitting after it is linked) has not been observed on the bus
-  ([findings.md](findings.md) §7).
 - **Execute the declared memory-control-block steps on System B.** The System B download runs a
   fixed load bracket and ignores `LdCtrlWriteProp` to PID 27 and `LdCtrlLoadImageProp`, where ETS
   writes the segment CRC it computed from the image. On the Jung 400021SE that leaves a device that
@@ -179,6 +175,12 @@ started until the capability it depends on is hardware-proven.
 - **Channel headings that stay a raw template.** Placeholder substitution from a parameter is
   implemented and works on every bundled application, but one large application was observed
   rendering identical headings for all its channels. Reproduce it before changing anything.
+- **A hidden parameter's old baseline shows as a change nothing can clear.** After a test that set the
+  MDT's Input A to "switch / toggle" (subfunction 2) and back to "send contact status", the hidden
+  subfunction keeps baseline `2` while the project holds the default: the device shows one change
+  although parameter and GA dry runs both say unchanged, and revert would set the hidden value back
+  to 2. The change count should leave out a ref the configuration does not show, or the full download
+  should settle it.
 - **Com-objects with no group address still transmit to group address 0/0/0** on at least one
   device. Check whether the association table Busforge writes causes it.
 - **Warn when the gateway is handed an address that is not the interface's own**, so an operator
