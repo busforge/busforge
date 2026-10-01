@@ -13,7 +13,7 @@ import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
-import { buildSecurityObject, type OtherDevice } from "./securityobject.ts";
+import { buildSecurityObject, reachableGroupKeys, type OtherDevice } from "./securityobject.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
 // done/total counters (unit-agnostic; memory reads report bytes). Structurally identical
@@ -151,10 +151,12 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
 // What a Data Secure device's security object holds, in the shape buildSecurityObject builds: the
 // group key table by its element count, and the flags of objects 1..`flagCount`. The device reads
 // its group keys back only inside the secured session this runs in.
-async function readSecurityObject(dev: KnxDevice, flagCount: number): Promise<SecurityObjectTables> {
+// `addressCount`: the entries of the address table the device holds or is given (reachableGroupKeys).
+async function readSecurityObject(dev: KnxDevice, flagCount: number, addressCount: number): Promise<SecurityObjectTables> {
   const count = async (pid: number) => (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, pid, 0, 1)).readUInt16BE(0);
   const n = await count(SECURITY_PID.GROUP_KEY_TABLE);
-  const groupKeys = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
+  const all = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
+  const groupKeys = reachableGroupKeys(all, addressCount);
   const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, flagCount, 1);
   const m = await count(SECURITY_PID.SECURITY_IA_TABLE);
   const senders = m ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_IA_TABLE, 1, m, SENDER_ENTRY) : Buffer.alloc(0);
@@ -674,7 +676,7 @@ export class SystemBProfile extends DeviceProfile {
             const mcb = await readSegmentCrc(dev, LSM);
             const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
             const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
-            const sec = security ? await readSecurityObject(dev, security.goFlags.length) : null;
+            const sec = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null;
             return { gt, crcOk, img, sec };
           },
           ({ gt, crcOk, img, sec }) => {
@@ -827,7 +829,7 @@ export class SystemBProfile extends DeviceProfile {
     const cur = await readGroupTables(dev, undefined, false);
     // The security object is compared, not backed up: its group keys are secrets, and the project
     // holds them anyway.
-    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length) : undefined;
+    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
     // The application program object's load state BEFORE the flash. A GA flash unloads and rewrites the
     // three tables the running application references, and on some System B stacks that invalidates the
     // application itself: hardware-proven on the Jung 400021SE (Insta), where the flash leaves all three
@@ -883,7 +885,7 @@ export class SystemBProfile extends DeviceProfile {
             "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
         }
         const { ok } = await verifySettled(
-          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security.goFlags.length) : null }),
+          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null }),
           ({ tables: back, sec }) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );

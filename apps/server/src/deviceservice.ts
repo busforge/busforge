@@ -119,7 +119,14 @@ export function classifyOtherLink(cur: OtherDevice, d: OtherDeviceModel, link: {
   const reason = cur.unresolved ?? why();
   const co = d.objs?.get(link.refId);
   const transmits = cur.transmits || (reason === null && !!co && co.flags.transmit && co.flags.comm && link.slot === 0);
-  return { ...cur, transmits, unresolved: reason };
+  // ETS was seen not to list an object that only receives (write flag, no read or transmit flag,
+  // 2026-10-01). Not seen: one that answers reads there, and a transmitting one with the address only as
+  // a further address. An object with its communication flag off sends nothing and receives nothing.
+  const unclearHere = reason === null && co && co.flags.comm && !(co.flags.transmit && link.slot === 0)
+    ? (co.flags.read && link.slot === 0 ? `its linked object #${co.number} answers reads there`
+      : co.flags.transmit ? `its linked object #${co.number} transmits, but this is not its sending address` : null)
+    : null;
+  return { ...cur, transmits, unresolved: reason, unclear: cur.unclear ?? unclearHere };
 }
 
 // Resolve a device's application-program XML: from the shared catalog, falling

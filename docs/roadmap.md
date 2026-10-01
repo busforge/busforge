@@ -40,9 +40,11 @@ started until the capability it depends on is hardware-proven.
   over `tcp` completes and verifies. **It is not a general UDP fault**: the same server downloaded
   over UDP to a real MDT KNX-IP interface the same evening without trouble. (That gateway's
   `TUNNEL_ACK_TIMEOUT` over `tcp` was Busforge waiting for tunnelling ACKs that TCP does not use;
-  fixed 2026-09-27, TCP to it now works, see [connections.md](connections.md).) Suspect the
-  client/server pairing in `ipserver.ts`; the `closed` guard in `connection.ts` covers the
-  disconnect race but not this path.
+  fixed 2026-09-27, TCP to it now works, see [connections.md](connections.md).) **Not reproduced on
+  2026-10-01** with the current code: a full download of the MDT over a `udp` connection to the bench
+  bridge verified, from the Mac server and from the server in an `oven/bun:1.3` container, and a
+  67-second secured read of the Jung over UDP from the container completed. Nothing since names the
+  fault as fixed, so the entry stays until a cause is found or it does not recur in use.
 - **Confirm why a long-running server's TCP connects fail on macOS.** On 2026-09-29 the dev server
   got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. Bun reports
   any immediate connect failure that way; macOS Local Network privacy is the likely cause but not
@@ -110,15 +112,19 @@ started until the capability it depends on is hardware-proven.
   device without an application until the user starts a full download. Busforge does not repeat or
   finish the bracket by itself. *Decided 2026-10-01: no automatic resume; the UI offers the full
   download right away when a flash broke off inside its bracket.*
-- **Another device that only receives on a secured address.** ETS lists another secured device that
-  transmits on the address in a receiver's PID 54 ([findings.md](findings.md) §22); whether it also
-  lists one whose objects there only receive is not shown, and Busforge refuses it
-  (`SECURE_SENDERS_UNPROVEN`). Needs a capture with such a device.
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured
   values longer than 6 bits are refused (no extended frame). A sender address also used by another
   tool is not coordinated with that tool's sequence.
+- **Another secured device whose object only answers reads on a secured address,** or transmits with
+  it as a further address, is refused (`SECURE_SENDERS_UNPROVEN`): ETS was seen not to list one that
+  only receives (2026-10-01), these two cases not.
+- **A group key table that loses entries below the address table's length.** A load writes PID 53 from
+  element 1 and never its element 0, as ETS's does, so when the secured addresses shrink while the
+  address table does not, an old key can stay at an index that still exists. The verify then fails
+  loudly after the write, and nothing in Busforge clears it. ETS was not seen in that case; a capture
+  would show whether it writes element 0 there.
 - **Monitor replay history across reconnects.** Replay is judged only within one monitor connection.
 - **The security object on System 7.** Only System B loads it with the group tables; the others
   refuse a secure device's GA flash and full download.
@@ -143,12 +149,17 @@ started until the capability it depends on is hardware-proven.
   such a device over; wanted for users, not needed for the bench. *Decided 2026-10-01: build it.*
 - **Secure a group address Busforge creates.** Group keys arrive only with a project import, so an
   address created in Busforge is plain, and linking it to a secure device's object programs that
-  object as plain. *Decided 2026-10-01: build it (Busforge generates the group key); first observe in
-  ETS how it fills the receivers' PID 54 for a new secured address.*
+  object as plain. *Decided 2026-10-01: build it (Busforge generates the group key).* Observed in ETS
+  the same day: a new address linked only to secure devices is secured automatically, gets a new
+  16-byte key in each device's PID 53 at its address-table index, and no interface sender in PID 54.
 - **A plain device linked to a secured group address** is refused for GA flash and full download
   (`SECURE_GA_WITHOUT_DEVICE_KEY`). ETS keeps such a project; whether and how it programs that device
   is not established. *Decided 2026-10-01: reproduce it in ETS, then build what ETS does; refused
-  until then.*
+  until then.* Reproduced the same day ([findings.md](findings.md) §22): ETS turns the address plain for
+  every device ("Automatisch") or refuses the link ("Erzwungen an"). To build: the address's security
+  mode (whether the project file carries it is not checked yet), and linking a plain device to a
+  secured address either asks to turn it plain (all secure devices on it need their tables written
+  again) or is refused.
 - **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
   store's `manual` source is currently unreachable. *Decided 2026-10-01: build it, in the device menu;
   the key is checked with a Sync against the device before it is stored.*
@@ -181,8 +192,6 @@ started until the capability it depends on is hardware-proven.
   although parameter and GA dry runs both say unchanged, and revert would set the hidden value back
   to 2. The change count should leave out a ref the configuration does not show, or the full download
   should settle it.
-- **Com-objects with no group address still transmit to group address 0/0/0** on at least one
-  device. Check whether the association table Busforge writes causes it.
 - **Warn when the gateway is handed an address that is not the interface's own**, so an operator
   knows management on it will not work on a USB stick that only answers to its own address.
 - **Two identical USB interfaces cannot be told apart by the server.** The saved connection keeps

@@ -27,11 +27,14 @@ export const GO_SECURED = 0x03;
 // - every other secured device with an object that transmits on such an address, with the
 //   SequenceNumber the project holds for that device.
 // Both as ETS 6.4.1 loads them (the Jung 400021SE and the GVS AMMA on one secured address,
-// 2026-09-30). Another device linked to a secured address only by objects that do not transmit, or
-// without a sequence in the project, is not shown and is refused.
+// 2026-09-30). Another device whose objects on the address only receive (no transmit flag) is not
+// listed, as ETS does not list it (2026-10-01). One without a sequence in the project is refused.
 // unresolved: why the device cannot be classed as a sender or not (its application or object does not
 // resolve, or the linked object is hidden); such a device is refused, never left out.
-export interface OtherDevice { ia: number; transmits: boolean; sequence: bigint | null; unresolved?: string | null }
+// unclear: a link whose case ETS has not been seen to decide (an object that answers reads there, or a
+// transmitting object with the address only as a further address). It refuses the device unless
+// another of its objects transmits there anyway, which lists it regardless.
+export interface OtherDevice { ia: number; transmits: boolean; sequence: bigint | null; unresolved?: string | null; unclear?: string | null }
 export interface SecuritySenders {
   byGa: ReadonlyMap<number, readonly number[]>;        // group address -> assigned sender individual addresses
   ownIa: number;
@@ -70,7 +73,8 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
       }
       if (seen.has(o.ia)) throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is linked to two devices with the same individual address; refusing to pick one`);
       seen.add(o.ia);
-      const why = o.unresolved ?? (!o.transmits ? "that does not transmit on it (no transmitting object with it as sending address)" : o.sequence === null ? "whose sequence number the project does not hold" : o.sequence >= 2n ** 48n ? "whose sequence number does not fit 48 bits" : null);
+      if (!o.unresolved && !o.transmits && !o.unclear) continue;
+      const why = o.unresolved ?? (!o.transmits ? o.unclear : null) ?? (o.sequence === null ? "whose sequence number the project does not hold" : o.sequence >= 2n ** 48n ? "whose sequence number does not fit 48 bits" : null);
       if (why) {
         throw new ProductError("SECURE_SENDERS_UNPROVEN", `secured group address ${g} is also linked to another device ${o.unresolved ? `(${why})` : why}; whether a receiver lists it is not established, so its security object is not loaded`);
       }
@@ -83,4 +87,15 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
     senderTable.writeUIntBE(Number(seq), i * SENDER_ENTRY + 2, 6);
   });
   return { groupKeys: groupKeyTable, goFlags, senders: senderTable };
+}
+
+// The group key table without its trailing entries for address-table indices beyond `addressCount`.
+// A load writes the key table from element 1 without shrinking it, as ETS's does, so a device whose
+// address table lost entries keeps keys at the end for indices nothing refers to (GVS AMMA, ETS
+// partial download 2026-10-01); those are left out of every comparison. Such an entry before a
+// reachable one is not what a load leaves, and stays in, so it shows as a difference.
+export function reachableGroupKeys(table: Buffer, addressCount: number): Buffer {
+  let end = table.length - (table.length % GROUP_KEY_ENTRY);
+  while (end >= GROUP_KEY_ENTRY && table.readUInt16BE(end - GROUP_KEY_ENTRY) > addressCount) end -= GROUP_KEY_ENTRY;
+  return table.subarray(0, end);
 }

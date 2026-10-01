@@ -14,12 +14,14 @@ const model = (over: Partial<OtherDeviceModel> = {}): OtherDeviceModel => ({
     ["O-3_R-3", { number: 3, flags: flags({ read: true, transmit: true }) }], // Status: transmits
     ["O-9_R-9", { number: 9, flags: flags({ transmit: true }) }],            // hidden by parameters
     ["O-5_R-5", { number: 5, flags: flags({ transmit: true, comm: false }) }],
+    ["O-4_R-4", { number: 4, flags: flags({ read: true }) }],                 // answers reads only
+    ["O-6_R-6", { number: 6, flags: flags({ transmit: true }) }],            // another transmitter
   ]),
-  active: new Set(["O-2_R-2", "O-3_R-3", "O-5_R-5"]),
+  active: new Set(["O-2_R-2", "O-3_R-3", "O-5_R-5", "O-4_R-4", "O-6_R-6"]),
   failure: null,
   ...over,
 });
-const start: OtherDevice = { ia: GVS, transmits: false, sequence: 0x0ab9aen, unresolved: null };
+const start: OtherDevice = { ia: GVS, transmits: false, sequence: 0x0ab9aen, unresolved: null, unclear: null };
 const fold = (d: OtherDeviceModel, links: { refId: string; slot: number }[]) => links.reduce((cur, l) => classifyOtherLink(cur, d, l), start);
 
 describe("another device on a secured address", () => {
@@ -27,9 +29,21 @@ describe("another device on a secured address", () => {
     expect(fold(model(), [{ refId: "O-2_R-2", slot: 0 }, { refId: "O-3_R-3", slot: 0 }])).toEqual({ ...start, transmits: true });
   });
 
-  test("an object that only receives, or transmits on another address first, does not make it one", () => {
+  test("an object that only receives does not make it one (ETS does not list it)", () => {
     expect(fold(model(), [{ refId: "O-2_R-2", slot: 0 }])).toEqual(start);
-    expect(fold(model(), [{ refId: "O-3_R-3", slot: 1 }])).toEqual(start);
+  });
+
+  test("an object that answers reads, or transmits on a further address, is a case ETS was not seen to decide", () => {
+    expect(fold(model(), [{ refId: "O-4_R-4", slot: 0 }])).toMatchObject({ transmits: false, unresolved: null, unclear: expect.stringMatching(/answers reads/) });
+    expect(fold(model(), [{ refId: "O-3_R-3", slot: 1 }])).toMatchObject({ transmits: false, unresolved: null, unclear: expect.stringMatching(/not its sending address/) });
+    // A transmitter on a further address with its communication flag off sends nothing there.
+    expect(fold(model(), [{ refId: "O-5_R-5", slot: 1 }])).toEqual(start);
+  });
+
+  test("a device that transmits there anyway stays a sender whatever its other links are", () => {
+    for (const links of [[{ refId: "O-6_R-6", slot: 1 }, { refId: "O-3_R-3", slot: 0 }], [{ refId: "O-3_R-3", slot: 0 }, { refId: "O-6_R-6", slot: 1 }]]) {
+      expect(fold(model(), links)).toMatchObject({ transmits: true, unresolved: null });
+    }
   });
 
   test("a hidden object, an unknown object, no application, a failed configuration or a switched-off communication flag leave it unresolved", () => {

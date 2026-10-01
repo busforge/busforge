@@ -657,8 +657,7 @@ So ETS listed the other secured device that transmits on the address (one pair o
 ascending by address, never the device itself, and started it not at 0 but at the `SequenceNumber`
 the project holds for that device: `0x0AB9AE` is the GVS's value in the exported project. An interface sender still starts at 0.
 The Jung was downloaded although ETS showed it as needing nothing: ETS does not flag a receiver whose
-sender list changed. Whether a device whose objects on the address only receive is listed as well is
-not shown (both devices here transmit on it).
+sender list changed. A device whose objects on the address only receive is not listed (below).
 
 **Where ETS's value comes from.** It is the last sequence ETS saw that device send. The GVS answered
 the last request of its own download (13:37:12) with sequence `0x0AB9AE`, the value ETS wrote into the
@@ -668,6 +667,26 @@ come from the counter it sends group telegrams from. On the Jung that holds: its
 of the security object, read `0x011028` on 2026-09-30 evening, and the last answer of its next session
 carried `0x011030`. For the GVS it is not compared. Busforge records
 the same value after each session (`SecureSession.peerSequence`, the key store's `seq_group`).
+
+**A device that only receives, a plain device, a new address (2026-10-01).** Three more ETS 6.4.1 runs
+on the same bench, partial downloads of the GVS only, captured and decrypted
+(`scratchpad/cap-1001`, local):
+
+- *Only receives.* The Jung's transmitting object 253 unlinked from 0/0/1 and its receive-only object
+  254 ("Schalten - Status": communication and write flags, no read or transmit flag) linked instead. The GVS's PID 54 came back as
+  `1164 000000000000` alone: ETS does not list another secured device whose objects on the address
+  only receive.
+- *A plain device.* Linking the MDT BE-02001's transmitting object to 0/0/1: with the address's
+  security on "Automatisch" (the default) ETS warns that 0/0/1 will then communicate unencrypted, for
+  every device on it; with "Erzwungen an" it refuses the link ("Eine sichere Gruppenadresse kann
+  nicht zu einem Gerät gelinkt werden, welches keine Sicherheit unterstützt"). ETS never programs a
+  plain device onto an address that stays secured. (Both dialogs cancelled; nothing was downloaded.)
+- *A new address.* The GVS's switching object linked to a new 0/0/2 as well: the address is secured
+  automatically, and the download wrote a second PID 53 element, `0002` and a 16-byte key ETS made for
+  it. PID 54 stayed `1164` alone: a new address gets no interface sender of its own.
+- *A key table that shrinks.* Deleting 0/0/2 again, the next download wrote PID 53 element 1 only,
+  start 1, and never touched element 0: the GVS kept two entries, the second for address-table index 2,
+  which the one-entry address table no longer has. ETS leaves such an entry; it refers to nothing.
 
 ## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
 
@@ -764,3 +783,22 @@ KNX IP interface (reads and a secured smoke run). Not shown: `TUNNEL_CON_TIMEOUT
 which needs the stall to recur. An interrupted flash still leaves the device where the bracket stood;
 recovering it is a full download, started by the user.
 
+
+## 26. An OpenKNX object with no group address transmits to 0/0/0
+
+On the OpenKNX AB-PRE at 1.1.x, freshly commissioned by Busforge, sent its measurements to
+group address 0/0/0. The cause is in the KNX stack OpenKNX runs (thelsing/knx, unchanged in the
+OpenKNX fork; source read at thelsing `980c047` and OpenKNX `57b5b05`):
+
+- `BauSystemBDevice::sendNextGroupTelegram` skips an object whose communication flag is off. One with
+  the communication and transmit flags set goes on to `ApplicationLayer::groupValueWriteRequest`.
+- `groupValueSend` takes `_assocTable->translateAsap(asap)` without checking it. For an object with no
+  association that is `-1`, cast to `0xFFFF` (the read path checks for `< 0`, the write path does not).
+- `AddressTableObject::getGroupAddress(0xFFFF)` is out of range and returns `0`: group address 0/0/0.
+
+So an unlinked object with its communication flag on transmits to 0/0/0. Busforge left that flag on
+for unlinked objects until (`dddf900`, "Clear the Communication flag on com-objects that
+carry no group address", as ETS does), which matches the date of the observation. With the flag
+cleared the stack skips the object. A 5.5-minute listen on the house line (97 group
+telegrams, 19 senders) saw nothing to 0/0/0; 1.1.x itself sent nothing in that window. The unchecked
+lookup is an upstream bug; a device configured by any tool that leaves the flag on would show it.

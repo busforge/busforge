@@ -293,13 +293,18 @@ remove them (`group_senders`, `apps/server/src/db/groupSenders.ts`). A secure de
 full download load them into PID 54, once each, ascending, never the device itself (shown for the GA
 flash; the full download builds the same object, but has not written a non-empty table on hardware).
 A sender's sequence in the table is the device's own receive state and is not compared by the dry run
-or the verify. An assignment whose interface address cannot be resolved is counted in the import
+or the verify. A group key entry for an address-table index beyond the address table refers to nothing and is
+left out of the comparison: a load writes the key table from element 1 without shrinking it, as ETS's
+does, so a device whose address table lost entries keeps such keys. An assignment whose interface address cannot be resolved is counted in the import
 result, never guessed.
 
 Refused rather than guessed:
 
-- **Another device on a secured address that does not transmit on it, or whose sequence number the
-  project does not hold** (`SECURE_SENDERS_UNPROVEN`): whether ETS lists it is not shown. Another
+- **Another device on a secured address whose sequence number the project does not hold, or whose
+  only objects there answer reads or transmit with the address as a further address**
+  (`SECURE_SENDERS_UNPROVEN`): whether ETS lists the latter two is not shown. One whose objects there
+  only receive (write flag, no read or transmit flag) is not listed, as ETS does not list it
+  ([findings.md](findings.md) §22). Another
   secured device with a transmitting object on the address is listed like ETS does it, with the
   sequence the key store holds for it ([findings.md](findings.md) §22): the project's at import,
   replaced after every server session with that device (read, flash, identify, activation) by the
@@ -308,13 +313,15 @@ Refused rather than guessed:
   record nothing. The master reset of 2026-09-30 did not rewind the Jung 400021SE's counter
   (`0x010C40` in the ETS session before it, `0x011028` after it and one activation and download). "Transmitting" means the communication and transmit
   flags on an object whose first (sending) address this is, in the device's active configuration. An
-  object that only answers reads there (read flag, no transmit flag) sends secured responses too, but
-  does not count; such a device is refused. A linked object
+  object that only answers reads there (read flag, no transmit flag) sends secured responses too; a
+  device with no other transmitting object there is refused. A linked object
   that is hidden by its parameters, or does not resolve in its application program, is refused as
   well, never left out; a link of a device the project no longer holds is ignored.
 - **A device without a tool key linked to a secured address** (`SECURE_GA_WITHOUT_DEVICE_KEY`): a
   plain device, or a secure one ETS never commissioned (imported without its key, counted in the
-  import result); writing its tables would put the address on it without key or flag.
+  import result); writing its tables would put the address on it without key or flag. ETS never does
+  that either: it turns the address plain for every device on it ("Automatisch") or refuses the link
+  ("Erzwungen an"), [findings.md](findings.md) §22; Busforge does neither yet (roadmap).
 
 Sending: the monitor's send panel (and `POST /api/projects/:id/bus/group`) hands a GroupValueWrite or
 GroupValueRead to the interface over the monitor connection. The interface's confirmation is not

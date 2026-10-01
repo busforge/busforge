@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { buildSecurityObject, GO_SECURED, type OtherDevice } from "../src/securityobject.ts";
+import { buildSecurityObject, reachableGroupKeys, GO_SECURED, type OtherDevice } from "../src/securityobject.ts";
 
 const K1 = Buffer.alloc(16, 0x11), K5 = Buffer.alloc(16, 0x55);
 
@@ -78,9 +78,17 @@ describe("the security individual address table (PID 54) a device's links imply"
     expect(gvs.senders.toString("hex")).toBe("1164" + "000000000000" + "11cc" + "000000010bcd");
   });
 
-  test("another device that only receives on the address, or has no sequence, is refused: not shown", () => {
+  test("another device that only receives on the address is not listed, as ETS does (2026-10-01)", () => {
+    const gvs = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [1] }], 3, new Map([[1, K1]]), { byGa: new Map([[1, [TUNNEL]]]), ownIa: GVS, otherDevices: new Map([[1, [{ ia: JUNG, transmits: false, sequence: null }]]]) });
+    expect(gvs.senders.toString("hex")).toBe("1164" + "000000000000");
+  });
+
+  test("another device that has no sequence, or cannot be classed, is refused: not shown", () => {
     const tbl = (o: OtherDevice) => () => buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [o]]]) });
-    expect(tbl({ ia: GVS, transmits: false, sequence: 5n })).toThrow(/another device/);
+    expect(tbl({ ia: GVS, transmits: false, sequence: 5n, unclear: "its linked object #3 transmits, but this is not its sending address" })).toThrow(/not its sending address/);
+    expect(tbl({ ia: GVS, transmits: false, sequence: 5n, unclear: "its linked object #4 answers reads there" })).toThrow(/answers reads/);
+    // A device that transmits there is listed whatever else its links leave unclear.
+    expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 5n, unclear: "its linked object #4 answers reads there" }]]]) }).senders.toString("hex")).toBe("11cb000000000005");
     expect(tbl({ ia: GVS, transmits: true, sequence: null })).toThrow(/another device/);
     expect(tbl({ ia: GVS, transmits: true, sequence: 5n, unresolved: "its linked object #3 is hidden by its parameters" })).toThrow(/hidden/);
     expect(tbl({ ia: GVS, transmits: true, sequence: 2n ** 48n })).toThrow(/48 bits/);
@@ -90,3 +98,17 @@ describe("the security individual address table (PID 54) a device's links imply"
     expect(() => buildSecurityObject([{ comObjNum: 2, gaRaws: [7] }], 3, new Map([[1, K1]]), { ...none, otherDevices: new Map([[7, [{ ia: GVS, transmits: false, sequence: null }]]]) })).not.toThrow();
   });
 });
+
+describe("the group key entries a device's key table holds for its addresses", () => {
+  test("trailing entries for indices beyond the address table refer to nothing and are left out", () => {
+    const entry = (i: number, b: number) => Buffer.concat([Buffer.from([0, i]), Buffer.alloc(16, b)]);
+    const table = Buffer.concat([entry(1, 0xaa), entry(2, 0xbb)]);
+    expect(reachableGroupKeys(table, 1).equals(entry(1, 0xaa))).toBe(true);
+    expect(reachableGroupKeys(table, 2).equals(table)).toBe(true);
+    expect(reachableGroupKeys(Buffer.alloc(0), 3).length).toBe(0);
+    // One before a reachable entry is not what a load leaves: it stays, so it shows as a difference.
+    const odd = Buffer.concat([entry(1, 0xaa), entry(5, 0xcc), entry(3, 0xdd)]);
+    expect(reachableGroupKeys(odd, 3).equals(odd)).toBe(true);
+  });
+});
+
