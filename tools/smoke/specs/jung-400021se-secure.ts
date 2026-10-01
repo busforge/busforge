@@ -1,9 +1,10 @@
 import type { DeviceSpec } from "../spec.ts";
 
-// The same bench Jung 400021SE as jung-400021se.ts, since 2026-09-28 in KNX Data Secure mode: ETS 6
-// commissioned it from its certificate with one secured group address, 0/0/1 on K1's "Ausgang" (#253,
-// read + transmit), and 1.1.100 (the bench bridge's tunnel address) assigned as a sender of 0/0/1, so
-// the device's security table lists it (docs/findings.md §22). The plain spec cannot drive it any more:
+// The same bench Jung 400021SE as jung-400021se.ts, in KNX Data Secure mode: ETS 6 commissioned it from
+// its certificate (last on 2026-10-01, after a master reset) with one secured group address, 0/0/1 on
+// K1's "Ausgang" (#253, read + transmit), and 1.1.100 (the bench bridge's tunnel address) assigned as a
+// sender of 0/0/1, so the device's security table lists it beside the GVS AMMA, which transmits on 0/0/1
+// too (docs/findings.md §22). The plain spec cannot drive it any more:
 // its keys exist only in that ETS project, so this spec imports the project file (the export is kept
 // outside the repository because it holds the keys; its password comes from
 // BUSFORGE_SMOKE_KNXPROJ_PASSWORD) and runs every bus operation through a secure session.
@@ -20,7 +21,7 @@ export const jung400021seSecure: DeviceSpec = {
     productRef: "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
     ia: "1.1.204",
     mask: "MV-07B0",
-    knxprod: "scratchpad/bench-sender.knxproj",
+    knxprod: "scratchpad/bench-jung-ets-20261001.knxproj",
   },
   provision: "import-knxproj",
   configure: [

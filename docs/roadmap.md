@@ -39,7 +39,9 @@ started until the capability it depends on is hardware-proven.
   67-second secured read of the Jung over UDP from the container completed. Nothing since names the
   fault as fixed, so the entry stays until a cause is found or it does not recur in use.
 - **Confirm why a long-running server's TCP connects fail on macOS.** On 2026-09-29 the dev server
-  got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. Bun reports
+  got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. It recurred on
+  2026-10-01 after about an hour: the dev server and the smoke runner (both long-running) were refused
+  while a freshly started Bun process connected at once; a UI smoke run died of it mid-way. Bun reports
   any immediate connect failure that way; macOS Local Network privacy is the likely cause but not
   proven ([findings.md](findings.md) §23). A long-lived Node process next to the server would
   record the real errno when it recurs.
