@@ -802,3 +802,22 @@ carry no group address", as ETS does), which matches the date of the observation
 cleared the stack skips the object. A 5.5-minute listen on the house line (97 group
 telegrams, 19 senders) saw nothing to 0/0/0; 1.1.x itself sent nothing in that window. The unchecked
 lookup is an upstream bug; a device configured by any tool that leaves the flag on would show it.
+
+## 27. The Jung 400021SE clears the last byte of its parameter segment
+
+A full ETS 6.4.1 download of the Jung after a master reset (2026-10-01; ETS activated it from its
+certificate, then downloaded everything; capture decrypted with the exported project's keys) shows the
+whole load of the parameter segment:
+
+- LSM 4 is allocated with `0x1E15` bytes, then PID 27 of object 4 gets the two elements the application
+  declares (`LdCtrlWriteProp`): `00001E14 0033 0000` and `00000001 0133 0000`, a region of `0x1E14`
+  bytes and one of a single byte, the segment's last. Busforge writes the same (`3c54107`).
+- The memory writes put `01` at offset `0x1E14`: parameter P-1, default 1. Busforge's full-download
+  image and its parameter-flash target both have `01` there.
+- `LdCtrlLoadImageProp` is no write: at the end ETS only reads PID 27 of objects 1 to 4 back, each entry
+  now carrying the device's CRC.
+
+Read back through Busforge a few minutes later, the segment equals what ETS wrote in every byte but
+`0x1E14`, which holds `00`. The device clears that byte itself. This is why a Busforge parameter-flash
+dry run reported one differing byte after a verified full download: not a builder fault, the device's
+own state. What the byte means to the firmware is not known.

@@ -13,19 +13,12 @@ started until the capability it depends on is hardware-proven.
   Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
   part, and it needs a bus-behaviour proof, not just a byte match. *Decided 2026-10-01: build it,
   after the open hardware checks.*
-- **Execute the declared memory-control-block steps on System B.** The System B download runs a
-  fixed load bracket and ignores `LdCtrlWriteProp` to PID 27 and `LdCtrlLoadImageProp`, where ETS
-  writes the segment CRC it computed from the image. On the Jung 400021SE that leaves a device that
-  verifies and runs, and comes back from its next restart with the application in ERROR
-  ([status.md](status.md)). An ETS capture of that device gives the exact bytes; the fix is then a
-  hardware restart test, not a read-back.
-- **A surgical parameter flash wants to change a byte the full download left.** On the Jung 400021SE
-  after a verified secured full download (no project changes since, read-back with no drift), the
-  parameter-flash dry run still reports one differing byte: offset `0x1E14` of the parameter segment,
-  `00` on the device, `01` in the flash's target (owned). The flash's target owns the default member
-  of an idle union (`ownIdleUnionDefaults`), which the full-download image may not write; which of the
-  two is right needs an ETS capture of this device's parameter download. Until then a parameter flash
-  there writes that byte.
+- **The Jung 400021SE clears the last byte of its parameter segment by itself.** Offset `0x1E14`
+  (parameter P-1, default 1) is its own one-byte memory-control-block region. ETS's full download writes
+  `01` there, as Busforge's image has it, and minutes later the device holds `00` (2026-10-01,
+  [findings.md](findings.md) §27). So a parameter-flash dry run on this device always reports one
+  differing byte, and a parameter flash writes it again each time. Whether the byte is a one-shot
+  marker the firmware consumes, and so should be left out of the comparison, is not established.
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared load
   procedures is executed; devices whose procedure declares image-property stamps the engine cannot
   compute are refused (`LOAD_STEP_UNSUPPORTED`) rather than flashed with a partial recipe.
