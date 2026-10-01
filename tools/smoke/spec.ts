@@ -61,8 +61,9 @@ export interface FuzzPolicy {
   excludeComObjects?: string[];
   // Budget: how many single-param surgical sweep rounds and full-download rounds to run. A sweep
   // round mutates ONE generated parameter and flashes it; a param that alters the com-object table
-  // is auto-routed to a full download (the server refuses the surgical flash with
-  // COM_OBJECT_TABLE_STALE_USE_DOWNLOAD). 0 disables that kind of round. Defaults live in generate.ts.
+  // runs as a structural flash, or is auto-routed to a full download where the family cannot write it
+  // that way (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD). 0 disables that kind of round. Defaults live in
+  // generate.ts.
   paramSweepRounds?: number;
   fullDownloadRounds?: number;
 }
@@ -93,15 +94,11 @@ export interface DeviceSpec {
   behaviours: BehaviourSpec[];
   // The seeded parameter fuzzer policy. Absent = baseline configuration only, no generated mutation.
   fuzz?: FuzzPolicy;
-  // A parameter change that ALTERS the device's com-object table (adds/removes objects or flags),
-  // used only to exercise the FlashDialog needs-download surface (the automatable UI full-download)
-  // on a device kept addressed between runs, where the from-factory CommissionDialog is not
-  // reproducible without a physical reset. The runner sets this value, runs the UI full-download,
-  // then restores the canonical value with a second full download. Absent on such a device leaves the
-  // UI full-download reported `unproven` (honestly, never faked green). Not needed for
-  // require-prog-mode devices (their CommissionDialog IS the from-factory proof). Example: an
-  // "enable channel N" parameter set to off, which removes that channel's com-objects.
-  uiFullDownloadTrigger?: { paramRefId: string; value: string };
+  // A parameter change that ALTERS the device's com-object table (adds/removes objects or flags): the
+  // structuralFlash driver sets this value, writes it as one structural flash, then restores the
+  // canonical value the same way. Absent leaves structuralFlash reported `unproven` (honestly, never
+  // faked green). Example: a channel function whose objects differ from the canonical one's.
+  structuralTrigger?: { paramRefId: string; value: string };
   // The channels this device must pass in. A capability the product claims but that is never
   // exercised in one of these channels is a HARD failure (never a skip). Default: both.
   channels?: Channel[];

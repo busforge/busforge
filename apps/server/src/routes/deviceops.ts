@@ -9,7 +9,7 @@ import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertific
 import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
-import { flashDeviceParameters, flashDeviceGroupAddresses, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -93,25 +93,64 @@ async function programOrPreview(
   return json(task, 202);
 }
 
-// A parameter or link change that would alter the device's com-object table (L3) cannot be a
-// surgical flash: busforge keeps L3 from the device (see @busforge/product comobjtable.ts). The
-// honest resolution is a full download, which AUTHORS L3, so where the family can commission from
-// scratch we point the UI at that with a distinct code (the FlashDialog offers the download);
-// where it cannot, we refuse honestly. Returns an error Response to short-circuit with, or null to
-// let the surgical flash proceed. Runs pre-enqueue, like the capability guards: no snapshot, no bus.
+// A parameter or link change that alters the device's com-object table (L3) cannot be a parameter
+// or group-address flash alone: those keep the table the device was last programmed with (see
+// @busforge/product comobjtable.ts). Where the family can write it as a structural flash (parameters,
+// the com-object table they imply and the group tables in one bracket), that is what runs. Otherwise a
+// family that can commission from scratch is pointed at the full download with a distinct code (the
+// FlashDialog offers it), and any other is refused. Returns "surgical" when the table stays, a
+// "structural" verdict, or the refusal to short-circuit with. Runs pre-enqueue, like the capability
+// guards: no snapshot, no bus.
 function comObjectTableGuard(
   app: AppConfig | null,
   base: Map<string, string>,
   now: Map<string, string>,
   modules: ModuleInstance[],
   secure: boolean,
-): Response | null {
-  if (!app) return null; // no cfg: the profile layer's requireCfg refuses downstream
-  if (!comObjectTableChanges(app, base, now, modules).length) return null;
+): "surgical" | "structural" | Response {
+  if (!app) return "surgical"; // no cfg: the profile layer's requireCfg refuses downstream
+  if (!comObjectTableChanges(app, base, now, modules).length) return "surgical";
   if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
-  return classify(app).capabilities().fullDownload
+  const caps = classify(app).capabilities();
+  if (caps.structuralFlash) return "structural";
+  return caps.fullDownload
     ? err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400)
     : err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
+}
+
+// The structural flash both flash routes run for a change that alters the com-object table. It writes
+// the group tables whole, so it takes the group-address flash's link-baseline guard, and a verified
+// result adopts the parameter and the link baseline, as the full download does.
+function structuralFlash(
+  state: AppState, url: URL, projectId: string, deviceId: string,
+  dev: NonNullable<ReturnType<typeof getDeviceForFlash>>, conn: Connection, appXml: string,
+): Response | Promise<Response> {
+  const { db } = state;
+  const resolved = resolveDeviceLinks(state, projectId, deviceId);
+  if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  if (getLinkBaseGaps(db, projectId, deviceId) !== 0) throw linkBaselineIncomplete(db, projectId, deviceId);
+  const submittedLinks = getDeviceLinks(db, projectId, deviceId);
+  const params = getDeviceParams(db, projectId, deviceId);
+  const baseParams = getDeviceParamBase(db, projectId, deviceId);
+  const modules = getDeviceModules(db, projectId, deviceId);
+  const dry = url.searchParams.get("dry") === "1";
+  return programOrPreview(state,
+    { projectId, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-structure" }, dry, "before-flash",
+    (progress, commit, gate) => programSubmission(state, projectId, deviceId, dev.programmingToken, dry, () => {
+      if (getLinkBaseGaps(db, projectId, deviceId) !== 0) throw linkBaselineIncomplete(db, projectId, deviceId);
+      return flashDeviceStructure({
+        projectId, deviceId, ia: dev.ia, appXml,
+        connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, projectId, deviceId),
+        params, baseParams, links: resolved.links, moduleInstances: modules,
+        dryRun: dry, onProgress: progress, ...gate,
+      });
+    }, commit, () => {
+      resetParamBase(db, projectId, deviceId, params, unwrittenParamRefs(state, projectId, deviceId, params, modules));
+      resetLinkBase(db, projectId, deviceId, resolved.flashedRefIds, submittedLinks);
+      keepLinkBaseOnly(db, projectId, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
+      setLinkBaseGaps(db, projectId, deviceId, 0);
+    }),
+  );
 }
 
 function secureTablesRefusal(): Response {
@@ -310,10 +349,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaParams = getDeviceParams(db, id, deviceId);
     const gaBase = getDeviceParamBase(db, id, deviceId);
     const gaModules = getDeviceModules(db, id, deviceId);
-    // If wiring these links would leave the device's kept-from-device com-object table stale,
-    // a surgical GA flash cannot fix it: promote to a full download (or refuse). Pre-enqueue.
-    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, false);
-    if (gaStale) return gaStale;
+    // If wiring these links would leave the device's kept-from-device com-object table stale, the
+    // structural flash writes it (or the full download, or a refusal). Pre-enqueue.
+    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined);
+    if (gaStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, gaAppXml);
+    if (gaStale !== "surgical") return gaStale;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" }, dryGa, "before-flash-ga",
       (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => {
@@ -398,7 +438,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // parameter flash would leave its kept-from-device com-object table stale. Promote to a full
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
     const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined);
-    if (flStale) return flStale;
+    if (flStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, appXml);
+    if (flStale !== "surgical") return flStale;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" }, dryParams, "before-flash",
       (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => flashDeviceParameters({

@@ -222,7 +222,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   view.readbackSupport = { params: caps.readParams, links: caps.readLinks };
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
-  view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false } : caps;
+  view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI

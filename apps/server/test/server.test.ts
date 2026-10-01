@@ -94,14 +94,16 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
     // fullDownload true: property-mapped System 7 authors its com-object table into the declared
     // <ComObjectTable CodeSegment> (buildComObjectTableMv0705), live-hardware certified on the sibling
     // MDT BE-02001.02 (1.1.56). A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true });
+    // structuralFlash false: claimed per application program proven on hardware, and this is not one.
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false });
   });
 
   test("System B device: read-back and GA flash both supported", () => {
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
     const caps = classify(cfg).capabilities();
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true });
+    // structuralFlash false: the structural flash is claimed only for families proven on hardware.
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false });
   });
 
   test("System 1 (MV-0012 / BCU1) device: recognised but unsupported, every aspect false", () => {
@@ -111,7 +113,7 @@ describe("device profile capabilities (read vs flash, per memory model)", () => 
     expect(cfg.mask).toBe("MV-0012");
     const profile = classify(cfg);
     expect(profile.constructor.name).toBe("UnsupportedProfile");
-    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false });
+    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
   });
 });
 

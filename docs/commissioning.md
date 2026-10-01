@@ -112,11 +112,12 @@ families it supports and how the bracket is built is in
 
 The full download is also the **resolution when a surgical flash cannot proceed**. A
 parameter or group-address edit that would change the com-object table (a channel toggled, a
-flag flipped) leaves a kept-from-device table stale, so the surgical flash refuses it
-(`COM_OBJECT_TABLE_STALE`). Where the family can commission from scratch, that refusal
-carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`) and the UI offers the full
-download instead, run on the device's existing address, with no programming-mode press and no
-address reassignment. The flash dialog offers the same for a device that has its address but never
+flag flipped) is written as a structural flash where the family supports it
+([load-procedures.md](load-procedures.md#structural-flash)); where it does not but can commission
+from scratch, the refusal carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`) and the
+UI offers the full download instead, run on the device's existing address, with no
+programming-mode press and no address reassignment. The flash dialog also offers the full download
+as an action of its own. It offers it as the way forward for a device that has its address but never
 had an application loaded (`DEVICE_NOT_PROGRAMMED`), for example one just activated for KNX Data
 Secure after a master reset; the backend refuses it where the family cannot commission. So the same edit ETS would apply by re-downloading the whole device is
 applied here the same way, instead of being turned away.

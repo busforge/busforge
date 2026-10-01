@@ -20,13 +20,10 @@ export const abbUsu42: DeviceSpec = {
   // the behaviour. Stated honestly rather than faked with an unverifiable groupWrite.
   behaviours: [],
   // Enabling the "Telegr. Ventilspülung" object ADDS com-object #29 (baseline objects [1,3] → [1,3,29]),
-  // which rewrites the com-object table, so the surgical param flash is refused stale and the UI
-  // FlashDialog offers the needs-download route (the automatable UI full-download proof on this
-  // kept-addressed device). Deliberately additive and off the baseline objects [1,3]: it does not touch
-  // "Ausgang A" (object 1) the flashLinks capability binds to. The runner sets it, runs the UI download,
-  // then restores 0. (A param that only flips a byte would make FlashDialog offer a surgical flash and
-  // never reach the full-download route.)
-  uiFullDownloadTrigger: { paramRefId: "M-0002_A-A001-13-63C2_P-437_R-437", value: "1" },
+  // which rewrites the com-object table: the structuralFlash driver writes it and its revert as
+  // structural flashes. Deliberately additive and off the baseline objects [1,3]: it does not touch
+  // "Ausgang A" (object 1) the flashLinks capability binds to.
+  structuralTrigger: { paramRefId: "M-0002_A-A001-13-63C2_P-437_R-437", value: "1" },
   // The sweep draws from the full visible param set on purpose: the channel-function selectors and
   // object-enables that rewrite the com-object table are NOT excluded, so the sweep also exercises the
   // promote-to-full-download route (COM_OBJECT_TABLE_STALE) alongside the surgical byte flash. Only the

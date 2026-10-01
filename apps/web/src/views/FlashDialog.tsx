@@ -25,13 +25,15 @@ const freshPart = (): Part => ({ dry: null, done: null, error: null, checking: f
 // device's load procedure, and/or the group address + association tables). With both, it
 // previews each, then flashes only the targets that actually differ, sequentially, each with
 // a server-side backup and a read-back verify. A single target behaves like a focused flash.
-export function FlashDialog({ open, onOpenChange, projectId, device, targets, onFlashed }: {
+export function FlashDialog({ open, onOpenChange, projectId, device, targets, onFlashed, canFullDownload = false }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   projectId: string;
   device: Device;
   targets: FlashTarget[];
   onFlashed?: () => void;
+  // The family can be commissioned in full (capabilities().fullDownload), so the dialog offers it.
+  canFullDownload?: boolean;
 }) {
   const { t } = useTranslation();
   const [parts, setParts] = useState<Record<string, Part>>({});
@@ -88,8 +90,13 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   useEffect(() => { if (open && tasksLoaded && !blocked && !hasResult.current) check(); }, [open, check, tasksLoaded, blocked]);
 
   const anyDone = list.some((x) => x.p.done);
+  // A change that alters the com-object table previews as one structural write on every target it
+  // touches (parameters, com-object table and group tables in one bracket). It is written once, from
+  // the first target that previewed it; the others show that it covers them.
+  const structuralTarget = list.find((x) => x.p.dry?.kind === "dryRun" && x.p.dry.structural)?.tg;
+  const coveredByStructure = (tg: FlashTarget) => !!structuralTarget && tg !== structuralTarget && !!parts[tg]?.dry?.structural;
   // Only targets that actually differ get written; an in-sync target is skipped.
-  const toFlash = list.filter((x) => x.p.dry?.kind === "dryRun" && !x.p.done);
+  const toFlash = list.filter((x) => x.p.dry?.kind === "dryRun" && !x.p.done && !coveredByStructure(x.tg));
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
   // Connection-class failures are detected on the raw (English) message.
   const firstError = list.find((x) => x.p.error)?.p.error;
@@ -104,11 +111,18 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (busyRef.current) return;
     busyRef.current = true;
     let flashedAny = false;
+    const write = async (tg: FlashTarget) => {
+      setPart(tg, { flashing: true, error: null });
+      try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; return r; }
+      catch (e) { setPart(tg, { error: e, flashing: false }); return null; }
+    };
+    const covered = list.filter((x) => coveredByStructure(x.tg)).map((x) => x.tg);
     try {
       for (const { tg } of toFlash) {
-        setPart(tg, { flashing: true, error: null });
-        try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; }
-        catch (e) { setPart(tg, { error: e, flashing: false }); }
+        const r = await write(tg);
+        // The server decides again when the write runs: if it did not write the structural change after
+        // all, the targets the preview counted as covered are written on their own.
+        if (tg === structuralTarget && r && !r.structural) for (const c of covered) await write(c);
       }
     } finally {
       busyRef.current = false;
@@ -138,7 +152,11 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   };
 
   const partName = (tg: FlashTarget) => t(tg === "ga" ? "flash.partGAs" : "flash.partParams");
-  const partLine = (p: Part) => {
+  const partLine = (tg: FlashTarget, p: Part) => {
+    const lead = structuralTarget ? parts[structuralTarget] : undefined;
+    if (coveredByStructure(tg) && !p.error && !p.done && !p.flashing && !lead?.error) {
+      return <span className="text-muted-foreground" data-testid="flash-part-covered">{t("flash.structuralCovered", { part: partName(structuralTarget!) })}</span>;
+    }
     if (p.flashing) return <span className="flex items-center gap-2 text-primary"><Loader2 className="size-4 animate-spin" /> {t("flash.programming")}</span>;
     if (p.done) {
       if (p.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>; // raced to in-sync between preview and write
@@ -149,7 +167,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (p.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
     if (p.checking) return <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>;
     if (p.dry) return p.dry.kind === "dryRun"
-      ? <span>{t("flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}</span>
+      ? <span data-testid={p.dry.structural ? "flash-part-structural" : undefined}>{t(p.dry.structural ? "flash.willChangeStructure" : "flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}</span>
       : <span className="text-muted-foreground" data-testid="flash-part-insync">{t("flash.inSync")}</span>;
     return <span className="text-muted-foreground">…</span>;
   };
@@ -195,7 +213,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           {list.map(({ tg, p }) => (
             <div key={tg} className="flex flex-col gap-0.5">
               <span className="text-xs font-medium text-muted-foreground">{partName(tg)}</span>
-              {partLine(p)}
+              {partLine(tg, p)}
             </div>
           ))}
           {isConnError && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
@@ -215,10 +233,18 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>
           )}
-          {/* The change rewrites the com-object table: offer the full download that can author it. */}
+          {/* The change needs the full download (the family cannot write it otherwise, or the device was
+              never programmed): offer it as the way forward. */}
           {needsDownload && !dl && !anyFlashing && !anyChecking && (
             <Button onClick={startDownload} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="flash-needs-download">
               <Download className="size-4" /> {t("flash.needsDownloadCta")}
+            </Button>
+          )}
+          {/* A full download is always the user's choice where the family can commission, as ETS offers
+              it next to the partial download. */}
+          {!needsDownload && canFullDownload && !blocked && list.every((x) => x.p.dry || x.p.error) && !dl && !anyDone && !anyFlashing && !anyChecking && (
+            <Button variant="outline" onClick={startDownload} data-testid="flash-full-download">
+              <Download className="size-4" /> {t("flash.fullDownloadCta")}
             </Button>
           )}
           {/* Re-run the download after a preview or write failure (a dry-run is read-only, so this is safe). */}

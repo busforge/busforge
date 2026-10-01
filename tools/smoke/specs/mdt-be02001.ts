@@ -4,8 +4,7 @@ import type { DeviceSpec } from "../spec.ts";
 // A MODULE device: its com-object table is materialized from module instances, and full download for
 // this mask (authoring L3 into the <ComObjectTable CodeSegment>) is the capability MV-0705 unlocked
 // (docs/commissioning.md). This spec drives it through the SMOKE framework, including the
-// full download over the UI (FlashDialog needs-download), which was the one bonus left open after the
-// production-endpoint certification. Refs pinned verbatim from GET .../config and GET /api/catalog/products.
+// full download over the UI (FlashDialog's full-download action). Refs pinned verbatim from GET .../config and GET /api/catalog/products.
 //
 // Both channels of this device are CONTACT INPUTS, not outputs/relays — there is nothing for an input
 // to drive, so the bus behaviour proven is `output`: the input's "Zustand senden" object carries the
@@ -38,11 +37,11 @@ export const mdtBe02001: DeviceSpec = {
     },
   ],
   // Input B's function drives its module-instance com-objects. Changing it from the canonical 5
-  // ("Zustand senden", one object #6) to 7 ("kurz/lang", ADDS object #8) rewrites the com-object table,
-  // so the surgical param flash is refused stale and the UI FlashDialog offers the needs-download route
-  // — the automatable UI full-download proof. Deliberately on Input B, NOT Input A: it must not disturb
-  // object #0 the behaviour binds to. The runner sets it, runs the UI download, then restores 5.
-  uiFullDownloadTrigger: { paramRefId: "M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", value: "7" },
+  // ("Zustand senden", one object #6) to 7 ("kurz/lang", ADDS object #8) rewrites the com-object table:
+  // the structuralFlash driver writes it and its revert as structural flashes, the change ETS's partial
+  // download of 2026-10-01 made. Deliberately on Input B, NOT Input A: it must not disturb object #0 the
+  // behaviour binds to.
+  structuralTrigger: { paramRefId: "M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", value: "7" },
   // The seeded sweep draws from the safe scalar/enum params (device timings, debounce, logic, input B
   // sub-params). Excluded because they rewrite the object graph the behaviour and trigger depend on:
   // the two per-input FUNCTION selectors (Input A + Input B, both refs end _P-24_R-2), and the separate

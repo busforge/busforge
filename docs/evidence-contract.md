@@ -253,8 +253,8 @@ application at boot (the Jung 400021SE comes back with its application object in
 runner then reads the device back through the server and requires the decoded parameters and
 group links to equal the project. The com-object table is not read back, so the record says so in
 its method. The result goes onto the `fullDownload` and `flashLinks` records of the same run,
-because their writes are what the read-back sees; `flashParams` reverts every change it makes and
-gets none. A behaviour observed on addresses a full download committed counts only when that
+because their writes are what the read-back sees; `flashParams` and `structuralFlash` revert every
+change they make and get none. A behaviour observed on addresses a full download committed counts only when that
 download ran in the same run.
 
 ### Firmware

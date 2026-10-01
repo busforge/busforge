@@ -19,6 +19,7 @@ export interface FlashResult {
   diffBytes?: number;
   verified?: boolean;
   backup?: string;
+  structural?: boolean; // a structural flash: parameters, com-object table and group tables in one write
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }

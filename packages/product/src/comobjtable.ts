@@ -1,19 +1,20 @@
 // Com-object table (L3) staleness detection.
 //
-// THE PROBLEM THIS EXISTS FOR. Busforge writes the parameter segment (L4) and the group
-// address/association tables (L1/L2), but it does NOT author the com-object table (L3): the
-// flash reads L3 off the device and writes it back unchanged (docs/device-memory-model.md,
-// "kept-from-device"). L3 holds each com-object's flags and datapoint size, and the device's
-// L3 was compiled by whatever tool last programmed it, FOR THE PARAMETER SET IT PROGRAMMED.
+// THE PROBLEM THIS EXISTS FOR. The parameter flash writes the parameter segment (L4) and keeps the
+// device's com-object table; the group-address flash rewrites L3 only for the link-driven flags of the
+// object set the device already has. L3 holds each com-object's flags and datapoint size, compiled for
+// the parameter set the device was last programmed with.
 //
-// So when a parameter changes which com-objects exist, or their flags or size, the device is
-// left holding an L3 for the OLD configuration while busforge reports a successful flash. On a
-// multi-channel device (a presence detector, a channel actuator) that is not an edge case: it
-// is what enabling or disabling a channel does. The device would then silently behave unlike
-// what the UI shows, which is the most expensive failure class this tool can have.
+// So when a parameter changes which com-objects exist, or their flags or size, neither flash can write
+// it: the device would be left holding an L3 for the OLD configuration while busforge reports a
+// successful flash. On a multi-channel device (a presence detector, a channel actuator) that is not an
+// edge case: it is what enabling or disabling a channel does. The device would then silently behave
+// unlike what the UI shows, which is the most expensive failure class this tool can have.
 //
-// Until L3 authoring exists, the honest move is the one the load-procedure policy already
-// takes for unknown steps: REFUSE, and say exactly what would have gone stale.
+// Such a change is written by the structural flash (DeviceProfile.flashStructure), which authors L3
+// with the parameters and group tables in one bracket, or by a full download. The two flashes refuse
+// it here, and say exactly what would have gone stale; the server routes the change before it gets
+// this far (deviceops.ts comObjectTableGuard).
 //
 // WHAT IT COMPARES, AND WHY NOT THE DEVICE. The obvious detector (decode the device's own
 // parameter image and compare the com-object table it implies) does not work, and knowing why
@@ -26,8 +27,9 @@
 // The sound comparison point is the PROGRAMMED BASELINE (device_param_base): the parameter set
 // the device was last programmed with (ETS's values at import, our own after a flash). That is
 // by definition the configuration its L3 was compiled for. The induction holds because this
-// gate only ever lets com-object-neutral flashes through, so a baseline advanced by busforge
-// never invalidates the L3 it inherited. The read-back keeps it honest from the other side: it
+// gate only ever lets com-object-neutral flashes through, and the structural flash and the full
+// download author L3 for exactly the parameters they adopt, so a baseline advanced by busforge
+// never invalidates the L3 the device holds. The read-back keeps it honest from the other side: it
 // re-baselines only refs the device's image actually encodes (see foldDeviceValues), so an
 // unflashed edit to an unobservable parameter cannot launder itself into the baseline.
 //
@@ -99,9 +101,9 @@ export function comObjectTableChanges(
 // was last programmed with. Runs before any bus write, on BOTH the parameter flash and the group-
 // address flash: the parameter flash would leave the stale table behind its new parameters, and
 // the GA flash would point associations at object numbers that table does not configure. Same
-// staleness, same refusal. This is the profile-layer last line: the route promotes the common
-// case to a full download before it reaches here (see deviceops.ts), so a caller that reaches this
-// throw is either a family that cannot full-download or a direct product-layer/test caller.
+// staleness, same refusal. This is the profile-layer last line: the route sends the change to the
+// structural flash or the full download before it reaches here (see deviceops.ts), so a caller that
+// reaches this throw is a family that can do neither, or a direct product-layer/test caller.
 export function assertComObjectTableStable(
   app: AppConfig,
   baseParams: Map<string, string>,
@@ -113,5 +115,5 @@ export function assertComObjectTableStable(
   const shown = changes.slice(0, 5).map((c) => `#${c.number} (${c.fields.join(", ")})`).join(", ");
   const more = changes.length > 5 ? `, and ${changes.length - 5} more` : "";
   throw new ProductError("COM_OBJECT_TABLE_STALE",
-    `these parameters change the device's communication objects (${shown}${more}), which requires rewriting its com-object table. Busforge cannot author that table yet, so writing would leave the device with the old objects while reporting success. Refusing.`);
+    `these parameters change the device's communication objects (${shown}${more}), which requires rewriting its com-object table. This flash keeps that table, so writing would leave the device with the old objects while reporting success; a structural flash or a full download writes it. Refusing.`);
 }

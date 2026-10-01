@@ -821,3 +821,49 @@ Read back through Busforge a few minutes later, the segment equals what ETS wrot
 `0x1E14`, which holds `00`. The device clears that byte itself. This is why a Busforge parameter-flash
 dry run reported one differing byte after a verified full download: not a builder fault, the device's
 own state. What the byte means to the firmware is not known.
+
+## 28. What ETS writes when a parameter change alters the com-object table
+
+ETS 6.4.1, "Programmieren > Partiell", four captures on 2026-10-01 (`scratchpad/cap-1001`, local; trimmed
+fixtures in `tools/fixtures/*-ets-partial-structure.log` and `mdt-be02001-ets-fulldownload-b7.log`):
+the Jung 400021SE with K2 switched from "Schalten" to "Dimmen und Farbtemperatur" and back (decrypted
+with the exported project's keys), and the MDT BE-02001.02 with input B switched from "Kontaktzustand
+senden" to the two-object short/long function, downloaded once in full by ETS, then switched back.
+
+**System B (Jung): one bracket over all four objects and the security object.** Both directions:
+
+1. Reads only: serial, the application's state and program id, the MCBs of objects 3 and 4, the
+   table references.
+2. Unload of the application (4), the com-object table (3), association (2) and address table (1),
+   then the security object.
+3. Load and reallocation of each **without fill**, in the order 4, 3, 1, 2; the application's two
+   MCB elements right after its allocation (the parameter flash writes the same two). The sizes are
+   unchanged (7701, 2656, 4, 6), and each segment stays where it was.
+4. Memory writes: the parameter segment's changed region (25 bytes in five runs adding the dimmer
+   objects, 25 in three runs going back), the com-object table only where it changed (7 bytes in two
+   runs), the association and address tables whole.
+5. The security object's load (PID 54, 53, 61), the program-id stamp, `LoadCompleted` of 4, 3, 2, 1,
+   a read of every MCB, `A_Restart`.
+
+That is the full download's bracket (`planSystemBFullDownload`) without fill and with partial writes,
+relying on the device keeping the bytes of a segment that is reallocated at the same address.
+
+**System 7 (MDT, property-mapped): one load bracket per state machine, no common bracket.** The
+address table (LSM 1) and the association table (LSM 2) are each unloaded, loaded, declared and
+completed with their changed bytes (one count byte each here). The application's machine (LSM 3) is
+loaded without an unload and gets the parameter bytes and the com-object table, which on this device
+share it: 220 bytes in 30 runs, many of them unchanged. One `A_Restart` closes it.
+
+**ETS restores the template value of a parameter that goes inactive.** Going back to "Kontaktzustand
+senden", ETS wrote `01` at `0x44B2`, a byte of input B's short/long settings that the new function no
+longer uses; `01` is the segment's `<Data>` template there, the short/long function had `00`. So ETS
+writes the bytes where its whole image changes, not only those of active parameters.
+
+**Every byte ETS wrote matches Busforge's image for the same configuration**: 42 on the Jung (through
+a local conversion of the decrypted capture that leaves out the security object's writes) and 222 on the MDT,
+none divergent (`tools/etsdiff.ts --partial`, `tools/etsdiff.test.ts`). The structural flash is built
+on these brackets (see [load-procedures.md](load-procedures.md#structural-flash)). Where it differs
+from ETS: on System B it writes every byte its parameter model owns, as the parameter flash does; on
+System 7 only the bytes that differ from the device, and it brackets the group tables without ETS's
+unload and segment declaration. Against the MDT capture the writes are exact: Busforge's are the bytes
+ETS changed, with ETS's values, given the configuration ETS had downloaded before as the baseline.

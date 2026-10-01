@@ -123,9 +123,11 @@ trusting a row that does not.
   parameter change that, in ETS, would change a com-object's flags or the *set* of active
   com-objects (e.g. enabling a channel that adds objects) therefore cannot be expressed by
   re-pointing alone. **Both** the parameter flash and the group-address flash **refuse** such a
-  change with `COM_OBJECT_TABLE_STALE` (as `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where the family
-  can commission from scratch), naming the objects that would have gone stale, and the route
-  promotes it to a full download, which rewrites the table. The group-address flash is
+  change in the profile layer with `COM_OBJECT_TABLE_STALE`, naming the objects that would have gone
+  stale. The route sees it first: where the family claims `structuralFlash` it runs the structural
+  flash instead, which authors the table with the parameters and group tables in one bracket
+  ([load-procedures.md](load-procedures.md#structural-flash)); otherwise it refuses
+  (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where a full download can rewrite the table). The group-address flash is
   gated for a second reason: its association table numbers com-objects from the live
   configuration, so an association onto an object the device's table does not configure would be
   a link to nothing, and the verify (which only re-reads the tables we wrote) would still report

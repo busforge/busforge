@@ -122,9 +122,10 @@ export class UiDriver {
     throw new Error(`openFlash: could not open the ${target} flash dialog via the split-button menu — ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
   }
 
-  // A surgical flash: open, confirm the previewed diff, wait for the write to verify. Throws if the
-  // dialog offers no flash (in sync, or refused as com-object-table stale — use flashDownload then).
-  async flash(target: FlashTarget | "both" = "both"): Promise<void> {
+  // A surgical or structural flash: open, confirm the previewed diff, wait for the write to verify.
+  // Returns whether the preview was a structural write. Throws if the dialog offers no flash (in sync,
+  // or refused as com-object-table stale — use flashDownload then).
+  async flash(target: FlashTarget | "both" = "both"): Promise<{ structural: boolean }> {
     const page = this.req();
     await this.openFlash(target);
     // Dismiss the dialog whether this settles or throws: a dialog left open on a failure covers the
@@ -142,23 +143,26 @@ export class UiDriver {
       if (await page.$('[data-testid="flash-needs-download"]')) throw new Error("flash: refused as com-object-table stale; use flashDownload()");
       if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: dry-run failed — ${await this.dialogText()}`);
       if (!(await page.$('[data-testid="confirm-flash"]'))) throw new Error(`flash: nothing to program (every target already in sync) — ${await this.dialogText()}`);
+      const structural = !!(await page.$('[data-testid="flash-part-structural"]'));
       await page.click('[data-testid="confirm-flash"]');
       await this.awaitSettled('[data-testid="flash-part-ok"], [data-testid="flash-part-fail"]');
       if (await page.$('[data-testid="flash-part-fail"]')) throw new Error(`flash: not verified — ${await this.dialogText()}`);
       if (!(await page.$('[data-testid="flash-part-ok"]'))) throw new Error("flash: no verified target after the write");
+      return { structural };
     } finally { await this.dismiss().catch(() => undefined); }
   }
 
-  // The FlashDialog full-download route: a change that rewrites the com-object table is refused as a
-  // surgical flash (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD) and the dialog offers a full download on the
-  // device's existing address. The caller must have made that change first (params/links).
+  // The FlashDialog's full download on the device's existing address: offered as the way forward when
+  // the surgical flash is refused (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD, a never-programmed device), and
+  // otherwise as the full-download action next to the flash.
   async flashDownload(target: FlashTarget = "params"): Promise<void> {
     const page = this.req();
     await this.openFlash(target);
     try { // dismiss in finally: a dialog left open on failure blocks the next capability (see flash()).
-      try { await page.waitForSelector('[data-testid="flash-needs-download"]', { timeout: 60_000 }); }
-      catch { throw new Error(`flashDownload: no full-download offer (change does not alter the table?) — ${await this.dialogText()}`); }
-      await page.click('[data-testid="flash-needs-download"]');
+      const offer = '[data-testid="flash-needs-download"], [data-testid="flash-full-download"]';
+      try { await this.awaitSettled(offer); }
+      catch { throw new Error(`flashDownload: the dialog offers no full download — ${await this.dialogText()}`); }
+      await page.click((await page.$('[data-testid="flash-needs-download"]')) ? '[data-testid="flash-needs-download"]' : '[data-testid="flash-full-download"]');
       // The offer dry-runs the download first; confirm it once the preview is ready.
       await page.waitForSelector('[data-testid="confirm-download"], [data-testid="flash-dl-fail"], [data-testid="flash-download-retry"]', { timeout: 180_000 });
       if (!(await page.$('[data-testid="confirm-download"]'))) throw new Error(`flashDownload: preview failed — ${await this.dialogText()}`);

@@ -26,6 +26,7 @@ const real = await import("../src/deviceprofile.ts");
 const realParamFlash = real.flashDeviceParameters;
 const realGaFlash = real.flashDeviceGroupAddresses;
 const realDownload = real.downloadDeviceFull;
+const realStructure = real.flashDeviceStructure;
 
 // Mutable delegation targets. Default = the real implementations, and afterAll restores
 // them, so if the module mock leaks into later test files (bun does not auto-unmock),
@@ -33,19 +34,21 @@ const realDownload = real.downloadDeviceFull;
 let paramFlashImpl: typeof realParamFlash = realParamFlash;
 let gaFlashImpl: typeof realGaFlash = realGaFlash;
 let downloadImpl: typeof realDownload = realDownload;
+let structureImpl: typeof realStructure = realStructure;
 
 await mock.module("../src/deviceprofile.ts", () => ({
   ...real, // classify, readDeviceState, secureIdentify, profiles, ... stay real
   downloadDeviceFull: (opts: Parameters<typeof realDownload>[0]) => downloadImpl(opts),
   flashDeviceParameters: (opts: Parameters<typeof realParamFlash>[0]) => paramFlashImpl(opts),
   flashDeviceGroupAddresses: (opts: Parameters<typeof realGaFlash>[0]) => gaFlashImpl(opts),
+  flashDeviceStructure: (opts: Parameters<typeof realStructure>[0]) => structureImpl(opts),
 }));
 
 // app.ts must be imported AFTER the mock so its route handlers bind the wrappers.
 const { handleApi, createState } = await import("../src/app.ts");
 type AppState = ReturnType<typeof createState>;
 
-afterAll(() => { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; downloadImpl = realDownload; });
+afterAll(() => { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; downloadImpl = realDownload; structureImpl = realStructure; });
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
@@ -263,17 +266,20 @@ describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
   });
 });
 
-// A parameter (or link) edit that alters the device's com-object table (L3) cannot be a surgical
-// flash: the route refuses BEFORE any bus write. Where the family can commission from scratch it
-// points the UI at a full download (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD, which the FlashDialog turns
-// into a download button); where it cannot, it refuses honestly (COM_OBJECT_TABLE_STALE). The
-// surgical-flash orchestrators must never be reached in either case.
-describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full download (or refused)", () => {
+// A parameter (or link) edit that alters the device's com-object table (L3) cannot be a parameter or
+// group-address flash alone. Where the family can write it as a structural flash, both routes run that
+// (parameters, com-object table and group tables in one bracket) and a verified result adopts both
+// baselines; where it can only commission from scratch the route points at a full download
+// (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD); otherwise it refuses (COM_OBJECT_TABLE_STALE). The surgical
+// orchestrators are never reached in any of these cases.
+describe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash (or is refused)", () => {
   const readReal = (f: string) => gunzipSync(readFileSync(join(
     import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f,
   ))).toString("utf8");
-  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: fullDownload capable
+  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: full download, no structural flash
   const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30"; // System B: activates a com-object
+  const jung = readReal("M-0004_A-7072-21-99A7-O000A.xml.gz"); // System B, proven for the structural flash
+  const TABLE_CHANGING_JUNG = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142"; // 8 removes #253, #254
 
   // A device that can flash but CANNOT full-download: System B with NO parameter segment (no LSM4
   // RelativeSegment -> hasParamSegment false -> fullDownload false, flashParams still true). Its P-1
@@ -302,14 +308,57 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
   const TABLE_CHANGING_NOSEG = "M-00FA_A-A012-55-0000_P-1_R-1"; // activates com-object 5
 
-  test("param flash, full-download-capable family (System B) -> USE_DOWNLOAD, and the surgical flash never runs", async () => {
+  test("param flash, System B -> the structural flash runs, the surgical flash never does, and a verified one adopts both baselines", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, jung);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_JUNG, "8");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    let seen: Parameters<typeof realStructure>[0] | undefined;
+    structureImpl = async (o) => { seen = o; return { ...flashed(true), structural: true }; };
+    try {
+      const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+      expect(task).toMatchObject({ kind: "flash-structure", state: "done", result: { verified: true, structural: true }, baselineCommitted: true });
+    } finally { structureImpl = realStructure; }
+    expect(seen?.params.get(TABLE_CHANGING_JUNG)).toBe("8");
+    expect(Array.isArray(seen?.links)).toBe(true);
+    expect(getDeviceParamBase(state.db, projectId, deviceId).get(TABLE_CHANGING_JUNG)).toBe("8");
+    expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(TABLE_CHANGING_JUNG)).toBe(false);
+  });
+
+  test("an unverified structural flash adopts nothing", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, jung);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_JUNG, "8");
+    structureImpl = async () => ({ ...flashed(false), structural: true });
+    try { await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`)); }
+    finally { structureImpl = realStructure; }
+    expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(TABLE_CHANGING_JUNG)).toBe(true);
+  });
+
+  test("the structural flash takes the group-address flash's link-baseline guard", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, jung);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_JUNG, "8");
+    state.db.run("UPDATE devices SET link_base_gaps = 2 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    structureImpl = async () => { throw new Error("the structural flash must not be reached"); };
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as any).error.code).toBe("LINK_BASELINE_INCOMPLETE");
+    } finally { structureImpl = realStructure; }
+  });
+
+  test("param flash, System B family not proven for the structural flash -> USE_DOWNLOAD, and no flash runs", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, m0162);
     setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+    structureImpl = async () => { throw new Error("the structural flash must not be reached"); };
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+    } finally { structureImpl = realStructure; }
   });
 
   test("a never-programmed device of a family that cannot full-download keeps its surgical flash, which ends the state", async () => {
@@ -332,14 +381,17 @@ describe("POST /flash + /flash-ga: an L3-changing edit is promoted to a full dow
     expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE");
   });
 
-  test("the GA flash is gated the same way: an L3-changing param promotes it too", async () => {
+  test("the GA flash is routed the same way: an L3-changing param runs the structural flash", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await projectWithApp(state, m0162);
-    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
+    const { projectId, deviceId } = await projectWithApp(state, jung);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_JUNG, "8");
     gaFlashImpl = async () => { throw new Error("the surgical GA flash must not be reached"); };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+    structureImpl = async () => ({ kind: "dryRun", mask: "MV-07B0", imageBytes: 9, diffBytes: 3, backup: "x", structural: true });
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`))!;
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ kind: "dryRun", structural: true });
+    } finally { structureImpl = realStructure; }
   });
 
   test("an unchanged com-object table still reaches the surgical flash (the guard does not over-fire)", async () => {
@@ -384,7 +436,7 @@ describe("a memory-less module parameter that shapes the com-object table", () =
     expect(np()).toBe(0);
   });
 
-  test("a download adopts it, and switching it back promotes the parameter flash to a download", async () => {
+  test("a download adopts it, and switching it back runs the structural flash", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, jungXml);
     setDeviceParam(state.db, projectId, deviceId, CHANNEL_FUNCTION, "8");
@@ -394,9 +446,12 @@ describe("a memory-less module parameter that shapes the com-object table", () =
 
     setDeviceParam(state.db, projectId, deviceId, CHANNEL_FUNCTION, "1");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+    structureImpl = async () => ({ kind: "dryRun", mask: "MV-07B0", imageBytes: 9, diffBytes: 3, backup: "x", structural: true });
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ structural: true });
+    } finally { structureImpl = realStructure; }
   });
 });
 
@@ -701,7 +756,6 @@ describe("a Data Secure device: its table writes carry the security object", () 
   const readReal = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f))).toString("utf8");
   const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz");
   const mdt0705 = readReal("M-0083_A-00B6-32-9642.xml.gz");
-  const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30";
   const groupKey = Buffer.alloc(16, 0x5a);
   async function secureProject(state: AppState, app = m0162) {
     const p = await projectWithApp(state, app);
@@ -778,16 +832,18 @@ describe("a Data Secure device: its table writes carry the security object", () 
     expect(creds).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2), onPeerSequence: expect.any(Function) });
   });
 
-  test("a parameter change that needs the com-object table rewritten is promoted to a download, as on a plain device", async () => {
+  test("a parameter change that needs the com-object table rewritten runs the structural flash with the device's credentials and group keys", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await secureProject(state);
-    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
+    const jungApp = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0004_A-7072-21-99A7-O000A.xml.gz"))).toString("utf8");
+    const { projectId, deviceId } = await secureProject(state, jungApp);
+    setDeviceParam(state.db, projectId, deviceId, "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142", "8");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
-    } finally { paramFlashImpl = realParamFlash; }
+    let seen: Record<string, unknown> = {};
+    structureImpl = async (o) => { seen = o; return { ...flashed(true), structural: true }; };
+    try { await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`)); }
+    finally { paramFlashImpl = realParamFlash; structureImpl = realStructure; }
+    expect(seen.secure).toMatchObject({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) });
+    expect(seen.security).toBeDefined();
   });
 
   test("a System 7 device's GA flash and download refuse the security object in the profile layer", async () => {

@@ -8,7 +8,7 @@ import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -208,6 +208,20 @@ export const persistsOnLoadCompleted = (app: AppConfig): boolean => PERSIST_ON_L
 const HOLD_APPLICATION_ON_GA_FLASH = new Set<number>([0x0004]);
 export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLICATION_ON_GA_FLASH.has(appManufacturer(app));
 
+// Application programs the structural flash (flashStructure) is claimed for, each matched against an
+// ETS partial download of such a change (docs/findings.md §28) and run on its bench device. Keyed by
+// the program, not the manufacturer: another product of the same maker may run another stack. The bracket
+// rests on device behaviour that differs between stacks: a System B device keeping a segment's bytes
+// across a reallocation without fill at the same address (the com-object table is written only where
+// it differs), the order of the writes (thelsing/OpenKNX needs the tables before a long parameter
+// write, see planSystemBFullDownload), and the extra LoadCompleted events a persist-at-LoadCompleted
+// device turns into flash commits (the GVS, see HOLD_APPLICATION_ON_GA_FLASH). Everything not listed
+// keeps the full download for such a change.
+//   Jung 400021SE (System B, Data Secure): ETS capture both directions, smoke spec, 2026-10-01.
+//   MDT BE-02001.02 (System 7, property-mapped): ETS capture, smoke spec, 2026-10-01.
+const STRUCTURAL_FLASH = ["M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642"];
+const structuralFlashProven = (app: AppConfig): boolean => STRUCTURAL_FLASH.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
+
 // Guard a par download against its own declared load procedure: every par-applicable
 // step must have an explicit disposition (executed / caller / documented skip). A step
 // the model cannot execute blocks the flash: running a partial recipe and reporting
@@ -238,10 +252,13 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // compiler-enforced: a "flashed" result MUST state whether it verified. The old shape
 // (`verified?: boolean`) treated a forgotten field as verified at the persistence
 // boundary (baseline reset), which is exactly the fake-green class this codebase bans.
-export type FlashResult =
+// `structural`: the result of a structural flash (flashStructure), which covers the parameters and
+// the group tables together.
+export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
-  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string };
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string }
+) & { structural?: true };
 
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
 // device's current state and computed the diff. The profile supplies only the
@@ -304,6 +321,8 @@ async function runFlashOp(
   const verified = await verifyAfterRestart(dev, op.verify);
   return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup };
 }
+
+const structural = async (r: Promise<FlashResult>): Promise<FlashResult> => ({ ...(await r), structural: true });
 
 // The programmed-baseline read back off the bus (see readState). `paramBase` is sparse like
 // device_parameters; the caller persists only the aspects whose *Read flag is true.
@@ -412,6 +431,25 @@ export interface GaFlashCtx extends WriteGate {
   persistBackups: PersistBackups;
 }
 
+// A change that alters the com-object table, written without a full download: the parameters, the
+// com-object table those parameters and links imply, and the group tables, in one bracket. It needs
+// what a full download needs, and it reads the device first like the surgical flashes.
+export interface StructureFlashCtx extends WriteGate {
+  deviceId: string;
+  ia: string;
+  appXml: string;
+  params: Map<string, string>;
+  // The programmed baseline: on System 7 a parameter active there and not in `params` goes back to its
+  // template value (absoluteStructuralImages). Required, like ParamFlashCtx.baseParams.
+  baseParams: Map<string, string>;
+  links: ComObjectLink[];
+  moduleInstances?: ModuleInstance[];
+  dryRun: boolean;
+  security?: SecureTablesCtx;
+  onProgress?: ProgressFn;
+  persistBackups: PersistBackups;
+}
+
 // What a full download needs to build its image; the device-independent part of FullDownloadCtx.
 export interface FullDownloadInputs {
   ia: string;
@@ -482,6 +520,12 @@ export abstract class DeviceProfile {
     throw new UnsupportedOperation("full download", this.family, this.mask);
   }
 
+  // Write a change that alters the com-object table without a full download. Default: refuse, as
+  // capabilities().structuralFlash says.
+  async flashStructure(_dev: KnxDevice, _mask: string, _ctx: StructureFlashCtx): Promise<FlashResult> {
+    throw new UnsupportedOperation("structural flash", this.family, this.mask);
+  }
+
   // The image and load plan downloadFull writes, built offline. The same refusals apply; the
   // device-side pre-flight (declared property checks) is downloadFull's, not part of the plan.
   planFullDownload(_mask: string, _inputs: FullDownloadInputs): FullDownloadBuild {
@@ -508,7 +552,7 @@ export class SystemBProfile extends DeviceProfile {
     const hasParamSegment = this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
     // A full download needs the parameter segment to fill AND an application to author the
     // com-object table from; without either there is nothing to commission.
-    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload: hasParamSegment };
+    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload: hasParamSegment, structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) };
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -893,6 +937,89 @@ export class SystemBProfile extends DeviceProfile {
       },
     });
   }
+
+  // A parameter change that alters the com-object table, written the way ETS writes it as a partial
+  // download (planRelativeStructuralFlash): the application segment, the com-object table authored for
+  // the new parameters and links, and both group tables, in one bracket. The parameter bytes follow
+  // the parameter flash (owned bytes merged into the device's segment), the com-object table goes
+  // only where it differs from the device's, the group tables whole, and a Data Secure device's
+  // security object is reloaded with them. Unlike the full download nothing is pre-filled, so what
+  // the device holds outside the owned bytes stays.
+  override async flashStructure(dev: KnxDevice, mask: string, ctx: StructureFlashCtx): Promise<FlashResult> {
+    const cfg = this.requireCfg("structural flash");
+    if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
+    const proc = parseLoadProcedures(ctx.appXml);
+    const coverage = assertParCoverage(proc, "relative");
+    const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
+    const unmapped = unmappedParamRefs(model, ctx.params);
+    if (unmapped.length) {
+      throw new ProductError("CHANNEL_MODULES_UNSUPPORTED",
+        `parameter programming cannot place ${unmapped.length} stored value(s) for this device (e.g. ${unmapped[0]}); they would be dropped and that region reset to defaults. Refusing to flash to protect the device configuration.`);
+    }
+    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
+    if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
+    const { addr, assoc } = buildGroupTables(ctx.links);
+    const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
+    const mcb = declaredMcbWrites(proc, target.size, "par");
+
+    await runDeclaredChecks(dev, coverage);
+    const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
+    const current = await dev.memRead(paramsAt, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const { image, diffBytes: paramDiff } = mergeRelativeTarget(current, target);
+    const cur = await readGroupTables(dev, undefined, false);
+    const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
+    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
+    const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
+    const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
+    const plan = planRelativeStructuralFlash(LSM, {
+      params: { image, owned: target.owned, keptAt: paramsAt },
+      comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
+      addr, assoc,
+    }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
+    return structural(runFlashOp(dev, mask, ctx, {
+      imageBytes: image.length + comObj.length + addr.length + assoc.length,
+      diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
+        + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
+          + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
+      ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
+      backup: `${prefix}-params.bin`,
+      backups: ctx.dryRun ? [] : [
+        { file: `${prefix}-params.bin`, bytes: current },
+        { file: `${prefix}-comobj.bin`, bytes: cur.comObj },
+        { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
+        { file: `${prefix}-addr.bin`, bytes: cur.addr },
+      ],
+      write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
+      // Every byte of the parameter segment is checked as the parameter flash checks it, the three
+      // tables and the security object whole, and the application and the three tables must be
+      // LOADED again after the restart.
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
+        const { ok } = await verifySettled(
+          async () => ({
+            app: await lsmState(dev, OBJ.APP_PROGRAM),
+            tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
+            params: await dev.memRead(await dev.tableAddr(LSM), image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
+            tables: await readGroupTables(dev),
+            sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
+          }),
+          ({ app, tablesLoaded, params, tables, sec }) => app === STATE.LOADED && tablesLoaded && verifyMaskedBytes(params, image, paramMask)
+            && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)
+            && (!security || (sec !== null && sameSecurityObject(sec, security))),
+        );
+        return ok;
+      },
+    }));
+  }
 }
 
 // System 7 (absolute-segment) devices: MV-0700/0701/0705 and the RF/IP variants. Parameters
@@ -919,7 +1046,10 @@ export class System7Profile extends DeviceProfile {
     const canFull = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
       this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
       (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
-    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull };
+    // The structural flash authors the com-object table from its segment's template, as the full
+    // download does on both LSM styles, so it needs the segment the application names for it.
+    const canStructure = canFull && !!this.cfg && this.cfg.groupTables.comObjectSegment !== undefined && structuralFlashProven(this.cfg);
+    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull, structuralFlash: canStructure };
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -1086,6 +1216,61 @@ export class System7Profile extends DeviceProfile {
     });
   }
 
+  // A parameter change that alters the com-object table, written as ETS writes it in a partial
+  // download (planAbsoluteStructuralFlash): per load-state machine only the bytes that differ, the
+  // com-object table authored from its template for the new parameters and links. Everything is read
+  // first, so the comparison is against the device, not against what the project believes it holds.
+  override async flashStructure(dev: KnxDevice, mask: string, ctx: StructureFlashCtx): Promise<FlashResult> {
+    refuseSecureTables(ctx, this.family);
+    const cfg = this.requireCfg("structural flash");
+    if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
+    const proc = parseLoadProcedures(ctx.appXml);
+    const coverage = assertParCoverage(proc, "absolute");
+    const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    const active = new Set(view.imageComObjects.keys());
+    const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
+    if (orphans.length) {
+      throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+        `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
+    }
+    const comObjectTable = { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) };
+    const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
+    const images = absoluteStructuralImages(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), { baseValues: ctx.baseParams, baseInstances, moduleInstances: instances, comObjectTable });
+    await runDeclaredChecks(dev, coverage);
+    const memMapped = isMemoryMappedLsm(mask);
+    const current = new Map<number, Buffer>();
+    const total = images.reduce((n, r) => n + r.image.length, 0);
+    let read = 0;
+    for (const r of images) {
+      current.set(r.address, await dev.memRead(r.address, r.image.length, undefined, (d) => ctx.onProgress?.("backup", read + d, total), ctx.signal));
+      read += r.image.length;
+    }
+    // The closing restart is held to what the parameter flash proves on these devices.
+    const { plan, changedBytes, concerned, segments } = planAbsoluteStructuralFlash(images, proc, current, !persistsOnLoadCompleted(cfg));
+    const loaded = await allLoaded(dev, concerned, memMapped);
+    const stamp = Date.now();
+    return structural(runFlashOp(dev, mask, ctx, {
+      imageBytes: total,
+      diffBytes: changedBytes,
+      ...(loaded ? {} : { loadIncomplete: "refuse" as const }),
+      backup: `${ctx.deviceId}-structure-${stamp}`,
+      backups: ctx.dryRun ? [] : images.map((r) => ({ file: `${ctx.deviceId}-structure-${stamp}-${r.id.split("_").pop()}.bin`, bytes: current.get(r.address)! })),
+      write: () => runLoadPlan(dev, plan, { memMappedLsms: memMapped, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } }),
+      // Every written segment is read back, and every load-state machine it concerns must be LOADED.
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const { ok: loadedAfter } = await verifySettled(() => allLoaded(dev, concerned, memMapped), (l) => l);
+        if (!loadedAfter) return false;
+        for (const s of segments) {
+          const { ok } = await verifySettled(() => dev.memRead(s.address, s.image.length), (back) => verifyMaskedBytes(back, s.image, s.verify));
+          if (!ok) return false;
+        }
+        return true;
+      },
+    }));
+  }
+
   // Where the device's com-object table sits, from the segment the application names. A memory-mapped
   // device (MV-0700/0701) whose application names none is refused: its table cannot be located, and a
   // newly linked object would be left without its linked bit. A property-mapped one (MV-0705) keeps
@@ -1230,7 +1415,7 @@ export class System7Profile extends DeviceProfile {
 // (This is what fixes MV-0012: it has an AbsoluteSegment and used to be misread as System 7.)
 export class UnsupportedProfile extends DeviceProfile {
   constructor(readonly memoryModel: MemoryModel, readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
-  capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false }; }
+  capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false }; }
   async readState(): Promise<DeviceReadback> { throw new UnsupportedOperation("read-back", this.family, this.mask); }
   async flashParameters(): Promise<FlashResult> { throw new UnsupportedOperation("parameter flash", this.family, this.mask); }
   async flashGroupTables(): Promise<FlashResult> { throw new UnsupportedOperation("group-address flash", this.family, this.mask); }

@@ -31,13 +31,11 @@ export const gvsAmma: DeviceSpec = {
     },
   ],
   // Enabling Outputs 3 & 4 (default "Sperren"=disabled → "Schalten") ADDS that channel's com-objects,
-  // which rewrites the com-object table — the change the UI full-download (FlashDialog needs-download)
-  // needs to be reachable on this kept-addressed device. The runner sets it, runs the UI download, then
-  // restores it. Deliberately on Outputs 3 & 4, NOT Output 1: it must not disturb the switch/status
-  // objects the behaviour binds to. ("Enable Output 1" off was tried first — on this device it only
-  // changes a parameter byte, it does not remove the com-objects, so the FlashDialog offered a surgical
-  // flash and never the full-download route.)
-  uiFullDownloadTrigger: { paramRefId: "M-0085_A-0072-30-69AA_P-9_R-9", value: "1" },
+  // which rewrites the com-object table: the structuralFlash driver writes it and its revert as
+  // structural flashes. Deliberately on Outputs 3 & 4, NOT Output 1: it must not disturb the
+  // switch/status objects the behaviour binds to. ("Enable Output 1" off only changes a parameter byte
+  // on this device; it does not remove the com-objects.)
+  structuralTrigger: { paramRefId: "M-0085_A-0072-30-69AA_P-9_R-9", value: "1" },
   // The seeded param sweep draws from the safe parameters; the two structural enables above are
   // excluded so the sweep does not tear down the behaviour's object graph mid-run.
   fuzz: { gaRange: { main: 1, mid: 2, subStart: 1 }, excludeParams: ["_P-20_R-20", "_UP-142_R-142"], paramSweepRounds: 3 },

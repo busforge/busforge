@@ -1,11 +1,11 @@
-import type { AppConfig, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
-import type { LoadPlan, LoadStep } from "@busforge/knx";
+import { OBJ, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
 //
@@ -144,6 +144,170 @@ export function planRelativeParFlash(lsm: number, image: Buffer, owned: Readonly
     // PERSIST_ON_LOAD_COMPLETED distinction the full download already makes.
     { op: "restart", requireReboot },
   ];
+}
+
+// A segment of a System B structural flash: the image, which of its bytes to send while the segment
+// stays at `keptAt` (a bit mask per byte, as writeSegmentOwned takes it), and that address.
+export interface KeptSegment { image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
+
+// The System B bracket for a change that alters the com-object table: the application, the
+// com-object table and both group tables, and on a Data Secure device its security object, in one
+// load bracket. This is the bracket ETS runs for such a partial download (Jung 400021SE, K2 switched
+// between two functions with different objects, both directions, 2026-10-01): unload all four objects
+// and the security object; load and reallocate each without fill (the application first, then its
+// memory-control blocks); write the parameter bytes, the com-object table bytes that differ, the
+// association and address tables whole; load the security object; stamp the program id; complete
+// application, com-object, association and address table; restart. Its bytes are what the full
+// download's bracket (planSystemBFullDownload) writes, minus what the device keeps across a
+// reallocation at the same address.
+export function planRelativeStructuralFlash(
+  lsm: number,
+  segs: { params: KeptSegment; comObj: KeptSegment; addr: Buffer; assoc: Buffer },
+  appIdStamp: Buffer, requireReboot = true, mcb: McbWrite[] = [], security?: SecurityObjectTables,
+): LoadPlan {
+  const other = mcb.find((m) => m.obj !== lsm);
+  if (other) throw new ProductError("LOAD_STEP_UNSUPPORTED", `an MCB entry for object ${other.obj}; the structural flash writes memory-control blocks of object ${lsm} only, as the parameter flash does`);
+  const C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
+  return [
+    { op: "unload", lsm }, { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
+    ...(security ? [securityUnload] : []),
+    { op: "load", lsm }, { op: "alloc", lsm, size: segs.params.image.length },
+    ...mcb.map((m): LoadStep => ({ op: "writeProp", obj: lsm, pid: 27, start: m.element, data: m.data, echoPrefix: m.echoPrefix })),
+    { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: segs.comObj.image.length },
+    { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: segs.addr.length },
+    { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: segs.assoc.length },
+    { op: "writeSegmentOwned", lsm, ...segs.params },
+    { op: "writeSegmentOwned", lsm: C, ...segs.comObj },
+    { op: "writeSegment", lsm: A, bytes: segs.assoc },
+    { op: "writeSegment", lsm: D, bytes: segs.addr },
+    ...(security ? planSecurityObjectLoad(security) : []),
+    { op: "stampAppId", lsm, data: appIdStamp },
+    { op: "loadCompleted", lsm },
+    { op: "loadCompleted", lsm: C, assert: false }, { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },
+    { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
+    { op: "restart", requireReboot },
+  ];
+}
+
+// The bytes of a table to send after a reallocation at the same address: those that differ from what
+// the device holds there, and every byte past its old length.
+export function differingBytes(want: Buffer, have: Buffer): number[] {
+  return Array.from(want, (b, i) => (i >= have.length || have[i] !== b ? 0xff : 0));
+}
+
+// One region a System 7 structural flash compares and may write: the image the new configuration
+// gives it, which bits of it are ours to write (`owned`), and which a read-back may assert (`verify`).
+export interface AbsStructuralImage { id: string; address: number; image: Buffer; owned: ReadonlyArray<number>; verify: ReadonlyArray<number> }
+export interface AbsStructuralSegment { id: string; address: number; lsm: number; image: Buffer; verify: ReadonlyArray<number> }
+export interface AbsStructuralFlashPlan { plan: LoadPlan; changedBytes: number; lsms: number[]; concerned: number[]; segments: AbsStructuralSegment[] }
+
+// What a System 7 structural flash compares against the device: the address and association tables,
+// the com-object table authored from its segment's template (as the full download authors it), and
+// the parameter segments' owned bytes. A parameter that was active in the programmed baseline
+// (`baseValues`) and is not in the new configuration goes back to its segment's <Data> template value,
+// as ETS writes it: ETS writes where its old image differs from its new one (MDT BE-02001.02, input
+// B's short/long settings, 2026-10-01). Only bits a baseline parameter owned and verifies are taken
+// this way, so a byte no parameter derives (a text, a value the codec cannot encode) and an
+// Access="None" parameter the device stamps are never reset, and every bit taken is verified.
+export function absoluteStructuralImages(
+  app: AppConfig,
+  values: Map<string, string>,
+  links: ComObjectLink[],
+  ownIa: number,
+  opts: { baseValues: Map<string, string>; baseInstances?: ModuleInstance[]; moduleInstances?: ModuleInstance[]; comObjectTable: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } },
+): AbsStructuralImage[] {
+  const segment = (segId: string | undefined, which: string): CfgAbsSegment => {
+    const seg = segId === undefined ? undefined : app.absoluteSegments.find((s) => s.id === segId);
+    if (!seg) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the application names no segment for its ${which} table; refusing to write it blind`);
+    return seg;
+  };
+  const addrSeg = segment(app.groupTables.addressSegment, "address");
+  const assocSeg = segment(app.groupTables.associationSegment, "association");
+  const comObjSeg = segment(app.groupTables.comObjectSegment, "com-object");
+  if (comObjSeg.data.length === 0) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the com-object table segment ${comObjSeg.id} carries no <Data> template; refusing to author it blind`);
+  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
+  if (addr.length > addrSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the address table needs ${addr.length} B but its segment reserves only ${addrSeg.size} B; assign fewer group addresses`);
+  if (assoc.length > assocSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${assocSeg.size} B; remove links`);
+  const comObj = buildComObjectTableMv0705(comObjSeg.data, opts.comObjectTable.active, opts.comObjectTable.linked);
+  if (comObj.length > comObjSeg.size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${comObj.length} B but its segment reserves only ${comObjSeg.size} B`);
+  const all = (n: number) => new Array<number>(n).fill(0xff);
+  const images: AbsStructuralImage[] = [
+    { id: addrSeg.id, address: addrSeg.address, image: addr, owned: all(addr.length), verify: all(addr.length) },
+    { id: assocSeg.id, address: assocSeg.address, image: assoc, owned: all(assoc.length), verify: all(assoc.length) },
+    { id: comObjSeg.id, address: comObjSeg.address, image: comObj, owned: all(comObj.length), verify: all(comObj.length) },
+  ];
+  const tables = [...images];
+  const before = new Map(buildAbsoluteSegmentTargets(app, opts.baseValues, { moduleInstances: opts.baseInstances ?? opts.moduleInstances }).map((t) => [t.address, t]));
+  for (const t of buildAbsoluteSegmentTargets(app, values, { moduleInstances: opts.moduleInstances })) {
+    if (t.size === 0) continue;
+    if (tables.some((w) => t.address < w.address + w.image.length && w.address < t.address + t.size)) {
+      throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `parameter segment ${t.id} overlaps a group or com-object table; refusing to write two images over one another`);
+    }
+    const template = app.absoluteSegments.find((seg) => seg.address === t.address)?.data.length ?? 0;
+    const was = before.get(t.address);
+    // A verify bit is an owned bit of a parameter that is not Access="None": a byte the device stamps
+    // itself is never taken back to the template.
+    const dropped = (i: number) => (was && i < template ? (was.verify[i] ?? 0) & ~t.owned[i] & 0xff : 0);
+    images.push({
+      id: t.id, address: t.address, image: t.bytes,
+      owned: t.owned.map((m, i) => m | dropped(i)),
+      verify: t.verify.map((v, i) => v | dropped(i)),
+    });
+  }
+  return images;
+}
+
+// The System 7 writes for a change that alters the com-object table, as ETS writes them in a partial
+// download (MDT BE-02001.02, input B switched between a one-object and a two-object function, 2026-10-01):
+// one load bracket per load-state machine, in the order the load procedure loads them, each with only
+// the bytes that differ from the device (address and association table, then the application's own
+// machine with the parameter bytes and the com-object table). One restart closes it. ETS also unloads
+// the two group tables and declares their segments again; this plan brackets them the way the
+// hardware-proven group-address flash does (planMv0705GaFlash), with no unload and no declaration.
+// `current`: what the device holds at each image's address, at the image's length.
+// `concerned`: every load-state machine an image maps to, written or not, for the load-state check.
+export function planAbsoluteStructuralFlash(
+  images: AbsStructuralImage[],
+  procedure: LoadProcedures,
+  current: ReadonlyMap<number, Buffer>,
+  requireReboot = true,
+): AbsStructuralFlashPlan {
+  const lsmByAddress = new Map<number, number>();
+  const lsmOrder: number[] = [];
+  for (const s of flattenSteps(procedure, "full")) {
+    if (s.verb === "LdCtrlAbsSegment") { const a = stepAddress(s), l = lsmIdx(s); if (a !== undefined && l !== undefined) lsmByAddress.set(a, l); }
+    if (s.verb === "LdCtrlLoad") { const l = lsmIdx(s); if (l !== undefined && !lsmOrder.includes(l)) lsmOrder.push(l); }
+  }
+  const runsByLsm = new Map<number, FlashRun[]>();
+  const segments: AbsStructuralSegment[] = [];
+  let changedBytes = 0;
+  for (const w of images) {
+    const have = current.get(w.address);
+    if (!have || have.length !== w.image.length) {
+      throw new ProductError("PARAM_SEGMENT_NOT_READ", `the device's ${w.id} was not read in full (${have?.length ?? 0} of ${w.image.length} B); refusing to write its shared bytes without the bits it holds`);
+    }
+    const image = Buffer.from(w.image.map((b, i) => mergeOwnedBits(have[i], b, w.owned[i])));
+    const write = w.owned.map((own, i) => own !== 0 && have[i] !== image[i]);
+    const runs = runsFromMask(image, w.address, write);
+    if (!runs.length) continue;
+    const lsm = lsmByAddress.get(w.address);
+    if (lsm === undefined || !lsmOrder.includes(lsm)) {
+      throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `segment ${w.id} differs from the device but the load procedure loads it under no load-state machine; refusing a partial write`);
+    }
+    changedBytes += write.filter(Boolean).length;
+    segments.push({ id: w.id, address: w.address, lsm, image, verify: w.verify });
+    runsByLsm.set(lsm, [...(runsByLsm.get(lsm) ?? []), ...runs]);
+  }
+  const plan: LoadPlan = [];
+  const lsms = lsmOrder.filter((l) => runsByLsm.has(l));
+  for (const lsm of lsms) {
+    plan.push({ op: "load", lsm });
+    for (const r of runsByLsm.get(lsm)!) plan.push({ op: "writeMem", address: r.address, bytes: r.bytes });
+    plan.push({ op: "loadCompleted", lsm });
+  }
+  if (plan.length) plan.push({ op: "restart", requireReboot });
+  const concerned = lsmOrder.filter((l) => images.some((w) => lsmByAddress.get(w.address) === l));
+  return { plan, changedBytes, lsms, concerned, segments };
 }
 
 export function planAbsoluteParFlash(

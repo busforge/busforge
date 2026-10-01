@@ -52,7 +52,7 @@ export interface EvidenceRecord {
   source: { kind: "smoke-report" | "readback-tool" | "etsdiff" | "manual" | "diagnostic-package"; artifact: string | null; sha256: string | null };
 }
 
-const OPERATIONS = ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload", "assignIa", "provision", "uiClickThrough"] as const;
+const OPERATIONS = ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload", "structuralFlash", "assignIa", "provision", "uiClickThrough"] as const;
 const AXES: EvidenceAxis[] = ["transfer", "reference", "behaviour", "persistence"];
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const SHA256 = /^[0-9a-f]{64}$/;

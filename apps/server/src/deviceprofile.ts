@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask,
-  type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
+  type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
@@ -142,6 +142,16 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
   const profile = classify(parseAppConfig(opts.appXml));
   const ctx: GaFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
   return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
+}
+
+// Write a parameter change that alters the com-object table: parameters, the com-object table they
+// imply and the group tables, in one bracket (profile.flashStructure).
+export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+  const refused = refuseSessionWithoutSecurityObject(opts);
+  if (refused) return refused;
+  const profile = classify(parseAppConfig(opts.appXml));
+  const ctx: StructureFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashStructure(dev, mask, ctx), opts.secure);
 }
 
 // Commission a device from nothing: application id, parameter image, com-object table and group

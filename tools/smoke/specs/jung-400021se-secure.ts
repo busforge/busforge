@@ -32,7 +32,7 @@ export const jung400021seSecure: DeviceSpec = {
     { kind: "securedOutput", label: "K1 answers a secured read on 0/0/1", ga: "0/0/1" },
     { kind: "output", label: "K2 contact answers a read", comObjRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_O-2-0_R-1" },
   ],
-  uiFullDownloadTrigger: { paramRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-2_R-2", value: "1" },
+  structuralTrigger: { paramRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-2_R-2", value: "1" },
   // K1's "Ausgang" sits on the secured 0/0/1: a second, plain link on it would need one object flag
   // for both (SECURE_LINK_MIXED), so the generated links leave it alone.
   fuzz: {

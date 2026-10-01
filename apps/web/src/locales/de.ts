@@ -484,7 +484,7 @@ const de: Messages = {
     cancelRead: "Abbrechen (in das Gerät wurde noch nichts geschrieben)",
     writeNotCancellable: "Schreibt: Abbruch würde das Gerät gefährden",
     interruptedWrite: "Ein Schreibvorgang wurde unterbrochen; der Gerätezustand ist unbekannt",
-    kind: { read: "Lesen", "flash-params": "Programmieren", "flash-ga": "GAs programmieren", "assign-ia": "Adresse vergeben", download: "Erstinbetriebnahme", "secure-activate": "Secure aktivieren" },
+    kind: { read: "Lesen", "flash-params": "Programmieren", "flash-ga": "GAs programmieren", "flash-structure": "Objekte programmieren", "assign-ia": "Adresse vergeben", download: "Erstinbetriebnahme", "secure-activate": "Secure aktivieren" },
     phase: {
       connect: "Verbinde",
       params: "Lese Parameter",
@@ -595,6 +595,9 @@ const de: Messages = {
     checking: "Verbinde und prüfe auf Änderungen…",
     connHint: "Die Schnittstelle ist nicht erreichbar. Prüfe, ob sie online ist und keine andere Verbindung (ETS oder ein laufender Busmonitor) sie blockiert, und versuche es erneut.",
     willChange: "{{diff}} von {{total}} Bytes ändern sich (Gerätemaske {{mask}}).",
+    willChangeStructure: "Diese Änderung verändert die Kommunikationsobjekte des Geräts: {{diff}} von {{total}} Bytes aus Konfiguration, Objekttabelle und Gruppentabellen ändern sich, in einem Schreibvorgang (Maske {{mask}}).",
+    structuralCovered: "Wird zusammen mit „{{part}}“ geschrieben: die Änderung verändert die Kommunikationsobjekte.",
+    fullDownloadCta: "Vollständiger Download…",
     inSync: "Gerät ist bereits synchron, nichts zu programmieren.",
     programming: "Programmiere… das Gerät startet neu, das dauert ein paar Sekunden.",
     doneVerified: "Programmiert und verifiziert ({{bytes}} Bytes geschrieben).",

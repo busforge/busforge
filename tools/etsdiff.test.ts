@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { iaToNum, ownedRuns } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites } from "../packages/product/src/index.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
@@ -216,6 +216,76 @@ describe("System B parameter flash against ETS's partial download", () => {
       expect([...ours].filter(([o, b]) => ets.get(o) !== b)).toEqual([]);
     });
   }
+});
+
+// ETS 6 partial downloads of a change that alters the com-object table, 2026-10-01. Jung 400021SE: K2
+// switched from "Dimmen und Farbtemperatur" back to "Schalten" (secured; decrypted, the security
+// object's writes left out). MDT BE-02001.02: input B switched from the two-object short/long function
+// back to "Kontaktzustand senden" (object 8 goes), after an ETS full download with the two-object one.
+describe("structural flash against ETS's partial download", () => {
+  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+
+  test("MDT BE-02001.02: Busforge writes exactly the bytes ETS changed, with ETS's values, LSM by LSM", () => {
+    const xml = real("M-0083_A-00B6-32-9642.xml.gz");
+    const cfg = parseAppConfig(xml);
+    const ia = iaToNum(DEV);
+    const before = memoryImage(parseCapture(readFileSync(join(import.meta.dir, "fixtures", "mdt-be02001-ets-fulldownload-b7.log"), "utf8"), ia).writes);
+    const ets = memoryImage(parseCapture(readFileSync(join(import.meta.dir, "fixtures", "mdt-be02001-ets-partial-structure.log"), "utf8"), ia).writes);
+    const params = new Map<string, string>();
+    const instances = resolveModuleInstances(cfg, params);
+    const view = buildDeviceConfig(cfg, params, undefined, instances);
+    // The device's programmed baseline is the configuration ETS downloaded in full: input B short/long.
+    const baseValues = new Map([["M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", "7"]]);
+    const images = absoluteStructuralImages(cfg, params, [], ia, { baseValues, moduleInstances: instances, comObjectTable: { active: view.imageComObjects, linked: new Set() } });
+    // ETS's full download leaves the address table's own individual address to the device (it holds it
+    // already), so those two bytes are the only ones the capture does not show; the device holds 1.1.56.
+    const unseen = images.flatMap((w) => Array.from({ length: w.image.length }, (_, i) => w.address + i)).filter((a) => !before.has(a));
+    expect(unseen).toEqual([0x4001, 0x4002]);
+    before.set(0x4001, 0x11).set(0x4002, 0x38);
+    const current = new Map(images.map((w) => [w.address, Buffer.from(Array.from({ length: w.image.length }, (_, i) => before.get(w.address + i)!))]));
+    const { plan, lsms } = planAbsoluteStructuralFlash(images, parseLoadProcedures(xml), current);
+    const ours = new Map<number, number>();
+    for (const st of plan) if (st.op === "writeMem") st.bytes.forEach((b, i) => ours.set(st.address + i, b));
+    const changedByEts = [...ets].filter(([a, b]) => before.get(a) !== b);
+    expect(changedByEts.length).toBeGreaterThan(0);
+    expect([...ours].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
+    expect(changedByEts.filter(([a]) => !ours.has(a))).toEqual([]);
+    expect(lsms).toEqual([3]);
+    expect(plan.map((st) => st.op).filter((op) => op !== "writeMem")).toEqual(["load", "loadCompleted", "restart"]);
+  });
+
+  test("Jung 400021SE: every byte ETS wrote matches Busforge's image", () => {
+    const xml = real("M-0004_A-7072-21-99A7-O000A.xml.gz");
+    const cfg = parseAppConfig(xml);
+    const params: [string, string][] = [
+      ["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-154_R-220", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-150_R-243", "Taster"],
+      ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-154_R-220", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"],
+    ];
+    const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: new Map(params), links: [{ comObjNum: 253, gaRaws: [parseGa("0/0/1")] }], proc: parseLoadProcedures(xml) });
+    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "jung-400021se-ets-partial-structure.log"), "utf8"), iaToNum("1.1.204"));
+    const refs = reportedTableReferences(cap);
+    const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
+    expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 25, 0], [3, 7, 0], [2, 6, 0], [1, 4, 0]]);
+    expect(r.unattributed).toEqual([]);
+  });
+
+  test("Jung 400021SE: the bracket is ETS's, every object reallocated without fill and the application completed first", () => {
+    const xml = real("M-0004_A-7072-21-99A7-O000A.xml.gz");
+    const proc = parseLoadProcedures(xml);
+    const tables = { params: { image: Buffer.alloc(7701), owned: [], keptAt: 0x16000 }, comObj: { image: Buffer.alloc(2656), owned: [], keptAt: 0x15000 }, addr: Buffer.alloc(4), assoc: Buffer.alloc(6) };
+    const sec = { groupKeys: Buffer.alloc(18), goFlags: Buffer.alloc(1), senders: Buffer.alloc(0) };
+    const plan = planRelativeStructuralFlash(4, tables, Buffer.from("0004707221", "hex"), true, declaredMcbWrites(proc, 7701, "par"), sec);
+    const shape = plan.map((st) => ("lsm" in st ? `${st.op}:${st.lsm}` : st.op === "writeProp" ? `mcb:${st.obj}` : st.op === "writeSecurityProp" ? `sec:${st.pid}` : st.op === "securityLsm" ? `secLsm:${st.event}` : st.op));
+    expect(shape).toEqual([
+      "unload:4", "unload:3", "unload:2", "unload:1", "secLsm:4",
+      "load:4", "alloc:4", "mcb:4", "mcb:4", "load:3", "alloc:3", "load:1", "alloc:1", "load:2", "alloc:2",
+      "writeSegmentOwned:4", "writeSegmentOwned:3", "writeSegment:2", "writeSegment:1",
+      "secLsm:1", "sec:54", "sec:53", "sec:61", "secLsm:2",
+      "stampAppId:4", "loadCompleted:4", "loadCompleted:3", "loadCompleted:2", "loadCompleted:1",
+      "assertLoaded:3", "assertLoaded:2", "assertLoaded:1", "restart",
+    ]);
+    expect(plan.filter((st) => st.op === "alloc").every((st) => st.op === "alloc" && !st.fill)).toBe(true);
+  });
 });
 
 // The CLI's partial mode, end to end: one record per Busforge flash operation that the partial

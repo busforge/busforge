@@ -543,6 +543,7 @@ export function DeviceConfig() {
         <FlashDialog
           open onOpenChange={(o) => { if (!o) setFlashTargets(null); }}
           projectId={projectId} device={device} targets={flashTargets} onFlashed={afterFlash}
+          canFullDownload={!!view?.capabilities?.fullDownload}
         />
       )}
 

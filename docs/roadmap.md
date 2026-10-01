@@ -6,13 +6,18 @@ started until the capability it depends on is hardware-proven.
 
 ## Programming paths
 
-- **Surgical structural flash.** A parameter change that alters the set of com-objects is refused
-  surgically and promoted to a full download, which rewrites the whole parameter image even when
-  one channel changed. The plan is to author the new com-object table, diff it and the new
-  parameter image against the device, and write only the diverging segments in one load bracket.
-  Medium risk: the bracket for a partial multi-segment write on a device in service is the hard
-  part, and it needs a bus-behaviour proof, not just a byte match. *Decided 2026-10-01: build it,
-  after the open hardware checks.*
+- **Structural flash for more families.** A parameter change that alters the com-object table is
+  written as a structural flash ([load-procedures.md](load-procedures.md#structural-flash)) only for
+  the application programs in `STRUCTURAL_FLASH` (Jung 400021SE, MDT BE-02001.02); every other device
+  still gets the full download for it. Each needs an ETS capture of such a partial download and a bench run of the smoke spec's
+  `structuralTrigger` before it is listed: the GVS AMMA (persists at every `LoadCompleted`), the ABB
+  US/U 4.2 (memory-mapped System 7), and OpenKNX/thelsing, whose full download has to write the tables
+  before the parameter image, which the structural bracket does not.
+- **The System 7 parameter flash leaves a deactivated parameter's bytes as they were.** ETS writes where
+  its whole image changes, so a parameter a change deactivates goes back to its `<Data>` template value
+  ([findings.md](findings.md) §28). The structural flash does that; the plain parameter flash, for a
+  change that deactivates parameters without altering the com-object table, still writes only active
+  parameters' bytes. The device then holds the old values in bytes nothing reads; not shown to matter.
 - **The Jung 400021SE clears the last byte of its parameter segment by itself.** Offset `0x1E14`
   (parameter P-1, default 1) is its own one-byte memory-control-block region. ETS's full download writes
   `01` there, as Busforge's image has it, and minutes later the device holds `00` (2026-10-01,
@@ -38,6 +43,17 @@ started until the capability it depends on is hardware-proven.
   bridge verified, from the Mac server and from the server in an `oven/bun:1.3` container, and a
   67-second secured read of the Jung over UDP from the container completed. Nothing since names the
   fault as fixed, so the entry stays until a cause is found or it does not recur in use.
+- **The bench's TCP tunnel stalls over Wi-Fi, and one stall costs the bridge's only tunnel for 120 s.**
+  On 2026-10-01 two secure smoke runs in a row died at their first read (`TUNNEL_CON_TIMEOUT`), and a
+  third lost its final restore the same way. Each time the bridge held the stream with unacknowledged
+  data towards the Mac (`ss`: `ESTAB`, then `FIN-WAIT-1`/`LAST-ACK`, retransmitting) while new
+  connections from the Mac went through, and every reconnect was refused (`0x24`) until the bridge
+  reaped the channel ([findings.md](findings.md) §25). The bench host is on Wi-Fi. A wired bench host, the server
+  next to the bridge, or a bridge with more than one tunnel address would each take the stall out of
+  the runs.
+- **A secured full download of the Jung 400021SE closed by the device.** In a 2026-10-01 smoke run the full
+  download failed after 23 s with `DEVICE_CLOSED_CONNECTION`; every later
+  write of the run verified. Earlier runs the same day passed it. The cause is not known.
 - **Confirm why a long-running server's TCP connects fail on macOS.** On 2026-09-29 the dev server
   got `ECONNREFUSED` from every connect to a listening bridge until it was restarted. It recurred on
   2026-10-01 after about an hour: the dev server and the smoke runner (both long-running) were refused

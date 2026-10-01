@@ -268,17 +268,20 @@ worse load state than it found it (`GA_FLASH_BROKE_APPLICATION`).
 |---|---|---|
 | **Parameters** (`flash`) | the parameter segment built from the device's edited values | the addressing and com-object tables |
 | **Group addresses** (`flash-ga`) | the address and association tables, plus the com-object table: rebuilt from the current link set on System B, the device's own with each linked bit following the links on System 7 | the parameter image |
+| **Structural flash** (`flash` or `flash-ga`, when the change alters the com-object table) | the parameter bytes, the com-object table authored for the new configuration and links, and the group tables, in one load bracket on System B (one per load-state machine on System 7), only what differs from the device | everything else of the parameter image |
 | **Full download** (`download`) | application id, parameter image, com-object table and group tables, in one load bracket | nothing; this is what commissions a virgin device |
 
-Neither surgical path can change the *set* of com-objects. A parameter change that would alter it
-(activating or disabling a channel, flipping a com-object flag, changing a datapoint size) cannot be
-applied surgically without leaving that table stale. The route detects this **before any bus write**
-by comparing the programmed baseline against the edited configuration, and refuses. The refusal is
-honest and actionable: where the family can commission from scratch, it returns
-`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` and the flash dialog offers a full download on the device's
-existing address, with no programming-mode button press and no address reassignment. Where the
-family cannot yet author the table, it returns the plain `COM_OBJECT_TABLE_STALE` and says so,
-without pointing at ETS.
+Neither the parameter flash nor the group-address flash can change the *set* of com-objects. A
+change that would alter it (activating or disabling a channel, flipping a com-object flag, changing
+a datapoint size) is detected **before any bus write** by comparing the programmed baseline against
+the edited configuration. Where the family claims `structuralFlash`, both routes then run the
+structural flash, which writes the change the way ETS's partial download does
+([load-procedures.md](load-procedures.md#structural-flash)); the flash dialog writes it once even when
+both the configuration and the group addresses preview it. Where the family cannot, the route
+refuses: with `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where it can commission from scratch (the dialog
+offers the full download on the device's existing address), otherwise with the plain
+`COM_OBJECT_TABLE_STALE`. The dialog also offers the full download as a choice of its own wherever
+the family can commission.
 
 The load brackets themselves (which load state machine, which steps, when the device is restarted)
 are in [load-procedures.md](load-procedures.md); commissioning a factory device is

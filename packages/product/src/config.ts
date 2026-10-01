@@ -96,6 +96,9 @@ export interface DeviceCapabilities {
   // table and group tables all written in one bracket? A parameter-only download rewrites an
   // existing segment and cannot bring a virgin device to life.
   fullDownload: boolean;
+  // Can a parameter change that alters the com-object table be written without a full download:
+  // parameters, com-object table and group tables in one bracket, only what differs from the device?
+  structuralFlash: boolean;
 }
 
 // The SERIALIZABLE device-configuration wire view: the HTTP contract itself, imported directly

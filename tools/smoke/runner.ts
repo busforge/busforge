@@ -343,7 +343,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     // A stable order: establish the device (fullDownload) before the surgical write paths, then reads.
     // Built from a Record over EVERY DeviceCapabilities key, so adding a capability field to the
     // product forces adding it here (a compile error otherwise) — no key can be silently unexercised.
-    const CAP_ORDER: Record<keyof DeviceCapabilities, number> = { fullDownload: 0, flashLinks: 1, flashParams: 2, readParams: 3, readLinks: 4 };
+    const CAP_ORDER: Record<keyof DeviceCapabilities, number> = { fullDownload: 0, flashLinks: 1, flashParams: 2, structuralFlash: 3, readParams: 4, readLinks: 5 };
     const ORDER = (Object.keys(CAP_ORDER) as (keyof DeviceCapabilities)[]).sort((a, b) => CAP_ORDER[a] - CAP_ORDER[b]);
     const unsafe = new Map((spec.unsafe ?? []).map((u) => [u.capability, u.reason]));
     for (const key of ORDER) {

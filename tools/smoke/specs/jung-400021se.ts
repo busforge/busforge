@@ -43,11 +43,10 @@ export const jung400021se: DeviceSpec = {
     { kind: "output", label: "K1 contact answers a read", comObjRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_O-2-0_R-1" },
   ],
   // Changing K2's function from "Schalten" (0) to "Dimmen und Farbtemperatur" (1) swaps K2's com-objects
-  // (different numbers and sizes), which rewrites the com-object table, so the surgical param flash is
-  // refused stale and the UI FlashDialog offers the needs-download route (the automatable UI full-download
-  // proof). Deliberately on K2, NOT K1: it must not disturb K1's "Ausgang" object the behaviour observes.
-  // The runner sets it, runs the UI download, then restores 0.
-  uiFullDownloadTrigger: { paramRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-2_R-2", value: "1" },
+  // (different numbers and sizes), which rewrites the com-object table: the structuralFlash driver writes
+  // it and its revert as structural flashes. Deliberately on K2, NOT K1: it must not disturb K1's
+  // "Ausgang" object the behaviour observes.
+  structuralTrigger: { paramRefId: "M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-2_R-2", value: "1" },
   // The seeded param sweep exercises the surgical param flash (which DOES write L4 and byte-verifies with
   // zero drift on this device). Excluded: the two per-channel FUNCTION selectors (they rewrite the object
   // graph the behaviour and trigger depend on). Suffix _P-2_R-2 matches both channel functions.

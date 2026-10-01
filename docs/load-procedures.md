@@ -65,6 +65,8 @@ proven executors did. Every other bracket keeps the asserting default.
 | `planAbsoluteParFlash` | the surgical absolute-segment bracket: per LSM that owns a changed segment, load, write the changed owned runs, load-completed, then restart |
 | `planSystemBGaFlash` | the three group tables (com-object, address, association) rewritten in one bracket |
 | `planMv0705GaFlash` | the two fixed System 7 group tables |
+| `planRelativeStructuralFlash` | a System B change that alters the com-object table: application, com-object table, association and address table (and the security object) in one bracket, reallocated without fill, see [Structural flash](#structural-flash) |
+| `planAbsoluteStructuralFlash` | the same on System 7: per load-state machine, in the procedure's order, only the bytes that differ from the device, then one restart |
 | `planSystemBFullDownload` | first-time commissioning of a System B device |
 | `planAbsoluteFullDownload` | first-time commissioning of an absolute-segment device, walking the declared procedure in order |
 
@@ -147,6 +149,62 @@ ProductProcedure and MergedProcedure in the corpus except two classes, both refu
 
 Being dispositioned is not a hardware claim: which application programs have actually been
 flashed, and how far, is in [status.md](status.md).
+
+## Structural flash
+
+A parameter change that alters the com-object table (a channel function with other objects, an
+object enabled or disabled) used to need a full download, which rewrites the whole parameter image.
+The structural flash writes it the way ETS writes it in a partial download
+([findings.md](findings.md) §28), and both flash routes run it when `comObjectTableChanges` is not
+empty and the family claims `structuralFlash`. It is claimed only for the application programs in
+`STRUCTURAL_FLASH` (profiles.ts: the Jung 400021SE's and the MDT BE-02001.02's), each matched against
+an ETS capture and run on its bench device:
+the bracket rests on behaviour that differs between stacks (keeping a segment's bytes across a
+reallocation at the same address, the order of the writes on thelsing/OpenKNX, the flash commit a
+persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other family keeps the full
+download for such a change (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`).
+
+```
+System B (one bracket)                      System 7 (one bracket per LSM)
+unload 4, 3, 2, 1, security object          load 1, changed bytes, load-completed 1
+load+alloc 4 (no fill), MCB of 4            load 2, changed bytes, load-completed 2
+load+alloc 3, 1, 2 (no fill)                load 3, changed parameter and com-object
+write 4: owned bytes                             table bytes, load-completed 3
+write 3: bytes that differ                  restart
+write 2, 1: whole
+security object load
+stamp program id
+load-completed 4, 3, 2, 1, assert loaded
+restart
+```
+
+- **What is compared.** Everything is read first: the parameter segment, the three tables, the
+  security object. The com-object table is authored from the new configuration and its links, as
+  the full download authors it. On System 7 a parameter that was active in the programmed baseline
+  and is not in the new configuration returns to its segment's `<Data>` template value, as ETS writes
+  it; only bits a parameter of either configuration owns are ever taken, and a deactivated parameter
+  only if it is not `Access="None"`, so a text, a value the codec cannot encode or a byte the device
+  stamps is never reset.
+- **What is written.** On System B the parameter bytes follow the parameter flash (every byte holding
+  an owned bit), the com-object table only where it differs, while the reallocation leaves both
+  where they were (`writeSegmentOwned`; a moved segment is written whole). On System 7 only bytes
+  that differ from the device.
+- **What is verified.** After the restart: the parameter segment as the parameter flash checks it
+  (on System 7 the restored template bytes too), the three tables and the security object whole,
+  and every load-state machine the flash concerns LOADED again (on System B the application too).
+- **Where it differs from ETS.** On System 7, ETS also unloads the two group tables and declares their
+  segments again; Busforge brackets them as its group-address flash does (load, write,
+  load-completed). Busforge writes fewer bytes than ETS (only what differs from the device), never
+  other ones.
+- **The window a failure leaves.** On System B the bracket unloads the application and the security
+  object before the first write. A flash cut off inside it leaves the device without a running
+  application, and a secured device without its group keys, until the flash is repeated or a full
+  download completes it (see the roadmap entry on recovering an interrupted flash).
+- **What is adopted.** A verified structural flash adopts the parameter and the link baseline, like
+  the full download. It writes the group tables whole, so it takes the group-address flash's
+  link-baseline guard (`LINK_BASELINE_INCOMPLETE`). Started from the group-address flash, it writes
+  the pending parameter edits too, and the preview says so.
+- Families without it still get `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` or `COM_OBJECT_TABLE_STALE`.
 
 ## The flash bracket, and why it is tight
 

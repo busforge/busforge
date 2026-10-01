@@ -484,7 +484,7 @@ const en = {
     cancelRead: "Cancel (nothing has been written to the device yet)",
     writeNotCancellable: "Writing: cannot be cancelled without risking the device",
     interruptedWrite: "A write was interrupted; the device state is unknown",
-    kind: { read: "Read", "flash-params": "Program", "flash-ga": "Program GAs", "assign-ia": "Assign address", download: "Commission", "secure-activate": "Activate Secure" },
+    kind: { read: "Read", "flash-params": "Program", "flash-ga": "Program GAs", "flash-structure": "Program objects", "assign-ia": "Assign address", download: "Commission", "secure-activate": "Activate Secure" },
     phase: {
       connect: "Connecting",
       params: "Reading parameters",
@@ -595,6 +595,9 @@ const en = {
     checking: "Connecting and checking for changes…",
     connHint: "Could not reach the interface. Check that it is online and that no other client (ETS or a running bus monitor) is holding the connection, then retry.",
     willChange: "{{diff}} of {{total}} bytes will change (device mask {{mask}}).",
+    willChangeStructure: "This change alters the device's communication objects: {{diff}} of {{total}} bytes of configuration, com-object table and group tables will change, in one write (device mask {{mask}}).",
+    structuralCovered: "Written together with \"{{part}}\": the change alters the communication objects.",
+    fullDownloadCta: "Full download…",
     inSync: "Device is already in sync, nothing to program.",
     programming: "Programming… the device restarts, this takes a few seconds.",
     doneVerified: "Programmed and verified ({{bytes}} bytes written).",

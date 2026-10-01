@@ -42,33 +42,34 @@ export async function linkChan(ctx: ChanCtx, obj: { refId: string; number: numbe
   else await ctx.client.link(ctx.pid, ctx.did, obj.refId, ga);
 }
 
-// Flash the parameter segment. Returns whether the change was ROUTED to a full download because it
-// alters the com-object table (the server refuses the surgical flash as stale, and exercising that
-// routing is part of the contract). A UI flash's success IS the server's verified verdict (the driver
-// throws on a not-verified dialog); the API path checks FlashResult.verified explicitly.
-export async function flashParamsChan(ctx: ChanCtx, label: string): Promise<{ result?: FlashResult; routed: boolean }> {
+// Flash the parameter segment. Returns whether the change was written as a structural flash (it alters
+// the com-object table and the family writes that with the group tables in one bracket), or ROUTED to a
+// full download because the family cannot (the server refuses the surgical flash as stale, and
+// exercising that routing is part of the contract). A UI flash's success IS the server's verified
+// verdict (the driver throws on a not-verified dialog); the API path checks FlashResult.verified.
+export async function flashParamsChan(ctx: ChanCtx, label: string): Promise<{ result?: FlashResult; routed: boolean; structural: boolean }> {
   if (ctx.channel === "ui") {
-    try { await ctx.ui!.flash("params"); return { routed: false }; }
+    try { const { structural } = await ctx.ui!.flash("params"); return { routed: false, structural }; }
     catch (e) {
-      if (isInSync(e)) return { routed: false }; // nothing to write, same as the API `unchanged` path
+      if (isInSync(e)) return { routed: false, structural: false }; // nothing to write, same as the API `unchanged` path
       if (!isStale(e)) throw e;
       ctx.log(`${label}: alters the com-object table → full download (ui)`);
       await ctx.ui!.flashDownload("params");
-      return { routed: true };
+      return { routed: true, structural: false };
     }
   }
   try {
     const dry = await ctx.client.flashDry(ctx.pid, ctx.did);
-    if (dry.kind !== "dryRun") return { result: dry, routed: false }; // in sync: nothing to write
+    if (dry.kind !== "dryRun") return { result: dry, routed: false, structural: false }; // in sync: nothing to write
     const result = await ctx.client.flashReal(ctx.pid, ctx.did, (p) => ctx.log(`${label} ${p}`));
     if (result.kind !== "flashed" || result.verified !== true) throw new Error(`${label}: not verified (${result.kind}, verified=${result.verified})`);
-    return { result, routed: false };
+    return { result, routed: false, structural: result.structural === true };
   } catch (e) {
     if (!isStale(e)) throw e;
     ctx.log(`${label}: alters the com-object table → full download (api)`);
     const result = await ctx.client.downloadReal(ctx.pid, ctx.did, (p) => ctx.log(`${label} download ${p}`));
     if (result.kind !== "flashed" || result.verified !== true) throw new Error(`${label}: routed download not verified (${result.kind}, verified=${result.verified})`);
-    return { result, routed: true };
+    return { result, routed: true, structural: false };
   }
 }
 

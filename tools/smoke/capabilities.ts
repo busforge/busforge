@@ -1,5 +1,5 @@
 // One driver per DeviceCapabilities key (readParams, readLinks, flashParams, flashLinks,
-// fullDownload). Each runs in the requested channel (api = production endpoints, ui = the real web
+// fullDownload, structuralFlash). Each runs in the requested channel (api = production endpoints, ui = the real web
 // app) over the SAME hardware. The oracle everywhere is the same: the device's own read-back matches
 // busforge's image — a write is "placed" only when the device confirms the bytes it now holds (a
 // FlashResult.verified on the api path, a non-erroring flash dialog on the ui path, both re-checked
@@ -19,8 +19,8 @@ export interface CapabilityResult {
   channel: Channel;
   // "unsafe" = the product claims it but the spec declares it must not be exercised on the bench
   // (see DeviceSpec.unsafe). "unproven" = a channel surface that cannot be exercised on this device
-  // in this run (e.g. the from-factory CommissionDialog on a kept-addressed device with no
-  // uiFullDownloadTrigger). Both are reported honestly, proven by nothing, never faked green; neither
+  // in this run (e.g. a structural flash on a device whose spec names no structuralTrigger). Both are
+  // reported honestly, proven by nothing, never faked green; neither
   // is a run failure, but neither counts toward the done-bar (which requires every capability `pass`).
   state: "pass" | "fail" | "unsafe" | "unproven";
   detail: string;
@@ -57,10 +57,8 @@ async function readBackConfig(ctx: CapCtx) {
 // group tables) in one bracket and require the device to verify it.
 //   api: dry-run → download → assert flashed+verified+mask.
 //   ui : CommissionDialog when the device is provisioned from prog mode (the from-factory headline
-//        proof; the operator presses the button); on a device kept addressed between runs the
-//        from-factory surface is not reproducible without a reset, so it is recorded not-run and the
-//        UI download path is instead proven by the flashParams sweep routing a stale change to
-//        FlashDialog's needs-download (see flashParamsChan).
+//        proof; the operator presses the button); on a device kept addressed between runs, the
+//        FlashDialog's full-download action on its existing address.
 export async function capFullDownload(ctx: CapCtx): Promise<CapabilityResult> {
   const base = { capability: "fullDownload", channel: ctx.channel };
   if (ctx.channel === "ui") {
@@ -70,26 +68,11 @@ export async function capFullDownload(ctx: CapCtx): Promise<CapabilityResult> {
       const view = await readBackConfig(ctx);
       return { ...base, state: "pass", detail: `commissioned via CommissionDialog, ${allComObjects(view).length} objects` };
     }
-    // A device kept addressed between runs cannot be from-factory commissioned without a reset. The
-    // automatable UI full-download is FlashDialog's needs-download route, reached by a change that
-    // rewrites the com-object table. Exercise it with the spec's declared trigger, then restore.
-    const trig = ctx.spec.uiFullDownloadTrigger;
-    if (!trig) return { ...base, state: "unproven", detail: "UI full-download not exercised: kept-addressed device with no uiFullDownloadTrigger (the from-factory CommissionDialog needs a physical reset)" };
-    const canonical = findParam(await config(ctx), trig.paramRefId)?.value;
-    if (canonical === undefined) return { ...base, state: "fail", detail: `uiFullDownloadTrigger param ${trig.paramRefId} not on this device` };
-    if (canonical === trig.value) return { ...base, state: "fail", detail: `uiFullDownloadTrigger value ${trig.value} equals the canonical value; pick one that alters the com-object table` };
-    await setParamChan(ctx, trig.paramRefId, trig.value);
-    await ctx.ui!.flashDownload("params"); // needs-download → confirm-download: THE proof this route works
-    await ctx.settle(3000);
-    // Restore the canonical value. Unlike the trigger set (which must take the needs-download route, or
-    // the trigger was the wrong one and the driver fails loud), the restore is only cleanup: route it
-    // surgical-or-download exactly as the api path does, so a trigger whose reverse happens to be a plain
-    // parameter change (the device already holds the trigger's com-object table) still restores cleanly
-    // instead of failing on a "no full-download offer" the proof above already delivered.
-    await setParamChan(ctx, trig.paramRefId, canonical);
-    await flashParamsChan(ctx, "restore fullDownload trigger");
+    // A device kept addressed between runs cannot be from-factory commissioned without a reset; the
+    // FlashDialog offers the full download on its existing address.
+    await ctx.ui!.flashDownload("params");
     const view = await readBackConfig(ctx);
-    return { ...base, state: "pass", detail: `UI full-download via FlashDialog needs-download (trigger ${short(trig.paramRefId)}), restored, ${allComObjects(view).length} objects` };
+    return { ...base, state: "pass", detail: `UI full-download via the FlashDialog, ${allComObjects(view).length} objects` };
   }
   const dry = await ctx.client.downloadDry(ctx.pid, ctx.did);
   if (dry.kind !== "dryRun") return { ...base, state: "fail", detail: `dry-run returned ${dry.kind}, expected dryRun` };
@@ -154,6 +137,38 @@ export async function capFlashParams(ctx: CapCtx): Promise<CapabilityResult> {
   return { ...base, state: "pass", detail: `${swept.length} param(s) swept, each verified + reverted, zero drift`, evidence: { seedSwept: swept } };
 }
 
+// structuralFlash: a parameter change that alters the com-object table (the spec's structuralTrigger),
+// written as one structural flash, then its revert the same way, each required to verify and to have
+// been the structural write (not a surgical flash, not a full download). An independent read-back
+// afterwards must show no drift.
+export async function capStructuralFlash(ctx: CapCtx): Promise<CapabilityResult> {
+  const base = { capability: "structuralFlash", channel: ctx.channel };
+  const trig = ctx.spec.structuralTrigger;
+  if (!trig) return { ...base, state: "unproven", detail: "no structuralTrigger in the spec: no change that alters the com-object table was written" };
+  const canonical = findParam(await config(ctx), trig.paramRefId)?.value;
+  if (canonical === undefined) return { ...base, state: "fail", detail: `structuralTrigger param ${trig.paramRefId} not on this device` };
+  if (canonical === trig.value) return { ...base, state: "fail", detail: `structuralTrigger value ${trig.value} equals the canonical value; pick one that alters the com-object table` };
+  const objectsBefore = allComObjects(await config(ctx)).length;
+  await setParamChan(ctx, trig.paramRefId, trig.value);
+  const objectsWith = allComObjects(await config(ctx)).length;
+  const set = await flashParamsChan(ctx, `structural ${short(trig.paramRefId)}=${trig.value}`);
+  if (!set.structural) return { ...base, state: "fail", detail: `setting ${short(trig.paramRefId)}=${trig.value} was not written as a structural flash (routed to a download: ${set.routed})` };
+  await ctx.settle(2000);
+  await setParamChan(ctx, trig.paramRefId, canonical);
+  const back = await flashParamsChan(ctx, `structural revert ${short(trig.paramRefId)}=${canonical}`);
+  if (!back.structural) return { ...base, state: "fail", detail: `the revert to ${canonical} was not written as a structural flash (routed to a download: ${back.routed})` };
+  const after = await readBackConfig(ctx);
+  if (!after.readback?.paramsRead || !after.readback.linksRead) return { ...base, state: "fail", detail: "the read-back after the structural flashes did not read parameters and links" };
+  const drift = after.blocks.flatMap((b) => b.items).flatMap((it) => (it.kind === "param" && it.param.changed ? [it.param.refId] : []));
+  const linkDrift = allComObjects(after).filter((c) => c.changed).map((c) => c.number);
+  if (drift.length || linkDrift.length) return { ...base, state: "fail", detail: `read-back shows drift after the revert: params ${drift.slice(0, 5).map(short).join(", ") || "none"}, objects ${linkDrift.join(", ") || "none"}` };
+  return {
+    ...base, state: "pass",
+    detail: `${short(trig.paramRefId)} ${canonical}→${trig.value}→${canonical} (${objectsBefore}→${objectsWith}→${allComObjects(after).length} objects), each a verified structural flash, zero drift`,
+    evidence: { set: set.result, revert: back.result },
+  };
+}
+
 // readParams: read the device's parameter memory and decode it. The server reports what the read
 // actually covered (readback.paramsRead); the drift is zero when the device matches our image, which
 // holds after the write drivers have run. In the ui channel the read is triggered from the config
@@ -184,6 +199,7 @@ export const CAP_DRIVERS: Record<string, (ctx: CapCtx) => Promise<CapabilityResu
   fullDownload: capFullDownload,
   flashLinks: capFlashLinks,
   flashParams: capFlashParams,
+  structuralFlash: capStructuralFlash,
   readParams: capReadParams,
   readLinks: capReadLinks,
 };
