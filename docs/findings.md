@@ -874,3 +874,24 @@ from ETS: on System B it writes every byte its parameter model owns, as the para
 System 7 only the bytes that differ from the device, and it brackets the group tables without ETS's
 unload and segment declaration. Against the MDT capture the writes are exact: Busforge's are the bytes
 ETS changed, with ETS's values, given the configuration ETS had downloaded before as the baseline.
+
+## 29. ETS imports only the certificates from a keyring
+
+ETS 6.4.1 under Wine on the bench host, 2026-10-02, a new project "Keyring Test" with the Jung 400021SE
+(activated by ETS, its tool key held by the project "Bench") inserted from the catalog at 1.1.204.
+*Projekt > Sicherheit > Schlüsselbund importieren* asks for a project password first, then for the
+keyring's.
+
+- A Busforge keyring with the Jung's `ToolKey`, `SequenceNumber` and `SerialNumber` and no `FDSK`:
+  "Import fehlgeschlagen. Die Datei enthält keine Gerätezertifikate." Password and signature passed.
+- The same with the Jung's `FDSK`: "1 Gerätezertifikat(e) importiert", listed by serial
+  (`000A:00000204`), not assigned. So did a file from the export endpoint, and one with an `Interface`
+  element.
+- *Info > Geräteinfo* of 1.1.204 in that project: mask `FFFF` and the address, nothing else (a plain
+  read of a secured device). The same after the serial was set on the device and the certificate showed
+  as assigned to it. In "Bench", over the same bridge: mask `07B0`, serial, firmware, application
+  loaded and running.
+
+ETS therefore uses a keyring's certificates for a device it commissions itself, and ignores the tool
+key of a device that is already activated. A device Busforge activated reaches ETS only through a
+master reset and the certificate.

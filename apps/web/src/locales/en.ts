@@ -104,10 +104,23 @@ const en = {
     exporting: "Exporting…",
     done: "Export downloaded",
     failed: "Export failed",
+    keyringTitle: "Keys for other tools (.knxkeys)",
+    keyringHint: "An ETS keyring with this project's KNX Data Secure keys, encrypted with the password above (required, ASCII only). Home Assistant (xknx) reads the tool keys, group keys and sequence numbers from it. ETS imports only the device certificates (serial number and FDSK): it can take over a device Busforge commissioned only after a master reset.",
+    keyringSubmit: "Download .knxkeys",
+    keyringPasswordRequired: "Set a password first: a keyring is always encrypted.",
+    keyringDone: "Keyring downloaded",
   },
   // Localized backend error codes. The server sends a stable `code`; unknown
   // codes fall back to the raw English message it ships alongside.
   errors: {
+    KEYRING_PASSWORD_INVALID: "A keyring needs a password of printable ASCII characters (no umlauts), so that every tool reads the same key from it.",
+    KEYRING_EMPTY: "This project holds no KNX Data Secure keys or device certificates, so there is nothing to export.",
+    KEYRING_DEVICE_UNPLACED: "A key belongs to a device without an individual address. Give it one before exporting the keyring.",
+    KEYRING_SEQUENCE_INVALID: "A stored sequence number is not a number, so the keyring was not written.",
+    KEYRING_SERIAL_CONFLICT: "A device's certificate names another serial number than its tool key. The keyring was not written.",
+    KEYRING_SELF_CHECK_FAILED: "The written keyring did not read back with the same keys. Nothing was downloaded.",
+    KEYRING_MALFORMED: "The keyring could not be written from this project's data.",
+    KEYRING_KEY_INVALID: "A key has the wrong length for a keyring.",
     WRONG_PASSWORD: "Wrong password.",
     DECRYPT_FAILED: "Could not decrypt the project. Check the password, the file may also be corrupt.",
     PASSWORD_REQUIRED: "This project is password-protected. Enter its password.",

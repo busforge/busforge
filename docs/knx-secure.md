@@ -139,7 +139,7 @@ does. A failed Sync is a coded refusal (`SECURE_SYNC_FAILED`), never a blind ret
 
 ## The key store
 
-Tool keys live in a first-class Busforge store, not in an ETS keyring.
+Tool keys live in a first-class Busforge store, not in an ETS keyring (one can be exported, see [Keyring export](#keyring-export)).
 
 **Where they come from.** Inside the password-protected project file (the same `0.xml` Busforge
 already decrypts to parse), every secure device carries a `<Security>` element with a base64 16-byte
@@ -202,6 +202,46 @@ it talk to its own devices, so the `.busforge` archive always includes them, uns
 is encrypted only when an export password is set, so an unencrypted archive contains device keys in
 the clear, and the export dialog warns about exactly that before writing one. On import the keys are
 re-sealed under the importing installation's master key. See [export-format.md](export-format.md).
+
+### Keyring export
+
+The export dialog also writes the project's keys as an ETS keyring (`.knxkeys`,
+`POST /api/projects/:id/keyring`): the format ETS 5/6 exports and xknx (Home Assistant) and Calimero
+read. Every key is AES-128-CBC encrypted under `PBKDF2-HMAC-SHA256(password, "1.keyring.ets.knx.org",
+65536, 16)` with the first 16 bytes of `SHA-256(Created)` as IV, and the file is signed with a hash over
+its element tree and that key ([packages/project/src/keyring.ts](../packages/project/src/keyring.ts),
+checked against real ETS exports from xknx's tests). A password is required and must be printable
+ASCII: Calimero reads it as ASCII, xknx as UTF-8, so only ASCII means the same key to both.
+
+What goes in:
+
+| Element | From | For |
+|---|---|---|
+| `Device` with `ToolKey`, `SequenceNumber`, `SerialNumber` | the key store (the sequence is the device's own, last seen) | xknx, Calimero |
+| `Device` with `SerialNumber` and `FDSK` | stored device certificates | ETS, Calimero |
+| `GroupAddresses/Group` with `Key` | the group keys | xknx, Calimero |
+| `Interface` with `Group Address Senders` | each sender assigned to a secured address, with the other assigned senders and every device with a tool key linked there | xknx (as accepted senders), Calimero |
+
+Only ETS 6.4.1 and xknx 3.20.0 have read an exported file; Calimero is listed from its reader's source
+(`io.calimero.secure.Keyring`), not from a run.
+
+**ETS takes only the certificates.** ETS 6.4.1 (*Projekt > Sicherheit > Schlüsselbund importieren*)
+imports a Busforge keyring, signature and all, but reports a file without certificates as "contains no
+device certificates" and does not use the tool keys: a project holding only the keyring's key read the
+activated Jung 400021SE plainly (mask `FFFF`), also with the certificate assigned to it by serial
+([findings.md](findings.md#29-ets-imports-only-the-certificates-from-a-keyring)). So ETS takes over a
+device Busforge activated only after a master reset, from the certificate. The dialog says so.
+
+**The interface sender lists lean wide.** A software receiver only accepts a secured telegram from an
+address it lists, so every keyed device linked to the address is listed, whether or not one of its
+objects transmits there. That is more than a device's own security table (PID 54) carries. The lists follow ETS's meaning, the others that send to that
+interface, so a sender is in a list only when another sender shares its address: a project whose only
+assigned sender is Busforge's own address lists that address nowhere, and xknx then drops its secured
+telegrams (it builds its accepted senders from the lists and the devices).
+
+Before the file leaves, the server reads it back with the same reader that checks ETS's files; a
+signature or key that does not come back the same refuses the download (`KEYRING_SELF_CHECK_FAILED`).
+A project without keys or certificates is refused (`KEYRING_EMPTY`), not exported empty.
 
 ## Using it
 

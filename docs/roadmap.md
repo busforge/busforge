@@ -153,9 +153,15 @@ started until the capability it depends on is hardware-proven.
   slot; the import counts them, the PID 54 sender rule trusts the stored order.
 - **Project-level com-object flag overrides** are not parsed; whether an object transmits comes from
   the application program, which matters for the PID 54 sender rule.
-- **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
-  address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
-  such a device over; wanted for users, not needed for the bench. *Decided 2026-10-01: build it.*
+- **ETS does not take over a device Busforge activated.** The keyring export
+  ([knx-secure.md](knx-secure.md#keyring-export)) carries the tool keys, but ETS 6 imports only the
+  certificates from it ([findings.md](findings.md#29-ets-imports-only-the-certificates-from-a-keyring)),
+  so such a device reaches ETS only after a master reset. Whether xknx or Calimero, given the keyring,
+  talk to a device on the bus is not shown: only that they read the file (xknx 3.20.0, offline).
+- **A keyring names a lone sender nowhere.** An interface's `Senders` list holds the other senders on
+  the address, as ETS writes it, so a project with a single assigned sender (often Busforge's own
+  address) puts it in no list, and xknx drops its secured telegrams. Whether ETS lists such a sender
+  some other way is not known; an ETS keyring export of such a project would show it.
 - **Peers of an address whose key changed are not flagged.** A key Busforge generates, or one deleted
   when an address turns plain or is set to "never secured", changes the security object of every
   secure device on the address; only the device whose link changed shows a change

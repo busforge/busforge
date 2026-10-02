@@ -10,6 +10,8 @@ node_modules/
 *.knxkeys
 # except small synthetic test fixtures (no proprietary data)
 !packages/**/test/fixtures/*.knxproj
+# and the public keyring test files from xknx's test suite (MIT)
+!packages/project/test/fixtures/knxkeys/*.knxkeys
 
 # server runtime state
 apps/server/data/

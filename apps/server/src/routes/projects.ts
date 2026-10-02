@@ -8,6 +8,7 @@ import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "
 import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
 import { putBaggage, checkBaggageSize } from "../db/baggage.ts";
 import { exportProject } from "../db/exportProject.ts";
+import { exportKeyring } from "../db/keyringExport.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
 import { recentTelegrams } from "../db/telegrams.ts";
@@ -210,6 +211,20 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const artifact = await packBusforge(data, text(body.password) || undefined);
     return new Response(artifact, {
       headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${safe}.busforge"` },
+    });
+  }
+
+  // /api/projects/:id/keyring  -> the project's KNX Data Secure keys as an ETS keyring (.knxkeys),
+  // encrypted under the password given in the body (required: the format has no unencrypted form).
+  if (seg.length === 4 && seg[3] === "keyring" && req.method === "POST") {
+    const body = ((await req.json().catch(() => null)) ?? {}) as { password?: unknown };
+    // Trimmed as the .busforge export's password is, so the same entry opens both files.
+    const password = typeof body.password === "string" ? body.password.trim() : "";
+    if (!password) return err("KEYRING_PASSWORD_INVALID", "a keyring password is required");
+    const { xml, name } = exportKeyring(db, id, password, state.now(), state.masterKey);
+    const safe = name.replace(/[^\w.-]+/g, "_") || "project";
+    return new Response(xml, {
+      headers: { "content-type": "application/xml; charset=utf-8", "content-disposition": `attachment; filename="${safe}.knxkeys"` },
     });
   }
 

@@ -149,6 +149,22 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+// Hand a binary response to the browser as a download, named by its Content-Disposition.
+async function downloadResponse(res: Response, fallbackName: string): Promise<void> {
+  if (!res.ok) { await jsonOrThrow<never>(res); return; } // throws a localized ApiError
+  const blob = await res.blob();
+  const cd = res.headers.get("content-disposition") ?? "";
+  const filename = /filename="([^"]+)"/.exec(cd)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // A dry run answers with its preview directly; a real write answers with its task, awaited here.
 // `onTask` learns the submitted write's task, so a caller can tell its own job from someone else's.
 function programDevice(id: string, deviceId: string, route: "flash" | "flash-ga" | "download", dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> {
@@ -222,18 +238,18 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ password: password || undefined }),
     });
-    if (!res.ok) { await jsonOrThrow<never>(res); return; } // throws a localized ApiError
-    const blob = await res.blob();
-    const cd = res.headers.get("content-disposition") ?? "";
-    const filename = /filename="([^"]+)"/.exec(cd)?.[1] ?? "project.busforge";
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    await downloadResponse(res, "project.busforge");
+  },
+
+  // Download the project's KNX Data Secure keys as an ETS keyring (.knxkeys), encrypted with
+  // the password (required).
+  async exportKeyring(id: string, password: string): Promise<void> {
+    const res = await fetch(`/api/projects/${id}/keyring`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    await downloadResponse(res, "project.knxkeys");
   },
 
   setProjectConnection: (id: string, connectionId: string | null): Promise<{ connectionId: string | null }> =>

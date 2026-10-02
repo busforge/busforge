@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, KeyRound, Loader2, ShieldAlert } from "lucide-react";
+import { Download, KeyRound, KeySquare, Loader2, ShieldAlert } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -41,7 +41,16 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
 
   const exportMut = useMutation({
     mutationFn: () => api.exportProject(projectId, password.trim() || undefined),
+    onMutate: () => setError(null),
     onSuccess: () => { toast.success(t("export.done")); setOpen(false); },
+    onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("export.failed"), { description: msg }); },
+  });
+  // The keyring is offered when the project holds keys; it is always encrypted, so it needs the password.
+  const hasKeys = secureDevices > 0 || (project?.groupKeyCount ?? 0) > 0;
+  const keyringMut = useMutation({
+    mutationFn: () => api.exportKeyring(projectId, password.trim()),
+    onMutate: () => setError(null),
+    onSuccess: () => { toast.success(t("export.keyringDone")); setOpen(false); },
     onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("export.failed"), { description: msg }); },
   });
 
@@ -87,6 +96,17 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
               ? t("export.secretsWarning", { count: secureDevices })
               : t("export.groupKeysWarning", { count: project?.groupKeyCount ?? 0 })}
           </p>
+        )}
+
+        {hasKeys && (
+          <div className="space-y-1.5 rounded-md border border-border px-3 py-2" data-testid="export-keyring">
+            <p className="flex items-center gap-1.5 text-sm font-medium"><KeySquare className="size-3.5" /> {t("export.keyringTitle")}</p>
+            <p className="text-xs text-muted-foreground">{t("export.keyringHint")}</p>
+            {!password.trim() && <p className="text-xs text-muted-foreground">{t("export.keyringPasswordRequired")}</p>}
+            <Button variant="outline" size="sm" onClick={() => keyringMut.mutate()} disabled={!password.trim() || keyringMut.isPending} data-testid="export-keyring-submit">
+              {keyringMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} {t("export.keyringSubmit")}
+            </Button>
+          </div>
         )}
 
         {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
