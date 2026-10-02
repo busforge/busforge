@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -9,6 +9,10 @@ import { classify } from "../src/deviceprofile.ts";
 // The structural flash (DeviceProfile.flashStructure) against a simulated device: it writes a change
 // that alters the com-object table, verifies it after the restart, and never reports verified what
 // the device does not hold.
+// Each test plans a full download and a structural flash over a real application program: about
+// 0.7 s on a laptop, past Bun's 5 s default on a CI runner busy with the other workspaces' tests.
+setDefaultTimeout(30_000);
+
 const REAL = join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real");
 const real = (f: string) => gunzipSync(readFileSync(join(REAL, f))).toString("utf8");
 
