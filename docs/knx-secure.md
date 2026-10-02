@@ -470,9 +470,8 @@ where a secure device is one the project holds a tool key for:
 - **Setting `off`** deletes the key; **setting `on`** makes one if there is none; **setting `auto`** makes
   one if devices are linked and all are secure.
 
-A new or deleted key changes the security object of every secure device on the address. Only the
-device whose link changed shows a change; the others need their GA flash all the same (roadmap).
-Deleting an address keeps its key, as before, so an address created again at the same raw value is
+A new or deleted key changes the security object of every secure device on the address; each of them
+shows it ([below](#security-object-baseline)). Deleting an address keeps its key, as before, so an address created again at the same raw value is
 secured with it.
 
 **Shown on the GVS AMMA 1.1.203, 2026-10-02** (bench, API on an isolated server, project imported from
@@ -482,6 +481,38 @@ switched the output on and its status object sent a secured `01` on 0/0/1, then 
 Restored by linking the object back to 0/0/1 and a second verified GA flash (7 bytes). The key
 element for index 2 stays in the device's PID 53, as ETS leaves it. The plain-link confirmation and
 the mode dialog were driven in the browser, with no bus write.
+
+### Security object baseline
+
+A change to a device's security object often comes from somewhere else: a key generated or deleted for
+an address, another device linking a transmitting object to it or changing its address, a sender
+assigned in the group-address dialog, a snapshot restore. None of these touches the device's own
+parameters or links, so the parameter and link baselines cannot show it. ETS shows such a receiver as
+unchanged; Busforge flags it.
+
+Each secure device keeps the fingerprint of the security object last verified on it
+(`devices.security_base`, `deviceservice.ts` `securityFingerprint`): a hash of the group key table
+(keys under their address-table indices), the sender table with its sequence numbers zeroed, and the
+numbers of the secured objects, built by the same `buildSecurityObject` call and inputs the GA flash
+and full download load. Sequence numbers are left out because they move with every session.
+
+- **Recorded** by a verified GA flash, full download or structural flash, from the inputs that write
+  used, and by a GA flash that finds the device already holding them (it compares the key table, the
+  object flags and the senders it reads from the device); an unverified write and a dry run record
+  nothing. A `.busforge` export carries it; a product replacement clears it.
+- **Not adopted at an ETS import.** ETS does not flag a receiver whose senders changed, so a device in an
+  ETS project may hold a stale object while the project looks programmed. Every secure device starts as
+  unknown, and a GA flash settles it against the device (writing only if it differs).
+- **Compared** whenever the project is read. A difference shows as **Security changed** on the device;
+  no recorded fingerprint, or an object that cannot be decided for the project as it stands (for
+  instance `SECURE_SENDERS_UNPROVEN`), shows as **Security unknown**. Neither is undone by reverting the
+  device; a GA flash of it clears both.
+- **Left out:** a device never programmed (flagged as such already), and a secure device of a memory
+  model that does not load the security object: Busforge refuses its group tables, so nothing it could
+  write would settle a flag.
+
+Not shown on hardware: the flag is computed from the project, and was driven in route tests (a sender
+assigned, a key replaced, a peer linking its transmitting object and changing its address).
 
 ### Activation from the device certificate
 

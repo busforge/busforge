@@ -904,6 +904,99 @@ describe("a Data Secure device: its table writes carry the security object", () 
   });
 });
 
+describe("a Data Secure device: a security object that no longer matches is shown", () => {
+  const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
+  const security = async (state: AppState, projectId: string, deviceId: string) =>
+    (((await (await handleApi(req(`/api/projects/${projectId}`), state))!.json()) as any).devices.find((d: any) => d.id === deviceId).changes.security ?? null) as string | null;
+  async function setup(state: AppState) {
+    const p = await projectWithApp(state, m0162);
+    putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "1", source: "import" }], state.masterKey);
+    putGroupKeys(state.db, p.projectId, [{ raw: 1, key: Buffer.alloc(16, 0x5a), source: "import" }], state.masterKey);
+    setDeviceLink(state.db, p.projectId, p.deviceId, "O-1_R-1", [1]);
+    return p;
+  }
+  const gaFlash = async (state: AppState, p: { projectId: string; deviceId: string }, verified: boolean) => {
+    gaFlashImpl = async () => flashed(verified);
+    try { return await programmed(state, post(state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga`)); }
+    finally { gaFlashImpl = realGaFlash; }
+  };
+
+  test("unknown until a verified GA flash records it, then changed by a sender or key change made elsewhere", async () => {
+    const state = freshState();
+    const p = await setup(state);
+    expect(await security(state, p.projectId, p.deviceId)).toBe("unknown");
+    await gaFlash(state, p, true);
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+
+    // A sender assigned to the address (not this device's own link) changes its sender table.
+    putGroupSenders(state.db, p.projectId, [{ gaRaw: 1, ia: "1.1.100", source: "busforge" }]);
+    expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
+    // The link baseline is untouched: the device's own change count says nothing about it.
+    expect(getDeviceChangedKeys(state.db, p.projectId, p.deviceId).links.size).toBe(0);
+    // An unverified write records nothing.
+    await gaFlash(state, p, false);
+    expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
+    await gaFlash(state, p, true);
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+
+    // A new key for the address, as one generated or re-keyed elsewhere.
+    putGroupKeys(state.db, p.projectId, [{ raw: 1, key: Buffer.alloc(16, 0x6b), source: "generated" }], state.masterKey);
+    expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
+  });
+
+  test("another secure device linking a transmitting object to the address flags this one, not itself", async () => {
+    const state = freshState();
+    const p = await setup(state);
+    await gaFlash(state, p, true);
+    // A second secure device of the same product at another address.
+    const cols = (state.db.query("PRAGMA table_info(devices)").all() as { name: string }[]).map((c) => c.name).filter((c) => !["id", "instance_id", "ia"].includes(c));
+    state.db.prepare(`INSERT INTO devices (instance_id, ia, ${cols.join(", ")}) SELECT 'peer', '1.1.250', ${cols.join(", ")} FROM devices WHERE project_id = ? AND instance_id = ?`).run(p.projectId, p.deviceId);
+    state.db.prepare("UPDATE devices SET security_base = NULL WHERE instance_id = 'peer'").run();
+    putDeviceSecurity(state.db, p.projectId, [{ deviceId: "peer", toolKey: Buffer.alloc(16, 3), serialNumber: Buffer.alloc(6, 4), sequenceNumber: "7", source: "import" }], state.masterKey);
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+    // The object is the one this device links: it transmits, so the peer becomes one of its senders.
+    setDeviceLink(state.db, p.projectId, "peer", "O-1_R-1", [1]);
+    expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
+    expect(getDeviceChangedKeys(state.db, p.projectId, p.deviceId).links.size).toBe(0);
+    // Moving the peer to another address changes the entry this device would list.
+    await gaFlash(state, p, true);
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+    state.db.prepare("UPDATE devices SET ia = '1.1.251' WHERE instance_id = 'peer'").run();
+    expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
+  });
+
+  test("a GA flash that finds the device already matching records it, a dry run does not", async () => {
+    const state = freshState();
+    const p = await setup(state);
+    gaFlashImpl = async () => ({ kind: "unchanged", mask: "MV-0701", imageBytes: 1, backup: "x" });
+    try {
+      await post(state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga?dry=1`);
+      expect(await security(state, p.projectId, p.deviceId)).toBe("unknown");
+      await programmed(state, post(state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga`));
+    } finally { gaFlashImpl = realGaFlash; }
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+  });
+
+  test("a sequence number the device moved on does not count as a change", async () => {
+    const state = freshState();
+    const p = await setup(state);
+    await gaFlash(state, p, true);
+    state.db.prepare("UPDATE device_security SET seq_group = '99999' WHERE project_id = ?").run(p.projectId);
+    expect(await security(state, p.projectId, p.deviceId)).toBeNull();
+  });
+
+  test("the baseline travels with a .busforge export", async () => {
+    const state = freshState();
+    const p = await setup(state);
+    await gaFlash(state, p, true);
+    const res = (await handleApi(req(`/api/projects/${p.projectId}/export`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), state))!;
+    const form = new FormData();
+    form.set("file", new File([await res.arrayBuffer()], "p.busforge"));
+    const imp = (await (await handleApi(req("/api/projects/import-busforge", { method: "POST", body: form }), state))!.json()) as any;
+    expect(await security(state, imp.id, p.deviceId)).toBeNull();
+  });
+});
+
 describe("a Data Secure device: addressing and activation", () => {
   const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
   const secureProject = async (state: AppState) => {

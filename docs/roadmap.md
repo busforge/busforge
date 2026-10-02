@@ -144,10 +144,6 @@ started until the capability it depends on is hardware-proven.
   tool has talked to since keeps the older value until the next one (lower than the device's, which
   receivers accept). Secured group telegrams
   the monitor decrypts could refresh it as well; they do not today.
-- **A receiver whose sender list changed is not flagged.** Linking another device's transmitting
-  object to a secured address, or changing that device's individual address, changes the PID 54 of
-  every device on it; Busforge, like ETS, shows those receivers as unchanged until their tables are
-  written.
 - **A link token that does not resolve at import shifts the sending address.** Unresolved `Links`
   entries are dropped before the order is stored, so a second address can take the first (sending)
   slot; the import counts them, the PID 54 sender rule trusts the stored order.
@@ -162,12 +158,15 @@ started until the capability it depends on is hardware-proven.
   the address, as ETS writes it, so a project with a single assigned sender (often Busforge's own
   address) puts it in no list, and xknx drops its secured telegrams. Whether ETS lists such a sender
   some other way is not known; an ETS keyring export of such a project would show it.
-- **Peers of an address whose key changed are not flagged.** A key Busforge generates, or one deleted
-  when an address turns plain or is set to "never secured", changes the security object of every
-  secure device on the address; only the device whose link changed shows a change
-  ([knx-secure.md](knx-secure.md#group-address-security-mode)). Like the sender-list case above. Not
-  shown on hardware either: two secure devices on a Busforge-secured address, and a plain device on a
-  turned-plain one; and no ETS capture of a key Busforge generated.
+- **Key changes on hardware.** Peers of an address whose key or senders changed are flagged
+  ([knx-secure.md](knx-secure.md#security-object-baseline)), but not shown on hardware: two secure devices
+  on a Busforge-secured address, and a plain device on a turned-plain one; and no ETS capture of a key
+  Busforge generated.
+- **The security flag rebuilds configurations on every project read**: one per secure device and one
+  per other device linked to its secured addresses (shared within a read). Fine for the bench and a house;
+  a project with many secure devices would want it cached across reads.
+- **A secure device whose memory model does not load the security object is not flagged** when its
+  keys or senders change: Busforge refuses its group tables, and ETS has to write them.
 - **Link writers other than the link editor do not apply the security mode.** Reverting a link or a
   device, restoring a snapshot and replacing a product write links as stored; a plain device that lands
   on a secured address that way is refused at flash time (`SECURE_GA_WITHOUT_DEVICE_KEY`), a mode whose

@@ -15,7 +15,7 @@ import { recentTelegrams } from "../db/telegrams.ts";
 import { putGroupSenders } from "../db/groupSenders.ts";
 import { putDeviceSecurity, countOwnToolKeys } from "../db/deviceSecurity.ts";
 import { putGroupKeys } from "../db/groupKeys.ts";
-import { resolveAppXml, importGaps } from "../deviceservice.ts";
+import { resolveAppXml, importGaps, securityChanges } from "../deviceservice.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -146,7 +146,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
 
   // /api/projects/:id
   if (seg.length === 3 && req.method === "GET") {
-    const p = getProject(db, id);
+    const p = getProject(db, id, securityChanges(state, id));
     return p ? json(p) : err("PROJECT_NOT_FOUND", "project not found", 404);
   }
   if (seg.length === 3 && req.method === "PATCH") {
@@ -243,7 +243,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   if (seg.length === 6 && seg[3] === "snapshots" && seg[5] === "restore" && req.method === "POST") {
     const restored = restoreSnapshot(db, id, decodeURIComponent(seg[4]), state.now());
     if (!restored.ok) return err("SNAPSHOT_NOT_FOUND", "snapshot not found", 404);
-    return json({ ...getProject(db, id), gaStructureRestored: restored.gaStructureRestored });
+    return json({ ...getProject(db, id, securityChanges(state, id)), gaStructureRestored: restored.gaStructureRestored });
   }
 
   // /api/projects/:id/snapshots/:sid  -> delete a restore point

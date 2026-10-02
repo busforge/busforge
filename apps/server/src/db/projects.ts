@@ -196,7 +196,9 @@ export function listProjects(db: Database): ProjectSummary[] {
   }));
 }
 
-export function getProject(db: Database, id: string): StoredProject | null {
+// security: the per-device security-object state (deviceservice.ts securityChanges), which needs the
+// application programs and so is computed by the caller.
+export function getProject(db: Database, id: string, security?: ReadonlyMap<string, "changed" | "unknown">): StoredProject | null {
   const p = db.query("SELECT id, name, connection_id AS connectionId, ga_levels AS groupAddressLevels FROM projects WHERE id = ?").get(id) as
     | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
@@ -218,7 +220,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
   const secureIds = new Set((db.query("SELECT device_id AS id FROM device_security WHERE project_id = ?").all(id) as { id: string }[]).map((r) => r.id));
   const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
     ...d,
-    changes: changes.get(d.id) ?? { params: 0, links: 0, neverProgrammed: false },
+    changes: { ...(changes.get(d.id) ?? { params: 0, links: 0, neverProgrammed: false }), ...(security?.has(d.id) ? { security: security.get(d.id) } : {}) },
     searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
     secure: secureIds.has(d.id),
   }));

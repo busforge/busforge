@@ -84,7 +84,8 @@ only: a device already on the bus keeps the address it holds, and every read and
 one and finds nothing there until it is assigned. The dialog therefore offers the assignment right
 after saving; it opens the commissioning dialog, whose download step is optional. An address another
 device of the project holds is refused (`IA_TAKEN`). Other secured devices list this one's address in
-their PID 54, and are not flagged when it changes (see the roadmap).
+their PID 54; they show as "Security changed" until their group addresses are flashed
+([knx-secure.md](knx-secure.md#security-object-baseline)).
 
 ```bash
 P=http://localhost:3000/api/projects/<project-id>

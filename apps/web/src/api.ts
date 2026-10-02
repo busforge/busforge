@@ -15,7 +15,9 @@ export type {
 
 // neverProgrammed: no configuration of this project has been verified on the device since it was
 // placed or its product replaced.
-export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean }
+// security: the device's Data Secure security object differs from the one last verified on it
+// ("changed", written by a GA flash or full download), or that cannot be told ("unknown").
+export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
 // security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
 export type GroupAddressSecurity = "auto" | "on" | "off";

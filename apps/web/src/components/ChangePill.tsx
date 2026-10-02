@@ -1,4 +1,4 @@
-import { Zap } from "lucide-react";
+import { ShieldAlert, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { DeviceChanges } from "../api.ts";
 
@@ -19,13 +19,26 @@ export function ChangePill({ changes }: { changes?: DeviceChanges }) {
       </span>
     );
   }
-  if (!n || !changes) return null;
+  const security = changes?.security;
+  if (!n && !security) return null;
   return (
-    <span
-      title={t("changes.title", { count: n })}
-      className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
-    >
-      <Zap className="size-3" /> {t("changes.pill", { count: n })}
-    </span>
+    <>
+      {n > 0 && (
+        <span
+          title={t("changes.title", { count: n })}
+          className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
+        >
+          <Zap className="size-3" /> {t("changes.pill", { count: n })}
+        </span>
+      )}
+      {security && (
+        <span
+          title={t(security === "changed" ? "changes.securityTitle" : "changes.securityUnknownTitle")} data-testid={`security-${security}`}
+          className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-medium text-primary"
+        >
+          <ShieldAlert className="size-3" /> {t(security === "changed" ? "changes.security" : "changes.securityUnknown")}
+        </span>
+      )}
+    </>
   );
 }

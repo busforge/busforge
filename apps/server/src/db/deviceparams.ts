@@ -103,7 +103,7 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1 WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, security_base = NULL WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
@@ -150,7 +150,9 @@ export function getSourceFile(db: Database, projectId: string): string | null {
 // their baseline, and how many com-objects have a differing GA-link set.
 // neverProgrammed: no configuration of this project has been verified on the device since it was
 // placed or its product replaced, so it needs a full download whatever its configuration.
-export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean }
+// security: the device's Data Secure security object differs from the one last verified on it, or that
+// cannot be told (deviceservice.ts securityChanges, merged in by the routes); absent otherwise.
+export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
 export function getProjectChanges(db: Database, projectId: string): Map<string, DeviceChanges> {
   const out = new Map<string, DeviceChanges>();
   const entry = (id: string) => { const c = out.get(id) ?? { params: 0, links: 0, neverProgrammed: false }; out.set(id, c); return c; };

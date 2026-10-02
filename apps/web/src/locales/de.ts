@@ -515,6 +515,10 @@ const de: Messages = {
     title_other: "{{count}} Änderungen seit der letzten Programmierung",
     never: "Nie programmiert",
     neverTitle: "Auf diesem Gerät wurde keine Konfiguration dieses Projekts bestätigt, seit es platziert oder sein Produkt getauscht wurde: Es braucht einen vollständigen Download (In Betrieb nehmen).",
+    security: "Security geändert",
+    securityTitle: "Schlüssel oder Absender einer gesicherten Gruppenadresse dieses Geräts haben sich geändert, seit sein Security-Objekt zuletzt geschrieben wurde (auch über die Verknüpfung oder Adresse eines anderen Geräts): Seine Gruppenadressen müssen geflasht werden.",
+    securityUnknown: "Security unklar",
+    securityUnknownTitle: "Ob das Security-Objekt dieses Geräts zum Projekt passt, ist nicht bekannt: Seit dem letzten Schreiben wurde keines festgehalten, oder es lässt sich für den jetzigen Projektstand nicht entscheiden. Ein Flash der Gruppenadressen hält es fest.",
   },
   task: {
     title: "Bus-Warteschlange",

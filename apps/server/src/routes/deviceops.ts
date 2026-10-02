@@ -10,7 +10,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, secureTablesFor } from "../deviceservice.ts";
+import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
@@ -57,7 +57,7 @@ function linkBaselineIncomplete(db: AppState["db"], projectId: string, deviceId:
 // and a replaced/deleted target must never inherit success from its predecessor.
 async function programSubmission(
   state: AppState, projectId: string, deviceId: string, programmingToken: string, dry: boolean,
-  run: () => Promise<FlashResult>, commit: CommitFn, adopt: () => void,
+  run: () => Promise<FlashResult>, commit: CommitFn, adopt: () => void, onUnchanged?: () => void,
 ): Promise<FlashResult> {
   const assertTarget = () => {
     if (getDeviceForFlash(state.db, projectId, deviceId)?.programmingToken !== programmingToken) {
@@ -69,6 +69,8 @@ async function programSubmission(
   assertTarget();
   // The commit is the job's last step: a restart that finds it recorded closes the task as done.
   if (!dry && result.kind === "flashed" && result.verified) commit(result, adopt);
+  // "unchanged" is a comparison with what the device holds: whatever it covers may be recorded as such.
+  if (!dry && result.kind === "unchanged") onUnchanged?.();
   return result;
 }
 
@@ -134,13 +136,16 @@ function structuralFlash(
   const baseParams = getDeviceParamBase(db, projectId, deviceId);
   const modules = getDeviceModules(db, projectId, deviceId);
   const dry = url.searchParams.get("dry") === "1";
+  let fingerprint: string | null = null;
   return programOrPreview(state,
     { projectId, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-structure" }, dry, "before-flash",
     (progress, commit, gate) => programSubmission(state, projectId, deviceId, dev.programmingToken, dry, () => {
       if (getLinkBaseGaps(db, projectId, deviceId) !== 0) throw linkBaselineIncomplete(db, projectId, deviceId);
+      const tables = securityTablesWithFingerprint(state, projectId, deviceId, resolved.links, dev.ia);
+      fingerprint = tables.fingerprint;
       return flashDeviceStructure({
         projectId, deviceId, ia: dev.ia, appXml,
-        connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, projectId, deviceId),
+        connection: conn, dataDir: state.dataDir, ...tables.ctx,
         params, baseParams, links: resolved.links, moduleInstances: modules,
         dryRun: dry, onProgress: progress, ...gate,
       });
@@ -149,6 +154,7 @@ function structuralFlash(
       resetLinkBase(db, projectId, deviceId, resolved.flashedRefIds, submittedLinks);
       keepLinkBaseOnly(db, projectId, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
       setLinkBaseGaps(db, projectId, deviceId, 0);
+      setSecurityBase(state, projectId, deviceId, fingerprint);
     }),
   );
 }
@@ -412,23 +418,27 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined);
     if (gaStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, gaAppXml);
     if (gaStale !== "surgical") return gaStale;
+    let gaFingerprint: string | null = null;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-ga" }, dryGa, "before-flash-ga",
       (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryGa, () => {
         // Re-checked when the job starts: a read-back queued ahead of it may have found gaps.
         if (getLinkBaseGaps(db, id, deviceId) !== 0) throw linkBaselineIncomplete(db, id, deviceId);
+        const tables = securityTablesWithFingerprint(state, id, deviceId, resolved.links, dev.ia);
+        gaFingerprint = tables.fingerprint;
         return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
-          connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, id, deviceId),
+          connection: conn, dataDir: state.dataDir, ...tables.ctx,
           dryRun: dryGa, onProgress: progress, ...gate,
         });
       }, commit, () => {
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
         keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
         setLinkBaseGaps(db, id, deviceId, 0);
+        setSecurityBase(state, id, deviceId, gaFingerprint);
         if (gaEndsNever) clearNeverProgrammed(db, id, deviceId);
-      }),
+      }, () => setSecurityBase(state, id, deviceId, gaFingerprint)),
     );
   }
 
@@ -451,18 +461,24 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const dlParams = getDeviceParams(db, id, deviceId);
     const dlModules = getDeviceModules(db, id, deviceId);
     const dryDl = url.searchParams.get("dry") === "1";
+    let dlFingerprint: string | null = null;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "download" }, dryDl, "before-download",
-      (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => downloadDeviceFull({
+      (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryDl, () => {
+        const tables = securityTablesWithFingerprint(state, id, deviceId, resolved.links, dev.ia);
+        dlFingerprint = tables.fingerprint;
+        return downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
-          connection: conn, dataDir: state.dataDir, ...secureTablesFor(state, id, deviceId),
+          connection: conn, dataDir: state.dataDir, ...tables.ctx,
           params: dlParams, links: resolved.links, moduleInstances: dlModules,
           dryRun: dryDl, onProgress: progress, ...gate,
-        }), commit, () => {
+        });
+      }, commit, () => {
         resetParamBase(db, id, deviceId, dlParams, unwrittenParamRefs(state, id, deviceId, dlParams, dlModules));
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
         keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
         setLinkBaseGaps(db, id, deviceId, 0);
+        setSecurityBase(state, id, deviceId, dlFingerprint);
         clearNeverProgrammed(db, id, deviceId);
       }),
     );

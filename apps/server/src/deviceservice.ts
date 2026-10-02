@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { iaToNum, numToGa } from "@busforge/knx";
+import { createHash } from "node:crypto";
+import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -10,7 +11,7 @@ import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupS
 import { getGroupKeys } from "./db/groupKeys.ts";
 import { classify, type SecureCreds } from "./deviceprofile.ts";
 import { resolveDcaModule } from "./dca.ts";
-import { ApiError } from "./errors.ts";
+import { ApiError, errorCode } from "./errors.ts";
 import { fullRef, stripRef } from "./refids.ts";
 import type { AppState } from "./app.ts";
 
@@ -36,7 +37,8 @@ export function secureCredsFor(state: AppState, projectId: string, deviceId: str
 // credentials, the project's group keys its security object is loaded with, the senders the project
 // assigns to each group address, and the other devices of the project linked to its secured addresses.
 // Empty otherwise.
-export function secureTablesFor(state: AppState, projectId: string, deviceId: string): { secure?: SecureCreds; security?: SecureTablesCtx } {
+// models: the other devices' models, shared across calls that read one project state (securityChanges).
+export function secureTablesFor(state: AppState, projectId: string, deviceId: string, models = new Map<string, OtherDeviceModel | null>()): { secure?: SecureCreds; security?: SecureTablesCtx } {
   // An address whose mode and key disagree (a snapshot restores the mode, never the key) would reach
   // the device secured against "off", or plain against "on".
   const mismatch = state.db.query("SELECT l.ga_raw AS g, a.security AS mode FROM device_links l JOIN group_addresses a ON a.project_id = l.project_id AND a.raw = l.ga_raw WHERE l.project_id = ? AND l.device_id = ? AND ((a.security = 'on') <> EXISTS (SELECT 1 FROM group_keys k WHERE k.project_id = l.project_id AND k.raw = l.ga_raw)) AND a.security <> 'auto' LIMIT 1")
@@ -69,7 +71,7 @@ export function secureTablesFor(state: AppState, projectId: string, deviceId: st
   if (own.size === 0) return { secure, security: { groupKeys, senders, otherDevices } };
   const rows = state.db.query("SELECT device_id AS deviceId, com_obj_ref_id AS refId, slot, ga_raw AS g FROM device_links WHERE project_id = ? AND device_id <> ?")
     .all(projectId, deviceId) as { deviceId: string; refId: string; slot: number; g: number }[];
-  const devices = new Map<string, OtherDeviceModel | null>();
+  const devices = models;
   const deviceInfo = (id: string): OtherDeviceModel | null => {
     if (devices.has(id)) return devices.get(id)!;
     const dev = getDeviceForFlash(state.db, projectId, id);
@@ -102,6 +104,74 @@ export function secureTablesFor(state: AppState, projectId: string, deviceId: st
   }
   for (const [g, byDevice] of found) otherDevices.set(g, [...byDevice.values()]);
   return { secure, security: { groupKeys, senders, otherDevices } };
+}
+
+// The fingerprint of what a Data Secure device's security object holds for the project as it stands:
+// the group key table (keys under their address-table indices), the senders it lists, and which objects
+// are secured, from the inputs and builder the GA flash and full download load it with (sized to the
+// highest linked object rather than the device's declared count, which only the device knows). Sequence
+// numbers are left out: they move with every session, the device keeps its own. null for a device
+// without a tool key, or whose memory model does not load the object (its tables are refused instead).
+// Throws, as the load would, when the object cannot be decided.
+export function securityFingerprint(state: AppState, projectId: string, deviceId: string, models?: Map<string, OtherDeviceModel | null>): string | null {
+  if (!isSecureDevice(state.db, projectId, deviceId)) return null;
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  if (!classify(app).loadsSecurityObject) return null;
+  const dev = getDeviceForFlash(state.db, projectId, deviceId);
+  const resolved = resolveDeviceLinks(state, projectId, deviceId);
+  if (!dev || !resolved) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  return securityFingerprintOf(resolved.links, secureTablesFor(state, projectId, deviceId, models).security, dev.ia);
+}
+export function securityFingerprintOf(links: ComObjectLink[], security: SecureTablesCtx | undefined, ia: string): string | null {
+  if (!security) return null;
+  const count = Math.max(0, ...links.map((l) => l.comObjNum));
+  const so = buildSecurityObject(links, count, security.groupKeys, { byGa: security.senders ?? new Map(), ownIa: iaToNum(ia), otherDevices: security.otherDevices ?? new Map() });
+  const senders = Buffer.from(so.senders);
+  for (let i = 0; i < senders.length; i += SENDER_ENTRY) senders.fill(0, i + 2, i + SENDER_ENTRY);
+  const secured = [...so.goFlags].flatMap((f, i) => (f ? [i + 1] : []));
+  const h = createHash("sha256");
+  for (const part of [so.groupKeys, senders, Buffer.from(secured.join(","))]) h.update(Buffer.from([part.length >> 8, part.length & 0xff])).update(part);
+  return h.digest("hex").slice(0, 32);
+}
+
+// Per secure device whose security object differs from the one last verified on it ("changed"), or
+// where that cannot be told ("unknown": no fingerprint was ever recorded, or the object cannot be
+// decided for the project as it stands). A key or sender change made through any path shows here,
+// on every device it reaches. A device never programmed is flagged as such already and left out.
+export function securityChanges(state: AppState, projectId: string): Map<string, "changed" | "unknown"> {
+  const out = new Map<string, "changed" | "unknown">();
+  const rows = state.db.query("SELECT d.instance_id AS id, d.security_base AS base FROM devices d JOIN device_security s ON s.project_id = d.project_id AND s.device_id = d.instance_id WHERE d.project_id = ? AND d.never_programmed = 0")
+    .all(projectId) as { id: string; base: string | null }[];
+  const models = new Map<string, OtherDeviceModel | null>();
+  for (const r of rows) {
+    let now: string | null;
+    try { now = securityFingerprint(state, projectId, r.id, models); } catch (e) {
+      // A coded refusal (the object cannot be decided) is "unknown"; anything else is a bug and surfaces.
+      if (!errorCode(e)) throw e;
+      out.set(r.id, "unknown");
+      continue;
+    }
+    if (now === null) continue;
+    if (r.base === null) out.set(r.id, "unknown");
+    else if (r.base !== now) out.set(r.id, "changed");
+  }
+  return out;
+}
+
+// The security tables a write loads, with the fingerprint of the object they make, so the baseline a
+// verified write records is exactly what it wrote. The fingerprint is null when the object cannot be
+// fingerprinted (the write then refuses on the same inputs).
+export function securityTablesWithFingerprint(state: AppState, projectId: string, deviceId: string, links: ComObjectLink[], ia: string): { ctx: ReturnType<typeof secureTablesFor>; fingerprint: string | null } {
+  const ctx = secureTablesFor(state, projectId, deviceId);
+  let fingerprint: string | null = null;
+  try { fingerprint = securityFingerprintOf(links, ctx.security, ia); } catch (e) { if (!errorCode(e)) throw e; }
+  return { ctx, fingerprint };
+}
+
+// Record the fingerprint of the object a verified write loaded (null: not known).
+export function setSecurityBase(state: AppState, projectId: string, deviceId: string, fingerprint: string | null): void {
+  state.db.prepare("UPDATE devices SET security_base = ? WHERE project_id = ? AND instance_id = ?").run(fingerprint, projectId, deviceId);
 }
 
 // What the sender rule knows about another device of the project linked to a secured address.

@@ -1,6 +1,7 @@
 import { createSpace, renameSpace, deleteSpace, spaceDeviceImpact, assignDeviceSpace, spaceExists } from "../db/spaceedit.ts";
 import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
+import { securityChanges } from "../deviceservice.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -19,7 +20,7 @@ export async function handle(req: Request, _url: URL, seg: string[], state: AppS
     const type = text(body.type);
     if (!type) return err("SPACE_FIELDS_REQUIRED", "space type required");
     createSpace(db, id, body.parentId ?? null, type, text(body.name));
-    return json(getProject(db, id), 201);
+    return json(getProject(db, id, securityChanges(state, id)), 201);
   }
   // /api/projects/:id/spaces/:spaceId/impact  -> devices unassigned if deleted
   if (seg.length === 6 && seg[3] === "spaces" && seg[5] === "impact" && req.method === "GET") {
@@ -32,13 +33,13 @@ export async function handle(req: Request, _url: URL, seg: string[], state: AppS
     if (req.method === "PATCH") {
       const body = (await req.json().catch(() => ({}))) as { name?: unknown };
       if (!renameSpace(db, id, spaceId, text(body.name))) return err("SPACE_NOT_FOUND", "space not found", 404);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
     if (req.method === "DELETE") {
       if (!spaceExists(db, id, spaceId)) return err("SPACE_NOT_FOUND", "space not found", 404);
       createSnapshot(db, id, { kind: "auto", reason: "before-space-edit" }, state.now());
       deleteSpace(db, id, spaceId);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
   }
   // /api/projects/:id/devices/:deviceId/space  -> assign device to a space (or null to unassign)
@@ -46,7 +47,7 @@ export async function handle(req: Request, _url: URL, seg: string[], state: AppS
     const deviceId = decodeURIComponent(seg[4]);
     const body = (await req.json().catch(() => ({}))) as { spaceId?: number | null };
     if (!assignDeviceSpace(db, id, deviceId, body.spaceId ?? null)) return err("SPACE_ASSIGN_FAILED", "device or space not found", 404);
-    return json(getProject(db, id));
+    return json(getProject(db, id, securityChanges(state, id)));
   }
 
   return null;

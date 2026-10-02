@@ -515,6 +515,10 @@ const en = {
     title_other: "{{count}} changes since last programming",
     never: "Never programmed",
     neverTitle: "No configuration of this project has been verified on this device since it was placed or its product replaced: it needs a full download (Commission).",
+    security: "Security changed",
+    securityTitle: "The keys or senders of a secured group address this device uses changed since its security object was last written (also through another device's link or address): its group addresses need flashing.",
+    securityUnknown: "Security unknown",
+    securityUnknownTitle: "Whether this device's security object matches the project is not known: none was recorded since it was last written, or it cannot be decided for the project as it stands. Flashing its group addresses records it.",
   },
   task: {
     title: "Bus queue",

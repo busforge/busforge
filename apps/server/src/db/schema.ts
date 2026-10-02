@@ -425,6 +425,11 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE group_addresses ADD COLUMN security TEXT NOT NULL DEFAULT 'auto';
   `,
+  // The fingerprint of the security object last verified on a Data Secure device
+  // (deviceservice.ts securityFingerprint). NULL: not known.
+  `
+  ALTER TABLE devices ADD COLUMN security_base TEXT;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

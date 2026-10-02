@@ -1,7 +1,7 @@
 import { createGroupRange, renameGroupRange, deleteGroupRange, createGroupAddress, updateGroupAddress, deleteGroupAddress, rangeLinkImpact, countLinksForRaws, groupRangeExists, groupAddressExists } from "../db/groupedit.ts";
 import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
-import { buildGaDevicesView } from "../deviceservice.ts";
+import { buildGaDevicesView, securityChanges } from "../deviceservice.ts";
 import { addGroupSender, removeGroupSender } from "../db/groupSenders.ts";
 import { getGaSecurity, setGaSecurityMode } from "../db/gaSecurity.ts";
 import { hasGroupKey } from "../db/groupKeys.ts";
@@ -47,7 +47,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const body = (await req.json().catch(() => ({}))) as { parentId?: number | null; name?: unknown; number?: number };
     if (typeof body.number !== "number") return err("GA_NUMBER_INVALID", "number required");
     createGroupRange(db, id, body.parentId ?? null, text(body.name), body.number);
-    return json(getProject(db, id), 201);
+    return json(getProject(db, id, securityChanges(state, id)), 201);
   }
   // /api/projects/:id/group-ranges/:rangeId/impact  -> live links lost if deleted
   if (seg.length === 6 && seg[3] === "group-ranges" && seg[5] === "impact" && req.method === "GET") {
@@ -60,13 +60,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (req.method === "PATCH") {
       const body = (await req.json().catch(() => ({}))) as { name?: unknown };
       if (!renameGroupRange(db, id, rangeId, text(body.name))) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
     if (req.method === "DELETE") {
       if (!groupRangeExists(db, id, rangeId)) return err("GA_RANGE_NOT_FOUND", "range not found", 404);
       createSnapshot(db, id, { kind: "auto", reason: "before-ga-edit" }, state.now());
       deleteGroupRange(db, id, rangeId);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
   }
   // /api/projects/:id/group-addresses  -> create a group address in a range
@@ -75,7 +75,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const body = (await req.json().catch(() => ({}))) as { rangeId?: number; sub?: number; name?: unknown; dpt?: unknown };
     if (typeof body.rangeId !== "number" || typeof body.sub !== "number") return err("GA_FIELDS_REQUIRED", "rangeId and sub required");
     createGroupAddress(db, id, body.rangeId, body.sub, text(body.name), text(body.dpt));
-    return json(getProject(db, id), 201);
+    return json(getProject(db, id, securityChanges(state, id)), 201);
   }
   // /api/projects/:id/group-addresses/:raw/impact  -> live links lost if deleted
   if (seg.length === 6 && seg[3] === "group-addresses" && seg[5] === "impact" && req.method === "GET") {
@@ -101,13 +101,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return true;
       })();
       if (!found) return err("GA_NOT_FOUND", "group address not found", 404);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
     if (req.method === "DELETE") {
       if (!groupAddressExists(db, id, raw)) return err("GA_NOT_FOUND", "group address not found", 404);
       createSnapshot(db, id, { kind: "auto", reason: "before-ga-edit" }, state.now());
       deleteGroupAddress(db, id, raw);
-      return json(getProject(db, id));
+      return json(getProject(db, id, securityChanges(state, id)));
     }
   }
 
