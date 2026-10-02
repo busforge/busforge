@@ -197,7 +197,8 @@ started until the capability it depends on is hardware-proven.
   knows management on it will not work on a USB stick that only answers to its own address.
 - **Show two identical USB interfaces told apart on hardware.** The server opens a USB connection by
   its saved serial and refuses an ambiguous match ([connections.md](connections.md)); that is
-  unit-tested only. Not yet run with both of the two identical sticks attached at once.
+  unit-tested only. Parked 2026-10-02: only one stick is available, so two identical interfaces
+  attached at once cannot be shown.
 - **DCA-replacement plugins, phase 2**: writing a device-specific configuration back, instead of
   the read-only view that exists today.
 - Remaining parity gaps in the configuration view (HSV colour and picture parameters are shown
