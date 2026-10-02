@@ -275,14 +275,14 @@ const en = {
     ACTIVATION_UNCONFIRMED: "The device took the new key but could not be confirmed under it. The key is stored; run the activation again.",
     SECURE_SESSION_REQUIRED: "This write is only possible inside a KNX Data Secure session.",
     SECURE_ANSWER_REJECTED: "The device acknowledged the request and answered, but its answers could not be authenticated (a failed check, or an answer that was not secured), so none of them was used. A wrong or changed key, a device that left secure mode, or something altering the traffic looks like this.",
-    SECURE_KEY_MISSING: "A KNX Data Secure device answers at this address, and the project holds no key for it. Either the project was imported without its keys (the ETS project file carries them), or this is not the expected device.",
-    PROPERTY_ELEMENT_TOO_LONG: "One entry of the security object does not fit a request this device accepts, so it was not written.",
-    NO_FREE_IA: "No free individual address is available in area 1.",
-    INTERNAL: "Something went wrong.",
     TOOL_KEY_INVALID: "A tool key is 16 bytes as 32 hex digits; a serial number, when given, 6 bytes as 12.",
     TOOL_KEY_SERIAL_MISSING: "Busforge has no serial number for this device, and the secure session needs it. Enter the serial printed on the device or its certificate.",
     TOOL_KEY_SERIAL_MISMATCH: "This serial number differs from the one on file for this device, or from the one the device reports, so it belongs to another device.",
     TOOL_KEY_SECURITY_MODE_OFF: "The device answered under this key, but its security mode is off: this is its factory key (from the certificate), not a tool key. Nothing was stored; activate the device from its certificate instead.",
+    SECURE_KEY_MISSING: "A KNX Data Secure device answers at this address, and the project holds no key for it. Either the project was imported without its keys (the ETS project file carries them), or this is not the expected device.",
+    PROPERTY_ELEMENT_TOO_LONG: "One entry of the security object does not fit a request this device accepts, so it was not written.",
+    NO_FREE_IA: "No free individual address is available in area 1.",
+    INTERNAL: "Something went wrong.",
   },
   devices: {
     searchPlaceholder: "Filter devices…",
@@ -375,10 +375,6 @@ const en = {
     saved: "Saved: {{to}} in the project (was {{from}}). A device already on the bus keeps the address it holds until {{to}} is assigned to it.",
     assign: "Assign now…",
   },
-  // Commission dialog: assign the individual address to the device in
-  // programming mode, then download the complete configuration. Bus writes.
-  secureActivate: {
-    menu: "Activate KNX Data Secure…",
   toolKey: {
     menu: "Deposit tool key…",
     title: "Deposit the tool key of {{device}}",
@@ -392,6 +388,10 @@ const en = {
     check: "Check and store",
     stored: "Stored: the device answered under this key ({{serial}}).",
   },
+  // Commission dialog: assign the individual address to the device in
+  // programming mode, then download the complete configuration. Bus writes.
+  secureActivate: {
+    menu: "Activate KNX Data Secure…",
     title: "Activate KNX Data Secure on {{device}}",
     description: "Writes to the real device at {{ia}}: switches its security mode on and gives it a tool key. The key on file is used; without one, Busforge generates a key and stores it before writing it. Only a device in factory state (never activated, or after a master reset) accepts this; afterwards every operation on it runs secured.",
     certificate: "Device certificate",

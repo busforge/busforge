@@ -275,14 +275,14 @@ const de: Messages = {
     ACTIVATION_UNCONFIRMED: "Das Gerät hat den neuen Schlüssel übernommen, ließ sich darunter aber nicht bestätigen. Der Schlüssel ist gespeichert; starte die Aktivierung erneut.",
     SECURE_SESSION_REQUIRED: "Dieser Schreibvorgang geht nur innerhalb einer KNX-Data-Secure-Sitzung.",
     SECURE_ANSWER_REJECTED: "Das Gerät hat die Anfrage bestätigt und geantwortet, aber seine Antworten ließen sich nicht authentifizieren (fehlgeschlagene Prüfung oder eine ungesicherte Antwort), deshalb wurde keine verwendet. Ein falscher oder geänderter Schlüssel, ein Gerät, das den Secure-Modus verlassen hat, oder etwas, das den Verkehr verändert, sieht so aus.",
-    SECURE_KEY_MISSING: "An dieser Adresse antwortet ein KNX-Data-Secure-Gerät, und das Projekt enthält keinen Schlüssel dafür. Entweder wurde das Projekt ohne seine Schlüssel importiert (die ETS-Projektdatei enthält sie), oder es ist nicht das erwartete Gerät.",
-    PROPERTY_ELEMENT_TOO_LONG: "Ein Eintrag des Sicherheitsobjekts passt in keine Anfrage, die dieses Gerät annimmt, und wurde nicht geschrieben.",
-    NO_FREE_IA: "In Bereich 1 ist keine freie physikalische Adresse verfügbar.",
-    INTERNAL: "Etwas ist schiefgelaufen.",
     TOOL_KEY_INVALID: "Ein Tool-Key sind 16 Bytes als 32 Hex-Ziffern, eine Seriennummer, wenn angegeben, 6 Bytes als 12.",
     TOOL_KEY_SERIAL_MISSING: "Busforge hat keine Seriennummer für dieses Gerät, und die sichere Sitzung braucht sie. Gib die Seriennummer vom Gerät oder seinem Zertifikat ein.",
     TOOL_KEY_SERIAL_MISMATCH: "Diese Seriennummer weicht von der für dieses Gerät gespeicherten oder der vom Gerät gemeldeten ab, sie gehört also zu einem anderen Gerät.",
     TOOL_KEY_SECURITY_MODE_OFF: "Das Gerät hat unter diesem Schlüssel geantwortet, aber sein Sicherheitsmodus ist aus: Das ist sein Werksschlüssel (aus dem Zertifikat), kein Tool-Key. Es wurde nichts gespeichert; aktiviere das Gerät stattdessen mit seinem Zertifikat.",
+    SECURE_KEY_MISSING: "An dieser Adresse antwortet ein KNX-Data-Secure-Gerät, und das Projekt enthält keinen Schlüssel dafür. Entweder wurde das Projekt ohne seine Schlüssel importiert (die ETS-Projektdatei enthält sie), oder es ist nicht das erwartete Gerät.",
+    PROPERTY_ELEMENT_TOO_LONG: "Ein Eintrag des Sicherheitsobjekts passt in keine Anfrage, die dieses Gerät annimmt, und wurde nicht geschrieben.",
+    NO_FREE_IA: "In Bereich 1 ist keine freie physikalische Adresse verfügbar.",
+    INTERNAL: "Etwas ist schiefgelaufen.",
   },
   devices: {
     searchPlaceholder: "Geräte filtern…",
@@ -375,10 +375,6 @@ const de: Messages = {
     saved: "Gespeichert: {{to}} im Projekt (bisher {{from}}). Ein Gerät, das schon am Bus ist, behält seine Adresse, bis ihm {{to}} vergeben wird.",
     assign: "Jetzt vergeben…",
   },
-  // Erstinbetriebnahme-Dialog: physikalische Adresse an das Gerät im
-  // Programmiermodus vergeben, dann die komplette Konfiguration laden. Schreibt auf den Bus.
-  secureActivate: {
-    menu: "KNX Data Secure aktivieren…",
   toolKey: {
     menu: "Tool-Key hinterlegen…",
     title: "Tool-Key von {{device}} hinterlegen",
@@ -392,6 +388,10 @@ const de: Messages = {
     check: "Prüfen und speichern",
     stored: "Gespeichert: Das Gerät hat unter diesem Schlüssel geantwortet ({{serial}}).",
   },
+  // Erstinbetriebnahme-Dialog: physikalische Adresse an das Gerät im
+  // Programmiermodus vergeben, dann die komplette Konfiguration laden. Schreibt auf den Bus.
+  secureActivate: {
+    menu: "KNX Data Secure aktivieren…",
     title: "KNX Data Secure auf {{device}} aktivieren",
     description: "Schreibt in das echte Gerät unter {{ia}}: schaltet seinen Sicherheitsmodus ein und gibt ihm einen Tool-Key. Verwendet wird der hinterlegte Key; ohne einen erzeugt Busforge einen und speichert ihn, bevor er geschrieben wird. Nur ein Gerät im Werkszustand (nie aktiviert oder nach einem Master-Reset) nimmt das an; danach läuft jede Operation mit ihm gesichert.",
     certificate: "Gerätezertifikat",
