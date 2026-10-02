@@ -146,8 +146,23 @@ already decrypts to parse), every secure device carries a `<Security>` element w
 tool key and a sequence number. No `.knxkeys` import and no keyring parser are needed. The device's
 serial number, needed for the Sync request, comes from the same device instance.
 
-Today **import is the only population path**. The store's schema anticipates manually deposited and
-provisioned keys, but there is no endpoint for either.
+Three paths populate it: the project import (`import`), the activation from a device certificate
+(`pending` until confirmed, then `provisioned`, see below), and a key deposited by hand (`manual`).
+
+**A key deposited by hand** (device menu, `PUT .../devices/:deviceId/tool-key`) is for a device
+another tool activated. It is stored only after the device answered a secure Sync under it, through
+the same identification as `secure-identify`; a device does not answer a Sync under a key it does not
+hold, so an unanswered or unauthenticated Sync refuses the deposit (`SECURE_SYNC_NO_RESPONSE`,
+`SECURE_SYNC_FAILED`, `SECURE_MODE_OFF`) and the key on file stays as it was. A device that answers
+but states its security mode is off was reached under its factory key, which is not a tool key
+(`TOOL_KEY_SECURITY_MODE_OFF`). Nothing is written to the device. The Sync carries the device's serial,
+which a device in secure mode does not give a plain read: it comes from the key or certificate on file,
+else from the request (`TOOL_KEY_SERIAL_MISSING` without one, `TOOL_KEY_SERIAL_MISMATCH` when it
+contradicts the one on file or the one the device reports inside the session; a wrong serial on file
+can only be corrected by a new import). The last sequence the device sent in that session, when it
+sent one, is recorded with the key. Depositing the key already on file keeps its source (a pending key
+becomes provisioned), so a key Busforge provisioned stays counted as its own; a different key replaces
+it, and the old one, dead on the device, no longer guards the project against deletion.
 
 | Column | Notes |
 |---|---|
@@ -155,7 +170,7 @@ provisioned keys, but there is no endpoint for either.
 | `tool_key` | 16-byte AES-128 key, **sealed at rest** |
 | `serial_number` | 6-byte device serial, needed for the Sync request |
 | `seq_group` | the project's group/data counter, kept for future secure group communication; **not** the tool-access counter |
-| `source` | `import`, `manual` or `provisioned` |
+| `source` | `import`, `manual`, `pending` or `provisioned` |
 
 A key that is not 16 bytes, or a serial that is not 6, is refused (`SECURE_KEY_BAD`) rather than
 stored. Tool keys are never returned to the client and never logged.

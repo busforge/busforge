@@ -289,6 +289,64 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json({ serial: cert.serial.toString("hex") });
   }
 
+  // /api/projects/:id/devices/:deviceId/tool-key  -> deposit a tool key by hand (one another tool
+  // gave the device). It is stored only after the device answered a secure Sync under it: a device
+  // does not answer a Sync under a key it does not hold, so an unanswered or unauthenticated Sync
+  // refuses the deposit and leaves the key on file as it was. The Sync carries the device's serial,
+  // which a device in secure mode does not give a plain read: it comes from the key or certificate on
+  // file, else from the request. Nothing is written to the device.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "tool-key" && req.method === "PUT") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const body = (await req.json().catch(() => ({}))) as { toolKey?: unknown; serial?: unknown };
+    const hex = (v: unknown, bytes: number): Buffer | null => {
+      if (typeof v !== "string") return null;
+      const s = v.replace(/[\s:-]/g, "");
+      return new RegExp(`^[0-9a-fA-F]{${bytes * 2}}$`).test(s) ? Buffer.from(s, "hex") : null;
+    };
+    const toolKey = hex(body.toolKey, 16);
+    if (!toolKey) return err("TOOL_KEY_INVALID", "a tool key is 16 bytes as 32 hex digits; a serial, when given, 6 bytes as 12", 400);
+    let given: Buffer | null = null;
+    if (body.serial !== undefined && body.serial !== "") {
+      given = hex(body.serial, 6);
+      if (!given) return err("TOOL_KEY_INVALID", "a tool key is 16 bytes as 32 hex digits; a serial, when given, 6 bytes as 12", 400);
+    }
+    const onFile = getDeviceSecurity(db, id, deviceId, state.masterKey);
+    const known = onFile?.serialNumber ?? getDeviceCertificate(db, id, deviceId, state.masterKey)?.serialNumber;
+    if (known && given && !known.equals(given)) {
+      return err("TOOL_KEY_SERIAL_MISMATCH", `the serial ${given.toString("hex")} differs from this device's on file, ${known.toString("hex")}`, 400);
+    }
+    const serial = known ?? given;
+    if (!serial) return err("TOOL_KEY_SERIAL_MISSING", "the device's serial is needed for the secure Sync and none is on file; enter it", 400);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const source = await state.queue.enqueue(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
+      async (progress) => {
+        let peer: bigint | null = null;
+        const found = await secureIdentify(conn, dev.ia, { toolKey, serial, onPeerSequence: (s) => { peer = s; } }, progress);
+        // A device in factory state answers a Sync under its factory key with its security mode
+        // off; that key is not a tool key, and storing it would let an activation adopt it.
+        if (found.securityMode.state === "off") {
+          throw new ApiError("TOOL_KEY_SECURITY_MODE_OFF", "the device answered under this key but states its security mode is off: this is its factory key, not a tool key; activate it from its device certificate", 400);
+        }
+        if (found.serial !== null && found.serial !== serial.toString("hex")) {
+          throw new ApiError("TOOL_KEY_SERIAL_MISMATCH", `the device reports serial ${found.serial}, not ${serial.toString("hex")}`, 400);
+        }
+        // Read inside the job: an activation queued before this one may have changed the entry.
+        // The key busforge already holds keeps its origin (a provisioned key stays busforge's own),
+        // and a pending one is now confirmed on the device.
+        const current = getDeviceSecurity(db, id, deviceId, state.masterKey);
+        const same = current?.toolKey.equals(toolKey);
+        const src = same ? (current!.source === "pending" ? "provisioned" : current!.source) : "manual";
+        putDeviceSecurity(db, id, [{ deviceId, toolKey, serialNumber: serial, sequenceNumber: peer !== null ? String(peer) : current?.sequenceNumber ?? "", source: src }], state.masterKey);
+        return src;
+      },
+    );
+    return json({ serial: serial.toString("hex"), source });
+  }
+
   // /api/projects/:id/devices/:deviceId/secure-activate  -> take the device from its factory key
   // to a tool key of busforge's, persisted before it is written (see activateDevice). Repeatable:
   // a device that already holds the key on file is left alone.

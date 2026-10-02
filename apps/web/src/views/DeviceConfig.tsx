@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -21,6 +21,7 @@ import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
 import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
 import { CommissionDialog } from "./CommissionDialog.tsx";
 import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
+import { ToolKeyDialog } from "./ToolKeyDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -119,6 +120,7 @@ export function DeviceConfig() {
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [commissionOpen, setCommissionOpen] = useState(false);
   const [secureOpen, setSecureOpen] = useState(false);
+  const [toolKeyOpen, setToolKeyOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
@@ -534,6 +536,9 @@ export function DeviceConfig() {
               <DropdownMenuItem onClick={() => setSecureOpen(true)} data-testid="secure-activate-device">
                 <ShieldCheck className="size-4" /> {t("secureActivate.menu")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setToolKeyOpen(true)} data-testid="tool-key-device">
+                <KeyRound className="size-4" /> {t("toolKey.menu")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -577,6 +582,14 @@ export function DeviceConfig() {
           open={secureOpen} onOpenChange={setSecureOpen}
           projectId={projectId} device={device}
           onActivated={() => void qc.invalidateQueries({ queryKey: qk.project(projectId) })}
+        />
+      )}
+
+      {device && (
+        <ToolKeyDialog
+          open={toolKeyOpen} onOpenChange={setToolKeyOpen}
+          projectId={projectId} device={device}
+          onStored={() => void qc.invalidateQueries({ queryKey: qk.project(projectId) })}
         />
       )}
 

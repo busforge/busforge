@@ -310,6 +310,12 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/certificate`, {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ certificate }),
     }).then((r) => jsonOrThrow<{ serial: string }>(r)),
+  // Deposit a tool key another tool gave the device; stored only once the device answered a secure
+  // Sync under it. Nothing is written to the device.
+  putToolKey: (id: string, deviceId: string, toolKey: string, serial: string): Promise<{ serial: string; source: string }> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/tool-key`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ toolKey, serial }),
+    }).then((r) => jsonOrThrow<{ serial: string; source: string }>(r)),
   // Take the device from its factory key to a tool key (the one on file, or one Busforge generates
   // and stores before writing it). A device that already holds the key on file is left alone.
   secureActivate: (id: string, deviceId: string): Promise<{ outcome: "activated" | "already-active" }> =>

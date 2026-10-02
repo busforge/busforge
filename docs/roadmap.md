@@ -169,9 +169,6 @@ started until the capability it depends on is hardware-proven.
   mode (whether the project file carries it is not checked yet), and linking a plain device to a
   secured address either asks to turn it plain (all secure devices on it need their tables written
   again) or is refused.
-- **No manual way to deposit a tool key.** Keys arrive only with a project import, so the key
-  store's `manual` source is currently unreachable. *Decided 2026-10-01: build it, in the device menu;
-  the key is checked with a Sync against the device before it is stored.*
 - **Individual-address assignment has no secure path.** It is a broadcast operation and cannot use
   a device session, so a secure device cannot be addressed this way.
 

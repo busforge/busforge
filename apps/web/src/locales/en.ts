@@ -270,6 +270,10 @@ const en = {
     PROPERTY_ELEMENT_TOO_LONG: "One entry of the security object does not fit a request this device accepts, so it was not written.",
     NO_FREE_IA: "No free individual address is available in area 1.",
     INTERNAL: "Something went wrong.",
+    TOOL_KEY_INVALID: "A tool key is 16 bytes as 32 hex digits; a serial number, when given, 6 bytes as 12.",
+    TOOL_KEY_SERIAL_MISSING: "Busforge has no serial number for this device, and the secure session needs it. Enter the serial printed on the device or its certificate.",
+    TOOL_KEY_SERIAL_MISMATCH: "This serial number differs from the one on file for this device, or from the one the device reports, so it belongs to another device.",
+    TOOL_KEY_SECURITY_MODE_OFF: "The device answered under this key, but its security mode is off: this is its factory key (from the certificate), not a tool key. Nothing was stored; activate the device from its certificate instead.",
   },
   devices: {
     searchPlaceholder: "Filter devices…",
@@ -366,6 +370,19 @@ const en = {
   // programming mode, then download the complete configuration. Bus writes.
   secureActivate: {
     menu: "Activate KNX Data Secure…",
+  toolKey: {
+    menu: "Deposit tool key…",
+    title: "Deposit the tool key of {{device}}",
+    description: "For a device another tool (ETS) activated: Busforge opens a secure session with the device at {{ia}} under this key and stores it only if the device answers. Nothing is written to the device; a key on file is replaced only by one the device accepts.",
+    key: "Tool key",
+    keyHint: "16 bytes as 32 hex digits; spaces, dashes and colons are ignored.",
+    serial: "Serial number",
+    serialHint: "12 hex digits. Only needed when Busforge has neither a key nor a certificate for this device: a device in secure mode does not give its serial without a key.",
+    idle: "Nothing has been sent to the device yet.",
+    running: "Checking: asking the device for a secure session under this key…",
+    check: "Check and store",
+    stored: "Stored: the device answered under this key ({{serial}}).",
+  },
     title: "Activate KNX Data Secure on {{device}}",
     description: "Writes to the real device at {{ia}}: switches its security mode on and gives it a tool key. The key on file is used; without one, Busforge generates a key and stores it before writing it. Only a device in factory state (never activated, or after a master reset) accepts this; afterwards every operation on it runs secured.",
     certificate: "Device certificate",
