@@ -416,3 +416,56 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
     await pb; // resolves: the queue survived A's failure
   });
 });
+
+// node-hid fake that records how the transport opened the device, over a given enumeration.
+function enumeratingHid(list: { vendorId: number; productId: number; serialNumber?: string; path?: string }[]) {
+  const opened: unknown[][] = [];
+  const HID = function (...args: unknown[]) {
+    opened.push(args);
+    return new FakeHidDevice();
+  } as unknown as { new (path: string): FakeHidDevice; new (vid: number, pid: number): FakeHidDevice };
+  return { opened, hid: { HID, devices: () => list } };
+}
+
+describe("KnxUsbTransport: which of several identical interfaces it opens", () => {
+  const twins = [
+    { vendorId: 0x147b, productId: 0x5120, serialNumber: "000200000074", path: "/dev/hidraw0" },
+    { vendorId: 0x147b, productId: 0x5120, serialNumber: "000200000075", path: "/dev/hidraw1" },
+  ];
+
+  test("opens the interface whose serial the connection names, by its path", async () => {
+    const { opened, hid } = enumeratingHid(twins);
+    await new KnxUsbTransport({ vendorId: 0x147b, productId: 0x5120, serial: "000200000075" }, hid).connect();
+    expect(opened).toEqual([["/dev/hidraw1"]]);
+  });
+
+  test("refuses two identical interfaces it cannot tell apart, instead of opening the first", async () => {
+    const { opened, hid } = enumeratingHid(twins);
+    const e = await new KnxUsbTransport({ vendorId: 0x147b, productId: 0x5120 }, hid).connect().catch((x) => x);
+    expect(e).toBeInstanceOf(KnxError);
+    expect((e as KnxError).code).toBe("USB_INTERFACE_AMBIGUOUS");
+    const same = enumeratingHid(twins.map((d) => ({ ...d, serialNumber: "X" })));
+    const e2 = await new KnxUsbTransport({ vendorId: 0x147b, productId: 0x5120, serial: "X" }, same.hid).connect().catch((x) => x);
+    expect((e2 as KnxError).code).toBe("USB_INTERFACE_AMBIGUOUS");
+    expect([...opened, ...same.opened]).toEqual([]);
+  });
+
+  test("refuses a named serial that is not attached", async () => {
+    const { opened, hid } = enumeratingHid(twins);
+    const e = await new KnxUsbTransport({ vendorId: 0x147b, productId: 0x5120, serial: "NOPE" }, hid).connect().catch((x) => x);
+    expect((e as KnxError).code).toBe("USB_INTERFACE_NOT_FOUND");
+    expect(opened).toEqual([]);
+  });
+
+  test("a single matching interface opens without a serial", async () => {
+    const { opened, hid } = enumeratingHid([twins[0], { vendorId: 0x0e77, productId: 0x0104, path: "/dev/hidraw7" }]);
+    await new KnxUsbTransport({ vendorId: 0x147b, productId: 0x5120 }, hid).connect();
+    expect(opened).toEqual([["/dev/hidraw0"]]);
+  });
+
+  test("an explicit path is opened as given", async () => {
+    const { opened, hid } = enumeratingHid(twins);
+    await new KnxUsbTransport({ path: "/dev/hidraw9" }, hid).connect();
+    expect(opened).toEqual([["/dev/hidraw9"]]);
+  });
+});

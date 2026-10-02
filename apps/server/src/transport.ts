@@ -83,7 +83,8 @@ export class AutoIpTunnel implements KnxTransport {
 // node-hid lazily on connect(), so the IP path never loads the native module.
 export function makeTransport(c: Connection): KnxTransport {
   if (c.type === "usb") {
-    return new KnxUsbTransport({ vendorId: c.usbVendorId ?? undefined, productId: c.usbProductId ?? undefined });
+    // An empty saved serial names no interface.
+    return new KnxUsbTransport({ vendorId: c.usbVendorId ?? undefined, productId: c.usbProductId ?? undefined, serial: c.usbSerial || undefined });
   }
   if (c.ipTransport === "udp") return new KnxIpTunnel(c.host, c.port);
   if (c.ipTransport === "tcp") return KnxIpTunnel.tcp(c.host, c.port);

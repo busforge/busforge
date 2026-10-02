@@ -9,6 +9,9 @@ export interface Device {
   appRef: string;       // Hardware2ProgramRefId
   manufacturer: number; // from the M-XXXX prefix
   comment: string;      // ETS "Beschreibung" (Comment/Description), for search
+  // ETS sets ApplicationProgramLoaded="true" once it downloaded the device; a device another
+  // tool programmed reads false as well.
+  applicationProgramLoaded: boolean;
 }
 
 // A placeable catalog product: a manufacturer product paired with an application

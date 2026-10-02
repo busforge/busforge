@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, sparseRuns, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
-import { runLoadPlan, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
+import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -345,6 +345,39 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
     // The first write went out, the second threw: no write AFTER the failing one.
     expect(dev.calls.filter((c) => c[0] === "memWrite").length).toBe(2);
+  });
+
+  test("a failure is marked as leaving the device unloaded only between the first load-state event and the last LoadCompleted", async () => {
+    const failAt = async (plan: LoadPlan, writeFailAt: number) => {
+      const dev = new RecDev();
+      dev.writeFailAt = writeFailAt;
+      return runLoadPlan(asDev(dev), plan).then(() => null, (e) => e);
+    };
+    // Inside the bracket: the error keeps its own identity and carries the mark.
+    const inside = await failAt(bracket(4), 2);
+    expect(inside.message).toMatch(/verify mismatch/);
+    expect(leftUnloaded(inside)).toBe(true);
+    // Before the bracket opened and after it closed again, nothing was left unloaded.
+    const before = await failAt([{ op: "writeMem", address: 0x10, bytes: Buffer.from("00", "hex") }, ...bracket(4)], 1);
+    expect(leftUnloaded(before)).toBe(false);
+    const after = await failAt([...bracket(4).slice(0, -1), { op: "writeMem", address: 0x10, bytes: Buffer.from("00", "hex") }], 3);
+    expect(leftUnloaded(after)).toBe(false);
+    // Two machines: the first one completed, the second is still open.
+    const two: LoadPlan = [
+      { op: "unload", lsm: 1 }, { op: "load", lsm: 1 }, { op: "loadCompleted", lsm: 1 },
+      { op: "unload", lsm: 4 }, { op: "load", lsm: 4 }, { op: "writeMem", address: 0x4000, bytes: Buffer.from("dead", "hex") }, { op: "loadCompleted", lsm: 4 },
+    ];
+    expect(leftUnloaded(await failAt(two, 1))).toBe(true);
+    // An unasserted LoadCompleted closes the machine only once its batched assertLoaded saw LOADED.
+    const batched: LoadPlan = [
+      { op: "unload", lsm: 4 }, { op: "load", lsm: 4 }, { op: "loadCompleted", lsm: 4, assert: false },
+      { op: "writeMem", address: 0x10, bytes: Buffer.from("00", "hex") }, { op: "assertLoaded", lsm: 4 },
+      { op: "writeMem", address: 0x11, bytes: Buffer.from("00", "hex") },
+    ];
+    expect(leftUnloaded(await failAt(batched, 1))).toBe(true);
+    expect(leftUnloaded(await failAt(batched, 2))).toBe(false);
+    expect(leftUnloaded(new Error("x"))).toBe(false);
+    expect(leftUnloaded(undefined)).toBe(false);
   });
 
   test("re-running the plan after a mid-write failure completes (the device was left recoverable)", async () => {

@@ -48,6 +48,16 @@ describe("0.xml parser", () => {
     expect(proj.devices[1].manufacturer).toBe(0x83);
   });
 
+  test("reads whether ETS loaded a device's application program", () => {
+    expect(proj.devices.map((d) => d.applicationProgramLoaded)).toEqual([true, true]);
+    // ETS leaves the attribute off a device it never downloaded.
+    const xml = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
+    expect(xml).not.toBe(xml0);
+    expect(parseProject(xml, undefined, "fallback").devices.map((d) => d.applicationProgramLoaded)).toEqual([true, false]);
+    const explicitFalse = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, '$1 ApplicationProgramLoaded="false"');
+    expect(parseProject(explicitFalse, undefined, "fallback").devices[1].applicationProgramLoaded).toBe(false);
+  });
+
   test("parses group addresses with 3-level address and DPT display", () => {
     expect(proj.groupAddresses).toHaveLength(2);
     expect(proj.groupAddresses[0]).toMatchObject({ address: "0/0/1", name: "Kitchen On/Off", dpt: "1.001" });

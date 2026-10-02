@@ -89,6 +89,23 @@ export interface RunOpts {
 }
 
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
+  // The load-state machines this run has sent an UNLOAD or LOAD to and not yet completed. A failure
+  // while any is open may leave the device without a complete application: an event that failed
+  // may still have reached the device, so it counts from the moment it is sent.
+  const open = new Set<number | "security">();
+  try { await runSteps(dev, plan, opts, open); }
+  catch (e) {
+    if (open.size > 0 && e !== null && typeof e === "object" && Object.isExtensible(e)) (e as { leftUnloaded?: boolean }).leftUnloaded = true;
+    throw e;
+  }
+}
+
+// Whether an error broke off a load plan inside its bracket, leaving the device unloaded.
+export function leftUnloaded(e: unknown): boolean {
+  return e !== null && typeof e === "object" && (e as { leftUnloaded?: unknown }).leftUnloaded === true;
+}
+
+async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set<number | "security">): Promise<void> {
   // Which write service the device takes is settled before the first load-state event, so a device
   // that does not answer the question is refused before anything is unloaded. A device written with
   // the confirmed extended write is never put into verify mode, and is not read back before the
@@ -105,10 +122,12 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
       case "disconnect": await dev.disconnect(); break;
       case "restart": await dev.restart(step.requireReboot ?? true); break;
       case "unload": {
+        open.add(step.lsm);
         await lsmEvent(dev, step.lsm, LSM.UNLOAD, opts.memMappedLsms);
         break;
       }
       case "load": {
+        open.add(step.lsm);
         await lsmEvent(dev, step.lsm, LSM.LOAD, opts.memMappedLsms);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
@@ -178,19 +197,26 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
         break;
       }
       case "stampAppId": await dev.propWrite(step.lsm, PID.PROGRAM_ID, step.data); break;
-      case "securityLsm": await securityLsmEvent(dev, step.event); break;
+      case "securityLsm": {
+        if (step.event !== LSM.LOAD_COMPLETED) open.add("security");
+        await securityLsmEvent(dev, step.event);
+        if (step.event === LSM.LOAD_COMPLETED) open.delete("security");
+        break;
+      }
       case "writeSecurityProp": await dev.propExtWriteElements(OBJECT_TYPE_SECURITY, 1, step.pid, step.start, step.elementSize, step.data); break;
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
           if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+          open.delete(step.lsm);
         }
         break;
       }
       case "assertLoaded": {
         const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
         if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
+        open.delete(step.lsm);
         break;
       }
     }

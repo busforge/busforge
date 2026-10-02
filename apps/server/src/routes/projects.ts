@@ -6,7 +6,7 @@ import { insertProject, createProject, listProjects, getProject, deleteProject, 
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
 import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
-import { putBaggage } from "../db/baggage.ts";
+import { putBaggage, checkBaggageSize } from "../db/baggage.ts";
 import { exportProject } from "../db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
 import { packBusforge, unpackBusforge } from "../db/busforgeArtifact.ts";
@@ -64,6 +64,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     let baggage = new Map<string, Buffer>();
     let baggageUnreadable = false;
     try { baggage = readBaggage(bytes, password); } catch { baggageUnreadable = true; }
+    checkBaggageSize([...baggage].map(([name, buf]) => ({ name, bytes: buf.length })));
 
     // Everything is stored in the DB; no project files are written at import. The
     // raw .knxproj is not kept (app programs live in the catalog, baggage in the

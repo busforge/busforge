@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { leftUnloaded } from "@busforge/knx";
 import { ApiError, errorCode } from "./errors.ts";
 
 // A single physical KNX interface backs every bus operation (one tunnel, one
@@ -246,6 +247,12 @@ export class TaskQueue {
         return r;
       } catch (e) {
         if (controller.signal.aborted && !writing) { task.state = "cancelled"; task.error = null; }
+        else if (leftUnloaded(e)) {
+          // The device holds no complete application until a full download; the client offers it.
+          task.state = "error";
+          task.error = `the write broke off inside its load bracket and may have left the device unloaded; ${errorCode(e) ? `${errorCode(e)}: ` : ""}${(e as Error).message}`;
+          task.errorCode = "FLASH_INTERRUPTED_UNLOADED";
+        }
         else { task.state = "error"; task.error = (e as Error).message; task.errorCode = errorCode(e) ?? null; }
         throw e;
       } finally {

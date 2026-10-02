@@ -199,7 +199,14 @@ restart
 - **The window a failure leaves.** On System B the bracket unloads the application and the security
   object before the first write. A flash cut off inside it leaves the device without a running
   application, and a secured device without its group keys, until the flash is repeated or a full
-  download completes it (see the roadmap entry on recovering an interrupted flash).
+  download completes it. The load runner marks a failure that falls between sending the first
+  Unload or Load and seeing every machine it opened LOADED again (after LoadCompleted, or its
+  batched assert); the task then fails with `FLASH_INTERRUPTED_UNLOADED` ("may have left the device
+  unloaded": a failed event may or may not have reached the device). The flash dialog writes no
+  further target and, where the family can be downloaded in full, offers the full download (also
+  when a later preview finds the device so, `DEVICE_LOAD_INCOMPLETE`). On System B the same flash
+  run again also completes the load. Busforge never resumes the bracket by itself. A failure after
+  the bracket closed (the restart, the read-back) is not marked.
 - **What is adopted.** A verified structural flash adopts the parameter and the link baseline, like
   the full download. It writes the group tables whole, so it takes the group-address flash's
   link-baseline guard (`LINK_BASELINE_INCOMPLETE`). Started from the group-address flash, it writes

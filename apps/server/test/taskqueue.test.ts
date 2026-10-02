@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { MemoryTaskStore, TaskQueue } from "../src/taskqueue.ts";
 import { ApiError } from "../src/errors.ts";
+import { KnxError } from "@busforge/knx";
 import { openDb } from "../src/db/schema.ts";
 import { SqliteTaskStore, closeUnfinishedTasks } from "../src/db/tasks.ts";
 
@@ -92,6 +93,17 @@ describe("TaskQueue", () => {
     expect(task?.state).toBe("error");
     expect(task?.error).toBe("device mask 1 != expected 2"); // raw message kept as fallback
     expect(task?.errorCode).toBe("MASK_MISMATCH"); // code flows through for localization
+  });
+
+  test("a write that broke off inside its load bracket is named as leaving the device unloaded", async () => {
+    const q = new TaskQueue(() => 0);
+    const cause = Object.assign(new KnxError("TUNNEL_CON_TIMEOUT", "the interface did not confirm the frame"), { leftUnloaded: true });
+    const j = q.enqueue(meta("d1"), async () => { throw cause; });
+    expect(j).rejects.toBe(cause);
+    const task = q.list("p1").find((t) => t.deviceId === "d1");
+    expect(task?.state).toBe("error");
+    expect(task?.errorCode).toBe("FLASH_INTERRUPTED_UNLOADED");
+    expect(task?.error).toContain("TUNNEL_CON_TIMEOUT: the interface did not confirm the frame");
   });
 
   test("exposes live phase + chunk progress", async () => {

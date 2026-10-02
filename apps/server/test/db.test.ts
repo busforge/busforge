@@ -12,7 +12,7 @@ import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDe
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
-import { putBaggage, getDeviceBaggage, projectHasBaggage } from "../src/db/baggage.ts";
+import { putBaggage, getDeviceBaggage, projectHasBaggage, checkBaggageSize } from "../src/db/baggage.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../src/db/importProject.ts";
 import { putDeviceSecurity, getDeviceSecurity } from "../src/db/deviceSecurity.ts";
@@ -229,10 +229,29 @@ describe("projects", () => {
     for (const d of getProject(db, "p1")!.devices) expect(d.changes).toEqual({ params: 0, links: 0, neverProgrammed: false });
   });
 
+  test("a device ETS never loaded imports as never programmed", () => {
+    const db = fresh();
+    const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
+      .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    const flags = Object.fromEntries(getProject(db, "p1")!.devices.map((d) => [d.id, d.changes.neverProgrammed]));
+    expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
+  });
+
+  test("a device without an application program (a power supply) is not seeded as never programmed", () => {
+    const db = fresh();
+    const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
+      .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"([^>]*?) Hardware2ProgramRefId="[^"]*"/, "$1$2");
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    const dev = getProject(db, "p1")!.devices.find((d) => d.id === "P-TEST-0_DI-2")!;
+    expect(dev.appRef).toBe("");
+    expect(dev.changes.neverProgrammed).toBe(false);
+  });
+
   test("tracks parameter changes and resets on flash", () => {
     const xml0 = `<?xml version="1.0" encoding="utf-8"?>
       <KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><Installations><Installation><Topology>
-        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
+        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" ApplicationProgramLoaded="true" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
           <ParameterInstanceRefs>
             <ParameterInstanceRef RefId="M-X_A-1_P-1_R-1" Value="600" />
             <ParameterInstanceRef RefId="M-X_A-1_P-2_R-1" Value="1" />
@@ -783,7 +802,27 @@ describe("baggage (DCA blobs)", () => {
     expect(Buffer.from(got["DI-1_Dalie64.bin"], "base64").toString()).toBe("aaa");
     expect(getDeviceBaggage(db, "p1", "DI-9")).toEqual({}); // no match
   });
+
+  test("an import refuses a blob over 32 MiB or more than 128 MiB of baggage in all", () => {
+    const MiB = 1024 * 1024;
+    expect(() => checkBaggageSize([{ name: "a", bytes: 32 * MiB }, { name: "b", bytes: 32 * MiB }, { name: "c", bytes: 32 * MiB }, { name: "d", bytes: 32 * MiB }])).not.toThrow();
+    expect(catchCode(() => checkBaggageSize([{ name: "big.bin", bytes: 32 * MiB + 1 }]))).toBe("BAGGAGE_TOO_LARGE");
+    const many = Array.from({ length: 5 }, (_, i) => ({ name: `b${i}`, bytes: 26 * MiB }));
+    expect(catchCode(() => checkBaggageSize(many))).toBe("BAGGAGE_TOO_LARGE");
+  });
+
+  test("a .busforge artifact with an oversized baggage blob is refused before anything is stored", () => {
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], catalog: {} };
+    const big = Buffer.alloc(32 * 1024 * 1024 + 3).toString("base64");
+    expect(catchCode(() => validateExport({ ...base, baggage: [{ name: "DI-1_big.bin", dataBase64: big }] }))).toBe("BAGGAGE_TOO_LARGE");
+    expect(() => validateExport({ ...base, baggage: [{ name: "DI-1_ok.bin", dataBase64: Buffer.from("ok").toString("base64") }] })).not.toThrow();
+  });
 });
+
+function catchCode(fn: () => unknown): string | undefined {
+  try { fn(); } catch (e) { return (e as { code?: string }).code; }
+  return undefined;
+}
 
 describe("snapshots", () => {
   const dev = "P-TEST-0_DI-1"; // demo fixture: link O-1_R-1 -> [1, 2]

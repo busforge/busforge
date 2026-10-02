@@ -1,9 +1,29 @@
 import type { Database } from "bun:sqlite";
+import { ApiError } from "../errors.ts";
 
 // DCA baggage: the BinaryData/UserFiles blobs extracted from a project's inner
 // archive at import (e.g. a DALI gateway's backup-store), stored per project and
 // served to native DCA-replacement modules. The name is the slash-flattened
 // baggage basename; a device's blobs are those whose name starts with its id.
+
+const MiB = 1024 * 1024;
+export const BAGGAGE_BLOB_LIMIT = 32 * MiB;
+export const BAGGAGE_PROJECT_LIMIT = 128 * MiB;
+
+// Refuse an import whose baggage would not fit the limits, before anything is stored: every blob
+// sits in one SQLite row and is read whole into memory when a device's baggage is served.
+export function checkBaggageSize(blobs: Iterable<{ name: string; bytes: number }>): void {
+  let total = 0;
+  for (const b of blobs) {
+    if (b.bytes > BAGGAGE_BLOB_LIMIT) {
+      throw new ApiError("BAGGAGE_TOO_LARGE", `embedded file ${b.name} is ${b.bytes} bytes, over the ${BAGGAGE_BLOB_LIMIT}-byte limit per file`, 413);
+    }
+    total += b.bytes;
+  }
+  if (total > BAGGAGE_PROJECT_LIMIT) {
+    throw new ApiError("BAGGAGE_TOO_LARGE", `embedded files total ${total} bytes, over the ${BAGGAGE_PROJECT_LIMIT}-byte limit per project`, 413);
+  }
+}
 
 export function putBaggage(db: Database, projectId: string, name: string, data: Buffer): void {
   db.prepare("INSERT OR REPLACE INTO device_baggage (project_id, name, data) VALUES (?, ?, ?)").run(projectId, name, data);

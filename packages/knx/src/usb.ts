@@ -101,6 +101,22 @@ export async function listUsbInterfaces(): Promise<UsbInterfaceInfo[]> {
     .map((d) => ({ vendorId: d.vendorId, productId: d.productId, product: d.product ?? "", serial: d.serialNumber, path: d.path }));
 }
 
+// The HID path of the one attached interface with this vendor/product id (and serial, if named).
+// node-hid's (vid, pid) form opens whichever matching device it enumerates first, so with two
+// identical sticks that would be a guess: several matches are refused, as is none.
+function resolveUsbPath(devices: HidDeviceInfo[], want: { vendorId?: number; productId?: number; serial?: string }): string {
+  const name = `${(want.vendorId ?? 0).toString(16).padStart(4, "0")}:${(want.productId ?? 0).toString(16).padStart(4, "0")}${want.serial ? ` serial ${want.serial}` : ""}`;
+  // node-hid may list one device once per HID collection, each time under the same path.
+  const paths = [...new Set(devices
+    .filter((d) => d.vendorId === want.vendorId && d.productId === want.productId && (want.serial === undefined || d.serialNumber === want.serial))
+    .map((d) => d.path))];
+  if (paths.length > 1) {
+    throw new KnxError("USB_INTERFACE_AMBIGUOUS", `${paths.length} attached USB interfaces match ${name}; choose the interface by its serial`);
+  }
+  if (paths.length === 0 || paths[0] === undefined) throw new KnxError("USB_INTERFACE_NOT_FOUND", `no attached USB interface matches ${name}`);
+  return paths[0];
+}
+
 export class KnxUsbTransport implements KnxTransport {
   // The interface's own individual address, read from its Device Object at connect. Sending is
   // not what needs it: a cEMI with source 0.0.0 gets the interface's address substituted, which
@@ -125,19 +141,18 @@ export class KnxUsbTransport implements KnxTransport {
   private conSettle: ((reachedBus: boolean) => void) | null = null;
   private propResolve: ((cemi: Buffer) => void) | null = null;
 
-  // Identify the device by HID path (preferred, disambiguates multiple sticks)
-  // or by vendor/product id. hidModule is a test seam; when omitted the real
-  // node-hid module is loaded lazily as before.
+  // Identify the device by HID path, or by vendor/product id plus the USB serial. A HID path is
+  // not stable across replugs, so a saved connection names the serial and connect() resolves it
+  // to the path attached now. hidModule is a test seam; when omitted the real node-hid module is
+  // loaded lazily.
   constructor(
-    private readonly target: { path?: string; vendorId?: number; productId?: number },
+    private readonly target: { path?: string; vendorId?: number; productId?: number; serial?: string },
     private readonly hidModule?: NodeHid,
   ) {}
 
   async connect(): Promise<void> {
     const hid = this.hidModule ?? (await loadHid());
-    this.dev = this.target.path
-      ? new hid.HID(this.target.path)
-      : new hid.HID(this.target.vendorId!, this.target.productId!);
+    this.dev = new hid.HID(this.target.path ?? resolveUsbPath(hid.devices(), this.target));
     this.dev.on("data", (d) => this.onData(d));
     // node-hid emits 'error' when a read fails, in practice the stick was unplugged or the handle
     // was pulled out from under us. That is a genuine loss of the bus, so it is surfaced (unless it

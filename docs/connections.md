@@ -302,7 +302,11 @@ details; it references one saved connection, and deleting a connection clears it
 using it. There is no inline copy to drift out of sync.
 
 A connection carries a type (`ip` or `usb`), and for IP a host, a port and the transport preference;
-for USB the vendor and product id.
+for USB the vendor and product id and the interface's USB serial. The HID path is not stored, as it
+changes when the interface is plugged in again: each connect looks up the one attached interface with
+that id and serial and opens it by its current path. Two attached interfaces that match (identical
+sticks and no saved serial, or two with the same serial) are refused with `USB_INTERFACE_AMBIGUOUS`
+rather than opening whichever enumerates first, and a missing one with `USB_INTERFACE_NOT_FOUND`.
 
 | Method | Path | Purpose |
 |---|---|---|

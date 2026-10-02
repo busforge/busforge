@@ -19,6 +19,10 @@ const runFlash = (t: FlashTarget, projectId: string, deviceId: string, onTask: (
 // One preview/write status, reused for each flash target and for the full-download sub-flow
 // (same states: checking a dry-run, previewed, writing, done, or errored).
 interface Part { dry: FlashResult | null; done: FlashResult | null; error: unknown; checking: boolean; flashing: boolean; }
+// Errors the full download answers. The second set leaves a device whose family cannot be
+// downloaded in full where it is: only ETS can complete its load.
+const DOWNLOAD_CODES = new Set(["COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "DEVICE_NOT_PROGRAMMED", "NEVER_PROGRAMMED_USE_DOWNLOAD"]);
+const UNLOADED_CODES = new Set(["FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE"]);
 const freshPart = (): Part => ({ dry: null, done: null, error: null, checking: false, flashing: false });
 
 // Program a device over the bus. Handles one or both targets (parameter memory via the
@@ -97,32 +101,41 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const coveredByStructure = (tg: FlashTarget) => !!structuralTarget && tg !== structuralTarget && !!parts[tg]?.dry?.structural;
   // Only targets that actually differ get written; an in-sync target is skipped.
   const toFlash = list.filter((x) => x.p.dry?.kind === "dryRun" && !x.p.done && !coveredByStructure(x.tg));
-  const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
   // Connection-class failures are detected on the raw (English) message.
   const firstError = list.find((x) => x.p.error)?.p.error;
   const rawError = firstError instanceof Error ? firstError.message : "";
   const isConnError = !!firstError && /timeout|connect|tunnel|unreachable|ECONN|EHOST|network/i.test(rawError);
   // A surgical flash refused because the change rewrites the com-object table, or because the device
   // never had an application loaded: a full download is the way (the backend refuses it where the
-  // family cannot commission).
-  const needsDownload = list.some((x) => x.p.error instanceof ApiError && (x.p.error.code === "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD" || x.p.error.code === "DEVICE_NOT_PROGRAMMED" || x.p.error.code === "NEVER_PROGRAMMED_USE_DOWNLOAD"));
+  // family cannot commission). So is a device left unloaded (a write broke off inside its load
+  // bracket, or a preview found a load-state machine not LOADED), where the family can take one.
+  const needsDownload = list.some((x) => x.p.error instanceof ApiError
+    && (DOWNLOAD_CODES.has(x.p.error.code ?? "") || (canFullDownload && UNLOADED_CODES.has(x.p.error.code ?? ""))));
+  const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
 
   async function flash() {
     if (busyRef.current) return;
     busyRef.current = true;
     let flashedAny = false;
+    let leftUnloaded = false;
     const write = async (tg: FlashTarget) => {
       setPart(tg, { flashing: true, error: null });
       try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; return r; }
-      catch (e) { setPart(tg, { error: e, flashing: false }); return null; }
+      catch (e) {
+        setPart(tg, { error: e, flashing: false });
+        if (e instanceof ApiError && e.code === "FLASH_INTERRUPTED_UNLOADED") leftUnloaded = true;
+        return null;
+      }
     };
     const covered = list.filter((x) => coveredByStructure(x.tg)).map((x) => x.tg);
     try {
       for (const { tg } of toFlash) {
         const r = await write(tg);
+        // A device left unloaded takes nothing more but the full download.
+        if (leftUnloaded) break;
         // The server decides again when the write runs: if it did not write the structural change after
         // all, the targets the preview counted as covered are written on their own.
-        if (tg === structuralTarget && r && !r.structural) for (const c of covered) await write(c);
+        if (tg === structuralTarget && r && !r.structural) for (const c of covered) { await write(c); if (leftUnloaded) break; }
       }
     } finally {
       busyRef.current = false;

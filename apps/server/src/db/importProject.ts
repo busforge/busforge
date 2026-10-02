@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { appProgramId } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
-import { putBaggage } from "./baggage.ts";
+import { putBaggage, checkBaggageSize } from "./baggage.ts";
 import { insertSpaces, setProjectSource, SOURCE_NAME_MAX, type ImportSource } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
@@ -66,6 +66,9 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (seenDeviceIds.has(dev.id)) throw new ApiError("DUPLICATE_DEVICE_INSTANCE", `two devices share the instance id ${dev.id}`);
     seenDeviceIds.add(dev.id);
   }
+  const baggage = d.baggage as Record<string, unknown>[];
+  if (baggage.some((b) => typeof b?.name !== "string" || typeof b.dataBase64 !== "string")) throw new ApiError("BUSFORGE_INVALID", "malformed baggage");
+  checkBaggageSize(baggage.map((b) => ({ name: b.name as string, bytes: Buffer.byteLength(b.dataBase64 as string, "base64") })));
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
   for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates"]) {

@@ -118,11 +118,11 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Recover a device an interrupted flash left unloaded.** A flash cut off inside its load bracket
-  (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md) §25) leaves the
-  device without an application until the user starts a full download. Busforge does not repeat or
-  finish the bracket by itself. *Decided 2026-10-01: no automatic resume; the UI offers the full
-  download right away when a flash broke off inside its bracket.*
+- **Show the full-download offer after an interrupted flash on hardware.** A flash cut off inside its
+  load bracket (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md)
+  §25) now fails as `FLASH_INTERRUPTED_UNLOADED` and the flash dialog offers the full download
+  ([load-procedures.md](load-procedures.md)); covered by unit tests of the runner and the task queue
+  only. Not yet driven through the UI against a device whose link is cut mid-bracket.
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured
@@ -177,11 +177,6 @@ started until the capability it depends on is hardware-proven.
 - **Persist the parsed product model** in the catalog instead of the raw application-program XML,
   so a device page does not re-parse on every open. Deferred until one unified parser existed,
   which it now does.
-- **No size guard on plugin baggage blobs** stored in the database. *Decided 2026-10-01: refuse an
-  import with a blob over 32 MB or more than 128 MB of baggage per project.*
-- **Seed "never programmed" from the ETS project.** ETS leaves `ApplicationProgramLoaded` off a
-  device it never downloaded; such a device imports as programmed today. *Decided 2026-10-01: seed the
-  flag from it*, accepting that a device another tool programmed then also reads as never programmed.
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
 
 ## Product and UI
@@ -200,9 +195,9 @@ started until the capability it depends on is hardware-proven.
   should settle it.
 - **Warn when the gateway is handed an address that is not the interface's own**, so an operator
   knows management on it will not work on a USB stick that only answers to its own address.
-- **Two identical USB interfaces cannot be told apart by the server.** The saved connection keeps
-  a serial and a device path, but only the vendor and product id are passed on when the transport
-  is opened. Testable: two identical USB sticks are available.
+- **Show two identical USB interfaces told apart on hardware.** The server opens a USB connection by
+  its saved serial and refuses an ambiguous match ([connections.md](connections.md)); that is
+  unit-tested only. Not yet run with both of the two identical sticks attached at once.
 - **DCA-replacement plugins, phase 2**: writing a device-specific configuration back, instead of
   the read-only view that exists today.
 - Remaining parity gaps in the configuration view (HSV colour and picture parameters are shown

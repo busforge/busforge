@@ -9,7 +9,8 @@ import { getConnection, type Connection } from "./connections.ts";
 // searchText is a server-built, lowercased blob (comment + user-entered text
 // parameter values like channel/actuator names) so the device list can search
 // deeper than the visible name/address.
-export type DeviceWithChanges = Device & { changes: DeviceChanges; searchText: string; secure: boolean };
+// The import's applicationProgramLoaded is not kept: it seeds changes.neverProgrammed.
+export type DeviceWithChanges = Omit<Device, "applicationProgramLoaded"> & { changes: DeviceChanges; searchText: string; secure: boolean };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
 
@@ -110,7 +111,7 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 // Persist a freshly parsed project (rows only; the caller stores the source file).
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -137,7 +138,7 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile, project.groupAddressLevels);
-    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment);
+    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.applicationProgramLoaded || !d.appRef ? 0 : 1);
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
@@ -200,7 +201,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
     | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
 
-  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Device[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Omit<Device, "applicationProgramLoaded">[];
   const changes = getProjectChanges(db, id);
 
   // Per-device deep-search text: the user-entered text parameter values (channel

@@ -273,6 +273,7 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
           appRef: text(d.Hardware2ProgramRefId),
           manufacturer: manufacturerOf(text(d.ProductRefId)),
           comment: [d.Comment, d.Description].map((x) => text(x).trim()).filter(Boolean).join(" "),
+          applicationProgramLoaded: text(d.ApplicationProgramLoaded) === "true",
         });
       }
       return { address: Number(attr(line.Address)), name: text(line.Name), devices };

@@ -42,6 +42,10 @@ describe("makeTransport", () => {
   test("usb connection yields a USB transport", () => {
     expect(makeTransport(conn({ type: "usb", usbVendorId: 1, usbProductId: 2 }))).toBeInstanceOf(KnxUsbTransport);
   });
+  test("a usb connection names its interface by the saved serial", () => {
+    const t = makeTransport(conn({ type: "usb", usbVendorId: 0x147b, usbProductId: 0x5120, usbSerial: "000200000075" }));
+    expect((t as unknown as { target: unknown }).target).toEqual({ vendorId: 0x147b, productId: 0x5120, serial: "000200000075" });
+  });
   test("the ip transport value selects the concrete transport", () => {
     // udp and tcp both build a KnxIpTunnel (the classic client); auto wraps them in the
     // decide-at-connect AutoIpTunnel, which is deliberately NOT a KnxIpTunnel.
