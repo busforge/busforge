@@ -113,7 +113,7 @@ export function insertProject(db: Database, id: string, project: Project, source
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
   const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
-  const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
+  const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
   const insParamBase = db.prepare("INSERT OR REPLACE INTO device_param_base (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
   const insModules = db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES (?, ?, ?)");
@@ -122,7 +122,7 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
     const rangeId = Number(insRange.run(id, parentId, node.name, node.rangeStart, node.rangeEnd).lastInsertRowid);
-    for (const g of node.addresses) insGa.run(id, rangeId, g.raw, g.address, g.name, g.dpt);
+    for (const g of node.addresses) insGa.run(id, rangeId, g.raw, g.address, g.name, g.dpt, g.security);
     for (const c of node.children) insertRange(c, rangeId);
   };
 
@@ -225,7 +225,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
 
   const rangeRows = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id").all(id) as
     { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
-  const gaRows = db.query("SELECT range_id AS rangeId, raw, address, name, dpt FROM group_addresses WHERE project_id = ? ORDER BY raw").all(id) as
+  const gaRows = db.query("SELECT range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY raw").all(id) as
     ({ rangeId: number } & GroupAddress)[];
 
   // Rebuild the range tree (parent_id adjacency) and attach addresses.
@@ -238,7 +238,7 @@ export function getProject(db: Database, id: string): StoredProject | null {
     else nodes.get(r.parentId)?.children.push(node);
   }
   for (const g of gaRows) {
-    nodes.get(g.rangeId)?.addresses.push({ raw: g.raw, address: g.address, name: g.name, dpt: g.dpt });
+    nodes.get(g.rangeId)?.addresses.push({ raw: g.raw, address: g.address, name: g.name, dpt: g.dpt, security: g.security });
   }
 
   // How many devices carry a Data-Secure tool key, so the UI can warn before an

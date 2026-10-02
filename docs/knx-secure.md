@@ -176,8 +176,9 @@ A key that is not 16 bytes, or a serial that is not 6, is refused (`SECURE_KEY_B
 stored. Tool keys are never returned to the client and never logged.
 
 **Group keys** come from the same file: a secured group address carries its 16-byte key in the
-`Key` attribute of its `<GroupAddress>`. They live in `group_keys` (`project_id`, `raw`, `key`,
-`source`), sealed like the tool keys, and are parsed apart from the address model so a key never
+`Key` attribute of its `<GroupAddress>`, or Busforge generates one for an address it secures (source
+`generated`, see [Group address security mode](#group-address-security-mode)). They live in
+`group_keys` (`project_id`, `raw`, `key`, `source`), sealed like the tool keys, and are parsed apart from the address model so a key never
 travels with an address to the client. Neither deleting an address nor a restore point touches its
 key, so an address that comes back (by a restore, or recreated on the same value) is secured again,
 never silently plain. Exports carry them next to the tool keys.
@@ -336,7 +337,13 @@ Refused rather than guessed:
   plain device, or a secure one ETS never commissioned (imported without its key, counted in the
   import result); writing its tables would put the address on it without key or flag. ETS never does
   that either: it turns the address plain for every device on it ("Automatisch") or refuses the link
-  ("Erzwungen an"), [findings.md](findings.md) §22; Busforge does neither yet (roadmap).
+  ("Erzwungen an"), [findings.md](findings.md) §22. Busforge does the same at link time
+  ([Group address security mode](#group-address-security-mode)); this refusal still catches a plain
+  device on a secured address that arrived another way (a reverted link, a restored snapshot, a
+  replaced product).
+- **An address whose mode and key disagree** (`SECURE_GA_FORCED_WITHOUT_KEY`, `SECURE_GA_OFF_WITH_KEY`):
+  "Erzwungen an" without a key, or "Erzwungen aus" with one. A snapshot restores the mode but never a
+  key, so this can arise. Saving the address with the same mode again brings the key in line.
 
 Sending: the monitor's send panel (and `POST /api/projects/:id/bus/group`) hands a GroupValueWrite or
 GroupValueRead to the interface over the monitor connection. The interface's confirmation is not
@@ -392,6 +399,49 @@ read from the security object itself.
 
 So the secured full download, parameter flash and GA flash are supported on System B, each shown
 once on this one device; a smoke spec with evidence records for them is still to come.
+
+### Group address security mode
+
+Every group address carries ETS's Data Secure mode, `group_addresses.security`:
+
+| Mode | ETS | In the `.knxproj` | Key |
+|---|---|---|---|
+| `auto` | Automatisch | no `Security` attribute | while every linked device is secure |
+| `on` | Erzwungen an | `Security="On"` | always |
+| `off` | Erzwungen aus | `Security="Off"`, no `Key` | never |
+
+Read from three ETS 6.4.1 exports of the same address ([findings.md](findings.md) §22). An unknown
+value refuses the import. The mode travels with snapshots and `.busforge` exports; it is edited in the
+group-address dialog (`PATCH /api/projects/:id/group-addresses/:raw` with `security`).
+
+Whether an address is secured is whether the project holds a key for it. The rules (`gaSecurity.ts`),
+where a secure device is one the project holds a tool key for:
+
+- **A secure device linked to an `auto` address without a key**, with every device on it secure:
+  Busforge generates a random 16-byte key (source `generated`, sealed like the rest). ETS was seen doing
+  this for a new address; Busforge applies it to any `auto` address a link is added to.
+- **A device without a tool key linked to a secured `auto` address**: refused with
+  `SECURE_GA_TURNS_PLAIN` (409) until the user confirms (`allowPlain`); then the key is deleted and the
+  address is plain for every device on it, as ETS warns before doing. The key is gone for good: undoing
+  the link, reverting the device or restoring a snapshot does not bring it back, and securing the
+  address again makes a new one.
+- **A device without a tool key linked to an `on` address**: refused (`SECURE_GA_FORCED`), as ETS refuses
+  it. Setting `on` while such a device is linked is refused the same way.
+- **Setting `off`** deletes the key; **setting `on`** makes one if there is none; **setting `auto`** makes
+  one if devices are linked and all are secure.
+
+A new or deleted key changes the security object of every secure device on the address. Only the
+device whose link changed shows a change; the others need their GA flash all the same (roadmap).
+Deleting an address keeps its key, as before, so an address created again at the same raw value is
+secured with it.
+
+**Shown on the GVS AMMA 1.1.203, 2026-10-02** (bench, API on an isolated server, project imported from
+the ETS export): a new 0/0/2 linked to output 1's switching object got a generated key; the GA flash
+(23 bytes) verified; with 1.1.100 added as a sender of 0/0/2, a secured GroupValueWrite `01` on 0/0/2
+switched the output on and its status object sent a secured `01` on 0/0/1, then `00` the same way.
+Restored by linking the object back to 0/0/1 and a second verified GA flash (7 bytes). The key
+element for index 2 stays in the device's PID 53, as ETS leaves it. The plain-link confirmation and
+the mode dialog were driven in the browser, with no bus write.
 
 ### Activation from the device certificate
 

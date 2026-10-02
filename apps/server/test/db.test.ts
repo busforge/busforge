@@ -41,10 +41,11 @@ describe("schema/migrations", () => {
     const old = new Database(path, { create: true });
     // projects carries the migration-0 columns (incl. interface_ip/port) a real
     // user_version-1 DB would have, so the later drop-inline-columns migration applies; telegrams
-    // (also from migration 0) takes the security column.
+    // and group_addresses (also from migration 0) take their security columns.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT, interface_ip TEXT NOT NULL DEFAULT '', interface_port INTEGER NOT NULL DEFAULT 3671);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL);
       CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE group_addresses (project_id TEXT NOT NULL, raw INTEGER NOT NULL);
       PRAGMA user_version = 1;`);
     old.close();
 
@@ -63,13 +64,14 @@ describe("schema/migrations", () => {
     // raw CREATE UNIQUE INDEX over them would throw and brick startup; the migration must
     // first collapse the duplicate group to one row.
     const old = new Database(path, { create: true });
-    // Minimal connections and telegrams tables are present so the trailing ip_transport and
-    // telegram security ALTERs apply; production has it from the transport-aware migration long before this point.
+    // Minimal connections, telegrams and group_addresses tables are present so the trailing
+    // ip_transport and security ALTERs apply; production has it from the transport-aware migration long before this point.
     old.exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, imported_at INTEGER, source_file TEXT);
       CREATE TABLE devices (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL DEFAULT '', ia TEXT NOT NULL, name TEXT NOT NULL, product_ref TEXT NOT NULL, app_ref TEXT NOT NULL, manufacturer INTEGER NOT NULL, comment TEXT NOT NULL DEFAULT '');
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
+      CREATE TABLE group_addresses (project_id TEXT NOT NULL, raw INTEGER NOT NULL);
       INSERT INTO projects (id,name,imported_at,source_file) VALUES ('p','x',1,'');
       INSERT INTO devices (project_id,instance_id,ia,name,product_ref,app_ref,manufacturer) VALUES ('p','DI-1','1.1.1','a','','',0),('p','DI-1','1.1.2','b','','',0),('p','','1.1.3','c','','',0),('p','','1.1.4','d','','',0);
       PRAGMA user_version = 16;`);
@@ -1060,6 +1062,7 @@ describe("connections", () => {
       CREATE TABLE connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, host TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 3671, usb_vendor_id INTEGER, usb_product_id INTEGER, usb_serial TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE telegrams (id INTEGER PRIMARY KEY, project_id TEXT NOT NULL, ts INTEGER NOT NULL, src TEXT NOT NULL, dst_raw INTEGER NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE device_link_base (project_id TEXT NOT NULL, device_id TEXT NOT NULL, com_obj_ref_id TEXT NOT NULL, slot INTEGER NOT NULL, ga_raw INTEGER NOT NULL);
+      CREATE TABLE group_addresses (project_id TEXT NOT NULL, raw INTEGER NOT NULL);
       INSERT INTO connections (id,name,type,host,port,created_at) VALUES ('c1','GW','ip','1.2.3.4',3671,1000);
       INSERT INTO devices (project_id,instance_id,ia) VALUES ('p','read','1.1.1'),('p','never','1.1.2');
       INSERT INTO device_link_base VALUES ('p','read','O-0_R-1',0,1);

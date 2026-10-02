@@ -37,6 +37,16 @@ export function secureCredsFor(state: AppState, projectId: string, deviceId: str
 // assigns to each group address, and the other devices of the project linked to its secured addresses.
 // Empty otherwise.
 export function secureTablesFor(state: AppState, projectId: string, deviceId: string): { secure?: SecureCreds; security?: SecureTablesCtx } {
+  // An address whose mode and key disagree (a snapshot restores the mode, never the key) would reach
+  // the device secured against "off", or plain against "on".
+  const mismatch = state.db.query("SELECT l.ga_raw AS g, a.security AS mode FROM device_links l JOIN group_addresses a ON a.project_id = l.project_id AND a.raw = l.ga_raw WHERE l.project_id = ? AND l.device_id = ? AND ((a.security = 'on') <> EXISTS (SELECT 1 FROM group_keys k WHERE k.project_id = l.project_id AND k.raw = l.ga_raw)) AND a.security <> 'auto' LIMIT 1")
+    .get(projectId, deviceId) as { g: number; mode: string } | null;
+  if (mismatch?.mode === "on") {
+    throw new ApiError("SECURE_GA_FORCED_WITHOUT_KEY", `group address ${numToGa(mismatch.g)} is forced secure but the project holds no key for it; set its security to always secured again to give it one`, 409);
+  }
+  if (mismatch) {
+    throw new ApiError("SECURE_GA_OFF_WITH_KEY", `group address ${numToGa(mismatch.g)} is set to never secured but the project holds a key for it; set its security to never secured again to drop the key`, 409);
+  }
   const secure = secureCredsFor(state, projectId, deviceId);
   if (!secure) {
     // Without a tool key the tables would go out plain, and a secured address would reach the device

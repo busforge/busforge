@@ -421,6 +421,10 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE devices ADD COLUMN never_programmed INTEGER NOT NULL DEFAULT 0;
   `,
+  // A group address's Data Secure mode as ETS sets it (gaSecurity.ts): 'auto', 'on' or 'off'.
+  `
+  ALTER TABLE group_addresses ADD COLUMN security TEXT NOT NULL DEFAULT 'auto';
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

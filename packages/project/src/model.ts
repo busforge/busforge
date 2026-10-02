@@ -94,7 +94,12 @@ export interface GroupAddress {
   raw: number;          // 16-bit
   name: string;
   dpt: string;          // "DPST-1-1" -> "1.001" (display); raw kept too
+  security: GroupAddressSecurity;
 }
+
+// ETS's per-address Data Secure setting: "Automatisch" (secured while every linked device is
+// secure), "Erzwungen an" (a device without security cannot be linked), "Erzwungen aus" (plain).
+export type GroupAddressSecurity = "auto" | "on" | "off";
 
 // A node of the group-address tree (main group, then middle group), carrying
 // the human names ETS assigned to each range.

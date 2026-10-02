@@ -31,6 +31,7 @@ import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
+import { ApiError } from "../api.ts";
 
 // Shared width of the right-hand control column, so parameter inputs and the
 // group-address picker line up and none of them get cut off.
@@ -117,6 +118,8 @@ export function DeviceConfig() {
   // it to a single target, and only appears when both targets apply to this device.
   const [flashTargets, setFlashTargets] = useState<FlashTarget[] | null>(null);
   const [revertOpen, setRevertOpen] = useState(false);
+  // A link the server held back because it would turn a secured address plain, waiting for the user.
+  const [plainLink, setPlainLink] = useState<{ comObjRefId: string; gaRaw: number } | null>(null);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [commissionOpen, setCommissionOpen] = useState(false);
   const [secureOpen, setSecureOpen] = useState(false);
@@ -154,7 +157,19 @@ export function DeviceConfig() {
 
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
   const relink = (comObjRefId: string, gaRaw: number | null) =>
-    setLink.mutate({ comObjRefId, gaRaws: gaRaw == null ? [] : [gaRaw] }, { onError });
+    setLink.mutate({ comObjRefId, gaRaws: gaRaw == null ? [] : [gaRaw] }, {
+      onError: (e) => {
+        if (gaRaw != null && e instanceof ApiError && e.code === "SECURE_GA_TURNS_PLAIN") setPlainLink({ comObjRefId, gaRaw });
+        else onError(e);
+      },
+    });
+  const confirmPlainLink = () => {
+    if (!plainLink) return;
+    setLink.mutate({ comObjRefId: plainLink.comObjRefId, gaRaws: [plainLink.gaRaw], allowPlain: true }, {
+      onSuccess: () => setPlainLink(null),
+      onError: (e) => { setPlainLink(null); onError(e); },
+    });
+  };
   const doRevert = () =>
     revert.mutate(undefined, {
       onSuccess: () => { setRevertOpen(false); toast.success(t("device.reverted")); },
@@ -592,6 +607,23 @@ export function DeviceConfig() {
           onStored={() => void qc.invalidateQueries({ queryKey: qk.project(projectId) })}
         />
       )}
+
+      <AlertDialog open={plainLink !== null} onOpenChange={(o) => { if (!o) setPlainLink(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("device.plainLinkTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("device.plainLinkBody", { ga: gaOptions.find((o) => o.raw === plainLink?.gaRaw)?.address ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={setLink.isPending}>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={(e) => { e.preventDefault(); confirmPlainLink(); }} disabled={setLink.isPending} data-testid="confirm-plain-link">
+              {setLink.isPending && <Loader2 className="size-4 animate-spin" />} {t("device.plainLinkConfirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={revertOpen} onOpenChange={setRevertOpen}>
         <AlertDialogContent>

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Check, ChevronsUpDown, Loader2 } from "lucide-react";
-import { api } from "../api.ts";
+import { api, type GroupAddressSecurity } from "../api.ts";
 import { useGroupEdit } from "../queries.ts";
 import { mergeDpts, dptSubtypeLabel } from "@/lib/dpts.ts";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ export type Editor =
   | { kind: "range-rename"; rangeId: number; name: string }
   | { kind: "range-delete"; rangeId: number; name: string }
   | { kind: "ga-create"; rangeId: number; rangeStart: number; defaultSub: number; usedSubs: number[] }
-  | { kind: "ga-edit"; raw: number; name: string; dpt: string }
+  | { kind: "ga-edit"; raw: number; name: string; dpt: string; security: GroupAddressSecurity }
   | { kind: "ga-delete"; raw: number; name: string; address: string }
   | null;
 
@@ -216,6 +216,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
   const [name, setName] = useState(isCreate ? "" : editor.name);
   const [dpt, setDpt] = useState(isCreate ? "" : editor.dpt);
   const [sub, setSub] = useState(isCreate ? String(editor.defaultSub) : "");
+  const [security, setSecurity] = useState<GroupAddressSecurity>(isCreate ? "auto" : editor.security);
   const pending = createGa.isPending || updateGa.isPending;
   const maxSub = levels === 3 ? 255 : 2047;
   const s = Number(sub);
@@ -237,7 +238,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
         onError: (e) => toast.error(t("groupEdit.failed"), { description: errMsg(t, e) }),
       });
     } else {
-      updateGa.mutate({ raw: editor.raw, name: name.trim(), dpt: dpt.trim() }, {
+      updateGa.mutate({ raw: editor.raw, name: name.trim(), dpt: dpt.trim(), security }, {
         onSuccess: () => { toast.success(t("groupEdit.gaSaved")); onClose(); },
         onError: (e) => toast.error(t("groupEdit.failed"), { description: errMsg(t, e) }),
       });
@@ -271,6 +272,17 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
             <Label>{t("groupEdit.dpt")}</Label>
             <DptCombobox value={dpt} onChange={setDpt} options={dptOptions} />
           </div>
+          {!isCreate && (
+            <div className="space-y-1.5">
+              <Label htmlFor="ga-security">{t("groupEdit.security")}</Label>
+              <select id="ga-security" value={security} onChange={(e) => setSecurity(e.target.value as GroupAddressSecurity)} data-testid="ga-security"
+                className="h-9 w-56 rounded-md border bg-background px-2 text-sm">
+                {(["auto", "on", "off"] as const).map((m) => <option key={m} value={m}>{t(`groupEdit.securityMode.${m}`)}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">{t(`groupEdit.securityHint.${security}`)}</p>
+              {security !== editor.security && <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="ga-security-changed">{t("groupEdit.securityRewrite")}</p>}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>{t("common.cancel")}</Button>

@@ -138,7 +138,7 @@ export function GroupAddressesView() {
     },
     renameRange: (node) => setEditor({ kind: "range-rename", rangeId: Number(node.id), name: node.name }),
     deleteRange: (node) => setEditor({ kind: "range-delete", rangeId: Number(node.id), name: node.name }),
-    editGa: (g) => setEditor({ kind: "ga-edit", raw: g.raw, name: g.name, dpt: g.dpt }),
+    editGa: (g) => setEditor({ kind: "ga-edit", raw: g.raw, name: g.name, dpt: g.dpt, security: g.security }),
     deleteGa: (g) => setEditor({ kind: "ga-delete", raw: g.raw, name: g.name, address: g.address }),
   };
 

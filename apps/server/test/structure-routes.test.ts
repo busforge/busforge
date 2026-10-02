@@ -3,6 +3,10 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createState, handleApi, type AppState } from "../src/app.ts";
+import { putGroupKeys } from "../src/db/groupKeys.ts";
+import { createSnapshot, restoreSnapshot } from "../src/db/snapshots.ts";
+import { exportProject } from "../src/db/exportProject.ts";
+import { importProjectExport, validateExport } from "../src/db/importProject.ts";
 
 // HTTP route-glue tests for the structural-edit routes (groups.ts, spaces.ts,
 // devices.ts link/revert endpoints, deviceops.ts task cancel). The db functions
@@ -286,6 +290,19 @@ describe("device link + revert routes", () => {
     expect((await getProj(state, projectId)).devices[0].changes.links).toBe(1);
   });
 
+  test("PUT links of a device without a tool key onto a secured address asks first, then turns it plain", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    await setMode(state, projectId, deviceId, "1");
+    putGroupKeys(state.db, projectId, [{ raw: 1, key: Buffer.alloc(16, 3), source: "import" }], state.masterKey);
+    const refused = (await putLink(state, projectId, deviceId, COMOBJ, [1]))!;
+    expect(refused.status).toBe(409);
+    expect(await j(refused)).toMatchObject({ error: { code: "SECURE_GA_TURNS_PLAIN" } });
+    expect((await getProj(state, projectId)).devices[0].changes.links).toBe(0); // nothing linked
+    const res = (await handleApi(jreq(`/api/projects/${projectId}/devices/${deviceId}/links`, "PUT", { comObjRefId: COMOBJ, gaRaws: [1], allowPlain: true }), state))!;
+    expect(res.status).toBe(200);
+    expect((await getProj(state, projectId)).groupKeyCount).toBe(0);
+  });
+
   test("PUT links with a bogus com-object ref -> 400 COMOBJ_NOT_FOUND, nothing stored", async () => {
     const { state, projectId, deviceId } = await importConfig();
     await setMode(state, projectId, deviceId, "1");
@@ -400,5 +417,70 @@ describe("task cancel route", () => {
     const res = (await handleApi(req(`/api/projects/${projectId}/tasks/ghost/cancel`, { method: "POST" }), state))!;
     expect(res.status).toBe(404);
     expect(((await res.json()) as any).error.code).toBe("TASK_NOT_FOUND");
+  });
+});
+
+describe("group address security mode route", () => {
+  const patch = (state: AppState, projectId: string, body: unknown) => handleApi(jreq(`/api/projects/${projectId}/group-addresses/1`, "PATCH", { name: "L1", dpt: "", ...(body as object) }), state);
+  const gaOf = (proj: any) => proj.groupRanges[0].addresses.find((a: any) => a.raw === 1);
+
+  test("PATCH sets the mode, shows it, and keys the address when forced on", async () => {
+    const { state, projectId } = await importConfig();
+    expect(gaOf(await getProj(state, projectId)).security).toBe("auto");
+    const res = (await patch(state, projectId, { security: "on" }))!;
+    expect(res.status).toBe(200);
+    expect(gaOf(await j(res)).security).toBe("on");
+    expect((await getProj(state, projectId)).groupKeyCount).toBe(1);
+    // Leaving out the mode keeps it.
+    expect(gaOf(await j(await patch(state, projectId, {}))).security).toBe("on");
+  });
+
+  test("an unknown mode is refused and nothing changes", async () => {
+    const { state, projectId } = await importConfig();
+    const res = (await patch(state, projectId, { name: "Renamed", security: "sometimes" }))!;
+    expect(res.status).toBe(400);
+    expect(await j(res)).toMatchObject({ error: { code: "GA_SECURITY_INVALID" } });
+    expect(gaOf(await getProj(state, projectId)).name).toBe("L1");
+  });
+
+  test("a refused mode leaves the name unchanged too", async () => {
+    const { state, projectId, deviceId } = await importConfig();
+    await setMode(state, projectId, deviceId, "1");
+    await putLink(state, projectId, deviceId, COMOBJ, [1]); // a device without a tool key
+    const res = (await patch(state, projectId, { name: "Renamed", security: "on" }))!;
+    expect(res.status).toBe(409);
+    expect(gaOf(await getProj(state, projectId))).toMatchObject({ name: "L1", security: "auto" });
+  });
+
+  test("saving an unchanged mode again repairs a key that disagrees with it", async () => {
+    const { state, projectId } = await importConfig();
+    await patch(state, projectId, { security: "on" });
+    state.db.prepare("DELETE FROM group_keys WHERE project_id = ?").run(projectId); // as after a snapshot restore
+    await patch(state, projectId, { security: "on" });
+    expect((await getProj(state, projectId)).groupKeyCount).toBe(1);
+    await patch(state, projectId, { security: "off" });
+    putGroupKeys(state.db, projectId, [{ raw: 1, key: Buffer.alloc(16, 3), source: "import" }], state.masterKey);
+    await patch(state, projectId, { security: "off" });
+    expect((await getProj(state, projectId)).groupKeyCount).toBe(0);
+  });
+
+  test("a .busforge file whose never-secured address carries a key is refused", async () => {
+    const { state, projectId } = await importConfig();
+    await patch(state, projectId, { security: "on" });
+    const exported = exportProject(state.db, projectId, 3, state.masterKey)!;
+    exported.groupAddresses[0]!.security = "off";
+    expect(() => validateExport(JSON.parse(JSON.stringify(exported)))).toThrow(/never secured carries a key/);
+  });
+
+  test("the mode survives a snapshot restore and a .busforge round trip", async () => {
+    const { state, projectId } = await importConfig();
+    await patch(state, projectId, { security: "off" });
+    const snap = createSnapshot(state.db, projectId, { kind: "manual", reason: "manual" }, 1)!.id;
+    await patch(state, projectId, { security: "auto" });
+    restoreSnapshot(state.db, projectId, snap, 2);
+    expect(gaOf(await getProj(state, projectId)).security).toBe("off");
+    const exported = exportProject(state.db, projectId, 3, state.masterKey)!;
+    importProjectExport(state.db, exported, "copy", 4, state.masterKey);
+    expect(gaOf(await getProj(state, "copy")).security).toBe("off");
   });
 });

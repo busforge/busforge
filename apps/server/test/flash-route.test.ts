@@ -811,6 +811,38 @@ describe("a Data Secure device: its table writes carry the security object", () 
     expect(reached).toBe(false);
   });
 
+  test("a forced-secure address the project holds no key for is refused, not written plain", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    state.db.prepare("DELETE FROM group_keys WHERE project_id = ?").run(projectId);
+    state.db.prepare("UPDATE group_addresses SET security = 'on' WHERE project_id = ? AND raw = 1").run(projectId);
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'O-1_R-1', 0, 1)").run(projectId, deviceId);
+    let reached = false;
+    gaFlashImpl = async () => { reached = true; return flashed(true); };
+    downloadImpl = async () => { reached = true; return flashed(true); };
+    try {
+      for (const route of ["flash-ga?dry=1", "download?dry=1"]) {
+        const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+        expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_FORCED_WITHOUT_KEY" } });
+      }
+    } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
+    expect(reached).toBe(false);
+  });
+
+  test("an address set to never secured that still has a key is refused, not written secured", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await secureProject(state);
+    state.db.prepare("UPDATE group_addresses SET security = 'off' WHERE project_id = ? AND raw = 1").run(projectId);
+    state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'O-1_R-1', 0, 1)").run(projectId, deviceId);
+    let reached = false;
+    gaFlashImpl = async () => { reached = true; return flashed(true); };
+    try {
+      const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`, { method: "POST" }), state);
+      expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_OFF_WITH_KEY" } });
+    } finally { gaFlashImpl = realGaFlash; }
+    expect(reached).toBe(false);
+  });
+
   test("a plain device is written without either", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, m0162);

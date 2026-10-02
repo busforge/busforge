@@ -8,7 +8,7 @@ import { insertSpaces, setProjectSource, SOURCE_NAME_MAX, type ImportSource } fr
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
-import { putGroupKeys } from "./groupKeys.ts";
+import { putGroupKeys, type GroupKeySource } from "./groupKeys.ts";
 import { putGroupSenders, putSendSequences, isIndividualAddress, MAX_SEQUENCE, type SenderSource } from "./groupSenders.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
 import { TELEGRAM_SECURITY, type TelegramSecurity } from "../telegram.ts";
@@ -90,9 +90,14 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
       throw new ApiError("BUSFORGE_INVALID", "malformed deviceSecurity source");
     }
   }
+  const keyed = new Set(((d.groupKeys as Record<string, unknown>[] | undefined) ?? []).map((g) => g.raw));
+  for (const g of d.groupAddresses as Record<string, unknown>[]) {
+    if (g.security !== undefined && !["auto", "on", "off"].includes(g.security as string)) throw new ApiError("BUSFORGE_INVALID", "malformed group address security mode");
+    if (g.security === "off" && keyed.has(g.raw)) throw new ApiError("BUSFORGE_INVALID", "a group address set to never secured carries a key");
+  }
   for (const g of (d.groupKeys as Record<string, unknown>[] | undefined) ?? []) {
     if (typeof g.raw !== "number" || typeof g.key !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys entry");
-    if (g.source !== undefined && !["import", "manual", "provisioned"].includes(g.source as string)) {
+    if (g.source !== undefined && !["import", "manual", "provisioned", "generated"].includes(g.source as string)) {
       throw new ApiError("BUSFORGE_INVALID", "malformed groupKeys source");
     }
   }
@@ -157,8 +162,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
       const newId = Number(insRange.run(id, parent, r.name, r.rangeStart, r.rangeEnd).lastInsertRowid);
       idMap.set(r.id, newId);
     }
-    const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
-    for (const g of data.groupAddresses) insGa.run(id, g.rangeId == null ? null : idMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt);
+    const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    for (const g of data.groupAddresses) insGa.run(id, g.rangeId == null ? null : idMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt, g.security ?? "auto");
 
     insertSpaces(db, id, data.spaces ?? []);
 
@@ -202,7 +207,7 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     if (data.groupSenders?.length) putGroupSenders(db, id, data.groupSenders.map((g) => ({ gaRaw: g.gaRaw, ia: g.ia, source: g.source as SenderSource })));
     if (data.sendSequences?.length) putSendSequences(db, id, data.sendSequences);
     if (data.groupKeys?.length) {
-      putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as SecuritySource) || "import" })), masterKey);
+      putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as GroupKeySource) || "import" })), masterKey);
     }
   })();
 }

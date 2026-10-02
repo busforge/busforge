@@ -688,6 +688,13 @@ on the same bench, partial downloads of the GVS only, captured and decrypted
   start 1, and never touched element 0: the GVS kept two entries, the second for address-table index 2,
   which the one-entry address table no longer has. ETS leaves such an entry; it refers to nothing.
 
+**How the project file carries the mode (2026-10-02).** Three exports of the bench project from ETS
+6.4.1 with 0/0/1 set in turn to each mode: "Automatisch" writes no `Security` attribute on the
+`<GroupAddress>`, "Erzwungen an" writes `Security="On"` beside the `Key`, "Erzwungen aus" writes
+`Security="Off"` and drops the `Key`. Switching to "Erzwungen aus" first shows a warning that the
+address will communicate unencrypted. ETS's undo brought the address back to "Automatisch" with the
+same key (compared by hash across the exports).
+
 ## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
 
 On 2026-09-29 the dev server failed every bus operation for minutes with `TCP connect to

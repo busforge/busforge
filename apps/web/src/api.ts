@@ -17,7 +17,9 @@ export type {
 // placed or its product replaced.
 export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
-export interface GroupAddress { address: string; raw: number; name: string; dpt: string; }
+// security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
+export type GroupAddressSecurity = "auto" | "on" | "off";
+export interface GroupAddress { address: string; raw: number; name: string; dpt: string; security: GroupAddressSecurity; }
 export interface GroupRangeNode { id: string; name: string; rangeStart: number; rangeEnd: number; children: GroupRangeNode[]; addresses: GroupAddress[]; }
 // Building structure: a tree of spaces (Building > Floor > Room > ...), each with
 // the ids of the devices placed directly in it. Empty when the project has none.
@@ -267,8 +269,8 @@ export const api = {
     fetch(`/api/projects/${id}/group-ranges/${rangeId}/impact`).then((r) => jsonOrThrow<{ links: number }>(r)),
   createGroupAddress: (id: string, rangeId: number, sub: number, name: string, dpt: string): Promise<Project> =>
     fetch(`/api/projects/${id}/group-addresses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rangeId, sub, name, dpt }) }).then((r) => jsonOrThrow<Project>(r)),
-  updateGroupAddress: (id: string, raw: number, name: string, dpt: string): Promise<Project> =>
-    fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, dpt }) }).then((r) => jsonOrThrow<Project>(r)),
+  updateGroupAddress: (id: string, raw: number, name: string, dpt: string, security?: GroupAddressSecurity): Promise<Project> =>
+    fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, dpt, security }) }).then((r) => jsonOrThrow<Project>(r)),
   deleteGroupAddress: (id: string, raw: number): Promise<Project> =>
     fetch(`/api/projects/${id}/group-addresses/${raw}`, { method: "DELETE" }).then((r) => jsonOrThrow<Project>(r)),
   gaImpact: (id: string, raw: number): Promise<{ links: number }> =>
@@ -336,9 +338,10 @@ export const api = {
 
   flashDevice: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "flash", dry, onTask),
   flashDeviceGa: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "flash-ga", dry, onTask),
-  setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[], lang?: string): Promise<DeviceConfigView> =>
+  // allowPlain: the user confirmed turning a secured address plain (SECURE_GA_TURNS_PLAIN).
+  setDeviceLink: (id: string, deviceId: string, comObjRefId: string, gaRaws: number[], lang?: string, allowPlain?: boolean): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/links`, {
-      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang }),
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, gaRaws, lang, allowPlain }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   revertDevice: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>

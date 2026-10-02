@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { SCHEMA_VERSION } from "./schema.ts";
+import type { GroupAddressSecurity } from "@busforge/project";
 import { readProjectProperties, applyProjectProperties, type ProjectProperties } from "./projectProps.ts";
 import { ApiError } from "../errors.ts";
 
@@ -32,7 +33,7 @@ export interface SnapshotPayload {
   deviceParameters: { deviceId: string; paramRefId: string; value: string }[];
   deviceLinks: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
   groupRanges?: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
-  groupAddresses?: { id: number; rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
+  groupAddresses?: { id: number; rangeId: number | null; raw: number; address: string; name: string; dpt: string; security?: GroupAddressSecurity }[];
   // Building structure + device-to-space membership, so location edits (add/rename/
   // delete a space, move a device) are undoable. Optional: snapshots taken before
   // this capture leave the current structure in place on restore.
@@ -55,7 +56,7 @@ export function serializeConfig(db: Database, projectId: string): SnapshotPayloa
   // Ordered by id so parent ranges precede their children on restore (FK-safe).
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as NonNullable<SnapshotPayload["groupRanges"]>;
-  const groupAddresses = db.query("SELECT id, range_id AS rangeId, raw, address, name, dpt FROM group_addresses WHERE project_id = ? ORDER BY id")
+  const groupAddresses = db.query("SELECT id, range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY id")
     .all(projectId) as NonNullable<SnapshotPayload["groupAddresses"]>;
   // Ordered by id so a parent space precedes its children on restore (FK-safe).
   const spaces = db.query("SELECT id, parent_id AS parentId, ext_id AS extId, type, name, ord FROM spaces WHERE project_id = ? ORDER BY id")
@@ -166,8 +167,9 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
         const newId = Number(insRange.run(projectId, parent, r.name, r.rangeStart, r.rangeEnd).lastInsertRowid);
         rangeIdMap.set(r.id, newId);
       }
-      const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt) VALUES (?, ?, ?, ?, ?, ?)");
-      for (const g of payload.groupAddresses) insGa.run(projectId, g.rangeId == null ? null : rangeIdMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt);
+      const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
+      // A payload captured before the column existed holds only addresses that were 'auto'.
+      for (const g of payload.groupAddresses) insGa.run(projectId, g.rangeId == null ? null : rangeIdMap.get(g.rangeId) ?? null, g.raw, g.address, g.name, g.dpt, g.security ?? "auto");
     }
 
     // Building structure: only rewritten for snapshots that captured it. spaces.id is a global

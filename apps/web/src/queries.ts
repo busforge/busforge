@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, type ReplaceMappingEntry, type Task } from "./api.ts";
+import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -142,7 +142,7 @@ export function useGroupEdit(projectId: string) {
     renameRange: useMutation({ mutationFn: (v: { rangeId: number; name: string }) => api.renameGroupRange(projectId, v.rangeId, v.name), onSuccess: after }),
     deleteRange: useMutation({ mutationFn: (rangeId: number) => api.deleteGroupRange(projectId, rangeId), onSuccess: after }),
     createGa: useMutation({ mutationFn: (v: { rangeId: number; sub: number; name: string; dpt: string }) => api.createGroupAddress(projectId, v.rangeId, v.sub, v.name, v.dpt), onSuccess: after }),
-    updateGa: useMutation({ mutationFn: (v: { raw: number; name: string; dpt: string }) => api.updateGroupAddress(projectId, v.raw, v.name, v.dpt), onSuccess: after }),
+    updateGa: useMutation({ mutationFn: (v: { raw: number; name: string; dpt: string; security?: GroupAddressSecurity }) => api.updateGroupAddress(projectId, v.raw, v.name, v.dpt, v.security), onSuccess: after }),
     deleteGa: useMutation({ mutationFn: (raw: number) => api.deleteGroupAddress(projectId, raw), onSuccess: after }),
   };
 }
@@ -216,7 +216,7 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     onSuccess,
   });
   const setLink = useMutation({
-    mutationFn: (v: { comObjRefId: string; gaRaws: number[] }) => api.setDeviceLink(projectId, deviceId, v.comObjRefId, v.gaRaws, lang),
+    mutationFn: (v: { comObjRefId: string; gaRaws: number[]; allowPlain?: boolean }) => api.setDeviceLink(projectId, deviceId, v.comObjRefId, v.gaRaws, lang, v.allowPlain),
     onSuccess,
   });
   const revert = useMutation({

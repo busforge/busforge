@@ -156,19 +156,16 @@ started until the capability it depends on is hardware-proven.
 - **Export the keys for ETS.** Keys Busforge generates (a tool key it provisions, a group key for an
   address it secures) are known to Busforge alone. A `.knxkeys` export would let an ETS user take
   such a device over; wanted for users, not needed for the bench. *Decided 2026-10-01: build it.*
-- **Secure a group address Busforge creates.** Group keys arrive only with a project import, so an
-  address created in Busforge is plain, and linking it to a secure device's object programs that
-  object as plain. *Decided 2026-10-01: build it (Busforge generates the group key).* Observed in ETS
-  the same day: a new address linked only to secure devices is secured automatically, gets a new
-  16-byte key in each device's PID 53 at its address-table index, and no interface sender in PID 54.
-- **A plain device linked to a secured group address** is refused for GA flash and full download
-  (`SECURE_GA_WITHOUT_DEVICE_KEY`). ETS keeps such a project; whether and how it programs that device
-  is not established. *Decided 2026-10-01: reproduce it in ETS, then build what ETS does; refused
-  until then.* Reproduced the same day ([findings.md](findings.md) §22): ETS turns the address plain for
-  every device ("Automatisch") or refuses the link ("Erzwungen an"). To build: the address's security
-  mode (whether the project file carries it is not checked yet), and linking a plain device to a
-  secured address either asks to turn it plain (all secure devices on it need their tables written
-  again) or is refused.
+- **Peers of an address whose key changed are not flagged.** A key Busforge generates, or one deleted
+  when an address turns plain or is set to "never secured", changes the security object of every
+  secure device on the address; only the device whose link changed shows a change
+  ([knx-secure.md](knx-secure.md#group-address-security-mode)). Like the sender-list case above. Not
+  shown on hardware either: two secure devices on a Busforge-secured address, and a plain device on a
+  turned-plain one; and no ETS capture of a key Busforge generated.
+- **Link writers other than the link editor do not apply the security mode.** Reverting a link or a
+  device, restoring a snapshot and replacing a product write links as stored; a plain device that lands
+  on a secured address that way is refused at flash time (`SECURE_GA_WITHOUT_DEVICE_KEY`), a mode whose
+  key disagrees likewise (`SECURE_GA_FORCED_WITHOUT_KEY`, `SECURE_GA_OFF_WITH_KEY`), never written.
 - **Individual-address assignment has no secure path.** It is a broadcast operation and cannot use
   a device session, so a secure device cannot be addressed this way.
 

@@ -10,6 +10,7 @@ import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolvePa
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
+import { applyLinkSecurity } from "../db/gaSecurity.ts";
 
 // Device placement + configuration editing: config view, DCA baggage, parameter
 // and link edits, and the revert endpoints.
@@ -94,7 +95,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/devices/:deviceId/links  -> re-point a com-object to a GA
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "links" && req.method === "PUT") {
     const deviceId = decodeURIComponent(seg[4]);
-    const body = (await req.json()) as { comObjRefId?: string; gaRaws?: number[]; lang?: string };
+    // allowPlain: the user confirmed that linking a device without security turns a secured
+    // automatic address plain (gaSecurity.ts).
+    const body = (await req.json()) as { comObjRefId?: string; gaRaws?: number[]; lang?: string; allowPlain?: boolean };
     if (!body.comObjRefId || !Array.isArray(body.gaRaws)) return err("COMOBJ_FIELDS_REQUIRED", "comObjRefId and gaRaws required");
     const app = loadApp(state, id, deviceId);
     if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
@@ -107,7 +110,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const knownComObjs = new Set<string>();
     for (const b of linkView.blocks) for (const it of b.items) if (it.kind === "comObject") knownComObjs.add(it.comObject.refId);
     if (!knownComObjs.has(fullRef(app.id, key))) return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
-    setDeviceLink(db, id, deviceId, key, body.gaRaws.map(Number));
+    const gaRaws = body.gaRaws.map(Number);
+    db.transaction(() => {
+      applyLinkSecurity(db, id, deviceId, key, gaRaws, { allowPlain: body.allowPlain === true }, state.masterKey);
+      setDeviceLink(db, id, deviceId, key, gaRaws);
+    })();
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 

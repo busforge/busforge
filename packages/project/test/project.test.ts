@@ -188,6 +188,20 @@ describe("0.xml parser", () => {
     expect(JSON.stringify(p.groupAddresses)).not.toContain("EBESExQV");
     expect(parseProject(xml0, undefined, "fallback").groupKeys).toEqual([]);
   });
+
+  // ETS 6.4.1 (bench export 2026-10-02): "Automatisch" writes no Security attribute, "Erzwungen an"
+  // Security="On" beside the Key, "Erzwungen aus" Security="Off" and drops the Key.
+  test("reads a group address's security mode, auto when ETS writes none", () => {
+    const withMode = (mode: string) => parseProject(xml0.replace(
+      'Address="2" Name="Living Room On/Off" DatapointType="DPST-1-1" />',
+      `Address="2" Name="Living Room On/Off" DatapointType="DPST-1-1" Security="${mode}" />`,
+    ), undefined, "fallback").groupAddresses.find((g) => g.raw === 2)!.security;
+    expect(withMode("On")).toBe("on");
+    expect(withMode("Off")).toBe("off");
+    expect(withMode("Auto")).toBe("auto");
+    expect(parseProject(xml0, undefined, "fallback").groupAddresses.map((g) => g.security)).toEqual(["auto", "auto"]);
+    expect(() => withMode("Sometimes")).toThrow(/security mode "Sometimes"/);
+  });
 });
 
 describe("secured senders (a bus interface assigned to a group address)", () => {

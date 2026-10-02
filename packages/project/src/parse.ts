@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey, SecureSender } from "./model.ts";
+import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey, SecureSender, GroupAddressSecurity } from "./model.ts";
+import { KnxprojError } from "./errors.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
 
@@ -231,6 +232,16 @@ export function deviceParamValues(xml0: string, deviceId: string): { appRef: str
   return { appRef: text(dev.Hardware2ProgramRefId), values };
 }
 
+// ETS 6.4.1 writes no Security attribute for "Automatisch", "On" for "Erzwungen an" and "Off" for
+// "Erzwungen aus"; "Auto" is the schema's name for the first. Any other value would be a mode Busforge
+// does not know the rules of.
+function parseGaSecurity(v: string | undefined): GroupAddressSecurity {
+  if (v === undefined || v === "Auto") return "auto";
+  if (v === "On") return "on";
+  if (v === "Off") return "off";
+  throw new KnxprojError("INVALID_KNXPROJ", `group address security mode "${v}" is not one ETS is known to write`);
+}
+
 // Descends into arrays: see buildGaIdMap. A project with two lines puts an array between the
 // installation and every device in it, and a walker that stops there finds no device at all.
 function findDeviceInstance(n: unknown, id: string): XmlNode | undefined {
@@ -307,7 +318,7 @@ function parseGroupAddresses(gas: unknown, levels: Levels): { groupRanges: Group
   const groupKeys: GroupKey[] = [];
   const toGa = (g: XmlNode): GroupAddress => {
     const raw = Number(attr(g.Address));
-    const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: text(g.Name), dpt: dptDisplay(attr(g.DatapointType)) };
+    const ga: GroupAddress = { address: formatGa(raw, levels), raw, name: text(g.Name), dpt: dptDisplay(attr(g.DatapointType)), security: parseGaSecurity(attr(g.Security)) };
     flat.push(ga);
     const key = attr(g.Key);
     if (key !== undefined) groupKeys.push({ raw, key });

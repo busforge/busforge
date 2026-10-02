@@ -3,7 +3,12 @@ import { getProject, projectExists } from "../db/projects.ts";
 import { createSnapshot } from "../db/snapshots.ts";
 import { buildGaDevicesView } from "../deviceservice.ts";
 import { addGroupSender, removeGroupSender } from "../db/groupSenders.ts";
+import { getGaSecurity, setGaSecurityMode } from "../db/gaSecurity.ts";
+import { hasGroupKey } from "../db/groupKeys.ts";
+import type { GroupAddressSecurity } from "@busforge/project";
 import { json, err, text } from "../httputil.ts";
+
+const GA_SECURITY: GroupAddressSecurity[] = ["auto", "on", "off"];
 import type { AppState } from "../app.ts";
 
 // Group-address structure editing (ranges + addresses) and the GA devices overlay.
@@ -76,13 +81,26 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   if (seg.length === 6 && seg[3] === "group-addresses" && seg[5] === "impact" && req.method === "GET") {
     return json({ links: countLinksForRaws(db, id, [Number(decodeURIComponent(seg[4]))]) });
   }
-  // /api/projects/:id/group-addresses/:raw  -> edit name+dpt, or delete (deletes
-  // capture an undo snapshot first, but only once the target is known to exist).
+  // /api/projects/:id/group-addresses/:raw  -> edit name+dpt (and the Data Secure mode, when given), or
+  // delete (deletes capture an undo snapshot first, but only once the target is known to exist).
   if (seg.length === 5 && seg[3] === "group-addresses") {
     const raw = Number(decodeURIComponent(seg[4]));
     if (req.method === "PATCH") {
-      const body = (await req.json().catch(() => ({}))) as { name?: unknown; dpt?: unknown };
-      if (!updateGroupAddress(db, id, raw, text(body.name), text(body.dpt))) return err("GA_NOT_FOUND", "group address not found", 404);
+      const body = (await req.json().catch(() => ({}))) as { name?: unknown; dpt?: unknown; security?: unknown };
+      if (body.security !== undefined && !GA_SECURITY.includes(body.security as GroupAddressSecurity)) {
+        return err("GA_SECURITY_INVALID", "security must be auto, on or off");
+      }
+      const found = db.transaction(() => {
+        if (!updateGroupAddress(db, id, raw, text(body.name), text(body.dpt))) return false;
+        // An unchanged mode is applied again where its key disagrees with it ("on" without one, "off"
+        // with one), the way out the flash guard points to.
+        const mode = body.security as GroupAddressSecurity | undefined;
+        if (mode !== undefined && (mode !== getGaSecurity(db, id, raw) || (mode !== "auto" && (mode === "on") !== hasGroupKey(db, id, raw)))) {
+          setGaSecurityMode(db, id, raw, mode, state.masterKey);
+        }
+        return true;
+      })();
+      if (!found) return err("GA_NOT_FOUND", "group address not found", 404);
       return json(getProject(db, id));
     }
     if (req.method === "DELETE") {

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, type SpaceNode } from "@busforge/project";
+import { appProgramId, type SpaceNode, type GroupAddressSecurity } from "@busforge/project";
 import { getAppProgram } from "./catalog.ts";
 import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
@@ -32,7 +32,7 @@ export interface ProjectExport {
   // Building structure (0.xml <Locations>). Optional so artifacts exported before
   // it was carried still import (they re-import with no location grouping).
   spaces?: SpaceNode[];
-  groupAddresses: { rangeId: number | null; raw: number; address: string; name: string; dpt: string }[];
+  groupAddresses: { rangeId: number | null; raw: number; address: string; name: string; dpt: string; security?: GroupAddressSecurity }[];
   deviceParameters: { deviceId: string; paramRefId: string; value: string }[];
   deviceParamBase: { deviceId: string; paramRefId: string; value: string }[];
   deviceLinks: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
@@ -79,7 +79,7 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     .map(({ np, ...d }) => (np ? { ...d, neverProgrammed: true } : d));
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as ProjectExport["groupRanges"];
-  const groupAddresses = db.query("SELECT range_id AS rangeId, raw, address, name, dpt FROM group_addresses WHERE project_id = ? ORDER BY raw")
+  const groupAddresses = db.query("SELECT range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY raw")
     .all(projectId) as ProjectExport["groupAddresses"];
   const deviceModules = (db.query("SELECT device_id AS deviceId, instances FROM device_modules WHERE project_id = ? ORDER BY device_id")
     .all(projectId) as { deviceId: string; instances: string }[])
