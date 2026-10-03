@@ -15,8 +15,8 @@ columns are listed per operation below.
 | Product | Application program | Read parameters | Read links | Parameter flash | Group-address flash | Full download | Structural flash |
 |---|---|---|---|---|---|---|---|
 | M-0002 GH Q631 0070 R0111 | `M-0002_A-A001-13-63C2` | tested | tested | tested | tested | tested | refused |
-| M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | eligible, untested |
-| M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
+| M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
 
 ## M-0002 GH Q631 0070 R0111
@@ -25,11 +25,11 @@ Product `M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111`, a
 
 | Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware | Newest record |
 |---|---|---|---|---|---|---|---|
-| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 | 2026-09-27 |
-| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 | 2026-09-27 |
-| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 5 | 2026-09-28 |
-| Group-address flash | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 5 | 2026-09-28 |
-| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 5 | 2026-09-27 |
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 | 2026-10-03 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 | 2026-10-03 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 5 | 2026-10-03 |
+| Group-address flash | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 5 | 2026-10-03 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 5 | 2026-10-03 |
 | Structural flash | refused | none / none | none / none | none / none | none | none | none |
 
 ## M-0004 400021SE
@@ -38,12 +38,12 @@ Product `M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE`, application program
 
 | Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware | Newest record |
 |---|---|---|---|---|---|---|---|
-| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-09-29 |
-| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-09-29 |
-| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 0 | 2026-09-29 |
-| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-09-29 |
-| Full download | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-09-29 |
-| Structural flash | eligible, untested | none / none | none / none | none / none | none | none | none |
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 0 | 2026-10-03 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-10-03 |
+| Full download | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-10-03 |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
 
 ## M-0083 BE-02001.02
 
@@ -51,12 +51,12 @@ Product `M-0083_H-182-0_P-BE.2D02001.2E02`, application program `M-0083_A-00B6-3
 
 | Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware | Newest record |
 |---|---|---|---|---|---|---|---|
-| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-09-27 |
-| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-09-27 |
-| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-09-27 |
-| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-09-28 |
-| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 0 | 2026-09-27 |
-| Structural flash | eligible, untested | none / none | none / none | none / none | none | none | none |
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 0 | 2026-10-03 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 0 | 2026-10-03 |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 | 2026-10-03 |
 
 ## M-0085 AMMA-04/06.S
 
@@ -64,9 +64,9 @@ Product `M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES`, application program `M-0085_A
 
 | Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware | Newest record |
 |---|---|---|---|---|---|---|---|
-| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-09-27 |
-| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-09-27 |
-| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 81 | 2026-09-28 |
-| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 | 2026-09-28 |
-| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 | 2026-09-27 |
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-03 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-03 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 81 | 2026-10-03 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 | 2026-10-03 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 | 2026-10-03 |
 | Structural flash | refused | none / none | none / none | none / none | none | none | none |

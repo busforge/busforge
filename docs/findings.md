@@ -895,3 +895,30 @@ keyring's.
 ETS therefore uses a keyring's certificates for a device it commissions itself, and ignores the tool
 key of a device that is already activated. A device Busforge activated reaches ETS only through a
 master reset and the certificate.
+
+## 30. The GVS AMMA ignores a Sync shortly after one it could not authenticate
+
+Measured on the bench GVS AMMA (1.1.203, Data Secure, 2026-10-03, over the bench bridge, one tunnel):
+a Sync with a wrong tool key goes unanswered, as it should. A Sync with the right key that follows it
+about 3.1 s later (the wrong one's 3 s timeout, a T_Disconnect and a new T_Connect in between) also
+goes unanswered; the next one, 0.4 s after that, is answered. With 2, 5, 10 or 20 s more between them
+the right key is answered at once. The Jung 400021SE answers the right key straight after the wrong
+one. So the AMMA does not lock out after a failed authentication; it drops a Sync within a few seconds
+of an unauthentic one. Where exactly the window ends (between about 3 and 5 s) is not measured. The
+smoke spec of a device that does this declares it (`secondSyncAfterWrongKey`, today only the GVS); the
+robustness check then records the silent first Sync and requires the second to open the session.
+
+## 31. A flash cut off inside its load bracket, driven through the UI
+
+On the bench MDT BE-02001.02 (1.1.56, 2026-10-03, build `7933bb2`, server and browser on the bench host next
+to the bridge): input B's "Sendeverzögerung" changed 0 to 2 in the imported "Bench" project (after
+a verified full download of that project), the parameter flash started from the flash dialog, and the
+server's TCP socket to the bridge killed (`ss -K`) as soon as its task reported the write phase, step
+1 of 2. The task failed `FLASH_INTERRUPTED_UNLOADED` ("the write broke off inside its load bracket and
+may have left the device unloaded; TUNNEL_CLOSED"), 4 s after it started. The dialog showed that
+message and offered the full download; taken from the dialog, it verified (276 bytes). The parameter
+was then set back and flashed, verified. A group-address preview that nobody started ran 1.5 s after
+the failure and stopped with `MASK_MISMATCH` ("device mask MV-44A508"); where it came from and what the
+half-loaded device answered is not established (open ticket). The kill was one run with one cut point;
+other cut points (after LoadCompleted, inside the table writes) were not tried.
+

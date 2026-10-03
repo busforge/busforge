@@ -1449,6 +1449,355 @@
   },
   {
    "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T17:41:44.916Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-10-03T17-41-44-916Z.json",
+    "sha256": "6ef8c904358724b242873572f084c7ec582fb17e1c91828c1730a0db96ba0148"
+   },
+   "id": "abb-usu-4.2-api-2026-10-03T17:41:44.916Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 8171B, mask MV-0701"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5703 ms after A_Restart, answering again after 6289 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T17:41:44.916Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-10-03T17-41-44-916Z.json",
+    "sha256": "6ef8c904358724b242873572f084c7ec582fb17e1c91828c1730a0db96ba0148"
+   },
+   "id": "abb-usu-4.2-api-2026-10-03T17:41:44.916Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 3 → 1/1/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5703 ms after A_Restart, answering again after 6289 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T17:41:44.916Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-10-03T17-41-44-916Z.json",
+    "sha256": "6ef8c904358724b242873572f084c7ec582fb17e1c91828c1730a0db96ba0148"
+   },
+   "id": "abb-usu-4.2-api-2026-10-03T17:41:44.916Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T17:41:44.916Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-10-03T17-41-44-916Z.json",
+    "sha256": "6ef8c904358724b242873572f084c7ec582fb17e1c91828c1730a0db96ba0148"
+   },
+   "id": "abb-usu-4.2-api-2026-10-03T17:41:44.916Z#3-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T17:41:44.916Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-10-03T17-41-44-916Z.json",
+    "sha256": "6ef8c904358724b242873572f084c7ec582fb17e1c91828c1730a0db96ba0148"
+   },
+   "id": "abb-usu-4.2-api-2026-10-03T17:41:44.916Z#4-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
    "recordedAt": "2026-09-25T09:02:15.727Z",
    "subject": {
     "manufacturer": "M-0002",
@@ -3096,6 +3445,424 @@
     "sha256": "eb12a8fdeb6d3a6d7802c1b5d7987394c544c733a68a07853f8c9dd84ee80e25"
    },
    "id": "abb-usu-4.2-ui-2026-09-27T08:55:18.421Z#5-uiClickThrough",
+   "scope": {
+    "operation": "uiClickThrough",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps)",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "every parameter and com-object the API lists was visible in the UI",
+     "detail": "14 params, 2 objects rendered"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "UI full-download via the FlashDialog, 2 objects"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5701 ms after A_Restart, answering again after 6290 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 3 → 1/1/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5701 ms after A_Restart, answering again after 6290 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#3-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#4-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:00:22.965Z",
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": "378c78fb8a48"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/abb-usu-4.2-ui-2026-10-03T18-00-22-965Z.json",
+    "sha256": "b4aa338f33c89c5af1fc17a397973ff25a6562b39459d0e718b3bed745505933"
+   },
+   "id": "abb-usu-4.2-ui-2026-10-03T18:00:22.965Z#5-uiClickThrough",
    "scope": {
     "operation": "uiClickThrough",
     "channel": "ui",
@@ -5537,6 +6304,424 @@
   },
   {
    "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 3896B, mask MV-07B0"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2276 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 2 → 1/2/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2276 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#3-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#4-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:30:55.550Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-03T21-30-55-550Z.json",
+    "sha256": "bcc0bb16dc755bc14be1e4619f7ea69776a3d12ca318683c0252b8d3106b9f33"
+   },
+   "id": "gvs-amma-api-2026-10-03T21:30:55.550Z#5-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour inputToOutput: switch drives status",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed inputToOutput",
+     "detail": "3 transitions tracked on 1/2/2→1/2/3"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
    "recordedAt": "2026-09-25T08:21:12.275Z",
    "subject": {
     "manufacturer": "M-0085",
@@ -7460,6 +8645,493 @@
     "sha256": "c9a5a336d9ce62f6867a71accbf09b882b0b1f408fec4bf7eaa71a2e1cd27801"
    },
    "id": "gvs-amma-ui-2026-09-27T07:04:59.968Z#6-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour inputToOutput: switch drives status",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed inputToOutput",
+     "detail": "3 transitions tracked on 1/2/2→1/2/3"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "UI full-download via the FlashDialog, 4 objects"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2278 ms after A_Restart, answering again after 7184 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 2 → 1/2/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2278 ms after A_Restart, answering again after 7184 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#3-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#4-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#5-uiClickThrough",
+   "scope": {
+    "operation": "uiClickThrough",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps)",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "every parameter and com-object the API lists was visible in the UI",
+     "detail": "35 params, 4 objects rendered"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T21:47:08.637Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "663195626417"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-ui-2026-10-03T21-47-08-637Z.json",
+    "sha256": "3d63306e9175baf188962ac07571fcd5a887ea6e9d8130540a959b99348a6ac5"
+   },
+   "id": "gvs-amma-ui-2026-10-03T21:47:08.637Z#6-flashLinks",
    "scope": {
     "operation": "flashLinks",
     "channel": "ui",
@@ -10059,6 +11731,1119 @@
   },
   {
    "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 10367B, mask MV-07B0"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5108 ms after A_Restart, answering again after 6029 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5108 ms after A_Restart, answering again after 6029 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 0→1→0 (4→4→4 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#6-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "behaviour securedOutput: K1 answers a secured read on 0/0/1",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed securedOutput",
+     "detail": "0/0/1 answered 0x00, secured and authentic"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:29:41.382Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T15-29-41-382Z.json",
+    "sha256": "489fca2c831e4adfe41b65963acb5606fd55c0b4240029534f11658ac02b986e"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#7-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: K2 contact answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "fail",
+     "detail": "no GroupValueResponse on 1/6/3"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 10367B, mask MV-07B0"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5100 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5100 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 0→1→0 (4→4→4 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#6-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "behaviour securedOutput: K1 answers a secured read on 0/0/1",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed securedOutput",
+     "detail": "0/0/1 answered 0x00, secured and authentic"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T18:58:21.789Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [
+    "jung-400021se-secure-api-2026-10-03T15:29:41.382Z#7-flashLinks"
+   ],
+   "supersedeReason": "runner fault, not the device: the plain 'output' behaviour created its fresh group address in Data Secure mode auto, which Busforge secures on a secure device since 7c4d98c, and the witness read it in plain; the runner now sets the address to mode off (tools/smoke/behaviours.ts), and this run passed with it",
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-api-2026-10-03T18-58-21-789Z.json",
+    "sha256": "346f3360c393c7c8e8977735563f3ca311ffa18206805010635f779921a9939b"
+   },
+   "id": "jung-400021se-secure-api-2026-10-03T18:58:21.789Z#7-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: K2 contact answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "1/6/3 answered 0x00"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
    "recordedAt": "2026-09-29T16:41:41.570Z",
    "subject": {
     "manufacturer": "M-0004",
@@ -10590,6 +13375,1257 @@
     "sha256": "b8c09bb1352367670eba9de4e446067af9d2c00d335b648fdaaca880e8e1912d"
    },
    "id": "jung-400021se-secure-ui-2026-09-29T16:41:41.570Z#7-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: K2 contact answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "1/6/3 answered 0x00"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "UI full-download via the FlashDialog, 4 objects"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5104 ms after A_Restart, answering again after 6043 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5104 ms after A_Restart, answering again after 6043 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 0→1→0 (4→4→4 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#6-uiClickThrough",
+   "scope": {
+    "operation": "uiClickThrough",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps)",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "every parameter and com-object the API lists was visible in the UI",
+     "detail": "38 params, 4 objects rendered"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#7-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "behaviour securedOutput: K1 answers a secured read on 0/0/1",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed securedOutput",
+     "detail": "0/0/1 answered 0x00, secured and authentic"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T16:24:39.296Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T16-24-39-296Z.json",
+    "sha256": "4ffef5cb27e36b22f1eb796df56c380b51a9b921aee050b7d3bb9aa9c5918637"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#8-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: K2 contact answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "fail",
+     "detail": "no GroupValueResponse on 1/6/3"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "UI full-download via the FlashDialog, 4 objects"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5100 ms after A_Restart, answering again after 6024 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 5100 ms after A_Restart, answering again after 6024 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 0→1→0 (4→4→4 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#6-uiClickThrough",
+   "scope": {
+    "operation": "uiClickThrough",
+    "channel": "ui",
+    "configuration": "spec baseline (2 configure steps)",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "every parameter and com-object the API lists was visible in the UI",
+     "detail": "38 params, 4 objects rendered"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#7-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "behaviour securedOutput: K1 answers a secured read on 0/0/1",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed securedOutput",
+     "detail": "0/0/1 answered 0x00, secured and authentic"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T19:53:23.043Z",
+   "subject": {
+    "manufacturer": "M-0004",
+    "productRef": "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
+    "appProgramId": "M-0004_A-7072-21-99A7-O000A",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "jung-400021se-secure",
+     "revision": "0450761bcb24"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [
+    "jung-400021se-secure-ui-2026-10-03T16:24:39.296Z#8-flashLinks"
+   ],
+   "supersedeReason": "runner fault, not the device: the plain 'output' behaviour created its fresh group address in Data Secure mode auto, which Busforge secures on a secure device since 7c4d98c, and the witness read it in plain; the runner now sets the address to mode off (tools/smoke/behaviours.ts), and this run passed with it",
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/jung-400021se-secure-ui-2026-10-03T19-53-23-043Z.json",
+    "sha256": "5075c95e9c0516b1afe8f65e19b565c480d6fd4e5c0d09f64d51b9541c8e1208"
+   },
+   "id": "jung-400021se-secure-ui-2026-10-03T19:53:23.043Z#8-flashLinks",
    "scope": {
     "operation": "flashLinks",
     "channel": "ui",
@@ -13817,6 +17853,493 @@
   },
   {
    "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 276B, mask MV-0705"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2309 ms after A_Restart, answering again after 2898 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 0 → 1/3/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2309 ms after A_Restart, answering again after 2898 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 5→7→5 (2→3→2 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:20:37.631Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-10-03T15-20-37-631Z.json",
+    "sha256": "dd4e5b5f2b3a5bc96297e991543ef346bd05899851aad0dd511798510380cd94"
+   },
+   "id": "mdt-be02001-api-2026-10-03T15:20:37.631Z#6-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: input A answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "1/3/2 answered 0x01"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
    "recordedAt": "2026-09-25T09:35:46.523Z",
    "subject": {
     "manufacturer": "M-0083",
@@ -15253,6 +19776,562 @@
     "sha256": "615ff3d3f1374408f993d910bb59708c2a68ebeed37c729d0c45fb51a9de5f4a"
    },
    "id": "mdt-be02001-ui-2026-09-27T08:31:06.464Z#6-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: input A answers a read",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "1/3/2 answered 0x01"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "UI full-download via the FlashDialog, 2 objects"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2306 ms after A_Restart, answering again after 2895 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 0 → 1/3/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2306 ms after A_Restart, answering again after 2895 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#3-structuralFlash",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-2 5→7→5 (2→3→2 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#4-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#5-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#6-uiClickThrough",
+   "scope": {
+    "operation": "uiClickThrough",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps)",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "every parameter and com-object the API lists was visible in the UI",
+     "detail": "29 params, 2 objects rendered"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-03T15:25:01.146Z",
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
+    "appProgramId": "M-0083_A-00B6-32-9642",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.135-85-g7933bb2",
+     "commit": "7933bb2"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-be02001",
+     "revision": "2f6d59b2d4ed"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/mdt-be02001-ui-2026-10-03T15-25-01-146Z.json",
+    "sha256": "917a4bdd58b6b7affac5133ee21c36154574d9e35f4a24d855916d0c987b7844"
+   },
+   "id": "mdt-be02001-ui-2026-10-03T15:25:01.146Z#7-flashLinks",
    "scope": {
     "operation": "flashLinks",
     "channel": "ui",

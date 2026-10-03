@@ -128,6 +128,12 @@ export class Client {
   // The range id round-trips from the project view as a string; the group-address route requires a number.
   private createGaAddress(pid: string, rangeId: number | string, sub: number, name: string, dpt: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-addresses`, { rangeId: Number(rangeId), sub, name, dpt }); }
 
+  // A group address's KNX Data Secure mode: "auto" (secured when a secure device uses it, as ETS),
+  // "on" or "off".
+  setGaSecurity(pid: string, ga: string, security: "auto" | "on" | "off") {
+    return this.call<ProjectView>("PATCH", `/api/projects/${pid}/group-addresses/${gaToNum(ga)}`, { security });
+  }
+
   // Ensure a 3-level group address exists as a PROJECT group address, creating the main range,
   // middle range and address as needed (idempotent). The UI GA picker only offers project group
   // addresses, so a UI-driven link needs the GA to exist first; the API-driven link does not (it

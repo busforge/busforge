@@ -150,10 +150,19 @@ async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: str
       const dev = deviceOn(tun, o.spec.device.ia, o.creds, other);
       try { await dev.connect(); } finally { await dev.disconnect(); }
     });
-    const dev = deviceOn(tun, o.spec.device.ia, o.creds);
-    try { await dev.connect(); await dev.deviceDescriptor(); out.push({ name: "right tool key afterwards", state: "pass", detail: "session opened, descriptor read" }); }
-    catch (e) { out.push({ name: "right tool key afterwards", state: "fail", detail: e instanceof Error ? e.message : String(e) }); }
-    finally { await dev.disconnect(); }
+    const openRight = async () => { const dev = deviceOn(tun, o.spec.device.ia, o.creds); try { await dev.connect(); await dev.deviceDescriptor(); } finally { await dev.disconnect(); } };
+    const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+    try { await openRight(); out.push({ name: "right tool key afterwards", state: "pass", detail: "session opened, descriptor read" }); }
+    catch (first) {
+      const silent = first instanceof KnxError && first.code === "SECURE_SYNC_NO_RESPONSE";
+      if (silent && o.spec.secondSyncAfterWrongKey) {
+        // A device known to drop the first Sync after an unauthentic one: that silence is recorded as
+        // what it is, and the right key must open the session on the next Sync.
+        out.push({ name: "right tool key afterwards, first Sync", state: "pass", detail: "unanswered, as this device does (findings §30)" });
+        try { await openRight(); out.push({ name: "right tool key afterwards, second Sync", state: "pass", detail: "session opened, descriptor read" }); }
+        catch (e) { out.push({ name: "right tool key afterwards, second Sync", state: "fail", detail: message(e) }); }
+      } else out.push({ name: "right tool key afterwards", state: "fail", detail: message(first) });
+    }
   } finally { await tun.disconnect(); }
 
   const proxy = new FaultProxy(o.host, port, iaToNum(o.spec.device.ia));

@@ -155,8 +155,9 @@ describe("the records in docs/evidence", () => {
       for (const o of ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload"] as const) {
         expect(`${row.productRef} ${o} ${row.operations[o].state}`).toBe(`${row.productRef} ${o} tested`);
       }
-      // No structural-flash record has been kept yet, so no Product may claim it.
-      expect(row.operations.structuralFlash.state).toBe("eligible");
+      // The structural flash was driven on the Jung and the MDT only (2026-10-03); the others never ran it.
+      const structural = row.productRef.startsWith("M-0004_") || row.productRef.startsWith("M-0083_") ? "tested" : "eligible";
+      expect(`${row.productRef} structuralFlash ${row.operations.structuralFlash.state}`).toBe(`${row.productRef} structuralFlash ${structural}`);
       expect(Object.keys(row.operations)).toEqual([...MATRIX_OPERATIONS]);
     }
   });

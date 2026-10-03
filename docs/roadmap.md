@@ -116,11 +116,14 @@ started until the capability it depends on is hardware-proven.
 
 ## KNX Data Secure
 
-- **Show the full-download offer after an interrupted flash on hardware.** A flash cut off inside its
-  load bracket (the cause shown on the bench was a stalled TCP stream, [findings.md](findings.md)
-  §25) now fails as `FLASH_INTERRUPTED_UNLOADED` and the flash dialog offers the full download
-  ([load-procedures.md](load-procedures.md)); covered by unit tests of the runner and the task queue
-  only. Not yet driven through the UI against a device whose link is cut mid-bracket.
+- **No smoke behaviour exercises a fresh address Busforge secures.** The plain behaviours pin their
+  fresh addresses to "off"; a group-address flash on a secure device secures a fresh "auto" address with
+  a Busforge-generated key, but the specs check only its transfer. A `securedOutput` on a fresh address
+  would show the device acting on such a key.
+- **The bench bridge holds a dead USB interface and a half-open TCP channel.** After the stick
+  re-enumerated it kept accepting tunnels while every frame failed; a channel whose client vanished
+  without a disconnect stayed taken (one tunnel address, so every later connect got 0x24). It should
+  reopen or refuse the interface, and drop a channel without a heartbeat for 120 s, also over TCP.
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured

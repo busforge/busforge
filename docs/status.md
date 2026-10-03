@@ -218,11 +218,11 @@ spec states why no behaviour is observable.
 
 | Spec | Product | Mask | `api` | `ui` | Persistence (restart) | Done bar |
 |---|---|---|---|---|---|---|
-| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | hardware | hardware | hardware, both channels | **met** |
+| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator, in KNX Data Secure mode since 2026-09-30 | MV-07B0 | hardware | hardware | hardware, both channels | **met** (2026-10-03, secured, imported from the ETS project; its behaviour plain, on Output 2) |
 | `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | hardware, both channels | **met** |
 | `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | hardware, both channels | **met**, to the byte only |
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | hardware, both channels | **met** (before the device went secure, 2026-09-27) |
-| `jung-400021se-secure` | the same Jung, in KNX Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met** (2026-09-29, plus robustness refusals and restore; records in `docs/evidence/runs/2026-09-29/`) |
+| `jung-400021se-secure` | the same Jung, in KNX Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met** (2026-09-29 and 2026-10-03, plus robustness refusals and restore) |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
 All four devices pass both channels, every capability, their behaviour and the persistence step
@@ -233,6 +233,18 @@ Those runs, and the earlier ones they supersede (2026-09-25: MDT `c2cde85`, Jung
 GVS `c935d5f`; 2026-09-26: Jung `bf97acc`, all four on `1de6231`), are kept with their evidence records in evidence/runs/. Persistence there means an observed reboot
 after A_Restart, every load object LOADED again, and a read-back equal to the project; it is not a
 bus power cut ([evidence-contract.md](evidence-contract.md)).
+
+On build `7933bb2` (2026-10-03, run from the bench host next to the bench bridge) all four bench devices
+pass again in both channels: MDT, ABB, the Jung in secure mode and the GVS AMMA, now also secured,
+with every capability, behaviour, persistence and, on the two secure devices, the robustness checks
+and the restore (the GVS runs at 21:30 and 21:47 UTC, after the check below was added). These runs give the structural flash its first kept records (Jung and MDT, both
+channels), so [compatibility.md](compatibility.md) shows it tested there. The first Jung runs of
+that day failed only their plain behaviour, a runner fault (its fresh address was secured, the
+witness read it plain); the passing runs supersede those records with that reason. On the GVS the
+right tool key straight after a wrong one goes unanswered once and is answered on the next Sync
+([findings.md](findings.md) §30); its spec declares that (`secondSyncAfterWrongKey`), and the check
+records the silent first Sync and the answered second one as two results. The two GVS runs before
+that failed this check only (their reports were not kept). Reports and records in `docs/evidence/runs/2026-10-03/`.
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
@@ -284,13 +296,19 @@ report a device family as working on the strength of a passing test suite.
   a **transmit-only object** linked by a GA flash alone (MDT BE-02001, see
   [findings.md](findings.md) §7); on the memory-mapped ABB the latter is not shown. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.
-- **KNX Data Secure is shown on one device.** The smoke spec `jung-400021se-secure` (both channels,
+- **KNX Data Secure is shown on two devices.** The smoke spec `jung-400021se-secure` (both channels,
  ) covers the secured full download, parameter and GA flash, read-back, persistence, a
   secured and a plain behaviour, the robustness refusals and a restore to the ETS project; all on the
   Jung 400021SE. Two api runs broke off in a parameter flash (same seed);
   the second was captured: the TCP stream between the bench bridge and the Mac stalled on the Wi-Fi
   path, not the device ([findings.md](findings.md) §25); the same seed then passed. An interrupted
-  flash does not recover the device by itself.
+  flash does not recover the device by itself: on the MDT BE-02001.02 (UI, the server's
+  socket to the bridge killed in the write phase) the task failed `FLASH_INTERRUPTED_UNLOADED`, the
+  flash dialog offered the full download, and that download through the dialog verified
+  ([findings.md](findings.md) §31, one cut point). On a second Data Secure device, the GVS AMMA
+  (both channels), the secured full download, parameter and GA flash, read-back,
+  persistence, the robustness refusals and the restore pass; its behaviour is checked in plain only,
+  a secured behaviour is shown on the Jung alone.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.

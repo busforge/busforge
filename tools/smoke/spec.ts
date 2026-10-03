@@ -102,6 +102,9 @@ export interface DeviceSpec {
   // The channels this device must pass in. A capability the product claims but that is never
   // exercised in one of these channels is a HARD failure (never a skip). Default: both.
   channels?: Channel[];
+  // Data Secure robustness: the device leaves the first Sync after an unauthentic one unanswered and
+  // answers the next (docs/findings.md §30). The check then allows one further Sync, as its own result.
+  secondSyncAfterWrongKey?: true;
   // Capabilities the PRODUCT claims that this device must NOT exercise on the bench, each with the
   // hardware reason. This is the one honest exception to "exercise every claimed capability": it is
   // not a silent skip (it is declared here and reported as `unsafe`, proven by nothing), and it is

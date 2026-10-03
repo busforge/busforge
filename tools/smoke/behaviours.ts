@@ -54,6 +54,10 @@ export async function verifyBehaviour(ctx: BehaviourCtx, b: BehaviourSpec): Prom
         await applyEnable(ctx, b.enable, b.label);
         const obj = await resolveObject(ctx, b.comObjRefId);
         ga = ctx.allocGa();
+        // The witness reads and listens in plain. On a Data Secure device a fresh address in "auto" mode
+        // would be secured (as ETS does), so the plain behaviour pins its address to plain.
+        await ctx.client.ensureGa(ctx.pid, ga);
+        await ctx.client.setGaSecurity(ctx.pid, ga, "off");
         await linkChan(ctx, obj, ga);
         await flashGaChan(ctx, b.label);
         await ctx.settle(3000); // let the flash's tunnel fully release before the witness connects
@@ -90,6 +94,8 @@ export async function verifyBehaviour(ctx: BehaviourCtx, b: BehaviourSpec): Prom
       const inObj = await resolveObject(ctx, b.inObjRefId);
       const outObj = await resolveObject(ctx, b.outObjRefId);
       gaIn = ctx.allocGa(); gaOut = ctx.allocGa();
+      // Plain addresses, as for output above: the witness writes and reads in plain.
+      for (const ga of [gaIn, gaOut]) { await ctx.client.ensureGa(ctx.pid, ga); await ctx.client.setGaSecurity(ctx.pid, ga, "off"); }
       await linkChan(ctx, inObj, gaIn);
       await linkChan(ctx, outObj, gaOut);
       await flashGaChan(ctx, b.label);

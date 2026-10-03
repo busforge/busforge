@@ -87,6 +87,10 @@ tunnel and requires the device to act:
 | `output` | `GroupValueRead` the address, require a `GroupValueResponse` from the device itself |
 | `inputToOutput` | Write the input's address, read the output's. A **sequence** of transitions to different values, so a stuck output cannot pass by luck. The runner refuses a spec with fewer than two steps |
 
+These three check in plain. A fresh address the runner creates for `heartbeat` or `output` is set to
+Data Secure mode "off", since on a secure device an address in "auto" mode is secured, as ETS does
+it; a secured object is checked with `securedOutput`.
+
 This is the only layer that catches a byte-perfect flash of a semantically wrong value. Bringing it
 up found two real product bugs on a System B actuator that a byte-verified read-back could never
 have seen (see [findings.md](findings.md)): a group-address flash refused as `RESTART_IGNORED` on a
@@ -108,6 +112,7 @@ what the product cannot know:
 | `fuzz` | The seeded generator's policy: the group-address range to draw from, parameter and com-object exclusion lists, round budgets |
 | `structuralTrigger` | A parameter change that alters the com-object table. The `structuralFlash` driver sets it, writes it as one structural flash, writes the revert the same way and requires a read-back without drift; absent, the capability is reported `unproven` |
 | `channels` | Which channels this device must pass in (default: both) |
+| `secondSyncAfterWrongKey` | Data Secure only: the device leaves the first Sync after a wrong tool key unanswered ([findings.md](findings.md) §30). The robustness check records that silence as its own result and requires the right key to open the session on the next Sync; without the flag a silence fails |
 | `unsafe` | A claimed capability that must **not** be exercised on this device, with the hardware reason. Reported as `unsafe`, proven by nothing, never faked green |
 
 `unsafe` is the one honest exception to "exercise everything claimed". It is declared in the spec
