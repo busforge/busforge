@@ -116,7 +116,25 @@ The first relation gets its own state, `derived` (decided 2026-10-01): the same 
 same application program version is likely to behave the same, which is worth showing apart from a
 Product nothing is known about, but the catalog does not prove shared electronics and firmware. It
 sits between technically eligible and tested, never raises a cell to `pass`, and does not count
-toward qualification. Not implemented yet (see the [roadmap](roadmap.md)).
+toward qualification. `buildMatrix()` in
+[`packages/product/src/compatibility.ts`](../packages/product/src/compatibility.ts) computes it; the
+app does not show it yet (see the [roadmap](roadmap.md)).
+
+## The matrix state of an operation
+
+`buildMatrix()` gives each Product, running one application program, one state per operation:
+
+| State | When |
+|---|---|
+| `refused` | `capabilities()` does not allow the operation; the Product's own evidence stays visible next to it |
+| `conflict` | a transfer cell of the Product's own records, in any channel, is in `conflict` |
+| `failed` | the newest transfer result of the Product's own records, in any channel, is `fail` |
+| `tested` | transfer `pass` in both the `api` and the `ui` channel, from the Product's own records |
+| `derived` | none of the above, and the same Hardware with the same application program version is `tested` on another known Product; shown with that Product and the firmware it was tested on |
+| `eligible` | none of the above; possibly with a hint naming another Hardware where the same application program version is `tested` |
+
+`tested` is the transfer axis only. Whether a Product is qualified (behaviour, persistence, and the
+mechanism's reference case, below) is a separate judgement the matrix does not make.
 
 A record whose `appProgramId` or `productRef` is unknown cannot back any cell. Historical records
 without a Product stay readable, but they raise nothing.

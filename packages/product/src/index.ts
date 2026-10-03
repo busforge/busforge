@@ -13,4 +13,5 @@ export * from "./modules.ts";
 export * from "./profiles.ts";
 export * from "./comobjbuild.ts";
 export * from "./evidence.ts";
+export * from "./compatibility.ts";
 export * from "./securityobject.ts";
