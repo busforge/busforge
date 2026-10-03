@@ -516,7 +516,7 @@ const en = {
     gapsTitle: "This device uses settings busforge does not fully support yet:",
     gapType: "{{type}} ({{count}})",
     gapElement: "Element {{tag}} ({{count}})",
-    readbackUnsupportedTitle: "Not verified against the device",
+    readbackUnsupportedTitle: "What the comparison with the device does not cover",
     readbackUnsupportedBoth: "busforge cannot read this device's state back yet (an absolute-segment MV-0705 device). The values shown come from the import and have not been confirmed against the device, so change indicators are not a verified comparison.",
     readbackUnsupportedParams: "busforge cannot read this device's parameters back yet. The parameter values shown come from the import and were not confirmed against the device.",
     readbackUnsupportedLinks: "busforge cannot read this device's group-address links back yet. The links shown come from the import and were not confirmed against the device.",

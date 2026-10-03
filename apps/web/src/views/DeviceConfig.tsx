@@ -679,16 +679,21 @@ export function DeviceConfig() {
         </div>
       )}
 
+      {/* What this device's values are never compared with the device for. Not the product's test
+          state (the compatibility badge): a fully tested product has these gaps too. Collapsed, the
+          title and the count stay visible. */}
       {readbackNotes.length > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="readback-unsupported">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-medium">{t("device.readbackUnsupportedTitle")}</p>
-            <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
-              {readbackNotes.map((n, i) => <li key={i}>{n}</li>)}
-            </ul>
-          </div>
-        </div>
+        <details className="group rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300" data-testid="readback-unsupported">
+          <summary className="flex cursor-pointer list-none items-center gap-2 select-none">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            <span className="font-medium">{t("device.readbackUnsupportedTitle")}</span>
+            <span className="text-amber-700/80 dark:text-amber-300/80">({readbackNotes.length})</span>
+            <ChevronDown className="ml-auto size-3.5 shrink-0 transition-transform group-open:rotate-180" />
+          </summary>
+          <ul className="mt-1.5 list-disc space-y-0.5 pb-0.5 pl-5 text-amber-700/90 dark:text-amber-300/90">
+            {readbackNotes.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        </details>
       )}
 
       {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}

@@ -516,7 +516,7 @@ const de: Messages = {
     gapsTitle: "Dieses Gerät nutzt Einstellungen, die busforge noch nicht vollständig unterstützt:",
     gapType: "{{type}} ({{count}})",
     gapElement: "Element {{tag}} ({{count}})",
-    readbackUnsupportedTitle: "Nicht gegen das Gerät verifiziert",
+    readbackUnsupportedTitle: "Was der Abgleich mit dem Gerät nicht abdeckt",
     readbackUnsupportedBoth: "busforge kann den Zustand dieses Geräts noch nicht zurücklesen (Absolut-Segment-Gerät MV-0705). Die angezeigten Werte stammen aus dem Import und wurden nicht mit dem Gerät abgeglichen; die Änderungsmarkierungen sind also kein verifizierter Soll/Ist-Vergleich.",
     readbackUnsupportedParams: "busforge kann die Parameter dieses Geräts noch nicht zurücklesen. Die angezeigten Parameterwerte stammen aus dem Import und wurden nicht mit dem Gerät abgeglichen.",
     readbackUnsupportedLinks: "busforge kann die Gruppenadress-Verknüpfungen dieses Geräts noch nicht zurücklesen. Die angezeigten Verknüpfungen stammen aus dem Import und wurden nicht mit dem Gerät abgeglichen.",
