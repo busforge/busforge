@@ -3,8 +3,8 @@
 The single place where Busforge states what it can do and how far each claim is proven. Every
 other document links here instead of repeating a verification claim.
 The per-Product, per-operation matrix computed from the kept evidence records is
-[compatibility.md](compatibility.md) (generated); the server returns the same states with each
-device's configuration view.
+[compatibility.md](compatibility.md) (generated); the app shows the same states in each device's
+compatibility badge.
 
 The bar, and it is not negotiable: a claim says **what was shown on a real device**, on the axes of
 the [evidence contract](evidence-contract.md): transfer, reference, behaviour, persistence. "The

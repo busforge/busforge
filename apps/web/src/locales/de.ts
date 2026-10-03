@@ -337,7 +337,20 @@ const de: Messages = {
     emptyBuilding: "Noch keine Bereiche. Geschoss hinzufügen, um zu starten.",
     type: { Building: "Gebäude", Floor: "Geschoss", Room: "Raum" },
   },
-  // Geräte-Katalogauswahl (ein Produkt ins Projekt platzieren).
+  // Das Kompatibilitäts-Badge eines Geräts und sein Detail (Kompatibilitätsmatrix).
+  compat: {
+    title: "Für dieses Produkt auf Hardware gezeigt",
+    summary: { tested: "Alle unterstützten Vorgänge getestet", partial: "Teilweise getestet", derived: "An Schwesterprodukt getestet", failed: "Auf Hardware fehlgeschlagen", untested: "Ungetestet", unsupported: "Nicht unterstützt" },
+    state: { tested: "getestet", failed: "fehlgeschlagen", conflict: "widersprüchlich", derived: "abgeleitet", eligible: "ungetestet", refused: "nicht unterstützt" },
+    colOperation: "Vorgang", colState: "Stand", colTransfer: "Bytes gehalten (API / UI)", colPersistence: "Übersteht Neustart (API / UI)",
+    derivedFrom: "dieselbe Hardware und Applikation getestet als {{product}}",
+    sameApp: "dieselbe Applikation getestet an {{product}} (andere Hardware)",
+    firmware: "Firmware {{fw}}",
+    firmwareOf: "Firmware {{fw}} (von {{product}})",
+    toolFailed: "eine Tool-Prüfung (Readback-Tool oder ETS-Vergleich) ist an diesem Produkt fehlgeschlagen",
+    explain: "Getestet heißt: Das Gerät hielt genau die Bytes, die Busforge geschrieben hat, über die API und über die Oberfläche, an diesem Produkt. Ob die Bytes denen von ETS entsprechen oder das Gerät danach handelt, ist damit nicht gezeigt. Vorgänge, die Busforge für dieses Gerät nicht unterstützt, zählen in der Zusammenfassung nicht; n/a: nicht anwendbar.",
+    acknowledged: "Du hast in diesem Projekt bestätigt, dass ungetestete Vorgänge dieses Produkts geschrieben werden dürfen.",
+  },
   // Der Hinweis vor dem Schreiben eines Produkts, das nicht auf Hardware getestet ist (Kompatibilitätsmatrix).
   untested: {
     title: "Nicht auf Hardware getestet",
@@ -346,7 +359,10 @@ const de: Messages = {
     derived: "an diesem Produkt nicht getestet; dieselbe Hardware mit derselben Applikation ({{product}}) schon",
     explain: "Busforge baut die Bytes aus dem Applikationsprogramm des Herstellers, hat diesen Schreibvorgang an diesem Produkt aber noch nicht funktionieren sehen. Einmal für dieses Projekt bestätigen, um trotzdem zu schreiben.",
     acknowledge: "In diesem Projekt trotzdem schreiben",
+    failedTitle: "Auf Hardware schon fehlgeschlagen",
+    failedExplain: "Du hast in diesem Projekt bestätigt, dieses Produkt ungetestet zu schreiben. Dieser Schreibvorgang ist an diesem Produkt schon fehlgeschlagen oder hat widersprüchliche Ergebnisse gebracht; prüfe das Ergebnis genau.",
   },
+  // Geräte-Katalogauswahl (ein Produkt ins Projekt platzieren).
   catalog: {
     title: "Gerät hinzufügen",
     description: "Ein Produkt aus dem Katalog wählen, um es in dieses Projekt zu platzieren.",

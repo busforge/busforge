@@ -337,7 +337,20 @@ const en = {
     emptyBuilding: "No areas yet. Add a floor to start.",
     type: { Building: "Building", Floor: "Floor", Room: "Room" },
   },
-  // Device catalog picker (placing a product into a project).
+  // The device's compatibility badge and its detail (compatibility matrix).
+  compat: {
+    title: "Shown on hardware for this product",
+    summary: { tested: "All supported operations tested", partial: "Partly tested", derived: "Tested on a sibling", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
+    state: { tested: "tested", failed: "failed", conflict: "contradictory", derived: "derived", eligible: "untested", refused: "not supported" },
+    colOperation: "Operation", colState: "State", colTransfer: "Bytes held (API / UI)", colPersistence: "Survives restart (API / UI)",
+    derivedFrom: "same hardware and application tested as {{product}}",
+    sameApp: "same application tested on {{product}} (other hardware)",
+    firmware: "firmware {{fw}}",
+    firmwareOf: "firmware {{fw}} (of {{product}})",
+    toolFailed: "a tool check (read-back tool or ETS comparison) failed on this product",
+    explain: "Tested means the device held exactly the bytes Busforge wrote, through the API and the UI, on this product. It does not prove the bytes match ETS or that the device acts on them. Operations Busforge does not support for this device are left out of the summary; n/a: not applicable.",
+    acknowledged: "You acknowledged in this project that untested operations of this product may be written.",
+  },
   // The notice before writing a Product not tested on hardware (compatibility matrix).
   untested: {
     title: "Not tested on hardware",
@@ -346,7 +359,10 @@ const en = {
     derived: "not tested on this product; the same hardware with the same application ({{product}}) was",
     explain: "Busforge builds the bytes from the manufacturer's application program, but has not seen this write work on this product. Confirm once for this project to write it anyway.",
     acknowledge: "Write it anyway in this project",
+    failedTitle: "Failed on hardware before",
+    failedExplain: "You acknowledged writing this product untested in this project. This write has failed or given contradictory results on this product before; check the result closely.",
   },
+  // Device catalog picker (placing a product into a project).
   catalog: {
     title: "Add a device",
     description: "Pick a product from the catalog to place into this project.",

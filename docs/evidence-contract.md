@@ -118,7 +118,7 @@ Product nothing is known about, but the catalog does not prove shared electronic
 sits between technically eligible and tested, never raises a cell to `pass`, and does not count
 toward qualification. `buildMatrix()` in
 [`packages/product/src/compatibility.ts`](../packages/product/src/compatibility.ts) computes it; the
-app does not show it yet (see the [roadmap](roadmap.md)).
+app shows it in each device's compatibility badge.
 
 ## The matrix state of an operation
 

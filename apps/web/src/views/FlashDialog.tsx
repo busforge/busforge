@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, taskActive, type Device, type DeviceConfigView, type FlashResult, type MatrixOperation, type Task } from "../api.ts";
-import { UntestedNotice, untestedOps, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
+import { UntestedNotice, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
+import { untestedOps } from "../lib/untested.ts";
 import { useTasks } from "../queries.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,

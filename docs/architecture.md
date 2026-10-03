@@ -228,7 +228,9 @@ bus.
    in the compatibility matrix ([compatibility.md](compatibility.md), `buildMatrix()`); anything but
    `tested` refuses the real write with `PRODUCT_UNTESTED` (HTTP 409) until the user has acknowledged
    the Product with its application program for the project (`PUT .../untested-ack`). One
-   acknowledgement covers every operation of that Product in that project. Previews need none.
+   acknowledgement covers every operation of that Product in that project; an operation that failed
+   or gave contradictory results on hardware is still shown as such in the dialog after it. Previews
+   need none.
    Address assignment and Data Secure activation are not gated: they write no configuration and have
    no matrix operation. The flash and commission dialogs show the notice and keep the configuration
    write disabled until then.

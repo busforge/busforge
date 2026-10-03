@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import type { CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
 import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "@/lib/paramFormat.ts";
+import { CompatibilityBadge } from "@/components/CompatibilityBadge.tsx";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -488,6 +489,7 @@ export function DeviceConfig() {
           <div className="flex min-w-0 items-center gap-2 font-semibold leading-tight">
             <DeviceLabel name={device?.name} ia={device?.ia ?? ""} />
             <ChangePill changes={device?.changes} />
+            <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
           </div>
         </div>
         {view && view.blocks.length > 0 && (
