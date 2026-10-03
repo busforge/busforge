@@ -632,6 +632,29 @@ describe("busforge re-import (export round-trip)", () => {
     expect((await (await handleApi(req("/api/projects"), state))!.json()) as any[]).toHaveLength(1); // only the real import
   });
 
+  test("analyze refuses a .knxproj whose baggage is over the limit, as the import does", async () => {
+    const state = freshState();
+    const xml0 = `<?xml version="1.0"?><KNX xmlns="http://knx.org/xml/project/21"><Project Id="P-0001"><Installations><Installation Name="x"><Topology/></Installation></Installations></Project></KNX>`;
+    const knxproj = (blob: Buffer) => storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "BinaryData/D-1_store.bin": blob }) });
+    const post = (path: string, bytes: Buffer) => {
+      const form = new FormData();
+      form.set("file", new File([bytes], "Big.knxproj"));
+      return handleApi(req(path, { method: "POST", body: form }), state);
+    };
+
+    const within = await post("/api/projects/analyze", knxproj(Buffer.alloc(16, 1)));
+    expect(within!.status).toBe(200);
+    expect(((await within!.json()) as any).baggageUnreadable).toBe(false);
+
+    const big = knxproj(Buffer.alloc(32 * 1024 * 1024 + 1, 1));
+    for (const path of ["/api/projects/analyze", "/api/projects/import"]) {
+      const res = await post(path, big);
+      expect(res!.status).toBe(413);
+      expect(((await res!.json()) as any).error.code).toBe("BAGGAGE_TOO_LARGE");
+    }
+    expect((await (await handleApi(req("/api/projects"), state))!.json()) as any[]).toHaveLength(0);
+  });
+
   test("a project records the file it was imported from, and a re-import keeps that source", async () => {
     const state = freshState();
     const a = await importCfg(state);

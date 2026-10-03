@@ -282,7 +282,8 @@ Two consequences, both in the code:
 2. **The flash records the application object's load state before the write and re-checks it
    after.** A device whose application was LOADED and no longer is fails with
    `GA_FLASH_BROKE_APPLICATION`, naming the recovery (run a full download), instead of
-   reporting `verified: true`. Only a degradation is an error, so a device whose application
+   reporting `verified: true`. The flash dialog then writes no further target and, where the family
+   can be downloaded in full, offers the full download. Only a degradation is an error, so a device whose application
    object was already not LOADED gains no new refusal. The re-check goes through the same
    settle-and-retry the table comparison uses, so a device still recovering from the closing
    restart cannot produce a false alarm.

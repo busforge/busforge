@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
+import { offersFullDownload, leftDeviceUnloaded } from "../lib/flashRecovery.ts";
 
 export type FlashTarget = "params" | "ga";
 const runDry = (t: FlashTarget, projectId: string, deviceId: string) =>
@@ -19,10 +20,6 @@ const runFlash = (t: FlashTarget, projectId: string, deviceId: string, onTask: (
 // One preview/write status, reused for each flash target and for the full-download sub-flow
 // (same states: checking a dry-run, previewed, writing, done, or errored).
 interface Part { dry: FlashResult | null; done: FlashResult | null; error: unknown; checking: boolean; flashing: boolean; }
-// Errors the full download answers. The second set leaves a device whose family cannot be
-// downloaded in full where it is: only ETS can complete its load.
-const DOWNLOAD_CODES = new Set(["COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "DEVICE_NOT_PROGRAMMED", "NEVER_PROGRAMMED_USE_DOWNLOAD"]);
-const UNLOADED_CODES = new Set(["FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE"]);
 const freshPart = (): Part => ({ dry: null, done: null, error: null, checking: false, flashing: false });
 
 // Program a device over the bus. Handles one or both targets (parameter memory via the
@@ -108,9 +105,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // A surgical flash refused because the change rewrites the com-object table, or because the device
   // never had an application loaded: a full download is the way (the backend refuses it where the
   // family cannot commission). So is a device left unloaded (a write broke off inside its load
-  // bracket, or a preview found a load-state machine not LOADED), where the family can take one.
-  const needsDownload = list.some((x) => x.p.error instanceof ApiError
-    && (DOWNLOAD_CODES.has(x.p.error.code ?? "") || (canFullDownload && UNLOADED_CODES.has(x.p.error.code ?? ""))));
+  // bracket, a preview found a load-state machine not LOADED, or a GA flash stopped the application),
+  // where the family can take one.
+  const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, canFullDownload));
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
 
   async function flash() {
@@ -123,7 +120,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
       try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; return r; }
       catch (e) {
         setPart(tg, { error: e, flashing: false });
-        if (e instanceof ApiError && e.code === "FLASH_INTERRUPTED_UNLOADED") leftUnloaded = true;
+        if (e instanceof ApiError && leftDeviceUnloaded(e.code)) leftUnloaded = true;
         return null;
       }
     };

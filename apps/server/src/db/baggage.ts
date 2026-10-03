@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { readBaggage } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 
 // DCA baggage: the BinaryData/UserFiles blobs extracted from a project's inner
@@ -23,6 +24,16 @@ export function checkBaggageSize(blobs: Iterable<{ name: string; bytes: number }
   if (total > BAGGAGE_PROJECT_LIMIT) {
     throw new ApiError("BAGGAGE_TOO_LARGE", `embedded files total ${total} bytes, over the ${BAGGAGE_PROJECT_LIMIT}-byte limit per project`, 413);
   }
+}
+
+// A .knxproj's baggage, refused when it is over the limits. Unreadable baggage does not block an
+// import; the caller reports it (baggageUnreadable) so the loss is not silent.
+export function readCheckedBaggage(bytes: Buffer, password: string | undefined): { baggage: Map<string, Buffer>; baggageUnreadable: boolean } {
+  let baggage = new Map<string, Buffer>();
+  let baggageUnreadable = false;
+  try { baggage = readBaggage(bytes, password); } catch { baggageUnreadable = true; }
+  checkBaggageSize([...baggage].map(([name, buf]) => ({ name, bytes: buf.length })));
+  return { baggage, baggageUnreadable };
 }
 
 export function putBaggage(db: Database, projectId: string, name: string, data: Buffer): void {

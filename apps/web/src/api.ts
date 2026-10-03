@@ -46,7 +46,7 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
 // .knxproj (the UI falls back to the picked file's last-modified date).
-export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; }
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; baggageUnreadable?: boolean; }
 // A placeable catalog product (the device picker's list for blank projects).
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
 // One com-object of an application program's COMPLETE declaration (not gated by

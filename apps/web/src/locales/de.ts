@@ -87,6 +87,7 @@ const de: Messages = {
     gapsTitle: "Einige Daten konnten nicht vollständig importiert werden:",
     gapNoProgram: "{{count}} Gerät(e) haben kein Applikationsprogramm in dieser Datei und lassen sich nicht öffnen, konfigurieren oder flashen",
     gapBaggage: "Der eingebettete Gerätedaten-Speicher der Datei (z. B. ein DALI-Gateway-Backup) konnte nicht gelesen werden und wurde nicht importiert.",
+    gapBaggagePreview: "Der eingebettete Gerätedaten-Speicher der Datei (z. B. ein DALI-Gateway-Backup) kann nicht gelesen werden und wird nicht importiert.",
     gapUnresolvedLinks: "{{count}} Gruppenadress-Verknüpfung(en) verweisen auf eine Adresse, die nicht im Projekt ist, und wurden verworfen",
     gapUnresolvedSenders: "{{count}} einer Gruppenadresse zugeordnete Schnittstelle(n) ließen sich keiner Adresse zuordnen und wurden nicht als Absender übernommen",
     gapSecureWithoutSerial: "{{count}} sichere(s) Gerät(e) hat ETS nie in Betrieb genommen (keine Seriennummer); ohne Tool-Key übernommen",

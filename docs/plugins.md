@@ -44,7 +44,8 @@ This holds for every DCA device, module or not.
   import and stored per project, so a DCA device's state is never dropped. Baggage travels with the
   project through export and import. Baggage that cannot be read is reported at import rather than
   silently skipped. An import whose baggage holds a file over 32 MiB, or more than 128 MiB in all, is
-  refused as a whole (`BAGGAGE_TOO_LARGE`), for `.knxproj` and `.busforge` alike.
+  refused as a whole (`BAGGAGE_TOO_LARGE`), for `.knxproj` and `.busforge` alike, already in the
+  import preview (`/api/projects/analyze`), which also names baggage it cannot read.
 - **Surface.** The device page shows a clear notice that this device is configured through an ETS
   DCA app and that its device-specific configuration is not shown here, while the standard parameters
   stay editable and programmable.

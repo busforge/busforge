@@ -431,7 +431,7 @@ function ImportDialog({
                 roomCount={analysis.roomCount}
                 date={analysis.modifiedAt ?? file?.lastModified ?? Date.now()}
               />
-              {((analysis.devicesWithoutProgram?.length ?? 0) > 0 || (analysis.unresolvedLinks ?? 0) > 0 || (analysis.malformedDevices ?? 0) > 0 || (analysis.unresolvedSenders ?? 0) > 0 || (analysis.secureDevicesWithoutSerial ?? 0) > 0) && (
+              {((analysis.devicesWithoutProgram?.length ?? 0) > 0 || (analysis.unresolvedLinks ?? 0) > 0 || (analysis.malformedDevices ?? 0) > 0 || (analysis.unresolvedSenders ?? 0) > 0 || (analysis.secureDevicesWithoutSerial ?? 0) > 0 || analysis.baggageUnreadable) && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="import-gaps">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                   <div className="space-y-1">
@@ -452,6 +452,7 @@ function ImportDialog({
                       {(analysis.secureDevicesWithoutSerial ?? 0) > 0 && (
                         <li>{t("import.gapSecureWithoutSerial", { count: analysis.secureDevicesWithoutSerial })}</li>
                       )}
+                      {analysis.baggageUnreadable && <li>{t("import.gapBaggagePreview")}</li>}
                     </ul>
                   </div>
                 </div>

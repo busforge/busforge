@@ -1,13 +1,13 @@
 // Minimal STORE (uncompressed) zip writer for tests. readZip does not verify
 // CRCs, so a zero CRC is fine; this builds synthetic .knxproj/.knxprod-shaped
 // archives without a binary fixture. Shared by the project and server test suites.
-export function storeZip(files: Record<string, string>): Buffer {
+export function storeZip(files: Record<string, string | Buffer>): Buffer {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
   for (const [name, content] of Object.entries(files)) {
     const nameB = Buffer.from(name);
-    const data = Buffer.from(content);
+    const data = typeof content === "string" ? Buffer.from(content) : content;
     const lfh = Buffer.alloc(30);
     lfh.writeUInt32LE(0x04034b50, 0);
     lfh.writeUInt16LE(20, 4); // version needed

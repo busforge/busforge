@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { loadKnxproj, extractAppPrograms, extractCatalogProducts, readBaggage } from "@busforge/project";
+import { loadKnxproj, extractAppPrograms, extractCatalogProducts } from "@busforge/project";
 import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs, importSourceOf, setProjectSource } from "../db/projects.ts";
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
 import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
-import { putBaggage, checkBaggageSize } from "../db/baggage.ts";
+import { putBaggage, readCheckedBaggage } from "../db/baggage.ts";
 import { exportProject } from "../db/exportProject.ts";
 import { exportKeyring } from "../db/keyringExport.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
@@ -62,10 +62,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // view (and export/re-import propagated the loss). The gap rides in the import
     // result next to the other importGaps. Flattened name keeps the device-id
     // prefix the baggage endpoint filters on.
-    let baggage = new Map<string, Buffer>();
-    let baggageUnreadable = false;
-    try { baggage = readBaggage(bytes, password); } catch { baggageUnreadable = true; }
-    checkBaggageSize([...baggage].map(([name, buf]) => ({ name, bytes: buf.length })));
+    const { baggage, baggageUnreadable } = readCheckedBaggage(bytes, password);
 
     // Everything is stored in the DB; no project files are written at import. The
     // raw .knxproj is not kept (app programs live in the catalog, baggage in the
@@ -117,7 +114,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       // Run the same program/link resolution the real import does, so the preview's
       // gaps match what import will actually produce (no clean-looking false promise).
       const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
-      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs) });
+      const { baggageUnreadable } = readCheckedBaggage(bytes, password);
+      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs), baggageUnreadable });
     }
     const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
     validateExport(data);

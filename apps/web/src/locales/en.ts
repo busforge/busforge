@@ -85,6 +85,7 @@ const en = {
     gapsTitle: "Some data could not be fully imported:",
     gapNoProgram: "{{count}} device(s) have no application program in this file and cannot be opened, configured, or flashed",
     gapBaggage: "The file's embedded device data store (e.g. a DALI gateway backup) could not be read and was not imported.",
+    gapBaggagePreview: "The file's embedded device data store (e.g. a DALI gateway backup) cannot be read and will not be imported.",
     gapUnresolvedLinks: "{{count}} group-address link(s) reference an address not in the project and were dropped",
     gapUnresolvedSenders: "{{count}} interface(s) assigned to a group address could not be resolved to an address and were not imported as senders",
     gapSecureWithoutSerial: "{{count}} secure device(s) were never commissioned by ETS (no serial number); imported without their tool key",
