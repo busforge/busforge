@@ -430,6 +430,17 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE devices ADD COLUMN security_base TEXT;
   `,
+  // The user's acknowledgement that a Product running an application program is programmed
+  // although its operation is not tested on hardware (compatibility.ts). Once per project.
+  `
+  CREATE TABLE untested_acks (
+    project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    product_ref     TEXT NOT NULL,
+    app_program_id  TEXT NOT NULL,
+    acknowledged_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, product_ref, app_program_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -62,6 +62,8 @@ async function projectWithApp(state: AppState, appXml: string): Promise<{ projec
   await handleApi(req(`/api/projects/${imp.id}/connection`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }),
   }), state);
+  // The test products are untested on hardware; the user's one acknowledgement per project.
+  expect((await handleApi(req(`/api/projects/${imp.id}/devices/${encodeURIComponent(proj.devices[0].id)}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
   return { projectId: imp.id, deviceId: proj.devices[0].id };
 }
 

@@ -6,11 +6,11 @@
 // is exactly what keeps this contract from drifting away from the server's.
 import type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
-  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult,
+  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
 } from "@busforge/product";
 export type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
-  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult,
+  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
 };
 
 // neverProgrammed: no configuration of this project has been verified on the device since it was
@@ -176,6 +176,10 @@ function programDevice(id: string, deviceId: string, route: "flash" | "flash-ga"
 
 export const api = {
   version: (): Promise<VersionInfo> => fetch("/api/version").then((r) => jsonOrThrow<VersionInfo>(r)),
+
+  acknowledgeUntested: (id: string, deviceId: string): Promise<{ acknowledged: true }> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/untested-ack`, { method: "PUT" }).then((r) => jsonOrThrow<{ acknowledged: true }>(r)),
+  manufacturers: (): Promise<ManufacturerInfo[]> => fetch("/api/catalog/manufacturers").then((r) => jsonOrThrow<ManufacturerInfo[]>(r)),
 
   listProjects: (): Promise<ProjectSummary[]> => fetch("/api/projects").then((r) => jsonOrThrow<ProjectSummary[]>(r)),
 

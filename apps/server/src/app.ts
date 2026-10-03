@@ -1,3 +1,4 @@
+import { evidenceBundle } from "./compatibility.ts";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { Database } from "bun:sqlite";
@@ -48,6 +49,9 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   const dataDir = opts?.dataDir ?? DEFAULT_DATA_DIR;
   mkdirSync(dataDir, { recursive: true });
   const db = openDb(opts?.dbPath ?? join(dataDir, "busforge.db"));
+  // The shipped evidence bundle is validated at start: a broken one stops the server here instead
+  // of failing every device page later.
+  evidenceBundle();
   const bus = new Bus(opts?.now);
   // Persistent writer: every telegram of the active project is stored, whether
   // or not a monitor WebSocket is open.

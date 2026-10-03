@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Download, Loader2, RadioTower, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { api, type AssignIaResult, type Device, type FlashResult } from "../api.ts";
+import { api, type AssignIaResult, type Device, type DeviceConfigView, type FlashResult } from "../api.ts";
+import { UntestedNotice, untestedOps, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -21,17 +22,24 @@ const freshDownload = (): DownloadState => ({ checking: false, dry: null, runnin
 // the full download (application id + parameters + com-object table + group
 // tables). Every step is gated on the previous one having VERIFIED: an
 // unverified assign or download is shown as the failure it is, never as success.
-export function CommissionDialog({ open, onOpenChange, projectId, device, onCommissioned }: {
+export function CommissionDialog({ open, onOpenChange, projectId, device, onCommissioned, view }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   projectId: string;
   device: Device;
   onCommissioned?: () => void;
+  // The device's configuration view: its compatibility and whether its Product was acknowledged as untested.
+  view?: Pick<DeviceConfigView, "compatibility" | "untestedAcknowledged">;
 }) {
   const { t } = useTranslation();
   const [scan, setScan] = useState<ScanState>(freshScan);
   const [assign, setAssign] = useState<AssignState>(freshAssign);
   const [dl, setDl] = useState<DownloadState>(freshDownload);
+  // The full download of an untested Product needs the acknowledgement; assigning the address does
+  // not (the server does not gate it, and an address change runs through this dialog too). The notice
+  // shows from the start, so the user knows before assigning.
+  const awaitingAck = untestedOps(view, ["fullDownload"]).length > 0;
+  const refreshOnUntested = useRefreshOnUntested(projectId, device.id);
   const busyRef = useRef(false); // guards against a same-tick double click
 
   const doScan = useCallback(() => {
@@ -77,7 +85,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
         setDl((d) => ({ ...d, running: false, done }));
         if (done.kind === "flashed" && done.verified) onCommissioned?.();
       })
-      .catch((e) => setDl((d) => ({ ...d, running: false, error: e })))
+      .catch((e) => { refreshOnUntested(e); setDl((d) => ({ ...d, running: false, error: e })); })
       .finally(() => { busyRef.current = false; });
   };
 
@@ -174,6 +182,8 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
           ))}
         </div>
 
+        {!finished && <UntestedNotice projectId={projectId} deviceId={device.id} view={view} ops={["fullDownload"]} />}
+
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busOpRunning}>{finished ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
           {!assign.result && !busOpRunning && !scan.running && (
@@ -193,7 +203,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
             </Button>
           )}
           {canDownload && (
-            <Button onClick={doDownload} data-testid="commission-download">
+            <Button onClick={doDownload} disabled={awaitingAck} data-testid="commission-download">
               <Download className="size-4" /> {t("commission.download")}
             </Button>
           )}

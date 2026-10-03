@@ -133,6 +133,9 @@ app does not show it yet (see the [roadmap](roadmap.md)).
 | `derived` | none of the above, and the same Hardware with the same application program version is `tested` on another known Product; shown with that Product and the firmware it was tested on |
 | `eligible` | none of the above; possibly with a hint naming another Hardware where the same application program version is `tested` |
 
+The kept records ship with the server as a bundle that `bun run tools/evidence-bundle.ts --write`
+generates, together with [compatibility.md](compatibility.md); a test fails when either is stale.
+
 `tested` is the transfer axis only. Whether a Product is qualified (behaviour, persistence, and the
 mechanism's reference case, below) is a separate judgement the matrix does not make.
 

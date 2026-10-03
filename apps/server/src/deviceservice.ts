@@ -2,9 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
+import { deviceCompatibility } from "./compatibility.ts";
+import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
 import { getDeviceSecurity, isSecureDevice, setDeviceSequence } from "./db/deviceSecurity.ts";
 import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupSenders.ts";
@@ -284,6 +286,17 @@ export function resolveParamForEdit(state: AppState, projectId: string, deviceId
 // the web client reads, so a field renamed on either side is a compile error rather than a client
 // silently reading undefined. `extra` (a read-back summary) is merged in on the read-back route;
 // ReadbackSummary.readback and DeviceConfigView.readback share DeviceReadbackInfo for that reason.
+// A device's matrix state for one operation and whether the user acknowledged its Product as
+// untested in this project. Null when the device or its application program is unknown.
+export function untestedStatus(state: AppState, projectId: string, deviceId: string, op: MatrixOperation):
+  { productRef: string; appProgramId: string; state: OperationState; acknowledged: boolean } | null {
+  const productRef = getDeviceProductRef(state.db, projectId, deviceId);
+  const app = loadApp(state, projectId, deviceId);
+  if (!productRef || !app) return null;
+  const verdict = deviceCompatibility(productRef, app.id, classify(app).capabilities())[op];
+  return { productRef, appProgramId: app.id, state: verdict.state, acknowledged: verdict.state === "tested" || isUntestedAcknowledged(state.db, projectId, productRef, app.id) };
+}
+
 export interface ReadbackSummary { readback: DeviceReadbackInfo }
 export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary): DeviceConfigView {
   const { db } = state;
@@ -303,6 +316,11 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
+  const productRef = getDeviceProductRef(db, projectId, deviceId);
+  if (productRef) {
+    view.compatibility = deviceCompatibility(productRef, app.id, view.capabilities);
+    view.untestedAcknowledged = isUntestedAcknowledged(db, projectId, productRef, app.id);
+  }
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
   // For float params the override/baseline strings can differ purely in form (the UI
@@ -329,7 +347,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
   return extra ? { ...wire, ...extra } : wire;
 }
 

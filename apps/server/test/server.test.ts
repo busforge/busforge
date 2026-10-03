@@ -9,6 +9,7 @@ import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
 import { replaceParamBase } from "../src/db/deviceparams.ts";
 import { readGroupTables, KnxIpTunnel, KnxError } from "@busforge/knx";
 import { classify } from "../src/deviceprofile.ts";
+import { evidenceBundle } from "../src/compatibility.ts";
 import { parseAppConfig } from "@busforge/product";
 import { loadKnxproj, appProgramId } from "@busforge/project";
 import type { KnxDevice } from "@busforge/knx";
@@ -975,10 +976,60 @@ describe("device configuration", () => {
       new KnxError("TEST_TRANSPORT_FAILURE", "injected tunnel connection failure"),
     );
     try {
+      // The only guard this test does not exercise: the product is untested, the user acknowledged it.
+      await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/untested-ack`, { method: "PUT" }), state);
       const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
       expect(res.status).toBe(202); // past every guard: queued as a write
       const task = await state.queue.wait(((await res.json()) as any).id);
       expect(task).toMatchObject({ state: "error", errorCode: "TEST_TRANSPORT_FAILURE", error: "injected tunnel connection failure" });
+    } finally {
+      connect.mockRestore();
+    }
+  });
+
+  test("a write to a product untested on hardware is refused until acknowledged once for the project", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await mv0705Device(state);
+    const connect = spyOn(KnxIpTunnel.prototype, "connect").mockRejectedValue(new KnxError("TEST_TRANSPORT_FAILURE", "injected tunnel connection failure"));
+    try {
+      const view = async () => (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+      expect((await view()).untestedAcknowledged).toBe(false);
+      expect((await view()).compatibility.flashLinks.state).toBe("eligible");
+      const snapshots = () => state.db.query("SELECT COUNT(*) AS n FROM snapshots WHERE project_id = ?").get(projectId) as { n: number };
+      const write = (route: string) => handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
+      for (const route of ["flash", "flash-ga", "download"]) {
+        const refused = (await write(route))!;
+        expect(`${route} ${refused.status} ${((await refused.json()) as any).error?.code}`).toBe(`${route} 409 PRODUCT_UNTESTED`);
+      }
+      expect(state.queue.list(projectId)).toHaveLength(0); // no task
+      expect(snapshots().n).toBe(0); // and no restore point
+      // A preview only reads and needs no acknowledgement: it gets as far as the (injected) bus failure.
+      const preview = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`, { method: "POST" }), state))!;
+      expect(((await preview.json()) as any).error.code).toBe("TEST_TRANSPORT_FAILURE");
+      expect((await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
+      expect((await view()).untestedAcknowledged).toBe(true);
+      expect((await write("flash-ga"))!.status).toBe(202);
+
+      // The acknowledgement belongs to the project: another one with the same Product asks again.
+      const other = await mv0705Device(state);
+      const again = (await handleApi(req(`/api/projects/${other.projectId}/devices/${other.deviceId}/flash-ga`, { method: "POST" }), state))!;
+      expect(again.status).toBe(409);
+    } finally {
+      connect.mockRestore();
+    }
+  });
+
+  test("a Product tested on hardware for the operation writes without any acknowledgement", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await mv0705Device(state);
+    const jung = evidenceBundle().products.find((p) => p.productRef.startsWith("M-0004_"))!;
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), "M-TEST_A-1"]);
+    state.db.run("UPDATE devices SET product_ref = ? WHERE project_id = ?", [jung.productRef, projectId]);
+    const connect = spyOn(KnxIpTunnel.prototype, "connect").mockRejectedValue(new KnxError("TEST_TRANSPORT_FAILURE", "injected tunnel connection failure"));
+    try {
+      const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+      expect(view.compatibility.flashLinks.state).toBe("tested");
+      expect((await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!.status).toBe(202);
     } finally {
       connect.mockRestore();
     }

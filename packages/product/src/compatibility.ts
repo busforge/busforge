@@ -1,6 +1,6 @@
 import { ProductError } from "./errors.ts";
 import type { DeviceCapabilities } from "./config.ts";
-import { cellState, type AxisState, type EvidenceAxis, type EvidenceRecord } from "./evidence.ts";
+import { cellState, parseEvidenceRecord, type AxisState, type EvidenceAxis, type EvidenceRecord } from "./evidence.ts";
 
 // The compatibility matrix (docs/evidence-contract.md): for each Product running one application
 // program, and each operation, what Busforge may attempt (capabilities, computed from the catalog)
@@ -112,4 +112,58 @@ export function buildMatrix(records: EvidenceRecord[], products: MatrixProduct[]
     }
     return { productRef, hardwareRef, appProgramId, operations };
   });
+}
+
+// A set of records that can be shipped as one matrix: ids unique, and every supersession resolves
+// inside its own cell to an older record. Checked record by record, so the error names the record
+// at fault instead of failing whichever matrix cell happens to meet it first.
+export function checkEvidenceSet(records: EvidenceRecord[]): void {
+  const cellOf = (r: EvidenceRecord) => [r.subject.productRef, r.subject.appProgramId, r.scope.operation, r.scope.channel].join("|");
+  const byId = new Map<string, EvidenceRecord>();
+  for (const r of records) {
+    if (byId.has(r.id)) throw new ProductError("EVIDENCE_SET_INVALID", `${r.id}: the id occurs twice`);
+    byId.set(r.id, r);
+  }
+  for (const r of records) for (const id of r.supersedes) {
+    const old = byId.get(id);
+    if (!old) throw new ProductError("EVIDENCE_SET_INVALID", `${r.id}: supersedes ${id}, which is not in the set`);
+    if (cellOf(old) !== cellOf(r)) throw new ProductError("EVIDENCE_SET_INVALID", `${r.id}: supersedes ${id} of another cell (${cellOf(old)})`);
+    if (r.recordedAt === null || (old.recordedAt !== null && !(Date.parse(r.recordedAt) > Date.parse(old.recordedAt)))) {
+      throw new ProductError("EVIDENCE_SET_INVALID", `${r.id}: supersedes ${id} but is not newer than it`);
+    }
+  }
+}
+
+// The evidence shipped with a build: the kept records and the Products they were taken on, each
+// with the capabilities its application program had when the bundle was generated.
+export const EVIDENCE_BUNDLE_SCHEMA = "busforge.evidence-bundle/1";
+export interface EvidenceBundle { schema: typeof EVIDENCE_BUNDLE_SCHEMA; products: MatrixProduct[]; records: EvidenceRecord[] }
+
+export function parseEvidenceBundle(raw: unknown): EvidenceBundle {
+  const b = raw as Partial<EvidenceBundle> | null;
+  if (!b || typeof b !== "object" || b.schema !== EVIDENCE_BUNDLE_SCHEMA || !Array.isArray(b.products) || !Array.isArray(b.records)) {
+    throw new ProductError("EVIDENCE_BUNDLE_INVALID", `not a ${EVIDENCE_BUNDLE_SCHEMA} bundle`);
+  }
+  const records = b.records.map((r) => parseEvidenceRecord(r));
+  const unattributed = records.find((r) => r.subject.productRef === null);
+  if (unattributed) throw new ProductError("EVIDENCE_PRODUCT_UNKNOWN", `${unattributed.id} names no Product, so it cannot back a matrix cell`);
+  checkEvidenceSet(records);
+  const owners = new Set(records.map((r) => `${r.subject.productRef}|${r.subject.appProgramId}`));
+  const listed = new Set<string>();
+  for (const p of b.products) {
+    const k = `${p?.productRef}|${p?.appProgramId}`;
+    hardwareOf(String(p?.productRef));
+    const exact = (o: object, keys: readonly string[]) => Object.keys(o).length === keys.length && keys.every((x) => Object.hasOwn(o, x));
+    if (typeof p.appProgramId !== "string" || !p.capabilities || !exact(p, ["productRef", "appProgramId", "capabilities"]) || !exact(p.capabilities, MATRIX_OPERATIONS)
+      || MATRIX_OPERATIONS.some((op) => typeof p.capabilities[op] !== "boolean")) {
+      throw new ProductError("EVIDENCE_BUNDLE_INVALID", `${k}: a bundled Product needs its application program and every capability`);
+    }
+    if (listed.has(k)) throw new ProductError("EVIDENCE_BUNDLE_INVALID", `${k}: listed twice`);
+    listed.add(k);
+  }
+  const missing = [...owners].find((k) => !listed.has(k));
+  if (missing) throw new ProductError("EVIDENCE_BUNDLE_INVALID", `${missing}: has records but is not listed with its capabilities`);
+  const idle = [...listed].find((k) => !owners.has(k));
+  if (idle) throw new ProductError("EVIDENCE_BUNDLE_INVALID", `${idle}: listed without any record`);
+  return { schema: EVIDENCE_BUNDLE_SCHEMA, products: b.products, records };
 }

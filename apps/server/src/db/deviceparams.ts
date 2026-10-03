@@ -65,6 +65,12 @@ export function getDeviceAppRef(db: Database, projectId: string, deviceId: strin
   return r?.appRef ?? null;
 }
 
+export function getDeviceProductRef(db: Database, projectId: string, deviceId: string): string | null {
+  const r = db.query("SELECT product_ref AS productRef FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { productRef: string } | null;
+  return r?.productRef ?? null;
+}
+
 // A device's com-object -> GA links (comObjRefId -> ga raws, ordered by slot).
 export function getDeviceLinks(db: Database, projectId: string, deviceId: string): Map<string, number[]> {
   const rows = db.query("SELECT com_obj_ref_id AS refId, ga_raw AS gaRaw FROM device_links WHERE project_id = ? AND device_id = ? ORDER BY com_obj_ref_id, slot")

@@ -56,6 +56,8 @@ export class Client {
   version() { return this.call<{ version: string; commit: string; builtAt: string | null }>("GET", "/api/version"); }
   connections() { return this.call<{ id: string; type: string; host: string; port: number; ipTransport?: string }[]>("GET", "/api/connections"); }
   attachConnection(pid: string, connectionId: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/connection`, { connectionId }); }
+  // The operator's one acknowledgement per project that an untested Product may be written.
+  acknowledgeUntested(pid: string, did: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/devices/${did}/untested-ack`); }
   placeDevice(pid: string, appRef: string, productRef: string, name: string) { return this.call<{ id: string; ia: string }>("POST", `/api/projects/${pid}/devices`, { appRef, productRef, name }); }
   setAddress(pid: string, did: string, ia: string) { return this.call<unknown>("PUT", `/api/projects/${pid}/devices/${did}/address`, { ia }); }
   getConfig(pid: string, did: string, lang = "de") { return this.call<DeviceConfigView>("GET", `/api/projects/${pid}/devices/${did}/config?lang=${lang}`); }

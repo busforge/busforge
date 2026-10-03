@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Search, X, Zap, Plus, Loader2, Cpu, FolderUp, FolderPlus, Building2, Check, ChevronsUpDown, Pencil, Trash2, MapPin, ShieldCheck } from "lucide-react";
+import { Search, X, Zap, Plus, Loader2, Cpu, FolderUp, FolderPlus, Building2, Check, ChevronsUpDown, Pencil, Trash2, MapPin, ShieldCheck, ExternalLink } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Device, type CatalogProduct, type SpaceNode } from "../api.ts";
-import { useProject, useCatalog, useSpaceEdit, qk } from "../queries.ts";
+import { useProject, useCatalog, useManufacturers, useSpaceEdit, qk } from "../queries.ts";
 import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Input } from "@/components/ui/input";
@@ -751,11 +751,37 @@ function AddDeviceDialog({
           </div>
         )}
 
+        <ProductDataSources />
+
         <input
           ref={prodRef} type="file" accept=".knxprod,.xml" className="hidden"
           onChange={(e) => { pickProd(e.target.files?.[0] ?? null); e.target.value = ""; }}
         />
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Where to get a manufacturer's product database: a link to its own download page, never a
+// download by Busforge. Manufacturers without a public page say so instead of leaving a gap.
+function ProductDataSources() {
+  const { t } = useTranslation();
+  const { data: manufacturers } = useManufacturers();
+  if (!manufacturers?.length) return null;
+  return (
+    <details className="text-xs text-muted-foreground" data-testid="product-data-sources">
+      <summary className="cursor-pointer select-none">{t("catalog.sourcesTitle")}</summary>
+      <p className="mt-2">{t("catalog.sourcesHint")}</p>
+      <ul className="mt-2 space-y-1">
+        {manufacturers.map((m) => (
+          <li key={m.id} className="flex items-center justify-between gap-3">
+            <span><span className="font-mono">{m.id}</span> {m.name}</span>
+            {m.productDataUrl
+              ? <a href={m.productDataUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1 text-primary hover:underline">{t("catalog.sourceLink")} <ExternalLink className="size-3" /></a>
+              : <span>{t("catalog.sourceNone")}</span>}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

@@ -90,7 +90,12 @@ async function projectWithApp(state: AppState, xml: string): Promise<{ projectId
   await handleApi(req(`/api/projects/${imp.id}/connection`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }),
   }), state);
+  // The test products are untested on hardware; the user's one acknowledgement per project.
+  await acknowledgeUntested(state, imp.id, proj.devices[0].id);
   return { projectId: imp.id, deviceId: proj.devices[0].id };
+}
+async function acknowledgeUntested(state: AppState, projectId: string, deviceId: string) {
+  expect((await handleApi(req(`/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
 }
 // The real M-0081 (MV-0705, flashParams+flashLinks capable) is the default device for these tests.
 const m0081Project = (state: AppState) => projectWithApp(state, realAppXml);
@@ -190,6 +195,7 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }),
     }), state);
     const projectId = imp.id, deviceId = proj.devices[0].id;
+    await acknowledgeUntested(state, projectId, deviceId);
 
     const TEXT_REF = "M-0083_A-0137-20-7EB2_P-162_R-162";  // memory-backed TypeText (unwritable)
     const VALUE_REF = "M-0083_A-0137-20-7EB2_P-1_R-1";     // memory-backed Value (writable)

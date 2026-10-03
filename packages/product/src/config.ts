@@ -1,6 +1,7 @@
 import type { AppConfig, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
+import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
 
 // A human label for a datapoint type the engine cannot edit yet, shown on the
 // "not supported" row so the gap is explicit (never a blank/empty control).
@@ -121,6 +122,12 @@ export interface DeviceConfigView {
   // device's state, such as linkBaseGaps below, come on top). readbackSupport is the read subset,
   // kept for the read-back honesty text.
   capabilities?: DeviceCapabilities;
+  // What was shown on hardware for this device's Product and application program, per operation
+  // (compatibility.ts buildMatrix over the evidence bundle the server ships). Attached by the server.
+  compatibility?: Record<MatrixOperation, OperationVerdict>;
+  // The user acknowledged, once for this project, that this Product is written although an
+  // operation is not tested on hardware. The server refuses such a write without it (PRODUCT_UNTESTED).
+  untestedAcknowledged?: boolean;
   // Device links the last read-back could not show on this page (-1: not counted since the check
   // was added). While non-zero the server refuses a group-address flash (LINK_BASELINE_INCOMPLETE).
   linkBaseGaps?: number;

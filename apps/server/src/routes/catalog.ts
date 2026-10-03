@@ -1,5 +1,5 @@
 import { extractAppPrograms, extractCatalogProducts } from "@busforge/project";
-import { comObjectUniverse } from "@busforge/product";
+import { comObjectUniverse, MANUFACTURERS } from "@busforge/product";
 import { putAppProgram, putCatalogProduct, listCatalogProducts, backfillCatalogFromDevices } from "../db/catalog.ts";
 import { loadCatalogApp } from "../deviceservice.ts";
 import { json, err } from "../httputil.ts";
@@ -22,6 +22,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!app) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
     return json(comObjectUniverse(app, url.searchParams.get("lang") ?? undefined));
   }
+
+  // /api/catalog/manufacturers  -> where each known manufacturer publishes its product data
+  if (seg.length === 3 && seg[2] === "manufacturers" && req.method === "GET") return json(MANUFACTURERS);
 
   if (seg.length === 3 && seg[2] === "products" && req.method === "GET") {
     // Surface products from projects imported before the catalog table existed.

@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseEvidenceRecord, type EvidenceRecord, type AxisState } from "../src/evidence.ts";
-import { buildMatrix, hardwareOf, MATRIX_OPERATIONS, type MatrixProduct } from "../src/compatibility.ts";
+import { buildMatrix, hardwareOf, checkEvidenceSet, parseEvidenceBundle, MATRIX_OPERATIONS, EVIDENCE_BUNDLE_SCHEMA, type MatrixProduct } from "../src/compatibility.ts";
 import type { DeviceCapabilities } from "../src/config.ts";
 
 const EVIDENCE = join(import.meta.dir, "..", "..", "..", "docs", "evidence");
@@ -159,5 +159,27 @@ describe("the records in docs/evidence", () => {
       expect(row.operations.structuralFlash.state).toBe("eligible");
       expect(Object.keys(row.operations)).toEqual([...MATRIX_OPERATIONS]);
     }
+  });
+});
+
+describe("a shipped evidence set", () => {
+  const code = (fn: () => unknown) => { try { fn(); return null; } catch (e) { return (e as { code?: string }).code; } };
+
+  test("names the record at fault: a repeated id, a supersession of another cell or of nothing", () => {
+    const [a, b] = both();
+    expect(code(() => checkEvidenceSet([a, { ...a }]))).toBe("EVIDENCE_SET_INVALID");
+    const crossCell = rec({ channel: "api", op: "flashLinks", at: "2026-09-27T10:00:00.000Z", supersedes: [b.id], id: "cross" });
+    expect(() => checkEvidenceSet([a, b, crossCell])).toThrow("cross: supersedes");
+    expect(code(() => checkEvidenceSet([rec({ supersedes: ["nowhere"], at: "2026-09-27T10:00:00.000Z" })]))).toBe("EVIDENCE_SET_INVALID");
+    expect(code(() => checkEvidenceSet([a, rec({ channel: "api", at: "2026-09-24T10:00:00.000Z", supersedes: [a.id] })]))).toBe("EVIDENCE_SET_INVALID");
+  });
+
+  test("a bundle lists every Product that has records, with every capability", () => {
+    const records = both();
+    expect(parseEvidenceBundle({ schema: EVIDENCE_BUNDLE_SCHEMA, products: [product(P1)], records }).records).toHaveLength(2);
+    expect(code(() => parseEvidenceBundle({ schema: EVIDENCE_BUNDLE_SCHEMA, products: [], records }))).toBe("EVIDENCE_BUNDLE_INVALID");
+    const { structuralFlash: _, ...partial } = ALL;
+    expect(code(() => parseEvidenceBundle({ schema: EVIDENCE_BUNDLE_SCHEMA, products: [{ productRef: P1, appProgramId: APP, capabilities: partial }], records }))).toBe("EVIDENCE_BUNDLE_INVALID");
+    expect(code(() => parseEvidenceBundle({ schema: "other", products: [], records: [] }))).toBe("EVIDENCE_BUNDLE_INVALID");
   });
 });

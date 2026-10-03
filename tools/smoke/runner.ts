@@ -295,6 +295,9 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       did = dev.id;
       await client.setAddress(pid, did, spec.device.ia);
     }
+    // A run also drives operations that are not tested yet (that is how they become tested); the
+    // operator acknowledges that once, as a user would.
+    await client.acknowledgeUntested(pid, did);
     // What the imported project links, for the restore at the end of the run.
     if (imported) {
       const view = await client.getConfig(pid, did);

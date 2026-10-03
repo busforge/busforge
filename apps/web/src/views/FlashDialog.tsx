@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, taskActive, type Device, type FlashResult, type Task } from "../api.ts";
+import { api, ApiError, taskActive, type Device, type DeviceConfigView, type FlashResult, type MatrixOperation, type Task } from "../api.ts";
+import { UntestedNotice, untestedOps, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
 import { useTasks } from "../queries.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -26,7 +27,7 @@ const freshPart = (): Part => ({ dry: null, done: null, error: null, checking: f
 // device's load procedure, and/or the group address + association tables). With both, it
 // previews each, then flashes only the targets that actually differ, sequentially, each with
 // a server-side backup and a read-back verify. A single target behaves like a focused flash.
-export function FlashDialog({ open, onOpenChange, projectId, device, targets, onFlashed, canFullDownload = false }: {
+export function FlashDialog({ open, onOpenChange, projectId, device, targets, onFlashed, canFullDownload = false, view }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   projectId: string;
@@ -35,6 +36,8 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   onFlashed?: () => void;
   // The family can be commissioned in full (capabilities().fullDownload), so the dialog offers it.
   canFullDownload?: boolean;
+  // The device's configuration view: its compatibility and whether its Product was acknowledged as untested.
+  view?: Pick<DeviceConfigView, "compatibility" | "untestedAcknowledged">;
 }) {
   const { t } = useTranslation();
   const [parts, setParts] = useState<Record<string, Part>>({});
@@ -47,6 +50,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // The writes this dialog submitted, to tell them apart from a write someone else is running.
   const ownTasks = useRef(new Set<string>());
   const own = (task: Task) => { ownTasks.current.add(task.id); };
+  const refreshOnUntested = useRefreshOnUntested(projectId, device.id);
   const deviceLabel = device.name || device.ia;
   const setPart = (target: FlashTarget, patch: Partial<Part>) =>
     setParts((p) => ({ ...p, [target]: { ...(p[target] ?? freshPart()), ...patch } }));
@@ -108,6 +112,12 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // bracket, a preview found a load-state machine not LOADED, or a GA flash stopped the application),
   // where the family can take one.
   const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, canFullDownload));
+  // The operations the writes on offer run: each previewed target (or the structural flash covering
+  // them) and, once taken, the full download. An untested one needs the acknowledgement first.
+  const writeOps: MatrixOperation[] = dl
+    ? ["fullDownload"]
+    : toFlash.map((x) => (x.p.dry?.structural ? "structuralFlash" : x.tg === "ga" ? "flashLinks" : "flashParams"));
+  const awaitingAck = untestedOps(view, writeOps).length > 0;
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
 
   async function flash() {
@@ -120,6 +130,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
       try { const r = await runFlash(tg, projectId, device.id, own); setPart(tg, { done: r, flashing: false }); if (r.kind === "flashed") flashedAny = true; return r; }
       catch (e) {
         setPart(tg, { error: e, flashing: false });
+        refreshOnUntested(e);
         if (e instanceof ApiError && leftDeviceUnloaded(e.code)) leftUnloaded = true;
         return null;
       }
@@ -157,7 +168,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     setDl((d) => ({ ...(d ?? freshPart()), flashing: true, error: null }));
     api.downloadDevice(projectId, device.id, false, own)
       .then((done) => { setDl((d) => ({ ...(d ?? freshPart()), flashing: false, done })); if (done.kind === "flashed" && done.verified) onFlashed?.(); })
-      .catch((e) => setDl((d) => ({ ...(d ?? freshPart()), flashing: false, error: e })))
+      .catch((e) => { refreshOnUntested(e); setDl((d) => ({ ...(d ?? freshPart()), flashing: false, error: e })); })
       .finally(() => { busyRef.current = false; });
   };
 
@@ -234,6 +245,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
             </div>
           )}
         </div>
+        {(canFlash || (dl?.dry?.kind === "dryRun" && !dl.done)) && !anyFlashing && !dlBusy && (
+          <UntestedNotice projectId={projectId} deviceId={device.id} view={view} ops={writeOps} />
+        )}
 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={anyFlashing || dlBusy}>{anyDone || dl?.done ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
@@ -265,14 +279,14 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           )}
           {/* Confirm the previewed full download. */}
           {dl?.dry?.kind === "dryRun" && !dl.done && !dlBusy && (
-            <Button onClick={runDownload} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-download">
+            <Button onClick={runDownload} disabled={awaitingAck} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-download">
               <Download className="size-4" /> {t("flash.download")}
             </Button>
           )}
           {/* onClick returns void, so flash()'s promise is discarded explicitly. Nothing is lost by
               that: flash() catches each target's failure and shows it ON that target, and never rejects. */}
           {canFlash && !dl && (
-            <Button onClick={() => { void flash(); }} disabled={anyFlashing} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
+            <Button onClick={() => { void flash(); }} disabled={anyFlashing || awaitingAck} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
               {anyFlashing ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />} {t("flash.flash")}
             </Button>
           )}

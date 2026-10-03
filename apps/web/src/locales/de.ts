@@ -220,6 +220,8 @@ const de: Messages = {
     COM_OBJECT_NUMBER_INVALID: "Ein Kommunikationsobjekt löst auf Nummer 0 auf, die es in der Com-Objekt-Tabelle eines Geräts nicht geben kann. Programmieren abgelehnt.",
     LINK_COM_OBJECT_INACTIVE: "Einige Gruppenadress-Verknüpfungen zeigen auf Kommunikationsobjekte, die diese Konfiguration gar nicht aktiviert. Das Gerät würde sie ignorieren, deshalb lehnt Busforge ab, statt sie als programmiert zu melden.",
     GA_FLASH_BROKE_APPLICATION: "Der Gruppenadress-Flash hat die Tabellen geschrieben, aber das Gerät führt sein Applikationsprogramm nicht mehr aus, die Verknüpfungen würden also nicht funktionieren. Busforge meldet das als Fehler statt als Erfolg. Diese Gerätefamilie braucht ihre Verknüpfungen per vollständigem Download; führe einen aus, um das Gerät wiederherzustellen.",
+    PRODUCT_REF_INVALID: "Die Produkt-ID des Geräts hat nicht die KNX-Form <Hardware>_P-<Produkt>, deshalb kann Busforge ihr keine Nachweise zuordnen.",
+    PRODUCT_UNTESTED: "Dieses Produkt ist für diesen Vorgang nicht auf Hardware getestet. Bestätige den Hinweis im Dialog einmal für dieses Projekt und schreibe dann erneut.",
     DEVICE_CONTROL_UNREADABLE: "Das Gerät meldet oder übernimmt seinen Verify-Modus nicht, in dem es jeden Schreibvorgang bestätigt. Ohne ihn schreibt ein Download blind, deshalb lehnt Busforge ab.",
     MASK_UNKNOWN: "Die Applikationsmaske ist unbekannt. Schreiben abgelehnt.",
     MASK_MISMATCH: "Das Gerät passt nicht zur erwarteten Applikation (Masken-Fehler). Abbruch.",
@@ -336,6 +338,15 @@ const de: Messages = {
     type: { Building: "Gebäude", Floor: "Geschoss", Room: "Raum" },
   },
   // Geräte-Katalogauswahl (ein Produkt ins Projekt platzieren).
+  // Der Hinweis vor dem Schreiben eines Produkts, das nicht auf Hardware getestet ist (Kompatibilitätsmatrix).
+  untested: {
+    title: "Nicht auf Hardware getestet",
+    op: { readParams: "Parameter lesen", readLinks: "Verknüpfungen lesen", flashParams: "Parameter-Flash", flashLinks: "Gruppenadress-Flash", fullDownload: "Vollständiger Download", structuralFlash: "Struktureller Flash" },
+    state: { eligible: "noch nie an einem Gerät dieses Produkts gezeigt", failed: "an diesem Produkt fehlgeschlagen", conflict: "widersprüchliche Ergebnisse an diesem Produkt" },
+    derived: "an diesem Produkt nicht getestet; dieselbe Hardware mit derselben Applikation ({{product}}) schon",
+    explain: "Busforge baut die Bytes aus dem Applikationsprogramm des Herstellers, hat diesen Schreibvorgang an diesem Produkt aber noch nicht funktionieren sehen. Einmal für dieses Projekt bestätigen, um trotzdem zu schreiben.",
+    acknowledge: "In diesem Projekt trotzdem schreiben",
+  },
   catalog: {
     title: "Gerät hinzufügen",
     description: "Ein Produkt aus dem Katalog wählen, um es in dieses Projekt zu platzieren.",
@@ -355,6 +366,10 @@ const de: Messages = {
     importedApps_one: "{{count}} Applikationsprogramm",
     importedApps_other: "{{count}} Applikationsprogramme",
     importFailed: "Produktdatenbank konnte nicht importiert werden",
+    sourcesTitle: "Woher bekomme ich eine Produktdatenbank?",
+    sourcesHint: "Die .knxprod beim Hersteller herunterladen und hier importieren. Busforge lädt keine Herstellerdaten herunter und liefert keine mit.",
+    sourceLink: "Download-Seite",
+    sourceNone: "Keine öffentliche Seite bekannt: ETS Online-Katalog oder Hersteller fragen",
   },
   // Produkt-Austausch-Dialog: das physische Gerät wurde durch ein anderes Modell ersetzt.
   // Reine Projektänderung; die neue Hardware braucht danach noch eine Erstinbetriebnahme.

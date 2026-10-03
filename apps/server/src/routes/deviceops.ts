@@ -1,16 +1,17 @@
-import { parseAppConfig, comObjectTableChanges, type AppConfig, type ModuleInstance, type WriteGate } from "@busforge/product";
+import { parseAppConfig, comObjectTableChanges, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed } from "../db/deviceparams.ts";
+import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
@@ -78,11 +79,29 @@ async function programSubmission(
 // longer than an HTTP request can be trusted to stay open, and its outcome must not depend on the
 // client still listening. The client polls GET .../tasks/:taskId for the result. A dry run is a
 // read-only preview the dialog waits for, so it stays a plain request.
+// The matrix operation each write runs.
+const WRITE_OPERATION: Partial<Record<TaskMeta["kind"], MatrixOperation>> = {
+  "flash-params": "flashParams", "flash-ga": "flashLinks", "flash-structure": "structuralFlash", "download": "fullDownload",
+};
+
+// A write to a Product whose operation is not tested on hardware needs the user's acknowledgement,
+// once per Product and project (PUT .../untested-ack). Previews read only and need none.
+function refuseUnacknowledgedUntested(state: AppState, meta: Omit<TaskMeta, "writes">): void {
+  const op = WRITE_OPERATION[meta.kind];
+  if (!op) throw new ApiError("INTERNAL", `no matrix operation for a ${meta.kind} write`, 500);
+  const status = untestedStatus(state, meta.projectId, meta.deviceId, op);
+  if (!status) throw new ApiError("APP_PROGRAM_MISSING", "the device's product or application program is unknown, so whether it is tested cannot be told", 404);
+  if (!status.acknowledged) {
+    throw new ApiError("PRODUCT_UNTESTED", `${status.productRef} running ${status.appProgramId} is ${status.state} for ${op}, not tested on hardware; acknowledge it for this project first`, 409);
+  }
+}
+
 async function programOrPreview(
   state: AppState, meta: Omit<TaskMeta, "writes">, dry: boolean, reason: "before-flash" | "before-flash-ga" | "before-download",
   run: (progress: ProgressFn, commit: CommitFn, gate: WriteGate) => Promise<FlashResult>,
 ): Promise<Response> {
   if (dry) return json(await state.queue.enqueue({ ...meta, writes: false }, (progress, signal, commit) => run(progress, commit, { signal })));
+  refuseUnacknowledgedUntested(state, meta);
   state.queue.refuseAdmission();
   state.queue.refuseConcurrentWrite(meta.projectId, meta.deviceId);
   // Auto restore point of the about-to-be-programmed config. When it would duplicate the latest
@@ -382,7 +401,18 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(task, 202);
   }
 
+  // /api/projects/:id/devices/:deviceId/untested-ack  -> the user accepts that this device's Product
+  // (with its application program) is written although not tested on hardware, for this project
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "untested-ack" && req.method === "PUT") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const status = untestedStatus(state, id, deviceId, "flashParams");
+    if (!status) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    acknowledgeUntested(db, id, status.productRef, status.appProgramId, state.now());
+    return json({ acknowledged: true });
+  }
+
   // /api/projects/:id/devices/:deviceId/flash-ga?dry=1  -> program the group tables
+
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "flash-ga" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);

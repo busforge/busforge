@@ -223,35 +223,44 @@ bus.
    `FULL_DOWNLOAD_UNSUPPORTED`. An unsupported family is a profile whose every capability is false
    and whose every operation throws, not a code path that guesses.
 3. **The com-object table must not go stale.** See below.
-4. **An automatic restore point** is taken before every real (non-dry) write.
-5. The configuration is read **once** and the same snapshot feeds both the image and the
+4. **A configuration write the Product was not tested for needs the user's acknowledgement.** The
+   parameter, group-address and structural flash and the full download look up the device's state
+   in the compatibility matrix ([compatibility.md](compatibility.md), `buildMatrix()`); anything but
+   `tested` refuses the real write with `PRODUCT_UNTESTED` (HTTP 409) until the user has acknowledged
+   the Product with its application program for the project (`PUT .../untested-ack`). One
+   acknowledgement covers every operation of that Product in that project. Previews need none.
+   Address assignment and Data Secure activation are not gated: they write no configuration and have
+   no matrix operation. The flash and commission dialogs show the notice and keep the configuration
+   write disabled until then.
+5. **An automatic restore point** is taken before every real (non-dry) write.
+6. The configuration is read **once** and the same snapshot feeds both the image and the
    post-flash baseline decision, so a concurrent edit cannot desynchronise them.
 
 **Inside the session** (`withDeviceSession` in `apps/server/src/deviceprofile.ts`):
 
-6. **Verify the device before writing.** The device descriptor is read and its mask compared
+7. **Verify the device before writing.** The device descriptor is read and its mask compared
    against the application's, by canonical equality, never substring. A mismatch aborts with
    `MASK_MISMATCH`, so the wrong device is never programmed. Teardown always runs.
 
 **Inside the operation** (`runFlashOp` in `packages/product/src/profiles.ts`, one sequence for
 every device model):
 
-7. **Back up first**, structurally before any write, to `data/projects/<id>/backups/`. The
+8. **Back up first**, structurally before any write, to `data/projects/<id>/backups/`. The
    surgical paths always hand over the segments they are about to overwrite; a full download
    hands over nothing unless its opt-in pre-unload backup is asked for (see
    [load-procedures.md](load-procedures.md)).
-8. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device, but
+9. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device, but
    only when every load-state machine the operation brackets is LOADED. Equal bytes under a machine
    left Loading by an interrupted write are not a running configuration: a System B flash, whose
    bracket always covers its load-state machines, runs anyway and completes the load; a System 7
    flash, whose plan brackets only the segments or tables it changes, refuses with
    `DEVICE_LOAD_INCOMPLETE` whenever one of its load-state machines is not LOADED, diff or not, and
    points at a full download.
-9. **Dry run** returns the diff and stops.
-10. **Write**, then reconnect after the device's restart, then **read the segment back** and compare
+10. **Dry run** returns the diff and stops.
+11. **Write**, then reconnect after the device's restart, then **read the segment back** and compare
     it against the intended bytes. The result type is a discriminated union: a `flashed` result
     *must* carry `verified`.
-11. **Baselines are adopted only on `verified: true`.** An unverified flash leaves the programmed
+12. **Baselines are adopted only on `verified: true`.** An unverified flash leaves the programmed
     baseline untouched, so the UI keeps showing the device as unprogrammed rather than claiming
     success. Parameters the flash provably did not write stay marked as drift.
 

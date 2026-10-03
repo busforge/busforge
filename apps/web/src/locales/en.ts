@@ -220,6 +220,8 @@ const en = {
     COM_OBJECT_NUMBER_INVALID: "A communication object resolves to number 0, which cannot exist in a device\u0027s com-object table. Refusing to program it.",
     LINK_COM_OBJECT_INACTIVE: "Some group-address links point at communication objects this configuration does not activate. The device would ignore them, so Busforge refuses rather than report them as programmed.",
     GA_FLASH_BROKE_APPLICATION: "The group-address flash wrote the tables, but the device stopped running its application program, so the links would not actually work. Busforge reports this as a failure instead of success. This device family needs its links written by a full download; run one to recover the device.",
+    PRODUCT_REF_INVALID: "The device's product id is not in the KNX form <Hardware>_P-<Product>, so Busforge cannot tell which evidence applies to it.",
+    PRODUCT_UNTESTED: "This product is not tested on hardware for this operation. Confirm the notice in the dialog once for this project, then write again.",
     DEVICE_CONTROL_UNREADABLE: "The device would not report or take its verify mode, in which it confirms every write. Without it a download writes blind, so Busforge refuses.",
     MASK_UNKNOWN: "The application mask is unknown. Refusing to write.",
     MASK_MISMATCH: "The device does not match the expected application (mask mismatch). Aborting.",
@@ -336,6 +338,15 @@ const en = {
     type: { Building: "Building", Floor: "Floor", Room: "Room" },
   },
   // Device catalog picker (placing a product into a project).
+  // The notice before writing a Product not tested on hardware (compatibility matrix).
+  untested: {
+    title: "Not tested on hardware",
+    op: { readParams: "Read parameters", readLinks: "Read links", flashParams: "Parameter flash", flashLinks: "Group-address flash", fullDownload: "Full download", structuralFlash: "Structural flash" },
+    state: { eligible: "never shown on a device of this product", failed: "failed on this product", conflict: "contradictory results on this product" },
+    derived: "not tested on this product; the same hardware with the same application ({{product}}) was",
+    explain: "Busforge builds the bytes from the manufacturer's application program, but has not seen this write work on this product. Confirm once for this project to write it anyway.",
+    acknowledge: "Write it anyway in this project",
+  },
   catalog: {
     title: "Add a device",
     description: "Pick a product from the catalog to place into this project.",
@@ -355,6 +366,10 @@ const en = {
     importedApps_one: "{{count}} application program",
     importedApps_other: "{{count}} application programs",
     importFailed: "Could not import the product database",
+    sourcesTitle: "Where do I get a product database?",
+    sourcesHint: "Download the .knxprod from the manufacturer and import it here. Busforge never downloads or ships manufacturer data.",
+    sourceLink: "Download page",
+    sourceNone: "No public page known: ETS Online Catalog or the manufacturer",
   },
   // Replace-product dialog: the physical device was swapped for another model.
   // A project-model edit only; the new hardware still needs commissioning.

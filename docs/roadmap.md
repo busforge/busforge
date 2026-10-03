@@ -70,8 +70,9 @@ started until the capability it depends on is hardware-proven.
 - **Show a derived state for a Product whose Hardware and application program were tested on
   another Product.** *Decided 2026-10-01:* evidence stays per Product and such a Product never
   counts as tested, but it gets its own state, `derived`, between technically eligible and tested
-  ([evidence-contract.md](evidence-contract.md)). `buildMatrix()` computes it; it is not yet shipped
-  with the build or shown in the app (release-readiness tickets 18b and 18c).
+  ([evidence-contract.md](evidence-contract.md)). `buildMatrix()` computes it and the server returns it
+  per device ([compatibility.md](compatibility.md)); the app does not show it yet (release-readiness
+  ticket 18c).
 - **`tools/readback.ts` cannot read MV-0705 devices.** On 2026-09-24 every MV-0705 device of the
   reference installation refused the tool's parameter read (`device refused byte @0x41e4`), so its
   evidence covers System B devices only. The server's read-back reads them; the tool should use the

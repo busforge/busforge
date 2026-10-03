@@ -18,6 +18,7 @@ export const qk = {
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
+  manufacturers: ["manufacturers"] as const,
   appComObjects: (appProgramId: string, lang: string) => ["appComObjects", appProgramId, lang] as const,
   connections: ["connections"] as const,
   version: ["version"] as const,
@@ -45,6 +46,10 @@ export const useProjects = () => useQuery({
 // (refetched on demand when the picker opens via staleTime expiry).
 export const useCatalog = (enabled = true) =>
   useQuery({ queryKey: qk.catalog, queryFn: api.catalog, enabled, staleTime: 60_000 });
+
+// Where each manufacturer publishes its product data: fixed per build.
+export const useManufacturers = (enabled = true) =>
+  useQuery({ queryKey: qk.manufacturers, queryFn: api.manufacturers, enabled, staleTime: Infinity });
 
 // The complete com-object universe of a catalog application program, for the
 // replace-product link mapping. Fetched only once a target product is picked
