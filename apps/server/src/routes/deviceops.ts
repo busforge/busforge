@@ -1,4 +1,4 @@
-import { parseAppConfig, comObjectTableChanges, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
+import { parseAppConfig, comObjectTableChanges, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
@@ -11,8 +11,9 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
+import { runCollection, readCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -278,6 +279,53 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // device associations the baseline could not show (see readbackLinkBase), surfaced
     // instead of letting the read-back pass as a complete links baseline.
     return json(buildDeviceView(state, id, deviceId, body.lang, { readback: rb }));
+  }
+
+  // /api/projects/:id/devices/:deviceId/collect  -> raw acquisition (docs/raw-acquisition.md): read
+  // the device's identity, interface objects and planned memory ranges into a package of its own,
+  // whether or not Busforge can program the device. Nothing is written to the device, the project or
+  // a baseline. Answers 202 with the task; the package is GET .../collections/:taskId.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "collect" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const secure = secureCredsFor(state, id, deviceId);
+    // The project's application program places the M112 parameter segments. Looked up without writing
+    // the catalog; one Busforge cannot parse is a reason in the package, not a refusal of the collection.
+    const appXml = dev.appRef ? lookupAppXml(state, id, dev.appRef)?.xml ?? null : null;
+    let app: CollectApp | null = null;
+    if (appXml) {
+      try { const cfg = parseAppConfig(appXml); app = { mask: cfg.mask, absoluteSegments: cfg.absoluteSegments }; }
+      catch (e) { app = { unavailable: `${(e as { code?: string }).code ?? "unparseable"}: ${e instanceof Error ? e.message : String(e)}` }; }
+    }
+    // The job starts only after submit has returned, so the id is set by then.
+    let taskId = "";
+    const task = state.queue.submit(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "collect", writes: false },
+      async (progress, signal) => {
+        const pkg = await runCollection({
+          dataDir: state.dataDir, projectId: id, deviceId, taskId, ia: dev.ia, connection: conn, secure, app, signal,
+          onProgress: progress, monitorClosed: bus.lastInterruption, now: state.now,
+        });
+        // A link or collector failure is the task's failure; what the device itself did (silence, no
+        // key, a bound) is the collection's result. The package is on disk either way.
+        if (pkg.stop?.reason === "interface" || pkg.stop?.reason === "error") {
+          throw new ApiError("COLLECT_FAILED", `the collection broke off (${pkg.stop.reason}): ${pkg.stop.detail}; what was read before is in its package`, 502);
+        }
+        return { kind: pkg.stop ? `stopped:${pkg.stop.reason}` : pkg.limits.length ? "limited" : "complete" };
+      },
+    );
+    taskId = task.id;
+    return json(task, 202);
+  }
+
+  // /api/projects/:id/collections/:taskId  -> the package a collect task wrote.
+  if (seg.length === 5 && seg[3] === "collections" && req.method === "GET") {
+    const pkg = readCollection(state.dataDir, id, seg[4]);
+    if (!pkg) return err("COLLECTION_NOT_FOUND", "no package for this task", 404);
+    return json(pkg);
   }
 
   // /api/projects/:id/devices/:deviceId/secure-identify -> read a device's identity (descriptor +

@@ -4,6 +4,7 @@ import type { SecureSession } from "./secureSession.ts";
 import { SECURE_APDU_OVERHEAD } from "./secure.ts";
 import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, propertyExtHead, APCI, type ParsedApdu } from "./frame.ts";
 import { KnxError } from "./errors.ts";
+import { decodeDeviceDescriptorResponse, encodeAuthorizeFreeKey, decodeAuthorizeResponse, encodePropertyDescriptionRead, decodePropertyDescription, decodePropertyValueResponse, type PropertyDescription, type PropertyValueResponse } from "./rawcodec.ts";
 
 // Interface-object property ids and standard table-object numbers used across the
 // management/flash layer. Named once here so a transposed literal (5 vs 7 vs 13) in
@@ -45,6 +46,15 @@ function assertElements(start: number, count: number): void {
   if (!Number.isInteger(count) || count < 0 || count > 0xff || !Number.isInteger(start) || start < 0 || start > 0xffff) {
     throw new KnxError("PROPERTY_ADDRESS_INVALID", `element count ${count} from ${start} does not fit an extended property service`);
   }
+}
+
+// A piece of a partial memory read: bytes the device gave, or a range it refused with its raw answer
+// (hex, address echo included; for a joined refusal, the answer to each of its requests).
+export type MemPiece = { address: number; length: number; bytes: Buffer } | { address: number; length: number; refused: string };
+export interface PartialMemRead { pieces: MemPiece[]; stopped: { address: number; error: unknown } | null }
+
+function serviceMismatch(what: string, got: number, want: number): KnxError {
+  return new KnxError("PROPERTY_RESPONSE_MISMATCH", `${what} was answered with service 0x${got.toString(16)}, not 0x${want.toString(16)}`);
 }
 
 // The security interface object (KNX Data Secure) and its security-mode function property.
@@ -510,6 +520,112 @@ export class KnxDevice {
     }
     return out;
   }
+  // ---- raw acquisition (docs/raw-acquisition.md): read-only services that hand back what the
+  // device answered, refusals included, instead of throwing them away ----
+  get secured(): boolean { return this.secure !== undefined; }
+
+  // The type 0 descriptor, refused unless the answer is one (deviceDescriptor takes any answer).
+  async descriptorType0(): Promise<string> {
+    const r = await this.request((s) => apdu(s, APCI.DEVICE_DESCRIPTOR_READ), true);
+    return decodeDeviceDescriptorResponse(r!.apci, r!.data).mask;
+  }
+  // A_Authorize with the free key only: the access level a tool without keys gets.
+  async authorizeFreeKey(): Promise<number> {
+    const r = await this.request((s) => apdu(s, APCI.AUTHORIZE_REQUEST, encodeAuthorizeFreeKey()), true);
+    if (r!.apci !== APCI.AUTHORIZE_RESPONSE) throw serviceMismatch("an authorize request", r!.apci, APCI.AUTHORIZE_RESPONSE);
+    return decodeAuthorizeResponse(r!.data).level;
+  }
+  // A property description, asked by PID (propertyIndex ignored by the device) or, with PID 0, by
+  // property index. An answer with PID 0 is the device saying there is nothing at that address.
+  async propertyDescription(obj: number, pid: number, propertyIndex: number): Promise<PropertyDescription> {
+    const tail = encodePropertyDescriptionRead(obj, pid, propertyIndex);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_DESCRIPTION_READ, tail), true);
+    if (r!.apci !== APCI.PROPERTY_DESCRIPTION_RESPONSE) throw serviceMismatch("a property description read", r!.apci, APCI.PROPERTY_DESCRIPTION_RESPONSE);
+    const d = decodePropertyDescription(r!.data);
+    const other = d.objectIndex !== obj || (d.pid !== 0 && (pid !== 0 ? d.pid !== pid : d.propertyIndex !== propertyIndex));
+    if (other) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a description of object ${obj} ${pid !== 0 ? `PID ${pid}` : `property index ${propertyIndex}`} was answered for object ${d.objectIndex} PID ${d.pid} index ${d.propertyIndex}`);
+    }
+    return d;
+  }
+  // A property value with the element count the device answered. Count 0 is returned, not thrown:
+  // it is the device's answer (no such property, or a refused read).
+  async propReadCounted(obj: number, pid: number, start: number, count: number): Promise<PropertyValueResponse> {
+    if (!Number.isInteger(count) || count < 1 || count > 15 || !Number.isInteger(start) || start < 0 || start > 0xfff) {
+      throw new KnxError("PROPERTY_ADDRESS_INVALID", `element count ${count} from ${start} does not fit a property read`);
+    }
+    const tail = Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]);
+    const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
+    if (r!.apci !== APCI.PROPERTY_RESPONSE) throw serviceMismatch("a property read", r!.apci, APCI.PROPERTY_RESPONSE);
+    const v = decodePropertyValueResponse(r!.data);
+    if (v.objectIndex !== obj || v.pid !== pid || (v.count > 0 && v.start !== start) || v.count > count) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a read of object ${obj} PID ${pid} from ${start} was answered for object ${v.objectIndex} PID ${v.pid}, ${v.count} element(s) from ${v.start}`);
+    }
+    return v;
+  }
+  // Read `len` bytes from `addr` and keep every refusal: a byte the device will not give is a
+  // refused piece, and the read goes on behind it. Pieces are exact, adjacent and in address order.
+  // A failure that ends the read (no answer, a closed connection, an answer for another address,
+  // `beforeRequest` throwing, an abort) returns what was read so far and where it stopped.
+  async memReadPartial(addr: number, len: number, opts: { chunk: number; signal?: AbortSignal; beforeRequest?: () => void }): Promise<PartialMemRead> {
+    const extended = addr >= 0 && addr + len - 1 > 0xffff;
+    if (extended) this.assertExtAddressable(addr, len, "extended memory read");
+    else assertAddressable(addr, len, "memory read");
+    const chunk = Math.min(Math.max(1, Math.floor(opts.chunk)), extended ? 255 : 63); // count octet / 6-bit APCI count
+    const pieces: MemPiece[] = [];
+    // Adjacent pieces of the same kind join: bytes with bytes, and refusals with the same answer.
+    const push = (p: MemPiece) => {
+      const last = pieces[pieces.length - 1];
+      if (!last || last.address + last.length !== p.address) { pieces.push(p); return; }
+      if ("bytes" in last && "bytes" in p) { last.bytes = Buffer.concat([last.bytes, p.bytes]); last.length += p.length; }
+      else if ("refused" in last && "refused" in p && last.refused === p.refused) last.length += p.length;
+      else pieces.push(p);
+    };
+    let pos = 0;
+    try {
+      while (pos < len) {
+        if (opts.signal?.aborted) throw new KnxError("READ_ABORTED", "read aborted");
+        let want = Math.min(chunk, len - pos);
+        const a = addr + pos;
+        if (extended) {
+          opts.beforeRequest?.();
+          const tail = Buffer.from([want, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]);
+          const r = await this.request((s) => apdu(s, APCI.MEMORY_EXT_READ, tail), true);
+          if (r!.apci !== APCI.MEMORY_EXT_READ_RESP) throw serviceMismatch("an extended memory read", r!.apci, APCI.MEMORY_EXT_READ_RESP);
+          const d = r!.data;
+          if (d.length < 4) throw new KnxError("MEMORY_RESPONSE_MISMATCH", `extended read @0x${a.toString(16)}: a ${d.length}-octet answer has no return code and address`);
+          const echoedAt = (d[1] << 16) | (d[2] << 8) | d[3];
+          if (echoedAt !== a) throw new KnxError("MEMORY_RESPONSE_MISMATCH", `extended read echoed 0x${echoedAt.toString(16)} for a request to 0x${a.toString(16)}`);
+          const got = d.subarray(4, 4 + want);
+          if (d[0] !== 0x00 || got.length === 0) { push({ address: a, length: want, refused: d.toString("hex") }); pos += want; continue; }
+          push({ address: a, length: got.length, bytes: Buffer.from(got) });
+          pos += got.length;
+          continue;
+        }
+        // Classic: some M112 devices refuse a read that spans an internal boundary, so a short answer
+        // shrinks the request; only a single byte answered short is a refused byte.
+        for (;;) {
+          opts.beforeRequest?.();
+          const tail = Buffer.from([(a >> 8) & 0xff, a & 0xff]);
+          const n = want;
+          const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, n), true);
+          if (r!.apci !== APCI.MEMORY_RESPONSE) throw serviceMismatch("a memory read", r!.apci, APCI.MEMORY_RESPONSE);
+          if (r!.data.length < 2 || r!.data.readUInt16BE(0) !== a) {
+            throw new KnxError("MEMORY_RESPONSE_MISMATCH", `a memory read of 0x${a.toString(16)} was answered for ${r!.data.length < 2 ? "no address" : `0x${r!.data.readUInt16BE(0).toString(16)}`}`);
+          }
+          const data = r!.data.subarray(2);
+          if (data.length >= want) { push({ address: a, length: want, bytes: Buffer.from(data.subarray(0, want)) }); break; }
+          if (want === 1) { push({ address: a, length: 1, refused: r!.data.toString("hex") }); break; }
+          want = Math.max(1, want >> 1);
+        }
+        pos += want;
+      }
+      return { pieces, stopped: null };
+    } catch (error) {
+      return { pieces, stopped: { address: addr + pos, error } };
+    }
+  }
+
   async tableAddr(obj: number): Promise<number> {
     const b = await this.propRead(obj, PID.TABLE_REFERENCE);
     let a = 0; for (const x of b) a = (a << 8) | x; return a;
@@ -745,7 +861,7 @@ export class KnxDevice {
 // After a device timeout the transport sequence is not advanced: keep this a session's last request.
 export type SecurityModeReading = { state: "on" | "off" } | { state: "denied" | "unreadable"; detail: string };
 const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "SECURE_ANSWER_REJECTED"]);
-export async function readSecurityMode(dev: KnxDevice): Promise<SecurityModeReading> {
+export async function readSecurityMode(dev: Pick<KnxDevice, "securityMode">): Promise<SecurityModeReading> {
   try {
     return { state: (await dev.securityMode()) ? "on" : "off" };
   } catch (e) {

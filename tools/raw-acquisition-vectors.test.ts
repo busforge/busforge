@@ -2,24 +2,45 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { APCI, CEMI, SVC, iaToNum, parseApdu, parseCemiLData } from "../packages/knx/src/index.ts";
+import {
+  APCI, CEMI, SVC, iaToNum, parseApdu, parseCemiLData,
+  decodeDeviceDescriptorResponse, decodePropertyValueResponse, decodeAuthorizeResponse, decodePropertyDescription,
+  decodeFunctionPropertyExtState, decodeMemoryRead, decodeMemoryResponse, encodeAuthorizeFreeKey, encodePropertyDescriptionRead,
+} from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 
 // The reference vectors of docs/raw-acquisition.md point at lines of the ETS captures. This test
 // keeps them honest: every vector must decode, from the captured frame itself, to what the fixture
-// and the design doc claim. The decoders are deliberately local; the collector's own codec has to
-// pass the same vectors.
+// and the design doc claim. The decoders below are deliberately local and independent; the collector's
+// own codec (packages/knx/src/rawcodec.ts) has to decode every vector to the same result.
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const { vectors } = JSON.parse(readFileSync(join(FIXTURES, "raw-acquisition-vectors.json"), "utf8")) as {
   vectors: { id: string; file: string; line: number; device: string; service: string; decoded: Record<string, unknown> }[];
 };
 
-// Not in the APCI table because nothing in Busforge sends them yet.
+// Literal on purpose: the APCI table is checked against them below, not used to derive them.
 const PROPERTY_DESCRIPTION_READ = 0x3d8;
 const PROPERTY_DESCRIPTION_RESPONSE = 0x3d9;
 const AUTHORIZE_REQUEST = 0x3d1;
 const AUTHORIZE_RESPONSE = 0x3d2;
+
+// The collector's codec for each service, in the fixture's terms.
+function codec(service: string, tpdu: Buffer, apci: number, data: Buffer): Record<string, unknown> {
+  const h = (b: Buffer) => b.toString("hex");
+  switch (service) {
+    case "DeviceDescriptor_Response": return decodeDeviceDescriptorResponse(apci, data);
+    case "PropertyValue_Response": { const v = decodePropertyValueResponse(data); return { ...v, value: h(v.value) }; }
+    case "Authorize_Request": expect(data.equals(encodeAuthorizeFreeKey())).toBe(true); return { key: h(data.subarray(1)) };
+    case "Authorize_Response": return decodeAuthorizeResponse(data);
+    case "PropertyDescription_Read": expect(data.equals(encodePropertyDescriptionRead(data[0], data[1], data[2]))).toBe(true); return { objectIndex: data[0], pid: data[1], propertyIndex: data[2] };
+    case "PropertyDescription_Response": { const { objectIndex, pid, propertyIndex, writable, pdt, maxElements, readLevel, writeLevel } = decodePropertyDescription(data); return { objectIndex, pid, propertyIndex, writable, pdt, maxElements, readLevel, writeLevel }; }
+    case "FunctionPropertyExtStateResponse": { const v = decodeFunctionPropertyExtState(data); return { ...v, value: h(v.value) }; }
+    case "Memory_Read": return decodeMemoryRead(tpdu, data);
+    case "Memory_Response": { const v = decodeMemoryResponse(tpdu, data); return { ...v, value: h(v.value) }; }
+    default: throw new Error(`no collector codec for ${service}`);
+  }
+}
 
 function apduAt(file: string, line: number) {
   const text = readFileSync(join(FIXTURES, file), "utf8").split("\n")[line - 1];
@@ -78,6 +99,11 @@ function decode(service: string, tpdu: Buffer, apci: number, data: Buffer): Reco
 }
 
 describe("raw acquisition reference vectors", () => {
+  test("the APCI table carries the services the collector sends", () => {
+    expect([APCI.PROPERTY_DESCRIPTION_READ, APCI.PROPERTY_DESCRIPTION_RESPONSE, APCI.AUTHORIZE_REQUEST, APCI.AUTHORIZE_RESPONSE])
+      .toEqual([PROPERTY_DESCRIPTION_READ, PROPERTY_DESCRIPTION_RESPONSE, AUTHORIZE_REQUEST, AUTHORIZE_RESPONSE]);
+  });
+
   test("the fixture is not empty", () => expect(vectors.length).toBeGreaterThan(0));
 
   for (const v of vectors) {
@@ -89,6 +115,8 @@ describe("raw acquisition reference vectors", () => {
       expect(code).toBe(request ? CEMI.LDATA_REQ : CEMI.LDATA_IND);
       expect(request ? dst : src).toBe(iaToNum(v.device));
       const decoded = decode(v.service, tpdu, apci, data);
+      // The collector's codec agrees with the independent decoder on the captured frame.
+      expect(codec(v.service, tpdu, apci, data)).toEqual(decoded);
       // A vector that names only a length carries a device identifier (a serial) not repeated in the fixture.
       const expected: Record<string, unknown> = v.decoded;
       if (expected.valueLength !== undefined) {

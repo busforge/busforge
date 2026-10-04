@@ -114,6 +114,8 @@ const en = {
   // Localized backend error codes. The server sends a stable `code`; unknown
   // codes fall back to the raw English message it ships alongside.
   errors: {
+    COLLECT_FAILED: "The raw data collection broke off at the interface or in Busforge itself; what it read before is kept in its package.",
+    COLLECTION_NOT_FOUND: "There is no raw data package for this task.",
     KEYRING_PASSWORD_INVALID: "A keyring needs a password of printable ASCII characters (no umlauts), so that every tool reads the same key from it.",
     KEYRING_EMPTY: "This project holds no KNX Data Secure keys or device certificates, so there is nothing to export.",
     KEYRING_DEVICE_UNPLACED: "A key belongs to a device without an individual address. Give it one before exporting the keyring.",
@@ -564,7 +566,7 @@ const en = {
     cancelRead: "Cancel (nothing has been written to the device yet)",
     writeNotCancellable: "Writing: cannot be cancelled without risking the device",
     interruptedWrite: "A write was interrupted; the device state is unknown",
-    kind: { read: "Read", "flash-params": "Program", "flash-ga": "Program GAs", "flash-structure": "Program objects", "assign-ia": "Assign address", download: "Commission", "secure-activate": "Activate Secure" },
+    kind: { read: "Read", "flash-params": "Program", "flash-ga": "Program GAs", "flash-structure": "Program objects", "assign-ia": "Assign address", download: "Commission", "secure-activate": "Activate Secure", collect: "Collect raw data" },
     phase: {
       connect: "Connecting",
       params: "Reading parameters",

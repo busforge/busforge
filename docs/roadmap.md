@@ -127,6 +127,23 @@ started until the capability it depends on is hardware-proven.
   download onto such an interface writes. Its product data has a System B parameter model, so the
   opaque-device item above applies to its plain reads, not to its application.
 
+## Raw acquisition
+
+The collector ([raw-acquisition.md](raw-acquisition.md#implementation)) records each of these as
+not attempted.
+
+- **Compare a package with a read-back.** On a System B and an M112 bench device, the collector's
+  table and segment bytes against a Busforge read-back of the same device, as the control case.
+- **System 300 variant plans.** Read the management descriptor, then the resources of the variant
+  it names (`MV-0300-0100…`).
+- **Discovery by `PID_IO_LIST`** on MV-2920, instead of the index scan.
+- **Coupler filter tables.** `LcFilterMemory` on the memory- and property-configured couplers, and
+  the relative filter table of MV-2920 behind the router object; needs a capture of a tool reading one.
+- **Product XML as the bound of a System B table** whose memory control block is absent, and a
+  plausibility bound on one that is present (PID 23's capacity, the application's declared sizes):
+  today a wrong PID 27 size is held only by the 64 KB budget.
+- **A UI** to start a collection and show its package.
+
 ## KNX Data Secure
 
 - **No smoke behaviour exercises a fresh address Busforge secures.** The plain behaviours pin their

@@ -114,6 +114,8 @@ const de: Messages = {
     keyringDone: "Schlüsselbund heruntergeladen",
   },
   errors: {
+    COLLECT_FAILED: "Das Lesen der Rohdaten brach an der Schnittstelle oder in Busforge selbst ab; was davor gelesen wurde, steht im Paket.",
+    COLLECTION_NOT_FOUND: "Zu diesem Task gibt es kein Rohdaten-Paket.",
     KEYRING_PASSWORD_INVALID: "Ein Schlüsselbund braucht ein Passwort aus druckbaren ASCII-Zeichen (keine Umlaute), damit jedes Programm denselben Schlüssel daraus liest.",
     KEYRING_EMPTY: "Dieses Projekt enthält keine KNX-Data-Secure-Schlüssel und keine Gerätezertifikate, es gibt nichts zu exportieren.",
     KEYRING_DEVICE_UNPLACED: "Ein Schlüssel gehört zu einem Gerät ohne physikalische Adresse. Vergib ihm eine, bevor du den Schlüsselbund exportierst.",
@@ -564,7 +566,7 @@ const de: Messages = {
     cancelRead: "Abbrechen (in das Gerät wurde noch nichts geschrieben)",
     writeNotCancellable: "Schreibt: Abbruch würde das Gerät gefährden",
     interruptedWrite: "Ein Schreibvorgang wurde unterbrochen; der Gerätezustand ist unbekannt",
-    kind: { read: "Lesen", "flash-params": "Programmieren", "flash-ga": "GAs programmieren", "flash-structure": "Objekte programmieren", "assign-ia": "Adresse vergeben", download: "Erstinbetriebnahme", "secure-activate": "Secure aktivieren" },
+    kind: { read: "Lesen", "flash-params": "Programmieren", "flash-ga": "GAs programmieren", "flash-structure": "Objekte programmieren", "assign-ia": "Adresse vergeben", download: "Erstinbetriebnahme", "secure-activate": "Secure aktivieren", collect: "Rohdaten lesen" },
     phase: {
       connect: "Verbinde",
       params: "Lese Parameter",

@@ -1,10 +1,10 @@
 # Raw acquisition
 
 How Busforge reads identity, interface-object properties and bounded memory ranges from a KNX
-device it cannot program, without writing anything and without inventing a byte. This is the
-design for the diagnostic collector; nothing on this page is implemented yet. The collector itself
-is a separate piece of work, and nothing here is a verification claim ([status.md](status.md) holds
-those).
+device it cannot program, without writing anything and without inventing a byte. The collector is
+built to this design; [Implementation](#implementation) says where, what it adds to the design and
+what it leaves out. Nothing here is a verification claim beyond the bench runs listed there
+([status.md](status.md) holds the claims).
 
 The rule that shapes every section: **a range is either read, refused with a reason, or not
 attempted with a reason**. A protected address answers with an empty or negative response, and
@@ -273,10 +273,10 @@ Each attempted read is one record. The shape, for the collector to implement:
 
 | Field | |
 |---|---|
-| `space` | `descriptor`, `property`, `property-description`, `memory`, `memory-extended` |
+| `space` | `descriptor`, `authorize`, `property`, `property-description`, `function-property` (the security mode), `memory`, `memory-extended` |
 | `target` | object index or type and instance, PID, element range; or address and length |
 | `source` | where the range came from: `master-data`, `device` (PID 7 / PID 27 / description), `product-xml` |
-| `outcome` | `bytes` (with the bytes), `refused` (with the raw answer: count 0, return code such as `0xFC` access denied or `0xFD` address void), `timeout`, `connection-closed`, `not-attempted` (with the reason) |
+| `outcome` | `bytes` (with the bytes), `refused` (with the raw answer: count 0, return code such as `0xFC` access denied or `0xFD` address void), `timeout`, `connection-closed`, `malformed` (an answer for another address or service, or of the wrong shape; never used as data), `not-attempted` (with the reason) |
 
 A range that comes back in pieces is recorded as several records with exact sub-ranges. The
 existing `memRead` throws `DEVICE_READ_REFUSED` when even one byte is refused; the collector needs
@@ -335,13 +335,90 @@ scan past the first property, nothing from BCU1, BCU2, System 300, a coupler or 
 ETS never sent those to the bench devices. They are the first thing the collector's bench run has
 to capture.
 
+## Implementation
+
+| Part | Where |
+|---|---|
+| Codecs (descriptor, authorize, property description and value, memory, function-property state) | `packages/knx/src/rawcodec.ts`, checked against every reference vector |
+| Read services that keep refusals: `authorizeFreeKey`, `propertyDescription`, `propReadCounted`, `memReadPartial` | `packages/knx/src/device.ts` |
+| Plan per mask | `packages/product/src/collectplan.ts` |
+| Execution, bounds, records | `packages/product/src/collect.ts` |
+| Session, package file, provenance | `apps/server/src/collect.ts` |
+
+**API.** `POST /api/projects/:id/devices/:deviceId/collect` queues a task of kind `collect`
+(`writes: false`) and answers 202 with it; the task's result is the verdict (`complete`, `limited`,
+or `stopped:<reason>` for what the device did: unresponsive, secured without a key, the duration
+bound). A collection that breaks off at the interface or in Busforge itself ends the task as an
+error, `COLLECT_FAILED`. `GET /api/projects/:id/collections/:taskId` returns the package. The package
+is a JSON file under the data directory, `projects/<projectId>/collections/<taskId>.json`, written
+also when the job is cancelled or the device stops answering. No table of the database holds it.
+
+**What it adds to the design.**
+
+- `memReadPartial` joins adjacent pieces of the same kind, so a range is a handful of records: the
+  bytes read, and each refused run with the device's answer.
+- A request that gets no answer, a connection the device closes, or an answer that does not fit
+  the request (`malformed`: one late answer would shift every answer after it) is followed by a
+  fresh connection (`T_Disconnect`, `T_Connect`, the free-key authorize again, since the access
+  level is the connection's). Three failed requests in a row stop the job as unresponsive; the
+  authorize on the new connection answering does not reset that count.
+- The budgets count requests as the collector issues them. The transport's own repetitions of
+  one request (`KNX_TRIES`, three by default), `T_Connect`, `T_Disconnect` and the Data Secure Sync
+  of each new connection are not counted. The 15 minutes are checked before each request, so the
+  job can overrun them by the request in flight and one reconnect, some seconds.
+- **On System B, PID 27 alone bounds a table read**, as designed, held only by the 64 KB memory
+  budget. A device reporting a wrong memory control block size therefore gets up to 64 KB read from
+  the address its own PID 7 names. A plausibility bound (PID 23's capacity, the application's
+  declared sizes) is in the backlog.
+- Property values are read within a budget of **1024 bytes per property** past element 0. A batch
+  of elements the device refuses is asked again one element at a time, and a single refused
+  element ends that property: the GVS AMMA answers element 1 of two properties (object 0 PID 223,
+  object 7 PID 220) and refuses every element after it, which without this rule spent the whole
+  scan budget on a thousand refusals.
+- A memory range planned from the product XML or from the device must be covered by declared
+  segments; adjacent segments join (the ABB's application segment `0x4600` + 7790 runs from
+  `0x4000` + 8192 into `0x6000` + 22016). A master-data resource is a location in its own right.
+- Monitor and bus: the package names the monitor connection the job closed and when
+  (`provenance.monitorClosed`), when the job took the bus and when it released it. The job does
+  not reopen the monitor.
+- **One write to the database, on secure devices only:** after a secured session the device's
+  sending sequence, as seen in that session, is stored with its tool key (`device_security.seq_group`),
+  as every secured session in Busforge does. It is the device's counter, not project state.
+
+**What it leaves out**, each as a `not-attempted` record in the package and a backlog entry in
+[roadmap.md](roadmap.md#raw-acquisition): the System 300 variant plans, discovery by `PID_IO_LIST`
+(MV-2920, scanned by index instead), every coupler filter table, the product XML as the bound of a
+System B table without a memory control block, and a UI.
+
+### Bench runs, 2026-10-04
+
+Read-only, from the Mac over the bench bridge, against a copy of the data directory; every table
+of that copy hashed before and after. Each run below was repeated on the final build, with the
+same results; the cancel was run once, on the build before the review fixes.
+
+| Device | Session | Result | Requests | Bytes from memory | Time |
+|---|---|---|---|---|---|
+| ABB US/U 4.2 (MV-0701) | plain | complete: identity, scan of objects 0 to 4, load statuses, both group tables, every application segment of the product XML | 911 | 9199 | 96 s |
+| MDT BE-02001.02 (MV-0705) | plain | complete; the two product-XML segments at `0x0700` lie outside the declared segments and are not attempted | 284 | 1304 | 28 s |
+| GVS AMMA (MV-07B0) | plain, no key on file | stopped after the descriptor (`0xFFFF`): secured, no key | 1 | 0 | 0.1 s |
+| GVS AMMA (MV-07B0) | secured | limited only by the property budget (object 3 PID 23); tables of objects 1 to 4 read through PID 7 and PID 27; security mode read last. It answers the description of object 6, property index 23, with the description of PID 1 at index 0, in every run: recorded as malformed, the link reopened, the rest of object 6 not described | 459 | 3896 | 94 s |
+| Jung 400021SE (MV-07B0) | secured | as the GVS; tables at `0xF000` to `0x16000`, the three above `0xFFFF` through the extended read | 636 | 10366 | 157 s |
+| ABB US/U 4.2 | plain, cancelled after 12 s | task `cancelled`, package kept with 129 records from the scan | 123 | 0 | 12 s |
+
+Database: on the plain runs only the task list changed. On the two secured runs `device_security`
+changed in `seq_group` of those two devices and nothing else. No device memory was refused on any
+run, so a negative memory answer from a real device is still not seen.
+
+Not compared yet: a collector package with a Busforge read-back of the same device (the control
+case of System B and M112).
+
 ## Known unknowns
 
 | Unknown | Why it matters | How it gets settled |
 |---|---|---|
 | What the house device declared MV-0012 (the MDT IP interface) reports and holds | it is the only owned device in an unsupported family on paper | a secure identify (read-only, key from the project) and then a collector run under that session |
 | BCU1 behaviour at all | no owned real BCU1 is known | a capture from a contributed device, through the diagnostic intake |
-| Whether M112 devices answer property descriptions | ETS never asked them | a description request to the MDT and the ABB on the bench |
+| Whether M112 devices answer property descriptions | ETS never asked them | **settled for the bench devices** (2026-10-04): the ABB US/U 4.2 (MV-0701) describes objects 0 to 4, 21 properties, and the MDT BE-02001.02 (MV-0705) answers the scan as well. Other M112 products: not shown. |
 | Whether a free-key authorize is needed for any read the bench devices allow without it | Busforge reads PID 7 today without authorizing | compare the same plan with and without it on the bench |
 | `LcFilterMemory` access on couplers | the filter table is a coupler's configuration | a capture of a tool reading a coupler |
 | Device-specific internal read boundaries | a refused straddling read must not fail the range | the boundary-aware read, recorded per sub-range |

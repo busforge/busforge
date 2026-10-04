@@ -78,7 +78,7 @@ export interface GaComObj {
 // objects (a tunnelling channel); a secured address's receivers list them in their security table.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; secured: boolean; interfaceSenders: { ia: string; source: "import" | "busforge" }[]; }
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;

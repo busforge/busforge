@@ -43,6 +43,8 @@ export const APCI = {
   MEMORY_EXT_WRITE: 0x1fb, MEMORY_EXT_WRITE_RESP: 0x1fc,
   MEMORY_EXT_READ: 0x1fd, MEMORY_EXT_READ_RESP: 0x1fe,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
+  PROPERTY_DESCRIPTION_READ: 0x3d8, PROPERTY_DESCRIPTION_RESPONSE: 0x3d9,
+  AUTHORIZE_REQUEST: 0x3d1, AUTHORIZE_RESPONSE: 0x3d2,
   // Extended property services: a 16-bit object TYPE (not an object index), a 12-bit instance and a
   // 12-bit PID. The security interface object (type 17) is reachable only through these. The
   // function-property pair acts on a property rather than reading or writing its value.

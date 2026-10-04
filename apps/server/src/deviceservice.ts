@@ -216,14 +216,18 @@ export function classifyOtherLink(cur: OtherDevice, d: OtherDeviceModel, link: {
 // (and backfilling the catalog so the next read hits the DB). The catalog is
 // keyed by application-program id, so this is shared across devices and projects.
 export function resolveAppXml(state: AppState, projectId: string, appRef: string): string | null {
-  const id = appProgramId(appRef);
-  const cached = getAppProgram(state.db, id);
-  if (cached) return cached;
+  const found = lookupAppXml(state, projectId, appRef);
+  if (found && !found.cached) putAppProgram(state.db, appProgramId(appRef), found.xml);
+  return found?.xml ?? null;
+}
+// The same lookup without backfilling the catalog, for an operation that must not write the database.
+export function lookupAppXml(state: AppState, projectId: string, appRef: string): { xml: string; cached: boolean } | null {
+  const cached = getAppProgram(state.db, appProgramId(appRef));
+  if (cached) return { xml: cached, cached: true };
   const sourceFile = getSourceFile(state.db, projectId);
   if (!sourceFile || !existsSync(sourceFile)) return null;
   const xml = readAppProgram(readFileSync(sourceFile), appRef);
-  if (xml) putAppProgram(state.db, id, xml);
-  return xml;
+  return xml ? { xml, cached: false } : null;
 }
 
 // Gaps an import does not fully cover, surfaced so the device/GA counts are not the

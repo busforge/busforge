@@ -12,7 +12,7 @@ import { ApiError, errorCode } from "./errors.ts";
 // is never replayed: the store reports it as interrupted, and for a write that means the device
 // state is unknown.
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 
 export interface Task {
@@ -40,7 +40,8 @@ export interface Task {
   // one that worked. The result is the only place that distinction exists; it belongs here.
   outcome: TaskOutcome | null;
   // A write's full result (a FlashResult, an address assignment), for the client that submitted
-  // it and collects the answer later. Null for reads: their result lands in the database instead.
+  // it and collects the answer later, and a collection's verdict (its package is a file of its own).
+  // Null for the other reads: their result lands in the database instead.
   result: unknown;
   // Whether the verified submission was adopted as the device's programmed baseline. Set in the
   // same transaction as the adoption, so the two cannot disagree after a crash.
@@ -231,7 +232,7 @@ export class TaskQueue {
         });
         // A cancel the task accepted while it wrote nothing stands, even when the job ran to its end.
         if (controller.signal.aborted && !writing) throw new CancelledError();
-        task.result = task.writes ? r ?? null : null;
+        task.result = task.writes || task.kind === "collect" ? r ?? null : null;
         task.outcome = outcomeOf(r);
         // A write the device did not confirm is not a success. The routes already refuse to adopt
         // the programmed baseline in that case, but the TASK said "done" regardless, so a caller

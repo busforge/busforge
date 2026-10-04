@@ -25,6 +25,8 @@ export class Bus {
   private managementActive = false;
   private closed = false;
   private transition: Promise<unknown> = Promise.resolve();
+  // The monitor connection the last exclusive operation closed, and when; null when none was open.
+  lastInterruption: { projectId: string; closedAt: number } | null = null;
   private groupKeys = new Map<number, Buffer>();
   private lastSecure = new Map<number, bigint>();
   // Group keys are read once per connect: a project's keys are fixed at import, nothing changes them later.
@@ -50,7 +52,11 @@ export class Bus {
     if (this.managementActive) throw new ApiError("BUS_BUSY", "a bus operation owns the interface", 409);
     this.managementActive = true;
     try {
-      await this.transitionTo(() => this.closeMonitor());
+      await this.transitionTo(async () => {
+        const open = this.activeProjectId !== null && this.status === "connected" ? this.activeProjectId : null;
+        await this.closeMonitor();
+        this.lastInterruption = open === null ? null : { projectId: open, closedAt: this.now() };
+      });
       return await run();
     } finally {
       this.managementActive = false;
