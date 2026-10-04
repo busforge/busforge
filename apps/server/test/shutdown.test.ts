@@ -74,11 +74,12 @@ describe("shutdown on a signal", () => {
   }, 15_000);
 
   test("SIGTERM with no write running exits at once", async () => {
-    const { proc, startedAt } = await start(0);
+    const { proc, dataDir, startedAt } = await start(0);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(0);
     expect(Date.now() - startedAt).toBeLessThan(1000);
     expect(await new Response(proc.stderr).text()).toContain("received SIGTERM, exiting");
+    expectCheckpointed(dataDir, {});
   }, 15_000);
 
   test("a failed shutdown step still checkpoints the database before exiting non-zero", async () => {
@@ -94,6 +95,6 @@ describe("shutdown on a signal", () => {
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(1);
     const log = await new Response(proc.stderr).text();
-    expect(log).toContain("closing the database failed the database checkpoint did not complete (busy 1,");
+    expect(log).toContain("closing the database failed the database checkpoint did not complete (");
   }, 15_000);
 });

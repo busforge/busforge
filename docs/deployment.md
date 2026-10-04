@@ -125,10 +125,12 @@ reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the ser
 4. closes the monitor tunnel, refusing any new monitor connection,
 5. checkpoints the database, so `busforge.db` holds every committed write and `busforge.db-wal` is
    empty or gone, and exits. If closing the bus connection fails, that is logged, the checkpoint
-   still runs, and the exit code is 1. If the checkpoint cannot complete, because another process
-   is reading or writing the database at that moment (an open transaction in an `sqlite3` shell, a
-   second server on the same directory), the log says so (`closing the database failed`) and the exit code is 1: recent writes are then still only in
-   `busforge.db-wal`.
+   still runs, and the exit code is 1. Another process reading or writing the database at that
+   moment (an open transaction in an `sqlite3` shell, a second server on the same directory) blocks
+   the checkpoint; it waits up to 5 seconds for that to end. If it cannot complete, the log says so
+   (`closing the database failed`) and names which case it is, and the exit code is 1: either some
+   recent writes are still only in `busforge.db-wal`, or every write reached `busforge.db` but the
+   log could not be emptied.
 
 With no write running it exits at once. A second signal does not skip the wait; the log names the
 write it is still finishing. The HTTP API stays up meanwhile, so an open client keeps seeing the
@@ -212,7 +214,7 @@ Back up the data directory of a **stopped** container, and always the **whole di
 `master.key` in it. A clean stop (any of the signals above, within the grace period) checkpoints
 the SQLite write-ahead log into `busforge.db` and leaves `busforge.db-wal` empty or removes it. A
 process that ends any other way (`SIGKILL`, a crash, a host losing power) leaves recent writes only
-in `busforge.db-wal`, and so does a stop whose checkpoint failed (see above). `busforge.db` alone is
+in `busforge.db-wal`, and so can a stop whose checkpoint failed (see above). `busforge.db` alone is
 then an older state, and `busforge.db-shm` is only an index into that log. Since a backup cannot tell how the last process ended, never copy
 `busforge.db` alone.
 

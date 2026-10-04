@@ -468,12 +468,17 @@ export function openDb(path: string): Database {
 
 // Bun's close() defers the close while any statement from db.prepare() is unfinalized, and a
 // deferred close never checkpoints: every committed write would stay in busforge.db-wal alone.
-// The checkpoint moves them into busforge.db and empties the log first. A checkpoint another
-// connection blocks (a reader on the same file) is reported in its result row, not thrown.
+// The checkpoint moves them into busforge.db and empties the log first. Another connection reading
+// or writing the same file blocks it; the checkpoint waits for that up to the busy timeout and
+// then reports it in its result row, not as an error.
 export function closeDb(db: Database): void {
+  db.exec("PRAGMA busy_timeout = 5000");
   const r = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number };
-  if (r.busy !== 0 || r.checkpointed !== r.log) {
-    throw new Error(`the database checkpoint did not complete (busy ${r.busy}, ${r.checkpointed} of ${r.log} log frames copied): busforge.db alone does not hold every committed write`);
+  if (r.checkpointed !== r.log) {
+    throw new Error(`the database checkpoint did not complete (${r.checkpointed} of ${r.log} log frames copied): busforge.db alone does not hold every committed write`);
+  }
+  if (r.busy !== 0) {
+    throw new Error("the database checkpoint copied every log frame but could not empty the log: busforge.db holds every committed write, busforge.db-wal is not empty");
   }
   db.close();
 }
