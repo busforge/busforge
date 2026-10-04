@@ -122,7 +122,10 @@ reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the ser
    dry run (neither writes anything),
 3. stops a running flash or download that is still reading the device, before its first write, and
    otherwise waits for the running write to finish, its read-back and baseline commit included,
-4. closes the monitor tunnel, refusing any new monitor connection, and exits.
+4. closes the monitor tunnel, refusing any new monitor connection,
+5. checkpoints the database, so `busforge.db` holds every committed write and `busforge.db-wal` is
+   empty or gone, and exits. A failure in an earlier step is logged, the checkpoint still runs, and the exit
+   code is 1.
 
 With no write running it exits at once. A second signal does not skip the wait; the log names the
 write it is still finishing. The HTTP API stays up meanwhile, so an open client keeps seeing the
@@ -137,7 +140,7 @@ sequenceDiagram
   S->>S: refuse new work, cancel queued tasks
   S->>Dev: running download continues
   Dev-->>S: read-back verified
-  S->>S: commit baseline, close tunnel
+  S->>S: commit baseline, close tunnel, checkpoint database
   S-->>D: exit 0
   Note over D,S: grace period exceeded: SIGKILL,<br/>write reported interrupted on next start
 ```
@@ -202,38 +205,60 @@ than silently generating a new one that cannot open them.
 
 ### Backup, restore and upgrade
 
-Back up the data directory of a **stopped** container, and always the **whole directory**: the
-SQLite database is `busforge.db` together with its write-ahead log `busforge.db-wal` and
-`busforge.db-shm`, and recent writes can live only in `-wal`/`-shm`, even after a clean stop. Never copy `busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
-same for a named volume and a bind mount and does not depend on the name compose gave the volume
+Back up the data directory of a **stopped** container, and always the **whole directory**, with
+`master.key` in it. A clean stop (any of the signals above, within the grace period) checkpoints
+the SQLite write-ahead log into `busforge.db` and leaves `busforge.db-wal` empty or removes it. A
+process that ends any other way (`SIGKILL`, a crash, a host losing power) leaves recent writes only
+in `busforge.db-wal`, and `busforge.db` alone is then an older state; `busforge.db-shm` is only an
+index into that log. Since a backup cannot tell how the last process ended, never copy
+`busforge.db` alone.
+
+The commands below address the container by its fixed name `busforge` (`container_name` in the
+compose file, `--name` with `docker run`) rather than through compose: `docker compose stop` run
+from another directory or under another project name finds no service and does nothing, without
+an error, and the backup would then read a running database. `docker stop` keeps the container's
+own grace period. The image is the one the container runs, whatever registry prefix it carries.
+The data is reached through the stopped container itself (`--volumes-from`), which works the same
+for a named volume and a bind mount and does not depend on the name compose gave the volume
 (compose prefixes it with the project name, by default the directory name, e.g.
 `busforge_busforge-data`; `-v busforge-data:...` would silently create a new, empty volume):
 
 ```bash
-docker compose stop busforge
-docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar busforge:latest \
-  -czf /backup/busforge-data.tgz -C /app/apps/server/data .
-docker compose start busforge
+docker stop busforge && \
+docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar \
+  "$(docker inspect -f '{{.Config.Image}}' busforge)" \
+  -czf /backup/busforge-data.tgz -C /app/apps/server/data . && \
+docker start busforge
 ```
 
-Check that the archive lists `busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
-Restore into the data directory of a container that is created but not started. **The restore is
-destructive**: it deletes the current content of the data directory and replaces it with the
-archive. It first reads the whole archive and checks that it holds `./busforge.db`, and deletes
-nothing if either fails: a wrong path, a truncated or corrupt file, or a readable archive of
-something else. It empties the directory before unpacking because a `busforge.db-wal` or `-shm`
-left from a newer state would otherwise be replayed onto the restored database. The container is
-started only if the restore succeeded; on a failure the command prints the error and exits non-zero,
-and the container stays stopped.
+Check that the archive lists `./busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
+
+Restore into the data directory of a stopped container. On a host that has no `busforge`
+container yet, create one first from the compose directory with `docker compose create busforge`
+(on an existing container, running or not, that command changes nothing, so it cannot stand in for
+the stop). **The restore is destructive**: it deletes the current content of the data directory
+and replaces it with the archive. It first reads the whole archive and checks that it holds
+`./busforge.db`, and deletes nothing if either fails: a wrong path, a truncated or corrupt file, or
+a readable archive of something else (reported as `archive lacks ./busforge.db`). It empties the
+directory before unpacking because a `busforge.db-wal` left from a newer state would otherwise be
+replayed onto the restored database. The container is started only if the restore succeeded; on a
+failure the command prints the error and exits non-zero, and the container stays stopped. A failure
+after the check, such as a full disk while unpacking, leaves the directory partly emptied: run the
+same restore again once the cause is fixed, and do not start the container before it succeeds.
 
 ```bash
-docker compose create busforge
-docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint sh busforge:latest -c \
-  'tar -tzf /backup/busforge-data.tgz > /tmp/list && grep -qx ./busforge.db /tmp/list && find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data' \
-  && docker compose start busforge
+docker stop busforge && \
+docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint sh \
+  "$(docker inspect -f '{{.Config.Image}}' busforge)" -c '
+    set -e
+    tar -tzf /backup/busforge-data.tgz > /tmp/list
+    grep -qx ./busforge.db /tmp/list || { echo "archive lacks ./busforge.db" >&2; exit 1; }
+    find /app/apps/server/data -mindepth 1 -delete
+    tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data' && \
+docker start busforge
 ```
 
- The archive holds `master.key` too, unless the key comes from
+The archive holds `master.key` too, unless the key comes from
 `BUSFORGE_MASTER_KEY`, in which case the same value must be set again.
 
 An upgrade is a new image on the same data directory: `docker compose pull && docker compose up -d`,
@@ -252,7 +277,14 @@ to half its size and one from a readable archive without `busforge.db` both fail
 directory byte-identical and did not start the container; the restore from the intact archive
 started it, and the project list was that of the backup. The same sequence with a plain
 `tar -xzf` restore, without emptying the directory, kept the three newer projects: the leftover log
-had been replayed onto the restored database. Not every historical data layout was exercised.
+had been replayed onto the restored database. The backup and restore commands as written above
+were run verbatim from a directory other than the compose directory, on a bind mount: the backup
+listed `./busforge.db` with an empty `-wal`; a readable archive without `busforge.db` was refused
+with `archive lacks ./busforge.db`, left the directory unchanged and the container stopped; the
+intact archive restored onto a running container, which the restore stopped first, and gave the
+backup's project list. A `docker stop` of a container whose writes were all still in the log left
+`busforge.db` holding all of them, which the image before the checkpoint did not: there the
+`busforge.db` copied alone had no tables at all. Not every historical data layout was exercised.
 
 ### Bus access from a container
 

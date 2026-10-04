@@ -1,9 +1,11 @@
 import type { AppState } from "./app.ts";
+import { closeDb } from "./db/schema.ts";
 
 // A signal must not cut a write short: a download interrupted mid-bracket can leave the device
 // reset. A repeated signal does not skip the wait either. Only SIGKILL (Docker sends it when the
 // stop grace period runs out) ends the process mid-write, and the next start reports that write
-// as interrupted.
+// as interrupted. The database is checkpointed on every exit through here, a failed step included,
+// so busforge.db holds every committed write.
 export function installShutdown(state: Pick<AppState, "queue" | "bus" | "db">, say: (why: string, e?: unknown) => void): void {
   let stopping = false;
   const describeActiveWrites = () => state.queue.activeWrites().map((t) => `${t.kind} of ${t.ia} (${t.deviceName}, task ${t.id})`).join(", ");
@@ -17,10 +19,13 @@ export function installShutdown(state: Pick<AppState, "queue" | "bus" | "db">, s
       stopping = true;
       const w = describeActiveWrites();
       say(`received ${sig}, ${w ? `finishing ${w} before exiting` : "exiting"}`);
-      Promise.resolve().then(() => state.queue.shutdown())
+      void Promise.resolve().then(() => state.queue.shutdown())
         .then(() => state.bus.close())
-        .then(() => { state.db.close(); process.exit(0); })
-        .catch((e) => { say("shutdown cleanup failed", e); process.exit(1); });
+        .then(() => 0, (e) => { say("shutdown cleanup failed", e); return 1; })
+        .then((code) => {
+          try { closeDb(state.db); } catch (e) { say("closing the database failed", e); code = 1; }
+          process.exit(code);
+        });
     });
   }
 }

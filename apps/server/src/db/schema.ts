@@ -465,3 +465,11 @@ export function openDb(path: string): Database {
   migrate(db);
   return db;
 }
+
+// Bun's close() defers the close while any statement from db.prepare() is unfinalized, and a
+// deferred close never checkpoints: every committed write would stay in busforge.db-wal alone.
+// The checkpoint moves them into busforge.db and empties the log first.
+export function closeDb(db: Database): void {
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  db.close();
+}

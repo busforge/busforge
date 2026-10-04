@@ -4,6 +4,7 @@ import { createState } from "../../src/app.ts";
 import { installShutdown } from "../../src/shutdown.ts";
 
 const state = createState({ dataDir: process.env.DATA_DIR! });
+if (process.env.FAIL_BUS_CLOSE) state.bus.close = async () => { throw new Error("bus close failed"); };
 installShutdown(state, (why) => console.error(why));
 const jobMs = Number(process.env.JOB_MS ?? 0);
 const meta = (deviceId: string) => ({ projectId: "p1", deviceId, deviceName: deviceId, ia: "1.1.1", kind: "download" as const, writes: true });
