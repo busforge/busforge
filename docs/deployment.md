@@ -202,9 +202,10 @@ than silently generating a new one that cannot open them.
 
 ### Backup, restore and upgrade
 
-Back up the data directory of a **stopped** container. A running server keeps recent writes in the
-SQLite write-ahead log (`busforge.db-wal`); a clean stop folds it into `busforge.db`, so the copy is
-consistent. Reach the data through the stopped container itself (`--volumes-from`), which works the
+Back up the data directory of a **stopped** container, and always the **whole directory**: the
+SQLite database is `busforge.db` together with its write-ahead log `busforge.db-wal` and
+`busforge.db-shm`, and recent writes can live only in the log, even after a clean stop. Never copy
+`busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
 same for a named volume and a bind mount and does not depend on the name compose gave the volume
 (compose prefixes it with the project name, by default the directory name, e.g.
 `busforge_busforge-data`; `-v busforge-data:...` would silently create a new, empty volume):
@@ -217,13 +218,14 @@ docker compose start busforge
 ```
 
 Check that the archive lists `busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
-Restore by unpacking the archive into the data directory of a container that is created but not
-started, then starting it:
+Restore into the data directory of a container that is created but not started, then start it. The
+restore empties the directory before unpacking: a `busforge.db-wal` or `-shm` left from a newer state
+would otherwise be replayed onto the restored database.
 
 ```bash
 docker compose create busforge
-docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar busforge:latest \
-  -xzf /backup/busforge-data.tgz -C /app/apps/server/data
+docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint sh busforge:latest -c \
+  'find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data'
 docker compose start busforge
 ```
 
@@ -236,11 +238,15 @@ period above. On start the server applies its forward-only schema migrations (ve
 `user_version`), so there is no separate migration step to run. There is no downgrade: an older image
 does not notice that a newer one has migrated the database and runs on it unchecked. To go back,
 restore the backup taken before the upgrade. On 2026-10-04 this path was exercised locally with the shipped compose file
-and exactly the commands above: a container from the image of `181c1fb` imported a project and
-created a blank one on a fresh named volume, the image built from this layout replaced it and listed
-both projects unchanged, the backup archive held `busforge.db` and `master.key`, and after
-`docker compose down -v` deleted the volume, the restore gave the same project list. That covers a
-fresh start, one upgrade and one restore, not every historical data layout.
+and a named volume: a container from the image of `181c1fb` imported a project and created a blank
+one, the image built from this layout replaced it and listed both projects unchanged, and a backup
+restored after `docker compose down -v` gave the same project list. A second run restored onto a
+volume that was not empty: backup taken under the `181c1fb` image, upgrade, three more projects
+created by the new image, container killed so that `busforge.db-wal` and `-shm` stayed in the
+volume, backup restored with the commands above onto the same volume; the project list was that of
+the backup. The same sequence with a plain `tar -xzf` restore, without emptying the directory, kept
+the three newer projects: the leftover log had been replayed onto the restored database. A bind-mounted data
+directory was not exercised, and neither is every historical data layout.
 
 ### Bus access from a container
 
