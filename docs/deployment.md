@@ -204,9 +204,7 @@ than silently generating a new one that cannot open them.
 
 Back up the data directory of a **stopped** container, and always the **whole directory**: the
 SQLite database is `busforge.db` together with its write-ahead log `busforge.db-wal` and
-`busforge.db-shm`. A clean stop normally folds the log into `busforge.db`; after an unclean exit
-(`SIGKILL` once the grace period runs out, a crash, a failed shutdown) recent writes live only in
-`-wal`/`-shm`. Never copy `busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
+`busforge.db-shm`, and recent writes can live only in `-wal`/`-shm`, even after a clean stop. Never copy `busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
 same for a named volume and a bind mount and does not depend on the name compose gave the volume
 (compose prefixes it with the project name, by default the directory name, e.g.
 `busforge_busforge-data`; `-v busforge-data:...` would silently create a new, empty volume):
@@ -221,17 +219,18 @@ docker compose start busforge
 Check that the archive lists `busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
 Restore into the data directory of a container that is created but not started. **The restore is
 destructive**: it deletes the current content of the data directory and replaces it with the
-archive. It reads the whole archive first and deletes nothing if that read fails (a wrong path, an
-archive cut short in its content, a corrupt file). It empties the directory before unpacking because a `busforge.db-wal` or `-shm`
-left from a newer state would otherwise be replayed onto the restored database. Start the container
-only if the restore command exited with 0; otherwise the directory may be incomplete.
+archive. It first reads the whole archive and checks that it holds `./busforge.db`, and deletes
+nothing if either fails: a wrong path, a truncated or corrupt file, or a readable archive of
+something else. It empties the directory before unpacking because a `busforge.db-wal` or `-shm`
+left from a newer state would otherwise be replayed onto the restored database. The container is
+started only if the restore succeeded; on a failure the command prints the error and exits non-zero,
+and the container stays stopped.
 
 ```bash
 docker compose create busforge
 docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint sh busforge:latest -c \
-  'tar -tzf /backup/busforge-data.tgz >/dev/null && find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data'
-echo "restore exit code: $?"   # start only on 0
-docker compose start busforge
+  'tar -tzf /backup/busforge-data.tgz > /tmp/list && grep -qx ./busforge.db /tmp/list && find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data' \
+  && docker compose start busforge
 ```
 
  The archive holds `master.key` too, unless the key comes from
@@ -249,8 +248,9 @@ restored after `docker compose down -v` gave the same project list. Further runs
 directory that was not empty, once on the named volume and once on a bind mount (`BUSFORGE_DATA`):
 backup taken under the `181c1fb` image, upgrade, three more projects created by the new image,
 container killed so that `busforge.db-wal` and `-shm` stayed behind. A restore from the archive cut
-to half its size exited with 2 and left the directory byte-identical; the restore from the intact
-archive exited with 0 and the project list was that of the backup. The same sequence with a plain
+to half its size and one from a readable archive without `busforge.db` both failed, left the
+directory byte-identical and did not start the container; the restore from the intact archive
+started it, and the project list was that of the backup. The same sequence with a plain
 `tar -xzf` restore, without emptying the directory, kept the three newer projects: the leftover log
 had been replayed onto the restored database. Not every historical data layout was exercised.
 
