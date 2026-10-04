@@ -22,9 +22,11 @@ device change. A device that is Data Secure commissioned refuses a plain device-
 answers `0xFFFF`. **That `0xFFFF` is a locked door, not a different memory model**, which is worth
 saying because it is easy to mistake for an unknown mask.
 
-**The boundary, stated honestly:** Busforge re-configures devices that were already commissioned
-with a tool key, imported from the project file. Writing a device's tool key from its factory key
-(from-scratch provisioning) is not built.
+**The boundary, stated honestly:** Busforge drives a device securely only under a tool key it holds:
+imported from the project file, deposited by hand ([the key store](#the-key-store)), or written by
+Busforge itself when it activates a factory device from its certificate
+([activation](#activation-from-the-device-certificate)); the activation itself runs under the FDSK
+from that certificate. How far each path is proven is in [status.md](status.md).
 
 ## Where the secure layer sits
 
@@ -433,14 +435,16 @@ declares `IsSecureEnabled="true"`, has a parameter image and is not the interfac
 1's switching output), through the logging proxy (see [The ETS reference capture](#the-ets-reference-capture)).
 It left the plain bench runs with that: the plain smoke spec no longer applies, and the way back to
 plain is Jung's documented master reset (start in safe state with the programming button held, then
-hold it longer than 5 s; restores the FDSK, wipes configuration and address), not tried yet.
+hold it longer than 5 s; restores the FDSK, wipes configuration and address), done on the bench before
+each activation run (see [Activation from the device certificate](#activation-from-the-device-certificate)).
 
 With the ETS project imported, Busforge reads the secured Jung back in full: parameters and links
 equal to the ETS project, no gap (2026-09-28). `secure-identify` reports its security mode as on,
 read from the security object itself.
 
 So the secured full download, parameter flash and GA flash are supported on System B, each shown
-once on this one device; a smoke spec with evidence records for them is still to come.
+first by hand on this device; the smoke spec `jung-400021se-secure` has repeated them in both
+channels with evidence records since 2026-09-29 (see [status.md](status.md)).
 
 ### Group address security mode
 
@@ -590,7 +594,8 @@ nowhere. What ETS does, in order:
 Every secured request ETS sends there is at most 40 octets long: a 22-byte memory write and an
 18-element property write come to exactly that. The exported ETS project carries the same tool key
 (checked by hash) and, on the group address, the same group key the device holds. This capture is
-the reference for the security object download and for Busforge's own activation (still to build).
+the reference for the security object download and for Busforge's own activation (see
+[Activation from the device certificate](#activation-from-the-device-certificate)).
 
 ## The honesty bar for this area
 
