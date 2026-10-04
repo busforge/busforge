@@ -1,22 +1,39 @@
-# Build context hygiene: only ship source the image actually needs.
-node_modules
+# Build context as an allowlist: nothing enters any image layer unless it is named here.
+# Tests and their fixtures (manufacturer catalogue data, ETS bus captures, device backups),
+# docs, tools, local scratch and runtime state are therefore never sent to the builder.
+*
+
+!LICENSE
+!package.json
+!bun.lock
+!tsconfig.base.json
+!tsconfig.json
+
+# Workspace manifests: a frozen-lockfile install resolves every workspace, including tools.
+!packages/*/package.json
+!apps/*/package.json
+!plugins/*/package.json
+!tools/package.json
+
+# Source of the workspaces the server and the web build use.
+!packages/*/tsconfig.json
+!packages/*/src
+!apps/server/src
+!plugins/*/tsconfig.json
+!plugins/*/src
+
+# Web build inputs.
+!apps/web/tsconfig.json
+!apps/web/vite.config.ts
+!apps/web/components.json
+!apps/web/index.html
+!apps/web/public
+!apps/web/src
+
+# Unit tests live next to the source in some workspaces; they are not runtime payload.
+**/*.test.ts
+**/*.test.tsx
 **/node_modules
 **/dist
-**/bin
-**/obj
-
-.git
-.forgejo
-.remember
-reference
-docs
-
-# Runtime state and proprietary user data must never enter an image layer.
-apps/server/data
-*.knxproj
-*.knxprod
-*.knxkeys
-*.bin
-
-.DS_Store
-*.tsbuildinfo
+**/*.tsbuildinfo
+**/.DS_Store

@@ -123,10 +123,16 @@ by, sponsored by, or certified by the KNX Association** or any device manufactur
 - These names are used **only descriptively**, to identify the standard and the devices
   Busforge interoperates with (nominative use). Busforge does not claim any KNX
   certification and is not "KNX software" in the certified sense.
-- Busforge ships **tooling only**, never manufacturer product data or any proprietary
-  binary. Users bring their own `.knxproj` (which embeds the manufacturer data they
-  legally obtained) or download `.knxprod` from the manufacturer. Parsing files you own
-  and speaking the standardized KNX management protocol is legitimate interoperability.
+- The Busforge application and its container image ship **tooling only**, never
+  manufacturer product data or any proprietary binary. Users bring their own `.knxproj`
+  (which embeds the manufacturer data they legally obtained) or download `.knxprod` from the
+  manufacturer. Parsing files you own and speaking the standardized KNX management protocol
+  is legitimate interoperability.
+- The **source tree's test suite** is not tooling only today: it carries manufacturer
+  catalogue fixtures (`packages/product/test/fixtures/real`), which remain the
+  manufacturers' data and are not licensed onward by Busforge, and two keyring files from
+  the xknx test suite under the MIT license
+  (`packages/project/test/fixtures/knxkeys`). None of it enters the container image.
 
 ## License
 

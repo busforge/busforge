@@ -12,7 +12,8 @@ docker build -t busforge .
 
 The build stage installs dependencies and runs `bun run build` (which builds the web app); the
 runtime stage carries the result. Three optional build arguments bake the build identity into the
-image, read back through `/api/version` and shown in the UI footer:
+image, read back through `/api/version` and shown in the UI footer, and set as the OCI labels
+`org.opencontainers.image.version`, `.revision` and `.created`:
 
 | Build arg | Meaning |
 |---|---|
@@ -23,6 +24,46 @@ image, read back through `/api/version` and shown in the UI footer:
 They default to `unknown`, which keeps a local `docker build` honest rather than claiming a version
 it does not have. The build context excludes `.git`, so the server cannot read this from git at
 runtime.
+
+### What the image contains
+
+The build context is an allowlist (`.dockerignore` starts with `*`): the license, the root and
+workspace manifests, the lockfile, the source of the workspaces and the web build inputs. Tests,
+fixtures, `docs/`, `tools/` (apart from its manifest), local scratch and runtime state are never
+sent to the builder, so no layer of any build stage carries them. The runtime image then holds:
+
+| Path in `/app` | What |
+|---|---|
+| `LICENSE` | The license, including its required notice |
+| `package.json`, `bun.lock`, `tsconfig.base.json`, every workspace's `package.json` (`tools` and `apps/bridge` included) | Needed by the frozen-lockfile install |
+| `apps/server/src`, `packages/*/src`, `plugins/*/src`, the `tsconfig.json` of `packages/*` and `plugins/*` | The server and the workspaces it imports, run from source by Bun |
+| `node_modules` | Production dependencies of `@busforge/server` and the peer dependencies Bun adds for them (`react`, from the DALI plugin), about 9 MB |
+| `apps/web/dist` | The built web app |
+| `version.json` | The build identity above |
+| `apps/server/data` | Declared `VOLUME`: all persistent state, see below |
+
+The web source, the web app's own dependencies and the development toolchain (TypeScript, Vite,
+oxlint, Playwright) stay in the build stage. A context that bypasses `.dockerignore` (a tar piped
+into `docker build -`, which Docker sends as-is) is refused: the build stops if it finds tests,
+fixtures, captures, project or key files, a database or a `master.key` in the context.
+
+### Release build
+
+Build a version from a clean checkout of its commit, never from a working tree, so the image holds
+exactly what the commit holds and the stamped identity is true:
+
+```bash
+git worktree add --detach /tmp/busforge-release v0.4.0
+cd /tmp/busforge-release
+docker build -t busforge:v0.4.0 \
+  --build-arg BUSFORGE_VERSION="$(git describe --tags --always)" \
+  --build-arg BUSFORGE_COMMIT="$(git rev-parse --short=7 HEAD)" \
+  --build-arg BUSFORGE_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
+cd - && git worktree remove /tmp/busforge-release
+```
+
+Check the result with `docker inspect --format '{{json .Config.Labels}}' busforge:v0.4.0` and,
+once it runs, `GET /api/version`.
 
 ## Run
 
@@ -147,15 +188,59 @@ Nothing else is exposed. Outbound, the container reaches a KNXnet/IP interface o
 
 Everything persistent lives under `/app/apps/server/data` inside the container: the SQLite
 database (which is where an imported `.knxproj` or `.knxprod` ends up; the uploaded file itself is
-not kept), the per-project flash backups, and `master.key` if no `BUSFORGE_MASTER_KEY` is set. Bind-mount that path to a backed-up host directory. Nothing
-proprietary is baked into the image (see `.dockerignore`); user data only ever lands on the host at
-runtime.
+not kept), the per-project flash backups, and `master.key` if no `BUSFORGE_MASTER_KEY` is set. Bind-mount that path to a backed-up host directory. The image declares
+it a `VOLUME`, so a container started without a mount still writes to an anonymous volume rather
+than into its own layer, but only a named volume or a bind mount is found again by the next
+container. Nothing proprietary is baked into the image (see [What the image contains](#what-the-image-contains));
+user data only ever lands in the data directory at runtime.
 
 The master key seals KNX tool keys in the database. It is **unrecoverable**: restoring the database
 onto a host without its key makes every sealed tool key permanently unopenable. Either pin
 `BUSFORGE_MASTER_KEY` from your own secret store, or back up `master.key` **together with** the
 database. The server refuses to start if sealed keys exist but no master key is available, rather
 than silently generating a new one that cannot open them.
+
+### Backup, restore and upgrade
+
+Back up the data directory of a **stopped** container. A running server keeps recent writes in the
+SQLite write-ahead log (`busforge.db-wal`); a clean stop folds it into `busforge.db`, so the copy is
+consistent. Reach the data through the stopped container itself (`--volumes-from`), which works the
+same for a named volume and a bind mount and does not depend on the name compose gave the volume
+(compose prefixes it with the project name, by default the directory name, e.g.
+`busforge_busforge-data`; `-v busforge-data:...` would silently create a new, empty volume):
+
+```bash
+docker compose stop busforge
+docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar busforge:latest \
+  -czf /backup/busforge-data.tgz -C /app/apps/server/data .
+docker compose start busforge
+```
+
+Check that the archive lists `busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
+Restore by unpacking the archive into the data directory of a container that is created but not
+started, then starting it:
+
+```bash
+docker compose create busforge
+docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar busforge:latest \
+  -xzf /backup/busforge-data.tgz -C /app/apps/server/data
+docker compose start busforge
+```
+
+ The archive holds `master.key` too, unless the key comes from
+`BUSFORGE_MASTER_KEY`, in which case the same value must be set again.
+
+An upgrade is a new image on the same data directory: `docker compose pull && docker compose up -d`,
+or `docker run` the new tag with the same `-v`. The old container is stopped first, with the grace
+period above. On start the server applies its forward-only schema migrations (versioned on SQLite's
+`user_version`), so there is no separate migration step to run. There is no downgrade: an older image
+does not notice that a newer one has migrated the database and runs on it unchecked. To go back,
+restore the backup taken before the upgrade. On 2026-10-04 this path was exercised locally with the shipped compose file
+and exactly the commands above: a container from the image of `181c1fb` imported a project and
+created a blank one on a fresh named volume, the image built from this layout replaced it and listed
+both projects unchanged, the backup archive held `busforge.db` and `master.key`, and after
+`docker compose down -v` deleted the volume, the restore gave the same project list. That covers a
+fresh start, one upgrade and one restore, not every historical data layout.
 
 ### Bus access from a container
 
@@ -187,9 +272,14 @@ build) on every push and pull request. That job is the gate; nothing downstream 
 
 On `main`, CI then computes the next version from the commit subjects since the last `v*` tag
 (`feat:` → minor, any `type!:` or a `BREAKING CHANGE` body → major, everything else → patch), builds
-the image with that version baked in, publishes it to the project's container registry tagged by
-version and by commit, and creates a release with the changelog. It skips when nothing changed since
-the last tag.
+the image with that version baked in and pushes it to the project's container registry tagged by
+commit. The pushed image is then started in a fresh container without a data volume, and must
+report the commit it was built from on `/api/version`. That start is the release gate: only then is
+`latest` moved to the image, and the release job tags the commit, re-tags the image with the version and creates a release with the
+changelog. It skips when nothing changed since the last tag.
+
+Deploying to the author's own NAS is a separate job after the build. It writes its site-specific
+compose overlay and pulls `latest`; a release neither waits for it nor fails with it.
 
 The hardware smoke framework is never part of CI. It needs a real bus and a real device; see
 [testing.md](testing.md).

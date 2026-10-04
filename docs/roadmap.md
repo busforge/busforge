@@ -215,6 +215,28 @@ not attempted.
   so a device page does not re-parse on every open. Deferred until one unified parser existed,
   which it now does.
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
+- **Refuse a database migrated by a newer version.** The schema migrates forward on start, but an
+  older image opens a database whose `user_version` is ahead of its own migrations and runs on it
+  unchecked ([deployment.md](deployment.md#backup-restore-and-upgrade)). It should refuse to start
+  and name the restore path instead.
+
+## Publication
+
+- **Decide the public test corpus before the source goes public.** The container image carries no
+  test data ([deployment.md](deployment.md#what-the-image-contains)), but the source tree does: the
+  manufacturer catalogue fixtures under `packages/product/test/fixtures/real`, the ETS bench
+  captures under `tools/fixtures` (they carry the bench devices' serial numbers), and the DALI
+  gateway backup the DCA plugin's tests parse (it carries the house's room names). Each needs a
+  distribution basis, a synthetic replacement, or to stay out of the public repository, and the
+  same choice applies to history: a public repository either starts from a cleaned history or from
+  a fresh one.
+- **Decide where public images are published** and whether the Forgejo pipeline, which names the
+  author's own registry and NAS, is part of the public repository.
+- **Site-specific values in the tracked tree.** The evidence bundle the server ships
+  (`apps/server/src/evidence-bundle.json`) and `docs/evidence/**` record artifact paths under the
+  author's home directories, the knx CLI defaults to the house gateway's address, and
+  `docs/findings.md` names the bench host's address. None is a secret, but a public build should
+  record repository-relative paths and take the gateway as an argument.
 
 ## Product and UI
 
