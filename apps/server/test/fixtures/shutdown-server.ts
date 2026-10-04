@@ -10,7 +10,7 @@ if (process.env.FAIL_BUS_CLOSE) state.bus.close = async () => { throw new Error(
 // A second connection holding a read snapshot from before the job's writes blocks a complete checkpoint.
 const reader = process.env.HOLD_READER ? new Database(join(process.env.DATA_DIR!, "busforge.db")) : null;
 if (reader) { reader.exec("BEGIN"); reader.query("SELECT count(*) FROM tasks").get(); }
-installShutdown(state, (why) => console.error(why));
+installShutdown(state, (why, e) => console.error(why, e instanceof Error ? e.message : ""));
 const jobMs = Number(process.env.JOB_MS ?? 0);
 const meta = (deviceId: string) => ({ projectId: "p1", deviceId, deviceName: deviceId, ia: "1.1.1", kind: "download" as const, writes: true });
 

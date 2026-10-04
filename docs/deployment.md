@@ -126,8 +126,8 @@ reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the ser
 5. checkpoints the database, so `busforge.db` holds every committed write and `busforge.db-wal` is
    empty or gone, and exits. If closing the bus connection fails, that is logged, the checkpoint
    still runs, and the exit code is 1. If the checkpoint cannot complete, because another process
-   holds the database open (an `sqlite3` shell, a second server on the same directory), the log says
-   so (`closing the database failed`) and the exit code is 1: recent writes are then still only in
+   is reading or writing the database at that moment (an open transaction in an `sqlite3` shell, a
+   second server on the same directory), the log says so (`closing the database failed`) and the exit code is 1: recent writes are then still only in
    `busforge.db-wal`.
 
 With no write running it exits at once. A second signal does not skip the wait; the log names the
@@ -212,9 +212,8 @@ Back up the data directory of a **stopped** container, and always the **whole di
 `master.key` in it. A clean stop (any of the signals above, within the grace period) checkpoints
 the SQLite write-ahead log into `busforge.db` and leaves `busforge.db-wal` empty or removes it. A
 process that ends any other way (`SIGKILL`, a crash, a host losing power) leaves recent writes only
-in `busforge.db-wal`, and so does a stop whose checkpoint failed (see above); `busforge.db` alone is
-then an older state; `busforge.db-shm` is only an
-index into that log. Since a backup cannot tell how the last process ended, never copy
+in `busforge.db-wal`, and so does a stop whose checkpoint failed (see above). `busforge.db` alone is
+then an older state, and `busforge.db-shm` is only an index into that log. Since a backup cannot tell how the last process ended, never copy
 `busforge.db` alone.
 
 The commands below address the container by its fixed name `busforge` (`container_name` in the
@@ -246,8 +245,9 @@ Restore into the data directory of a stopped container. On a host that has no `b
 container yet, create one first from the compose directory with `docker compose create busforge`.
 Use that only on such a host: on an existing container it either changes nothing, or, if the image
 or the compose configuration changed since, replaces the container (a running one included) with
-a new, stopped one, outside the stop sequence above. **The restore is destructive**: it deletes the current content of the data directory
-and replaces it with the archive. It first reads the whole archive and checks that it holds
+a new, stopped one, outside the stop sequence above.
+**The restore is destructive**: it deletes the current content of the data directory and replaces
+it with the archive. It first reads the whole archive and checks that it holds
 `./busforge.db`, and deletes nothing if either fails: a wrong path, a truncated or corrupt file, or
 a readable archive of something else (reported as `archive lacks ./busforge.db`). It empties the
 directory before unpacking because a `busforge.db-wal` left from a newer state would otherwise be

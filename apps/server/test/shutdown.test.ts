@@ -93,6 +93,7 @@ describe("shutdown on a signal", () => {
     const { proc } = await start(JOB_MS, { HOLD_READER: "1" });
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(1);
-    expect(await new Response(proc.stderr).text()).toContain("closing the database failed");
+    const log = await new Response(proc.stderr).text();
+    expect(log).toContain("closing the database failed the database checkpoint did not complete (busy 1,");
   }, 15_000);
 });

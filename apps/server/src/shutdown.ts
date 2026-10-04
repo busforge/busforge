@@ -5,7 +5,8 @@ import { closeDb } from "./db/schema.ts";
 // reset. A repeated signal does not skip the wait either. Only SIGKILL (Docker sends it when the
 // stop grace period runs out) ends the process mid-write, and the next start reports that write
 // as interrupted. The database is checkpointed on every exit through here, a failed step included,
-// so busforge.db holds every committed write.
+// so busforge.db holds every committed write; a checkpoint that cannot complete is logged and the
+// exit code is 1.
 export function installShutdown(state: Pick<AppState, "queue" | "bus" | "db">, say: (why: string, e?: unknown) => void): void {
   let stopping = false;
   const describeActiveWrites = () => state.queue.activeWrites().map((t) => `${t.kind} of ${t.ia} (${t.deviceName}, task ${t.id})`).join(", ");
