@@ -238,8 +238,10 @@ docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar \
 docker start busforge
 ```
 
-`docker stop` succeeds even when the server exited 1 after a failed checkpoint; the backup still
-holds everything, because it takes `busforge.db-wal` along. If the archive cannot be written (a
+`docker stop` succeeds even when the server exited 1 after a failed checkpoint. The backup then
+still holds everything, because it takes `busforge.db-wal` along, provided the connection that
+blocked the checkpoint has ended too: stop a second server and close an `sqlite3` shell on the same
+directory before backing up, or the archive can catch them mid-write. If the archive cannot be written (a
 wrong directory, no permission, a full disk), the command exits non-zero and the container stays
 stopped: fix the cause and run the backup again, or start the container with
 `docker start busforge`. Check that the archive lists `./busforge.db`

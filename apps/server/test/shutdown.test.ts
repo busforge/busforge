@@ -105,11 +105,13 @@ describe("shutdown on a signal", () => {
     const reader = new Database(join(dataDir, "busforge.db"));
     reader.exec("BEGIN");
     reader.query("SELECT count(*) FROM tasks").get();
+    const signalledAt = Date.now();
     proc.kill("SIGTERM");
     await Bun.sleep(1000);
     reader.exec("COMMIT");
     reader.close();
     expect(await proc.exited).toBe(0);
+    expect(Date.now() - signalledAt).toBeGreaterThanOrEqual(900); // the checkpoint waited for the reader
     expectCheckpointed(dataDir, {});
   }, 15_000);
 
