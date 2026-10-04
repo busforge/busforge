@@ -159,9 +159,16 @@ Two runs still to be made, then what the collector
 - **The bench bridge held a half-open TCP channel on 2026-10-03.** After a verified full download the
   next server connection stalled (`TUNNEL_CON_TIMEOUT`) and the bridge held an established stream to a
   Mac port that no longer existed, with data queued, while connects got 0x24. The reaper drops a TCP
-  channel without a heartbeat after 120 s, and the bridge log of that day shows no channel outliving
+  channel that sent no frame for 120 s, and the bridge log of that day shows no channel outliving
   it, so which channel held the address and why is not established. Refusals for want of an address
-  are now logged with the holder's peer and silence, which is what the next occurrence needs. (The
+  are now logged with the holder's peer and silence, which is what the next occurrence needs. Staged
+  on the bench on 2026-10-04 (client gone without a FIN), the channel was released after the 120 s and
+  the next connect served, so a channel that is never released did not reproduce. Open: whether the
+  bridge should close a TCP stream whose send queue stops draining before the 120 s run out. Bun's
+  `node:net` (and its native sockets) expose neither the kernel send queue nor `TCP_USER_TIMEOUT`
+  (keepalive does not help: it probes only an idle connection, unacknowledged data is governed by
+  retransmission), and a Wi-Fi stall of a few seconds that TCP recovers from
+  ([findings.md](findings.md) §25) must not cut a running download. (The
   dead USB handle of the same day is fixed: the bridge refuses and reopens, see
   [connections.md](connections.md).)
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's

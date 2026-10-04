@@ -302,6 +302,15 @@ enough: a client whose FIN never arrives (a network change, a sleeping laptop, a
 instead of resetting) leaves a socket that stays open on the bridge, and before the reaper covered
 TCP such a channel held its tunnel address until the bridge was restarted.
 
+Shown on the bench on 2026-10-04 with a client that vanished without a FIN or a reset: a TCP tunnel
+from the Mac, then both directions of that one peer port dropped on the bench host (`iptables`) and the
+client killed. The bridge kept the stream `ESTAB`, a connect 22 s after its last frame got `0x24`
+and the log named the holder ("held by channel 1 … last heard 22 s ago"); 124 s after its last frame
+the channel was dropped, the stream went to `FIN-WAIT-1` with the queued `DISCONNECT_REQUEST` and no
+owning process, and the next connect got the address. What the bridge does not have: a faster way out for a stream
+whose send queue stops draining. Until the reaper runs (120 to 130 s after the last frame, it checks
+every 10 s), its address is taken.
+
 A client's `L_Data.req` is answered with an `L_Data.con` **whether or not the bus took it**, with the
 error bit set when it did not. Withholding the confirmation would leave the client on a timeout it
 cannot interpret; sending a clean one would be a lie. What one client sends is forwarded to the other
