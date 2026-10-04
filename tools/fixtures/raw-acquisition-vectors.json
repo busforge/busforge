@@ -1,0 +1,23 @@
+{
+  "about": "Read-only discovery exchanges ETS 6 performed on the four bench devices, as reference vectors for raw acquisition (docs/raw-acquisition.md). Each vector points at one line of a capture in this directory; tools/raw-acquisition-vectors.test.ts decodes that line and checks it against `decoded`. `device` is the bus address the request went to or the response came from. Serial numbers are checked for length only and not repeated here.",
+  "vectors": [
+    { "id": "dd0-mdt-0705", "file": "mdt-be02001-ets-fulldownload-defaults.log", "line": 11, "device": "1.1.56", "service": "DeviceDescriptor_Response", "decoded": { "type": 0, "mask": "MV-0705" } },
+    { "id": "dd0-abb-0701", "file": "abb-usu-4.2-ets-fulldownload-defaults.log", "line": 7, "device": "1.1.201", "service": "DeviceDescriptor_Response", "decoded": { "type": 0, "mask": "MV-0701" } },
+    { "id": "dd0-gvs-07b0", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 8, "device": "1.1.203", "service": "DeviceDescriptor_Response", "decoded": { "type": 0, "mask": "MV-07B0" } },
+    { "id": "max-apdu-gvs", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 21, "device": "1.1.203", "service": "PropertyValue_Response", "decoded": { "objectIndex": 0, "pid": 56, "count": 1, "start": 1, "value": "0037" } },
+    { "id": "max-apdu-absent-mdt", "file": "mdt-be02001-ets-fulldownload-defaults.log", "line": 23, "device": "1.1.56", "service": "PropertyValue_Response", "decoded": { "objectIndex": 0, "pid": 56, "count": 0, "start": 1, "value": "" } },
+    { "id": "max-apdu-absent-abb", "file": "abb-usu-4.2-ets-fulldownload-defaults.log", "line": 21, "device": "1.1.201", "service": "PropertyValue_Response", "decoded": { "objectIndex": 0, "pid": 56, "count": 0, "start": 1, "value": "" } },
+    { "id": "serial-gvs", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 39, "device": "1.1.203", "service": "PropertyValue_Response", "decoded": { "objectIndex": 0, "pid": 11, "count": 1, "start": 1, "valueLength": 6 } },
+    { "id": "authorize-free-request-jung", "file": "jung-400021se-ets-fulldownload.log", "line": 72, "device": "1.1.204", "service": "Authorize_Request", "decoded": { "key": "ffffffff" } },
+    { "id": "authorize-free-response-jung", "file": "jung-400021se-ets-fulldownload.log", "line": 75, "device": "1.1.204", "service": "Authorize_Response", "decoded": { "level": 0 } },
+    { "id": "propdesc-request-jung", "file": "jung-400021se-ets-fulldownload.log", "line": 78, "device": "1.1.204", "service": "PropertyDescription_Read", "decoded": { "objectIndex": 2, "pid": 23, "propertyIndex": 0 } },
+    { "id": "propdesc-response-jung", "file": "jung-400021se-ets-fulldownload.log", "line": 81, "device": "1.1.204", "service": "PropertyDescription_Response", "decoded": { "objectIndex": 2, "pid": 23, "propertyIndex": 3, "writable": true, "pdt": 20, "maxElements": 1600, "readLevel": 3, "writeLevel": 2 } },
+    { "id": "propdesc-response-gvs", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 88, "device": "1.1.203", "service": "PropertyDescription_Response", "decoded": { "objectIndex": 2, "pid": 23, "propertyIndex": 3, "writable": false, "pdt": 20, "maxElements": 1000, "readLevel": 3, "writeLevel": 3 } },
+    { "id": "security-mode-off-gvs", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 27, "device": "1.1.203", "service": "FunctionPropertyExtStateResponse", "decoded": { "objectType": 17, "instance": 1, "pid": 51, "returnCode": 0, "value": "0000" } },
+    { "id": "table-reference-jung-obj3", "file": "jung-400021se-ets-fulldownload.log", "line": 295, "device": "1.1.204", "service": "PropertyValue_Response", "decoded": { "objectIndex": 3, "pid": 7, "count": 1, "start": 1, "value": "00015000" } },
+    { "id": "table-reference-gvs-obj3", "file": "gvs-amma-ets-fulldownload-defaults.log", "line": 310, "device": "1.1.203", "service": "PropertyValue_Response", "decoded": { "objectIndex": 3, "pid": 7, "count": 1, "start": 1, "value": "00003774" } },
+    { "id": "load-status-read-abb", "file": "abb-usu-4.2-ets-fulldownload-defaults.log", "line": 69, "device": "1.1.201", "service": "Memory_Read", "decoded": { "count": 1, "address": 46828 } },
+    { "id": "load-status-response-abb", "file": "abb-usu-4.2-ets-fulldownload-defaults.log", "line": 72, "device": "1.1.201", "service": "Memory_Response", "decoded": { "count": 1, "address": 46828, "value": "01" } },
+    { "id": "load-status-response-mdt", "file": "mdt-be02001-ets-partial-links.log", "line": 30, "device": "1.1.56", "service": "Memory_Response", "decoded": { "count": 1, "address": 46828, "value": "01" } }
+  ]
+}
