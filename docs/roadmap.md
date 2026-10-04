@@ -43,14 +43,14 @@ started until the capability it depends on is hardware-proven.
   bridge verified, from the Mac server and from the server in an `oven/bun:1.3` container, and a
   67-second secured read of the Jung over UDP from the container completed. Nothing since names the
   fault as fixed, so the entry stays until a cause is found or it does not recur in use.
-- **The bench's TCP tunnel stalls over Wi-Fi, and one stall costs the bridge's only tunnel for 120 s.**
-  On 2026-10-01 two secure smoke runs in a row died at their first read (`TUNNEL_CON_TIMEOUT`), and a
-  third lost its final restore the same way. Each time the bridge held the stream with unacknowledged
-  data towards the Mac (`ss`: `ESTAB`, then `FIN-WAIT-1`/`LAST-ACK`, retransmitting) while new
-  connections from the Mac went through, and every reconnect was refused (`0x24`) until the bridge
-  reaped the channel ([findings.md](findings.md) §25). The bench host is on Wi-Fi. A wired bench host, the server
-  next to the bridge, or a bridge with more than one tunnel address would each take the stall out of
-  the runs.
+- **The bench's TCP tunnel stalls over Wi-Fi, and one stall costs the bridge's only tunnel for two
+  minutes or more.** On 2026-10-01 two secure smoke runs in a row died at their first read
+  (`TUNNEL_CON_TIMEOUT`), and a third lost its final restore the same way. Each time the bridge held
+  the stream with unacknowledged data towards the Mac (`ss`: `ESTAB`, then `FIN-WAIT-1`/`LAST-ACK`,
+  retransmitting) while new connections from the Mac went through, and every reconnect was refused
+  (`0x24`) until the bridge reaped the channel ([findings.md](findings.md) §25). The bench host is on Wi-Fi.
+  A wired bench host, the server next to the bridge, or a bridge with more than one tunnel address would
+  each take the stall out of the runs.
 - **A secured full download of the Jung 400021SE closed by the device.** In a 2026-10-01 smoke run the full
   download failed after 23 s with `DEVICE_CLOSED_CONNECTION`; every later
   write of the run verified. Earlier runs the same day passed it. The cause is not known.
@@ -162,15 +162,15 @@ Two runs still to be made, then what the collector
   channel that sent no frame for 120 s, and the bridge log of that day shows no channel outliving
   it, so which channel held the address and why is not established. Refusals for want of an address
   are now logged with the holder's peer and silence, which is what the next occurrence needs. Staged
-  on the bench on 2026-10-04 (client gone without a FIN), the channel was released after the 120 s and
-  the next connect served, so a channel that is never released did not reproduce. Open: whether the
-  bridge should close a TCP stream whose send queue stops draining before the 120 s run out. Bun's
-  `node:net` (and its native sockets) expose neither the kernel send queue nor `TCP_USER_TIMEOUT`
-  (keepalive does not help: it probes only an idle connection, unacknowledged data is governed by
-  retransmission), and a Wi-Fi stall of a few seconds that TCP recovers from
-  ([findings.md](findings.md) §25) must not cut a running download. (The
-  dead USB handle of the same day is fixed: the bridge refuses and reopens, see
-  [connections.md](connections.md).)
+  on the bench on 2026-10-04 (client gone without a FIN, nothing queued on the stream), the channel
+  was released after the 120 s and the next connect served, so a channel that is never released did
+  not reproduce; a queue that does not drain was not staged. Open: whether the bridge should close a
+  TCP stream whose send queue stops draining before the 120 s run out. Bun's `node:net` (and its
+  native sockets) expose neither the kernel send queue nor `TCP_USER_TIMEOUT`. Keepalive does not help
+  a stream with unacknowledged data (retransmission governs it, not the keepalive timer); it would
+  only shorten the idle case staged on the bench. And a Wi-Fi stall of a few seconds that TCP recovers
+  from ([findings.md](findings.md) §25) must not cut a running download. (The dead USB handle of the
+  same day is fixed: the bridge refuses and reopens, see [connections.md](connections.md).)
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured

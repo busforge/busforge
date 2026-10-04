@@ -784,15 +784,17 @@ confirmation (§15). It now does, matched by destination and TPDU, and a missing
 the device answered is unknown") instead of `DEVICE_NOT_ANSWERING`. It is not retried (a repetition
 would queue behind the stuck frame), and the load runner and the reconnect after a restart pass it on
 rather than report the device as silent. What does not change: a new tunnel opened before the bridge
-has reaped the dead channel is still refused (`0x24`) for up to 120 s, because the bench bridge has one
-tunnel address. The same picture recurred (`ESTAB` with 160 bytes queued towards a Mac
-port that no longer existed, connects refused with `0x24`); that day's log shows no channel outliving
-the 120 s. Staged on the bench (a client's port dropped by the bench host's firewall, then the
-client killed), the bridge released the channel after the 120 s and served the next connect
-([connections.md](connections.md)). Shown on hardware: the confirmation matched on the bench bridge
-and on the house's MDT KNX IP interface (reads and a secured smoke run). Not shown: `TUNNEL_CON_TIMEOUT` on a real stall,
-which needs the stall to recur. An interrupted flash still leaves the device where the bracket stood;
-recovering it is a full download, started by the user.
+has reaped the dead channel is still refused (`0x24`) until 120 to 130 s after that channel's last
+frame, because the bench bridge has one tunnel address. The same picture recurred
+(`ESTAB` with 160 bytes queued towards a Mac port that no longer existed, connects refused with
+`0x24`); that day's log shows no channel outliving the 120 s. Staged on the bench (a
+client's port dropped by the bench host's firewall, then the client killed), the bridge released the channel
+after the 120 s and served the next connect ([connections.md](connections.md)); that stream had
+nothing queued, so the queue itself was not staged. Shown on hardware: the confirmation
+matched on the bench bridge and on the house's MDT KNX IP interface (reads and a secured smoke run).
+Not shown: `TUNNEL_CON_TIMEOUT` on a real stall, which needs the stall to recur. An interrupted flash
+still leaves the device where the bracket stood; recovering it is a full download, started by the
+user.
 
 
 ## 26. An OpenKNX object with no group address transmits to 0/0/0
