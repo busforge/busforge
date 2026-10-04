@@ -128,9 +128,9 @@ reset, not merely half-configured. So on `SIGTERM`, `SIGINT` or `SIGHUP` the ser
    still runs, and the exit code is 1. Another process reading or writing the database at that
    moment (an open transaction in an `sqlite3` shell, a second server on the same directory) blocks
    the checkpoint; it waits up to 5 seconds for that to end. If it cannot complete, the log says so
-   (`closing the database failed`) and names which case it is, and the exit code is 1: either some
-   recent writes are still only in `busforge.db-wal`, or every write reached `busforge.db` but the
-   log could not be emptied.
+   (`closing the database failed`) and names which case it is, and the exit code is 1: the
+   checkpoint could not start, or it stopped partway and some recent writes are still only in
+   `busforge.db-wal`, or every write reached `busforge.db` but the log could not be emptied.
 
 With no write running it exits at once. A second signal does not skip the wait; the log names the
 write it is still finishing. The HTTP API stays up meanwhile, so an open client keeps seeing the
@@ -238,9 +238,11 @@ docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint tar \
 docker start busforge
 ```
 
-If the archive cannot be written (a wrong directory, no permission, a full disk), the command
-exits non-zero and the container stays stopped: fix the cause and run the backup again, or start
-the container with `docker start busforge`. Check that the archive lists `./busforge.db`
+`docker stop` succeeds even when the server exited 1 after a failed checkpoint; the backup still
+holds everything, because it takes `busforge.db-wal` along. If the archive cannot be written (a
+wrong directory, no permission, a full disk), the command exits non-zero and the container stays
+stopped: fix the cause and run the backup again, or start the container with
+`docker start busforge`. Check that the archive lists `./busforge.db`
 (`tar -tzf busforge-data.tgz`) before relying on it.
 
 Restore into the data directory of a stopped container. On a host that has no `busforge`

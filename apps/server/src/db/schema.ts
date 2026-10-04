@@ -474,6 +474,10 @@ export function openDb(path: string): Database {
 export function closeDb(db: Database): void {
   db.exec("PRAGMA busy_timeout = 5000");
   const r = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number; log: number; checkpointed: number };
+  // log -1 with busy set: another connection held the checkpoint lock, nothing was copied.
+  if (r.busy !== 0 && r.log < 0) {
+    throw new Error("the database checkpoint could not start: busforge.db alone may not hold every committed write");
+  }
   if (r.checkpointed !== r.log) {
     throw new Error(`the database checkpoint did not complete (${r.checkpointed} of ${r.log} log frames copied): busforge.db alone does not hold every committed write`);
   }

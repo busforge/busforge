@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createState } from "../src/app.ts";
+import { closeDb } from "../src/db/schema.ts";
 
 // Real processes and real signals: the point is that a signal cannot end a write, which an
 // in-process test of the queue alone cannot show.
@@ -97,4 +98,45 @@ describe("shutdown on a signal", () => {
     const log = await new Response(proc.stderr).text();
     expect(log).toContain("closing the database failed the database checkpoint did not complete (");
   }, 15_000);
+
+  test("a reader that lets go within the busy timeout does not fail the checkpoint", async () => {
+    // The reader lives in this process: the checkpoint's busy wait blocks the server's own thread.
+    const { proc, dataDir } = await start(0);
+    const reader = new Database(join(dataDir, "busforge.db"));
+    reader.exec("BEGIN");
+    reader.query("SELECT count(*) FROM tasks").get();
+    proc.kill("SIGTERM");
+    await Bun.sleep(1000);
+    reader.exec("COMMIT");
+    reader.close();
+    expect(await proc.exited).toBe(0);
+    expectCheckpointed(dataDir, {});
+  }, 15_000);
+
+  test("a reader whose snapshot holds every write keeps the log from being emptied, and says only that", async () => {
+    const { proc } = await start(0, { HOLD_READER: "1" });
+    proc.kill("SIGTERM");
+    expect(await proc.exited).toBe(1);
+    expect(await new Response(proc.stderr).text()).toContain("closing the database failed the database checkpoint copied every log frame but could not empty the log");
+  }, 15_000);
+});
+
+describe("closeDb", () => {
+  const withResult = (r: { busy: number; log: number; checkpointed: number }) => {
+    let closed = false;
+    const db = { exec: () => {}, query: () => ({ get: () => r }), close: () => { closed = true; } } as unknown as Database;
+    return { db, closed: () => closed };
+  };
+
+  test("refuses to claim anything when the checkpoint could not start", () => {
+    const { db, closed } = withResult({ busy: 1, log: -1, checkpointed: -1 });
+    expect(() => closeDb(db)).toThrow("the database checkpoint could not start: busforge.db alone may not hold every committed write");
+    expect(closed()).toBe(false);
+  });
+
+  test("closes after a complete checkpoint", () => {
+    const { db, closed } = withResult({ busy: 0, log: 0, checkpointed: 0 });
+    closeDb(db);
+    expect(closed()).toBe(true);
+  });
 });

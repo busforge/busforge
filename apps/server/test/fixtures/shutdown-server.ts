@@ -7,7 +7,9 @@ import { installShutdown } from "../../src/shutdown.ts";
 
 const state = createState({ dataDir: process.env.DATA_DIR! });
 if (process.env.FAIL_BUS_CLOSE) state.bus.close = async () => { throw new Error("bus close failed"); };
-// A second connection holding a read snapshot from before the job's writes blocks a complete checkpoint.
+// A second connection holding a read snapshot blocks the checkpoint: one taken before the job's
+// writes keeps them out of busforge.db, one with nothing written after it keeps the log from being
+// emptied.
 const reader = process.env.HOLD_READER ? new Database(join(process.env.DATA_DIR!, "busforge.db")) : null;
 if (reader) { reader.exec("BEGIN"); reader.query("SELECT count(*) FROM tasks").get(); }
 installShutdown(state, (why, e) => console.error(why, e instanceof Error ? e.message : ""));
