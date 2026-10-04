@@ -1,4 +1,4 @@
-import { parseAppConfig, comObjectTableChanges, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
+import { parseAppConfig, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
@@ -531,7 +531,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
     if (app && !classify(app).capabilities().fullDownload) {
-      return err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
+      return fullDownloadRefusedForTunnelingEntries(app)
+        ? err("FULL_DOWNLOAD_TUNNELING_ENTRIES", "this interface's tunnelling addresses are not written by Busforge; a full download would reallocate it without them")
+        : err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
     }
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);

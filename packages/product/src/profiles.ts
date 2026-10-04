@@ -222,6 +222,26 @@ export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLI
 const STRUCTURAL_FLASH = ["M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642"];
 const structuralFlashProven = (app: AppConfig): boolean => STRUCTURAL_FLASH.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
 
+// An IP interface serves its tunnelling connections from individual addresses outside the parameter
+// image and the load procedure (MaxTunnelingUserEntries of them, the project's AdditionalAddresses).
+// A full download unloads and reallocates every load object; no Busforge path writes those addresses
+// and no capture shows what ETS writes for them, so the full download of such an application is
+// refused until they are modeled. A declaration that is not a number counts as declaring entries.
+export const declaresTunnelingEntries = (app: AppConfig): boolean => app.maxTunnelingUserEntries !== 0;
+// Whether the tunnelling entries are what keeps the full download from this application: its profile
+// would offer it without them. An application refused for its family anyway reports that instead.
+export const fullDownloadRefusedForTunnelingEntries = (app: AppConfig): boolean =>
+  declaresTunnelingEntries(app) && classify({ ...app, maxTunnelingUserEntries: 0 }).capabilities().fullDownload;
+// Always refuses an application declaring entries, with the code the download route answers.
+function refuseTunnelingEntries(app: AppConfig): void {
+  if (!declaresTunnelingEntries(app)) return;
+  if (!fullDownloadRefusedForTunnelingEntries(app)) {
+    throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED", "this application cannot be commissioned from scratch (and it declares tunnelling addresses no Busforge path writes)");
+  }
+  throw new ProductError("FULL_DOWNLOAD_TUNNELING_ENTRIES",
+    `this application declares ${app.maxTunnelingUserEntries} tunnelling address(es) (MaxTunnelingUserEntries), which no Busforge path writes; refusing a full download that would reallocate the interface without them`);
+}
+
 // Guard a par download against its own declared load procedure: every par-applicable
 // step must have an explicit disposition (executed / caller / documented skip). A step
 // the model cannot execute blocks the flash: running a partial recipe and reporting
@@ -552,7 +572,8 @@ export class SystemBProfile extends DeviceProfile {
     const hasParamSegment = this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
     // A full download needs the parameter segment to fill AND an application to author the
     // com-object table from; without either there is nothing to commission.
-    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload: hasParamSegment, structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) };
+    const fullDownload = hasParamSegment && !!this.cfg && !declaresTunnelingEntries(this.cfg);
+    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload, structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) };
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -561,6 +582,7 @@ export class SystemBProfile extends DeviceProfile {
 
   private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
+    refuseTunnelingEntries(cfg);
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
     // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
@@ -627,7 +649,7 @@ export class SystemBProfile extends DeviceProfile {
   // table is built from the same active-configuration projection the read-back and the staleness
   // gate use, and the result is verified by reading it back off the device afterwards.
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
-    this.requireCfg("full download");
+    refuseTunnelingEntries(this.requireCfg("full download"));
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
     const proc = parseLoadProcedures(ctx.appXml);
@@ -1043,12 +1065,13 @@ export class System7Profile extends DeviceProfile {
     // (buildComObjectTableMv0705). Byte-verified against two ETS captures of the MDT BE-02001.02 and
     // live-hardware certified on it: full download verified=true, and the device answers
     // group communication on a flashed link, unchanged across a bus power-cycle (docs/commissioning.md).
-    const canFull = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
+    const canAuthor = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
       this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
       (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
-    const canStructure = canFull && !!this.cfg && this.cfg.groupTables.comObjectSegment !== undefined && structuralFlashProven(this.cfg);
+    const canStructure = canAuthor && !!this.cfg && this.cfg.groupTables.comObjectSegment !== undefined && structuralFlashProven(this.cfg);
+    const canFull = canAuthor && !!this.cfg && !declaresTunnelingEntries(this.cfg);
     return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull, structuralFlash: canStructure };
   }
 
@@ -1301,6 +1324,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
+    refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate would build an association to an
@@ -1351,6 +1375,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
+    refuseTunnelingEntries(cfg);
     const proc = parseLoadProcedures(ctx.appXml);
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the

@@ -411,6 +411,57 @@ describe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash
 });
 
 
+// MDT IP Interface/Router (A-0137) declares tunnelling entries no Busforge path writes, so its full
+// download is refused with its own code; the surgical flashes stay, and a never-programmed one is not
+// sent to the download it cannot run.
+describe("an IP interface with tunnelling entries", () => {
+  const a0137 = gunzipSync(readFileSync(join(
+    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0083_A-0137-20-7EB2.xml.gz",
+  ))).toString("utf8");
+
+  test("the download route refuses with FULL_DOWNLOAD_TUNNELING_ENTRIES and never reaches the download", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0137);
+    downloadImpl = async () => { throw new Error("the full download must not be reached"); };
+    try {
+      for (const route of ["download", "download?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_TUNNELING_ENTRIES");
+      }
+    } finally { downloadImpl = realDownload; }
+  });
+
+  test("an interface whose family is refused anyway (MV-0012) keeps FULL_DOWNLOAD_UNSUPPORTED", async () => {
+    const a0138 = gunzipSync(readFileSync(join(
+      import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0083_A-0138-21-F18E-O0072.xml.gz",
+    ))).toString("utf8");
+    expect(a0138).toContain('MaxTunnelingUserEntries="4"');
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0138);
+    downloadImpl = async () => { throw new Error("the full download must not be reached"); };
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download`))!;
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_UNSUPPORTED");
+    } finally { downloadImpl = realDownload; }
+  });
+
+  test("a never-programmed one keeps its parameter and group-address flash", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0137);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const reached: string[] = [];
+    paramFlashImpl = async (o) => { reached.push("params"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x" }; };
+    gaFlashImpl = async (o) => { reached.push("links"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x" }; };
+    for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+      expect(res.status).toBe(200);
+    }
+    expect(reached).toEqual(["params", "links"]);
+  });
+});
+
 // Jung 400021SE (module device): "Kanalfunktion" of channel 1 is a module-instance parameter with no
 // device memory, yet it decides which com-objects the channel has (8 = door/window status removes
 // #253 and #254). A download programmed with it compiled the device's com-object table for that

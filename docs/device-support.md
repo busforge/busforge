@@ -149,7 +149,11 @@ trusting a row that does not.
   model, which is a separate effort. See [roadmap.md](roadmap.md).
 - **Non-application devices** (couplers, interfaces, media couplers) are out of scope for
   parameter commissioning by design. An interface whose product data uses an application mask (the
-  MDT IP Interface/Router, MV-07B0) is still routed to that mask's profile today; its gap is in
+  MDT IP Interface/Router, MV-07B0) is routed to that mask's profile: read-back, parameter and
+  group-address flash are offered, but the full download of an application that declares tunnelling
+  entries (`MaxTunnelingUserEntries`) is refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`), because no
+  Busforge path writes the interface's tunnelling addresses. The gate reads only that attribute: an
+  interface application that omits it is not recognised as one and keeps the full download. Details in
   [owned-products.md](owned-products.md).
 - **Devices that expose an object model instead of a memory image** (some IP interfaces answer an
   opaque device descriptor and offer no readable parameter model) have no read or program path

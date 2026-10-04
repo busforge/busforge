@@ -97,8 +97,8 @@ value.
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute | hardware | refused by policy (see below) | not proven; runs without the declared table stamps (see below) | refused (`LdCtrlTaskCtrl1` first, then `LdCtrlLoadImageProp`) | not proven |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
-| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | not proven | not proven; planned with its security object where a tool key is on file | not proven; planned likewise, tunnelling entries not written (see below) | not proven |
-| MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, not implemented | hardware, secure identify only | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`DEVICE_FAMILY_UNSUPPORTED`) | not proven |
+| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | not proven | not proven; planned with its security object where a tool key is on file | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`: its tunnelling entries are not written, see below) | not proven |
+| MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, not implemented | hardware, secure identify only | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`FULL_DOWNLOAD_UNSUPPORTED`) | not proven |
 
 Notes attached to that table:
 
@@ -202,11 +202,12 @@ Notes attached to that table:
   which the full download does not execute ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
   Their capability flag still offers it ([owned-products.md](owned-products.md)).
 - **MDT IP interfaces**: the IP Interface/Router application is System B and Data Secure, so the
-  full download plans it with its security object when the project holds its tool key (planned offline
-  with an empty group-key set) and the group-address flash takes the same path; without a key both
-  plan it plain; neither has run on it.
-  Its tunnelling addresses (`AdditionalAddresses`) are not written by any Busforge path, and what a
-  download without them does to the interface's tunnels is not established
+  group-address flash plans it with its security object when the project holds its tool key, and
+  plain without one; it has not run on it. Its tunnelling addresses (`AdditionalAddresses`,
+  `MaxTunnelingUserEntries="4"`) are not written by any Busforge path, and what a download without
+  them does to the interface's tunnels is not established, so the full download of any application
+  declaring tunnelling entries is refused before any bus traffic (`FULL_DOWNLOAD_TUNNELING_ENTRIES`,
+  unit- and route-tested offline) and not offered; the parameter and group-address flash stay
   ([owned-products.md](owned-products.md)).
 - **The table lists the devices driven through a write path.** A wider set carries the weaker
   hardware proof: an owned-byte read-back match (build the image, read the device's memory,

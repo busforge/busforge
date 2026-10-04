@@ -172,6 +172,10 @@ export interface AppConfig {
   appVersion: number;
   appNumber: number;
   appPeiType: number; // ApplicationProgram PeiType; declared to the device in the task-segment control on a full download
+  // ApplicationProgram MaxTunnelingUserEntries: how many tunnelling addresses an IP interface serves.
+  // They are device-instance data (the project's AdditionalAddresses), outside the parameter image
+  // and the load procedure. NaN when the attribute is present but not a non-negative integer.
+  maxTunnelingUserEntries: number;
   // <Options ParameterByteOrder>: the byte order of multi-byte parameter values in memory.
   parameterByteOrder: "BigEndian" | "LittleEndian";
   defaultLanguage: string;
@@ -315,6 +319,8 @@ export function parseAppConfig(xml: string): AppConfig {
     appVersion: Number(appAttrs.ApplicationVersion ?? 0),
     appNumber: Number(appAttrs.ApplicationNumber ?? 0),
     appPeiType: Number(appAttrs.PeiType ?? 0),
+    maxTunnelingUserEntries: appAttrs.MaxTunnelingUserEntries === undefined ? 0
+      : /^\d+$/.test(appAttrs.MaxTunnelingUserEntries) ? Number(appAttrs.MaxTunnelingUserEntries) : NaN,
     parameterByteOrder,
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,

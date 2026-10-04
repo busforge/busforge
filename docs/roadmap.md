@@ -122,10 +122,13 @@ started until the capability it depends on is hardware-proven.
 - **Execute `LdCtrlTaskCtrl1` and the absolute `LdCtrlLoadImageProp`**, against an ETS capture of
   a full download (and, for the M-0008, a parameter and group-address download) of one of the four
   affected applications. All their units are installed in the house.
-- **Write or refuse an IP interface's tunnelling addresses.** The MDT IP Interface/Router plans a
-  full download that leaves its `AdditionalAddresses` out; refuse until an ETS capture shows what a
-  download onto such an interface writes. Its product data has a System B parameter model, so the
-  opaque-device item above applies to its plain reads, not to its application.
+- **Configure KNX IP interfaces as alpha targets (decided).** The full download of an
+  application declaring tunnelling entries is refused today (`FULL_DOWNLOAD_TUNNELING_ENTRIES`),
+  because no Busforge path writes the interface's `AdditionalAddresses`. Capture an ETS download onto
+  an IP interface (on the bench, not the house interface), model what it writes for the tunnelling
+  entries, then lift the refusal against that capture. The MDT IP Interface/Router's product data
+  has a System B parameter model, so the opaque-device item above applies to its plain reads, not to
+  its application.
 
 ## Raw acquisition
 

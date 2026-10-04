@@ -120,8 +120,10 @@ UI offers the full download instead, run on the device's existing address, with 
 programming-mode press and no address reassignment. The flash dialog also offers the full download
 as an action of its own. It offers it as the way forward for a device that has its address but never
 had an application loaded (`DEVICE_NOT_PROGRAMMED`), for example one just activated for KNX Data
-Secure after a master reset; the backend refuses it where the family cannot commission. So the same edit ETS would apply by re-downloading the whole device is
-applied here the same way, instead of being turned away.
+Secure after a master reset, where the application can be commissioned from scratch; for any
+other application the dialog offers nothing on that code, and the backend refuses the download
+too. So the same edit ETS would apply by re-downloading the whole device is applied here the
+same way, instead of being turned away.
 
 ## What a first-time download has to get right
 

@@ -8,7 +8,7 @@ describe("offersFullDownload", () => {
   });
 
   test("a device left without a running application offers it where the family can take one", () => {
-    for (const code of ["FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE", "GA_FLASH_BROKE_APPLICATION"]) {
+    for (const code of ["DEVICE_NOT_PROGRAMMED", "FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE", "GA_FLASH_BROKE_APPLICATION"]) {
       expect(offersFullDownload(code, true)).toBe(true);
       expect(offersFullDownload(code, false)).toBe(false);
     }
