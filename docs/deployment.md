@@ -204,8 +204,9 @@ than silently generating a new one that cannot open them.
 
 Back up the data directory of a **stopped** container, and always the **whole directory**: the
 SQLite database is `busforge.db` together with its write-ahead log `busforge.db-wal` and
-`busforge.db-shm`, and recent writes can live only in the log, even after a clean stop. Never copy
-`busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
+`busforge.db-shm`. A clean stop normally folds the log into `busforge.db`; after an unclean exit
+(`SIGKILL` once the grace period runs out, a crash, a failed shutdown) recent writes live only in
+`-wal`/`-shm`. Never copy `busforge.db` alone; keep `master.key` with it. Reach the data through the stopped container itself (`--volumes-from`), which works the
 same for a named volume and a bind mount and does not depend on the name compose gave the volume
 (compose prefixes it with the project name, by default the directory name, e.g.
 `busforge_busforge-data`; `-v busforge-data:...` would silently create a new, empty volume):
@@ -218,14 +219,18 @@ docker compose start busforge
 ```
 
 Check that the archive lists `busforge.db` (`tar -tzf busforge-data.tgz`) before relying on it.
-Restore into the data directory of a container that is created but not started, then start it. The
-restore empties the directory before unpacking: a `busforge.db-wal` or `-shm` left from a newer state
-would otherwise be replayed onto the restored database.
+Restore into the data directory of a container that is created but not started. **The restore is
+destructive**: it deletes the current content of the data directory and replaces it with the
+archive. It reads the whole archive first and deletes nothing if that read fails (a wrong path, an
+archive cut short in its content, a corrupt file). It empties the directory before unpacking because a `busforge.db-wal` or `-shm`
+left from a newer state would otherwise be replayed onto the restored database. Start the container
+only if the restore command exited with 0; otherwise the directory may be incomplete.
 
 ```bash
 docker compose create busforge
 docker run --rm --volumes-from busforge -v "$PWD":/backup --entrypoint sh busforge:latest -c \
-  'find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data'
+  'tar -tzf /backup/busforge-data.tgz >/dev/null && find /app/apps/server/data -mindepth 1 -delete && tar -xzf /backup/busforge-data.tgz -C /app/apps/server/data'
+echo "restore exit code: $?"   # start only on 0
 docker compose start busforge
 ```
 
@@ -240,13 +245,14 @@ does not notice that a newer one has migrated the database and runs on it unchec
 restore the backup taken before the upgrade. On 2026-10-04 this path was exercised locally with the shipped compose file
 and a named volume: a container from the image of `181c1fb` imported a project and created a blank
 one, the image built from this layout replaced it and listed both projects unchanged, and a backup
-restored after `docker compose down -v` gave the same project list. A second run restored onto a
-volume that was not empty: backup taken under the `181c1fb` image, upgrade, three more projects
-created by the new image, container killed so that `busforge.db-wal` and `-shm` stayed in the
-volume, backup restored with the commands above onto the same volume; the project list was that of
-the backup. The same sequence with a plain `tar -xzf` restore, without emptying the directory, kept
-the three newer projects: the leftover log had been replayed onto the restored database. A bind-mounted data
-directory was not exercised, and neither is every historical data layout.
+restored after `docker compose down -v` gave the same project list. Further runs restored onto a data
+directory that was not empty, once on the named volume and once on a bind mount (`BUSFORGE_DATA`):
+backup taken under the `181c1fb` image, upgrade, three more projects created by the new image,
+container killed so that `busforge.db-wal` and `-shm` stayed behind. A restore from the archive cut
+to half its size exited with 2 and left the directory byte-identical; the restore from the intact
+archive exited with 0 and the project list was that of the backup. The same sequence with a plain
+`tar -xzf` restore, without emptying the directory, kept the three newer projects: the leftover log
+had been replayed onto the restored database. Not every historical data layout was exercised.
 
 ### Bus access from a container
 
