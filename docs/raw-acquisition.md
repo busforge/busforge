@@ -16,7 +16,9 @@ product" are exactly what this design exists to avoid.
 | Source | What it gives | Where |
 |---|---|---|
 | KNX master data, `MaskVersion` resources | Per mask: where each system resource lives (memory address, pointer, interface-object property), its length and read access. | `knx_master.xml` inside every `.knxproj`. Checked against ETS 6 master data version 298 (`scratchpad/ets-captures/bench-2026-09-25.knxproj`, local) and the copy under `reference/vendor/Kaenx.Konnect` (local, gitignored): identical for every mask quoted here that the master data contains. MV-0311, MV-1311, MV-2311, MV-2010, MV-2110, MV-0810, MV-0811, MV-0AFD, MV-0AFE, MV-3012 and MV-4012 are in neither file; Busforge knows them from its own registry (`packages/product/src/masks.ts`). |
-| ETS 6 captures of the four bench devices | What a real tool reads before it writes, and how the devices answer. | `tools/fixtures/*.log`, turned into checked vectors (see [Reference vectors](#reference-vectors)). |
+| ETS 6 captures of the four bench devices | What a real tool reads before it writes, and how the devices answer. | `tools/fixtures/*-ets-*.log`, turned into checked vectors (see [Reference vectors](#reference-vectors)). |
+| Captures of the collector on the bench | What the devices answer to the requests ETS never sends: the description scan, absent properties. | `tools/fixtures/*-collect-scan.log`, checked vectors as well. |
+| A capture of single memory reads on the bench | How a device refuses a memory read. | `tools/fixtures/bench-memory-refused.log` (`tools/memread.ts`), checked vectors as well. |
 | Calimero (`calimero-core`, `ManagementClientImpl`, `ManagementProceduresImpl`) | Service formats, chunking, how negative answers look. | github.com/calimero-project/calimero-core |
 | xknx (`xknx/management/procedures`) | `DMP_InterfaceObjectScan_R`, memory-read and authorize procedures, return codes. | github.com/XKNX/xknx |
 | thelsing/knx (OpenKNX stack) | Device-side behaviour: what a property description or an out-of-range read returns. | github.com/thelsing/knx |
@@ -205,7 +207,7 @@ reads, no scan unless the device answers a first property description.
 
 | | |
 |---|---|
-| Owned | No device is known to be one. The one house instance whose product data declares MV-0012 is the MDT KNX IP interface SCN-IP000.03, which answers plain reads with descriptor `0xFFFF` and was read only through a secure identify ([status.md](status.md), device table; the inventory's `secure: false` for it is wrong). The mask that identify returned is not written down in the docs, and an IP interface that declares a BCU1 mask need not run one. Until it is identified, BCU1 has no owned target. |
+| Owned | No device is known to be one. The one house instance whose product data declares MV-0012 is the MDT KNX IP interface SCN-IP000.03, which answers plain reads with descriptor `0xFFFF` and was read only through a secure identify ([status.md](status.md), device table; the inventory's `secure: false` for it is wrong). That identify, on 2026-06-30, returned MV-0012 (commits `bd5332d` and `f2b4b20`, no evidence record). An IP interface that reports a BCU1 mask need not hold a BCU1 memory layout; a collector run under its secure session would show it and has not been made (see [Known unknowns](#known-unknowns)). |
 | Discovery | Descriptor only. BCU1 has no interface objects and declares no `AuthorizeLevels`, so no authorize, no property reads, no scan: requests the device does not implement are answered by silence and cost a timeout each (Calimero notes the same for descriptor type 2). |
 | Range derivation | The master data places everything in memory: manufacturer id `0x0104` (1 byte), application id `0x0104` (4 bytes), PEI type `0x0109`, hardware config `0x010C`, run error `0x010D`, association table pointer `0x0111`, group object table pointer `0x0112`, group address table `0x0116`, individual address `0x0117`, run status and programming mode `0x0060`. The pointers are one byte with the flavour `Ptr_StandardMemory100`; that the table then sits at `0x0100 + pointer` is read from the flavour's name (inferred). |
 | Plan | `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060`; that it also holds the application's parameters is inferred. 256 bytes in 12-byte chunks. Then the tables at their pointers if a pointer leads outside that window. |
@@ -313,7 +315,10 @@ What the collector has to be, in the terms of the code that exists.
 ## Reference vectors
 
 [`tools/fixtures/raw-acquisition-vectors.json`](../tools/fixtures/raw-acquisition-vectors.json)
-names 18 exchanges from the ETS captures by file and line; `tools/raw-acquisition-vectors.test.ts`
+names 29 exchanges by file and line: 18 from the ETS captures and 11 from captures of the collector
+and of single memory reads on the bench, taken through the same logging proxy (the collector captures
+are excerpts that end with the interface-object scan; the memory phase of those runs is left out).
+`tools/raw-acquisition-vectors.test.ts`
 decodes each one from the captured frame and checks it against the fixture, including the
 direction and the device address, so the vectors cannot drift from the captures. The same test
 checks the association-table capacity of the two descriptions against the applications'
@@ -324,16 +329,21 @@ checks the association-table capacity of the two descriptions against the applic
 | `dd0-*` | descriptor type 0 for MV-0705, MV-0701, MV-07B0 |
 | `max-apdu-gvs`, `max-apdu-absent-*` | PID 56 present (55) and absent (count 0) |
 | `serial-gvs` | a 6-byte serial (length only; the value stays in the capture) |
-| `authorize-free-*` | free key `FFFFFFFF` answered with level 0 (the same exchange is in the captures of all four devices; one is enough as a vector) |
-| `propdesc-*` | property description of object 2 PID 23: index 3, PDT `0x14`, 1600 and 1000 elements, read level 3, writable on the Jung and not on the GVS |
+| `authorize-free-*-jung` | free key `FFFFFFFF` answered with level 0 (the same exchange is in the ETS captures of all four devices; one is enough as a vector) |
+| `propdesc-request-jung`, `propdesc-response-*` | property description of object 2 PID 23: index 3, PDT `0x14`, 1600 and 1000 elements, read level 3, writable on the Jung and not on the GVS |
 | `security-mode-off-gvs` | the security mode read on a device with Secure not activated |
 | `table-reference-*` | PID 7 of object 3 on both System B devices |
 | `load-status-*` | the application load status at `0xB6EC`, on the memory-mapped ABB and on the property-mapped MDT |
+| `authorize-free-response-abb` | the free key answered with level 0 on an M112 device |
+| `property-absent-abb` | object 0 PID 15 (order info) answered with element count 0: absent, not empty |
+| `propdesc-scan-*` | the scan's first request (object 0, PID 0, property index 0) and its answer: PID 1, PDT `0x04`, one element; read level 5 on the ABB, 15 on the MDT |
+| `propdesc-end-abb` | an object's last property: index 6 of object 0 answered with PID 0 |
+| `propdesc-no-object-*` | no object at the index (5 on the ABB, 6 on the MDT): PID 0, PDT 0 and no elements, with the access octet `0x00` on the ABB and `0xFF` on the MDT, so the access octet tells nothing about the end |
+| `memory-read-b800-mdt`, `memory-refused-*` | a 1-byte `A_Memory_Read` at `0xB800` (the start of the optional M112 segment) answered with count 0 and the address, no data, by both M112 devices |
 
-**What the vectors do not cover:** no negative memory response, no extended read, no description
-scan past the first property, nothing from BCU1, BCU2, System 300, a coupler or an interface.
-ETS never sent those to the bench devices. They are the first thing the collector's bench run has
-to capture.
+**What the vectors do not cover:** no extended read in plain (the bench devices reach it only in
+their secure sessions, whose frames a vector cannot decode without the tool key), nothing from BCU1,
+BCU2, System 300, a coupler or an interface.
 
 ## Implementation
 
@@ -344,6 +354,8 @@ to capture.
 | Plan per mask | `packages/product/src/collectplan.ts` |
 | Execution, bounds, records | `packages/product/src/collect.ts` |
 | Session, package file, provenance | `apps/server/src/collect.ts` |
+| The same collector from the command line, over a TCP tunnel, optionally without the free-key authorize. It writes the package with the tool's own provenance (commit, target) and stores no device sequence after a secured session: it prints it. | `tools/collect.ts` |
+| One memory read outside any plan, plain, and the device's answer | `tools/memread.ts` |
 
 **API.** `POST /api/projects/:id/devices/:deviceId/collect` queues a task of kind `collect`
 (`writes: false`) and answers 202 with it; the task's result is the verdict (`complete`, `limited`,
@@ -407,7 +419,33 @@ same results; the cancel was run once, on the build before the review fixes.
 
 Database: on the plain runs only the task list changed. On the two secured runs `device_security`
 changed in `seq_group` of those two devices and nothing else. No device memory was refused on any
-run, so a negative memory answer from a real device is still not seen.
+run.
+
+### Bench runs, 2026-10-04 evening: authorize and a refused read
+
+`tools/collect.ts` through a logging proxy on the Mac, read-only, the same plans as above (product
+XML of the ABB and the MDT for their segments). Each device once with the free-key authorize and once
+without (the GVS a second time with it), and the first two packages compared record by record (step,
+service, target, outcome, bytes):
+
+| Device | Session | With authorize | Without | Records that differ |
+|---|---|---|---|---|
+| ABB US/U 4.2 (MV-0701) | plain | complete, 911 requests, 9199 bytes | complete, 910, 9199 | the authorize record only |
+| MDT BE-02001.02 (MV-0705) | plain | complete, 284, 1304 | complete, 283, 1304 | the authorize record only |
+| GVS AMMA (MV-07B0) | secured | limited (property budget), 459, 3896 | limited (property budget), 457, 3896 | the two authorize records (the second on the connection reopened after the malformed object-6 answer), and the values of object 0 PID 30 and of PID 220 on objects 7 and 11 |
+
+Those GVS values change between two runs *with* the authorize as well, and so does one more. Over the
+three runs (with, without, with): object 0 PID 30 `000a`, `000b`, `000c`; object 0 PID 198 `000e62`,
+`000e62`, `000e63`; PID 220 of objects 7 and 11 a different 8-byte value each run. So on the three
+devices every read without the free key ended as it did with it (the same bytes, or the same refusal,
+failure or malformed answer, of the same length), except the three GVS values of the table, which also
+differ between two runs with the key; whether the authorize affects them these runs cannot show.
+
+No planned range was refused on any run. A single 1-byte read with `tools/memread.ts` at `0xB800`, the start of the
+optional M112 segment `0xB800` + 2048, outside every planned range, was answered with count 0 by both
+the ABB and the MDT (vectors `memory-refused-*`); that the segment is absent on them, rather than
+protected, is inferred. The collector records such an answer as `refused` with the raw answer
+(`memReadPartial`, spy tests in `packages/product/test/collect.test.ts`).
 
 Not compared yet: a collector package with a Busforge read-back of the same device (the control
 case of System B and M112).
@@ -416,9 +454,9 @@ case of System B and M112).
 
 | Unknown | Why it matters | How it gets settled |
 |---|---|---|
-| What the house device declared MV-0012 (the MDT IP interface) reports and holds | it is the only owned device in an unsupported family on paper | a secure identify (read-only, key from the project) and then a collector run under that session |
+| What the house device declared MV-0012 (the MDT IP interface) holds | it is the only owned device in an unsupported family on paper | **mask settled**: its secure identify reported MV-0012 (see [System 1](#system-1-bcu1-mv-0010-to-mv-0013-mv-1011-to-mv-1013-mv-3012-mv-4012)). What it holds: a collector run under that session (`tools/collect.ts --knxproj=…`), read-only, not made yet |
 | BCU1 behaviour at all | no owned real BCU1 is known | a capture from a contributed device, through the diagnostic intake |
 | Whether M112 devices answer property descriptions | ETS never asked them | **settled for the bench devices** (2026-10-04): the ABB US/U 4.2 (MV-0701) describes objects 0 to 4, 21 properties, and the MDT BE-02001.02 (MV-0705) answers the scan as well. Other M112 products: not shown. |
-| Whether a free-key authorize is needed for any read the bench devices allow without it | Busforge reads PID 7 today without authorizing | compare the same plan with and without it on the bench |
+| Whether a free-key authorize is needed for any read the bench devices allow without it | Busforge reads PID 7 today without authorizing | **settled for the ABB US/U 4.2, the MDT BE-02001.02 and the secured GVS AMMA** (2026-10-04 evening): every read without it ended as it did with it, outcome and length, except three GVS values (object 0 PID 30, PID 220 of objects 7 and 11) that also change between two runs with it. Other devices: not shown. |
 | `LcFilterMemory` access on couplers | the filter table is a coupler's configuration | a capture of a tool reading a coupler |
 | Device-specific internal read boundaries | a refused straddling read must not fail the range | the boundary-aware read, recorded per sub-range |

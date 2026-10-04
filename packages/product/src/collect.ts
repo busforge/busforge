@@ -75,6 +75,9 @@ export interface CollectOptions {
   app?: CollectApp | null;
   now?: () => number;
   limits?: Partial<typeof COLLECT_LIMITS>;
+  // false: no free-key authorize even where the mask declares one, to compare what a device answers
+  // without it (tools/collect.ts). The package records the step as not attempted.
+  authorize?: boolean;
   onProgress?: (phase: string, done?: number, total?: number) => void;
 }
 
@@ -209,7 +212,9 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     for (const n of plan.notAttempted) rec({ step: "plan", space: n.space ?? "memory", target: { name: n.name }, source: "master-data", outcome: "not-attempted", detail: n.reason });
 
     // ---- generic stage ----
-    if (plan.authorize) {
+    if (plan.authorize && opts.authorize === false) {
+      rec({ step: "authorize", space: "authorize", target: { key: "free" }, source: "master-data", outcome: "not-attempted", detail: "the caller asked for a session without the free-key authorize" });
+    } else if (plan.authorize) {
       opts.onProgress?.("authorize");
       const a = await ask({ step: "authorize", space: "authorize", target: { key: "free" }, source: "master-data" }, () => dev.authorizeFreeKey());
       if (a.ok) {

@@ -9,10 +9,11 @@ import {
 } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 
-// The reference vectors of docs/raw-acquisition.md point at lines of the ETS captures. This test
-// keeps them honest: every vector must decode, from the captured frame itself, to what the fixture
-// and the design doc claim. The decoders below are deliberately local and independent; the collector's
-// own codec (packages/knx/src/rawcodec.ts) has to decode every vector to the same result.
+// The reference vectors of docs/raw-acquisition.md point at lines of the bench captures (ETS, the
+// collector, single memory reads). This test keeps them honest: every vector must decode, from the
+// captured frame itself, to what the fixture and the design doc claim. The decoders below are
+// deliberately local and independent; the collector's own codec (packages/knx/src/rawcodec.ts) has to
+// decode every vector to the same result.
 
 const FIXTURES = join(import.meta.dir, "fixtures");
 const { vectors } = JSON.parse(readFileSync(join(FIXTURES, "raw-acquisition-vectors.json"), "utf8")) as {

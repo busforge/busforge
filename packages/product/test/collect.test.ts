@@ -59,6 +59,15 @@ describe("raw acquisition on a System B device", () => {
     expect(p.records.find((r) => r.step === "identity" && r.target.pid === 15)).toMatchObject({ outcome: "refused" });
   });
 
+  test("a session without the free-key authorize sends none and says so", async () => {
+    const { sim, dev, reopen } = setup();
+    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen, authorize: false });
+    expect(sim.apcis).not.toContain(APCI.AUTHORIZE_REQUEST);
+    expect(p.authorizeLevel).toBeNull();
+    expect(p.records.filter((r) => r.space === "authorize")).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("without the free-key authorize") }]);
+    expect(p.stop).toBeNull();
+  });
+
   test("refused elements: a refused batch is asked again singly, and the first refused element ends the property", async () => {
     const { sim, dev, reopen } = setup();
     sim.refuseElementsFrom.set("2:23", 5);
