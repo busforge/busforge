@@ -129,7 +129,15 @@ export class KnxUsbTransport implements KnxTransport {
   serialNumber: Buffer = Buffer.alloc(6);
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onRawCemi: ((cemi: Buffer) => void) | null = null;
-  onClosed: ((reason: string) => void) | null = null;
+  // A loss nobody was listening for yet (the bridge installs its listener after its server has
+  // started) is told to the first listener, once.
+  private closedCb: ((reason: string) => void) | null = null;
+  private lossTold = false;
+  get onClosed(): ((reason: string) => void) | null { return this.closedCb; }
+  set onClosed(cb: ((reason: string) => void) | null) {
+    this.closedCb = cb;
+    if (cb && this.lost !== null && !this.lossTold) { this.lossTold = true; cb(this.lost); }
+  }
 
   private dev: HidDevice | null = null;
   // Set the moment our own teardown begins, so the HID 'error' close() emits does not read back as
@@ -157,7 +165,7 @@ export class KnxUsbTransport implements KnxTransport {
     // node-hid emits 'error' when a read fails, in practice the stick was unplugged or the handle
     // was pulled out from under us. That is a genuine loss of the bus, so it is surfaced (unless it
     // is the error our own close() provokes), not swallowed.
-    this.dev.on("error", (e) => { if (!this.closed) this.onClosed?.(`the USB interface reported an error: ${e instanceof Error ? e.message : String(e)}`); });
+    this.dev.on("error", (e) => this.lose(`the USB interface reported an error: ${e instanceof Error ? e.message : String(e)}`));
     // Select cEMI as the active EMI type before any tunnelling. Best-effort:
     // some interfaces report 0 ("not set") yet accept cEMI regardless.
     try {
@@ -166,6 +174,12 @@ export class KnxUsbTransport implements KnxTransport {
     } catch { /* interface may not implement the feature service */ }
     await this.enterDataLinkLayer();
     await this.readIdentity();
+    if (this.lostDuringConnect !== null) {
+      try { this.dev?.close(); } catch { /* the handle is already dead */ }
+      this.dev = null;
+      throw new KnxError("USB_INTERFACE_LOST", `the USB interface failed while it was being opened (${this.lostDuringConnect})`);
+    }
+    this.up = true;
   }
 
   // Learn who the interface is on the bus. Deliberately non-fatal: every path that existed before
@@ -212,10 +226,11 @@ export class KnxUsbTransport implements KnxTransport {
   // ---- cEMI local device management (talks to the INTERFACE, never to the bus) ----
   private devMgmt(req: Buffer, conCode: number): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
-      const t = setTimeout(() => { this.propResolve = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not answer a local property request")); }, 1500);
+      this.propFail = (e) => { clearTimeout(t); this.propResolve = null; this.propFail = null; reject(e); };
+      const t = setTimeout(() => { this.propResolve = null; this.propFail = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not answer a local property request")); }, 1500);
       this.propResolve = (cemi) => {
         if (cemi[0] !== conCode) return; // a different confirmation; keep waiting
-        clearTimeout(t); this.propResolve = null;
+        clearTimeout(t); this.propResolve = null; this.propFail = null;
         // Header: code | IOT(2) | OI(1) | PID(1) | nrOfElem(high nibble) + startIndex. A zero
         // element count means the interface REFUSED and the body is an error code, not data.
         if ((cemi[5] & 0xf0) === 0) { reject(new KnxError("USB_LINK_LAYER_UNAVAILABLE", `the interface rejected a property access (error 0x${(cemi[7] ?? 0).toString(16)})`)); return; }
@@ -260,9 +275,10 @@ export class KnxUsbTransport implements KnxTransport {
     // frame that did not reach the bus is a failure with a name.
     let timer: ReturnType<typeof setTimeout>;
     const con = new Promise<void>((resolve, reject) => {
-      timer = setTimeout(() => { this.conSettle = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
+      timer = setTimeout(() => { this.conSettle = null; this.conFail = null; reject(new KnxError("USB_SEND_NOT_CONFIRMED", "the USB interface did not confirm the frame reached the bus (no L_Data.con)")); }, 1500);
+      this.conFail = (e) => { clearTimeout(timer); this.conSettle = null; this.conFail = null; reject(e); };
       this.conSettle = (reachedBus) => {
-        clearTimeout(timer); this.conSettle = null;
+        clearTimeout(timer); this.conSettle = null; this.conFail = null;
         if (reachedBus) { resolve(); return; }
         reject(new KnxError("BUS_SEND_FAILED", "the KNX interface reports that the telegram did not reach the bus (negative L_Data.con); the line is dead, disconnected, or no device acknowledged the frame"));
       };
@@ -274,7 +290,8 @@ export class KnxUsbTransport implements KnxTransport {
       // con wait we just armed: otherwise its 1.5 s timeout fires later with nobody listening and
       // clears `conSettle` out from under the NEXT send — the exact spurious con-timeout the
       // serialisation above exists to prevent.
-      clearTimeout(timer!); this.conSettle = null;
+      clearTimeout(timer!); this.conSettle = null; this.conFail = null;
+      con.catch(() => {}); // a loss in the write may have rejected it; the throw below is the answer
       throw e;
     }
     await con;
@@ -284,6 +301,32 @@ export class KnxUsbTransport implements KnxTransport {
     this.closed = true;
     try { this.dev?.close(); } catch { /* already gone */ }
     this.dev = null;
+  }
+
+  // The interface went away under us: a stick that re-enumerates leaves a handle on which every
+  // write fails ("Cannot write to hid device") and every send would read as a dead bus. The handle
+  // is released (a reopen needs the stick free) and the loss is said once; every later send fails
+  // as USB_INTERFACE_LOST without touching the handle. This transport is finished: a reopen is a
+  // new KnxUsbTransport, because the stick may come back under another path.
+  private lost: string | null = null;
+  // Before connect() completes a failing write fails connect() itself, as it always did; the
+  // feature handshake even tolerates one.
+  private up = false;
+  // An HID error while connect() runs; connect() fails with it instead of a later, vaguer timeout.
+  private lostDuringConnect: string | null = null;
+  // Rejecters of the L_Data.con and property waits in flight, so a loss ends them at once.
+  private conFail: ((e: KnxError) => void) | null = null;
+  private propFail: ((e: KnxError) => void) | null = null;
+  private lose(reason: string): void {
+    if (this.closed || this.lost !== null) return;
+    if (!this.up) { this.lostDuringConnect ??= reason; return; }
+    this.lost = reason;
+    try { this.dev?.close(); } catch { /* the handle is already dead */ }
+    this.dev = null;
+    const gone = new KnxError("USB_INTERFACE_LOST", `the USB interface is gone (${reason})`);
+    this.conFail?.(gone);
+    this.propFail?.(gone);
+    if (this.closedCb) { this.lossTold = true; this.closedCb(reason); }
   }
 
   // ---- feature service (used during connect / introspection) ----
@@ -311,6 +354,7 @@ export class KnxUsbTransport implements KnxTransport {
   }
 
   private writeReport(payload: Buffer): void {
+    if (this.lost !== null) throw new KnxError("USB_INTERFACE_LOST", `the USB interface is gone (${this.lost})`);
     if (!this.dev) throw new Error("USB not connected");
     if (payload.length > 61) throw new Error(`USB payload ${payload.length}B exceeds single report (fragmentation not implemented)`);
     const r = Buffer.alloc(64, 0);
@@ -318,7 +362,13 @@ export class KnxUsbTransport implements KnxTransport {
     r[1] = PACKET_SINGLE;
     r[2] = payload.length;
     payload.copy(r, 3);
-    this.dev.write(Array.from(r));
+    try {
+      this.dev.write(Array.from(r));
+    } catch (e) {
+      if (!this.up) throw e;
+      this.lose(`the USB interface refused a write: ${e instanceof Error ? e.message : String(e)}`);
+      throw new KnxError("USB_INTERFACE_LOST", `the USB interface is gone (${this.lost ?? "closed"})`);
+    }
   }
 
   private onData(report: Buffer): void {

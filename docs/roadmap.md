@@ -120,10 +120,14 @@ started until the capability it depends on is hardware-proven.
   fresh addresses to "off"; a group-address flash on a secure device secures a fresh "auto" address with
   a Busforge-generated key, but the specs check only its transfer. A `securedOutput` on a fresh address
   would show the device acting on such a key.
-- **The bench bridge holds a dead USB interface and a half-open TCP channel.** After the stick
-  re-enumerated it kept accepting tunnels while every frame failed; a channel whose client vanished
-  without a disconnect stayed taken (one tunnel address, so every later connect got 0x24). It should
-  reopen or refuse the interface, and drop a channel without a heartbeat for 120 s, also over TCP.
+- **The bench bridge held a half-open TCP channel on 2026-10-03.** After a verified full download the
+  next server connection stalled (`TUNNEL_CON_TIMEOUT`) and the bridge held an established stream to a
+  Mac port that no longer existed, with data queued, while connects got 0x24. The reaper drops a TCP
+  channel without a heartbeat after 120 s, and the bridge log of that day shows no channel outliving
+  it, so which channel held the address and why is not established. Refusals for want of an address
+  are now logged with the holder's peer and silence, which is what the next occurrence needs. (The
+  dead USB handle of the same day is fixed: the bridge refuses and reopens, see
+  [connections.md](connections.md).)
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured

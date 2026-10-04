@@ -241,6 +241,8 @@ const de: Messages = {
     DISCOVERY_FAILED: "Die Gateway-Suche konnte nicht ausgeführt werden (Netzwerk- oder Berechtigungsproblem). Das ist nicht dasselbe wie ein leeres Ergebnis.",
     TUNNEL_CONNECT_TIMEOUT: "Die KNX-Schnittstelle hat nicht geantwortet. Prüfe, ob sie eingeschaltet und unter der konfigurierten Adresse erreichbar ist.",
     TUNNEL_CONNECT_REJECTED: "Die KNX-Schnittstelle hat die Verbindung abgelehnt. Möglicherweise ist ein anderer Client verbunden oder die Schnittstelle ist belegt.",
+    TUNNEL_INTERFACE_UNAVAILABLE: "Der KNXnet/IP-Server ist erreichbar, hat aber keine Verbindung zum KNX-Bus: seine Schnittstelle ist weg (eine Bridge, deren USB-Stick abgezogen oder neu erkannt wurde). Er lehnt Tunnel ab, bis die Schnittstelle wieder da ist.",
+    USB_INTERFACE_LOST: "Die USB-Schnittstelle ist weg (abgezogen, oder der Rechner hat sie neu erkannt). Neu verbinden, um sie wieder zu öffnen.",
     TUNNEL_ACK_TIMEOUT: "Die KNX-Schnittstelle antwortet nicht mehr (kein Acknowledge). Prüfe die Verbindung zum Gateway und versuche es erneut.",
     TUNNEL_SEND_FAILED: "Dieser Rechner konnte gar nicht erst an die KNX-Schnittstelle senden: das Paket hat den Host nie verlassen. Entweder ist die Adresse der Schnittstelle aus diesem Netz nicht erreichbar, oder der App fehlt unter macOS die Berechtigung \"Lokales Netzwerk\" (Systemeinstellungen > Datenschutz & Sicherheit > Lokales Netzwerk).",
     USB_SEND_NOT_CONFIRMED: "Die USB-Schnittstelle hat nicht bestätigt, dass der Frame auf den Bus gelangt ist. Prüfe, ob die Schnittstelle am Bus hängt und funktioniert.",

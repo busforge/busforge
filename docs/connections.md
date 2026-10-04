@@ -253,6 +253,37 @@ UDP and TCP on the same port.
 | A cEMI that is not `L_Data.req` | tunnel-acknowledged, content refused and logged | The acknowledgement is about the datagram; forwarding unknown content to a real bus is not. |
 | Starting with an unknown interface address | `BRIDGE_NO_ADDRESS` | A tunnel on 0.0.0 is an address no device can answer to. |
 | Starting with no usable local IPv4 address | `BRIDGE_NO_LOCAL_ADDRESS` | It could not advertise a reachable endpoint. |
+| Any connection while the USB interface is gone | `E_KNX_CONNECTION` (0x27) | A tunnel on a dead interface would confirm every frame negatively, which reads as a dead line. Busforge reports it as `TUNNEL_INTERFACE_UNAVAILABLE`. |
+
+A refusal for want of a free address is logged with each holder: its channel, its peer and how long
+it has been silent. A channel whose client vanished keeps its address until the reaper below takes it.
+
+### When the USB interface goes away
+
+A stick that re-enumerates (replugged, moved, or reset by the host) leaves the bridge holding a dead
+HID handle: every write fails with "Cannot write to hid device", which a client would only see as
+negative confirmations, the same as a dead line. The USB transport therefore treats a failed write
+and an error from the HID read side as the interface lost (`USB_INTERFACE_LOST`), releases the
+handle and says so once. The bridge then:
+
+1. disconnects every tunnel (a `DISCONNECT_REQUEST`, so the client knows at once),
+2. refuses every new connection with `E_KNX_CONNECTION` and logs why,
+3. reopens the interface every 2 s by vendor, product and serial (its HID path changes), and
+4. accepts tunnels again once it is back with the address it had. A stick that has not told its
+   address yet is tried again; one that answers under another address (reprogrammed, or another
+   stick) is released and the bridge stops reopening and keeps refusing, with "restart the bridge"
+   in its log, because its tunnels hand out and route by the old address.
+
+A loss is also caught while the interface is being opened (the open fails with it) and before
+anyone listens for it; a send or property read waiting on the interface fails at once as lost.
+Without a USB serial the reopen works only while no identical stick is attached; the bridge says so
+at start.
+
+Shown on the bench on 2026-10-04 by taking the stick off the USB bus and back (`authorized` 0, then
+1, in sysfs) under a live TCP tunnel: the tunnel was disconnected, a connect during the gap got
+`TUNNEL_INTERFACE_UNAVAILABLE`, the stick came back as `hidraw0` instead of `hidraw1` and was open
+again 2 s later, and a read of 1.1.56 through a new tunnel answered. That run lost the stick through
+the read side; the write-side path is covered by an offline test only.
 
 On UDP, sequence numbers run in **both** directions: a client's retransmission (same sequence number,
 because its acknowledgement was lost) is acknowledged again but **not put on the bus twice**, because

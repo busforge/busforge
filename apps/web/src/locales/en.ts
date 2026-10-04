@@ -241,6 +241,8 @@ const en = {
     DISCOVERY_FAILED: "The gateway search could not run (network or permission problem). This is not the same as an empty result.",
     TUNNEL_CONNECT_TIMEOUT: "The KNX interface did not respond. Check that it is powered on and reachable at the configured address.",
     TUNNEL_CONNECT_REJECTED: "The KNX interface refused the connection. Another client may be connected, or the interface is busy.",
+    TUNNEL_INTERFACE_UNAVAILABLE: "The KNXnet/IP server is reachable but has no connection to the KNX bus: its interface is gone (a bridge whose USB stick was unplugged or re-enumerated). It refuses tunnels until the interface is back.",
+    USB_INTERFACE_LOST: "The USB interface went away (unplugged, or the host re-enumerated it). Reconnect to open it again.",
     TUNNEL_ACK_TIMEOUT: "The KNX interface stopped acknowledging. Check the connection to the gateway and try again.",
     TUNNEL_SEND_FAILED: "This computer could not send to the KNX interface at all: the packet never left this host. Either the interface's address is unreachable from this network, or on macOS the app is missing the \"Local Network\" permission (System Settings > Privacy & Security > Local Network).",
     USB_SEND_NOT_CONFIRMED: "The USB interface did not confirm the frame reached the bus. Check that the interface is on the bus and functioning.",

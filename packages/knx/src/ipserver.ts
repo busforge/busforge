@@ -35,6 +35,7 @@ const E_NO_ERROR = 0x00;
 const E_CONNECTION_ID = 0x21;      // no such channel
 const E_CONNECTION_TYPE = 0x22;    // connection type not supported
 const E_NO_MORE_CONNECTIONS = 0x24;
+const E_KNX_CONNECTION = 0x27;     // the server has no connection to the KNX subnetwork
 const E_TUNNELLING_LAYER = 0x29;   // requested layer not supported
 
 const CRI_TUNNEL = 0x04;   // connection type: tunnelling
@@ -86,6 +87,7 @@ function realSocket(): ServerSocket {
 // the wire, onData() delivers raw stream bytes (which the server reassembles), onClose() fires when
 // the connection ends. A TCP channel is bound to exactly one of these for its whole lifetime.
 export interface ServerTcpSocket {
+  readonly remote?: string; // "address:port" of the peer, for the log
   write(frame: Buffer): void;
   onData(cb: (chunk: Buffer) => void): void;
   onClose(cb: () => void): void;
@@ -110,6 +112,7 @@ function realTcpListener(): ServerTcpListener {
         // error is what actually reaps the channel, so the error handler need only keep the process up.
         s.on("error", () => {});
         cb({
+          remote: `${s.remoteAddress ?? "?"}:${s.remotePort ?? "?"}`,
           write: (frame) => { s.write(frame); },
           onData: (dcb) => { s.on("data", dcb); },
           onClose: (ccb) => { s.on("close", ccb); },
@@ -164,7 +167,9 @@ export interface KnxIpServerOptions {
 }
 
 export class KnxIpServer {
-  private readonly transport: KnxTransport;
+  private transport: KnxTransport;
+  // Why the interface is gone, while it is; null while it serves. See interfaceLost.
+  private down: string | null = null;
   private readonly addresses: number[];
   private readonly name: string;
   private readonly port: number;
@@ -262,6 +267,41 @@ export class KnxIpServer {
     this.sock = null;
     this.tcp?.close();
     this.tcp = null;
+  }
+
+  // The interface under the tunnels went away (a USB stick that re-enumerated). Every open channel
+  // is disconnected, and every new connection is refused with E_KNX_CONNECTION until
+  // interfaceRestored: a tunnel granted on a dead interface would confirm each frame negatively,
+  // which a client cannot tell from a dead line or an absent device.
+  interfaceLost(reason: string): void {
+    if (this.down !== null) return;
+    this.down = reason;
+    this.transport.onRawCemi = null;
+    this.mgmtOwner.clear();
+    this.log(`the KNX interface is gone (${reason}); disconnecting every tunnel and refusing new ones until it is back`);
+    for (const ch of [...this.channels.values()]) this.drop(ch, "the KNX interface is gone");
+  }
+
+  // The interface is back, as a new transport. It must hold the address the old one held: the
+  // tunnel addresses this server hands out and the management NAT are both built on it, and an
+  // interface with another address is another interface.
+  interfaceRestored(transport: KnxTransport): void {
+    if (this.sock === null) throw new Error("interfaceRestored: the server is not running");
+    if (this.down === null) throw new Error("interfaceRestored: the interface is not gone");
+    if (transport.assignedIa === 0) {
+      throw new KnxError("BRIDGE_NO_ADDRESS", "the KNX interface is back but did not tell its individual address yet");
+    }
+    // An interface that had no address (possible with an explicit address pool) takes the one it
+    // reports now; one that had an address must come back with it.
+    const before = this.transport.assignedIa;
+    if (before !== 0 && transport.assignedIa !== before) {
+      throw new KnxError("BRIDGE_INTERFACE_CHANGED",
+        `the KNX interface is back as ${numToIa(transport.assignedIa)}, not ${numToIa(before)} (reprogrammed, or another stick); the tunnels hand out and route by the old address, so restart the bridge to serve it under the new one`);
+    }
+    this.transport = transport;
+    this.transport.onRawCemi = (cemi) => this.routeFromBus(cemi);
+    this.down = null;
+    this.log(`the KNX interface is back as ${numToIa(transport.assignedIa)}; accepting tunnels again`);
   }
 
   private send(frame: Buffer, to: Endpoint): void {
@@ -418,6 +458,11 @@ export class KnxIpServer {
     const reject = (status: number) =>
       this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.from([0x00, status])));
 
+    if (this.down !== null) {
+      this.log(`refused a connection: the KNX interface is gone (${this.down})`);
+      reject(E_KNX_CONNECTION);
+      return;
+    }
     if (cri[1] === CRI_DEVICE_MGMT) { this.acceptMgmt(control, data, origin); return; } // ETS opens one alongside its tunnel
     if (cri[1] !== CRI_TUNNEL) { reject(E_CONNECTION_TYPE); return; }
     if (cri[2] !== LAYER_LINK) { reject(E_TUNNELLING_LAYER); return; }  // bus-monitor layer: not served
@@ -444,13 +489,22 @@ export class KnxIpServer {
     }
     let id = 1;
     while (this.channels.has(id) && id < 0xff) id++;
-    if (ia === undefined || this.channels.has(id)) { reject(E_NO_MORE_CONNECTIONS); return; }
+    if (ia === undefined) {
+      // Said with the holders: a channel whose client vanished keeps its address until the reaper
+      // takes it, and the log is where that shows.
+      const holders = [...this.channels.values()].filter((c) => !c.mgmt)
+        .map((c) => `${numToIa(c.ia)} held by channel ${c.id} ${this.peer(c)}, last heard ${Math.round((this.now() - c.lastSeen) / 1000)} s ago`);
+      this.log(`refused a connection ${origin.kind === "tcp" ? `over TCP from ${origin.sock.remote ?? "?"}` : `from ${from.address}:${from.port}`}: no free tunnel address (${holders.join("; ")})`);
+      reject(E_NO_MORE_CONNECTIONS);
+      return;
+    }
+    if (this.channels.has(id)) { reject(E_NO_MORE_CONNECTIONS); return; }
 
     const tcp = origin.kind === "tcp" ? origin.sock : null;
     this.channels.set(id, { id, ia, control, data, tcp, txSeq: 0, rxSeq: 0, lastSeen: this.now(), ack: null, queue: Promise.resolve() });
     const crd = Buffer.from([0x04, CRI_TUNNEL, (ia >> 8) & 0xff, ia & 0xff]);
     this.answer(origin, () => control, knxFrame(SVC.CONNECT_RES, Buffer.concat([Buffer.from([id, E_NO_ERROR]), this.responseHpai(origin), crd])));
-    this.log(`channel ${id} open ${tcp ? "over TCP" : `for ${data.address}:${data.port}`} as ${numToIa(ia)}`);
+    this.log(`channel ${id} open ${this.peer(this.channels.get(id)!)} as ${numToIa(ia)}`);
   }
 
   // ETS 6 opens a local device-management connection ALONGSIDE its tunnel and reads the interface's
@@ -545,6 +599,10 @@ export class KnxIpServer {
     if (!ch) return undefined;
     if (ch.tcp) return origin.kind === "tcp" && origin.sock === ch.tcp ? ch : undefined;
     return origin.kind === "udp" ? ch : undefined;
+  }
+
+  private peer(ch: Channel): string {
+    return ch.tcp ? `over TCP from ${ch.tcp.remote ?? "?"}` : `for ${ch.data.address}:${ch.data.port}`;
   }
 
   private onConnectionState(body: Buffer, origin: Origin): void {

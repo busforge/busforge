@@ -340,3 +340,26 @@ describe("KnxIpTunnel", () => {
     expect(closed[0]!).toContain("error");
   });
 });
+
+describe("KnxIpTunnel: why a gateway refused the connection", () => {
+  async function refusedWith(status: number) {
+    const sock = new FakeUdpSocket();
+    const tunnel = new KnxIpTunnel("192.0.2.10", 3671, () => sock);
+    const p = tunnel.connect().catch((e) => e);
+    await tick();
+    sock.inject(Buffer.from([0x06, 0x10, 0x02, 0x06, 0x00, 0x08, 0x00, status]));
+    return (await p) as { code: string; message: string };
+  }
+
+  test("E_KNX_CONNECTION (0x27) says the gateway has lost its bus, not that it is busy", async () => {
+    const e = await refusedWith(0x27);
+    expect(e.code).toBe("TUNNEL_INTERFACE_UNAVAILABLE");
+    expect(e.message).toContain("0x27");
+  });
+
+  test("any other status stays a plain refusal that names the status", async () => {
+    const e = await refusedWith(0x24);
+    expect(e.code).toBe("TUNNEL_CONNECT_REJECTED");
+    expect(e.message).toContain("0x24");
+  });
+});

@@ -216,6 +216,9 @@ export class KnxIpTunnel implements KnxTransport {
 
   private applyConnectRes(res: Buffer) {
     const b = res.subarray(6);
+    // 0x27 E_KNX_CONNECTION: the gateway is up but has no connection to the bus (the bridge says so
+    // while its USB stick is gone). Busy (0x24) and the rest stay a plain refusal.
+    if (b[1] === 0x27) throw new KnxError("TUNNEL_INTERFACE_UNAVAILABLE", "the KNXnet/IP server has no connection to the KNX bus (connect status 0x27)");
     if (b[1] !== 0) throw new KnxError("TUNNEL_CONNECT_REJECTED", `connect status 0x${b[1].toString(16)}`);
     this.channel = b[0]!;
     this.assignedIa = b.readUInt16BE(2 + 8 + 2); // channel/status + HPAI(8) + CRD type/len(2)

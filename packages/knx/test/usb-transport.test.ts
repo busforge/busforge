@@ -469,3 +469,109 @@ describe("KnxUsbTransport: which of several identical interfaces it opens", () =
     expect(opened).toEqual([["/dev/hidraw9"]]);
   });
 });
+
+// A stick that re-enumerates (replugged, or the host lost it) leaves the transport holding a dead
+// HID handle: node-hid then throws "Cannot write to hid device" on every write, and may or may not
+// emit 'error' from its read side. Both are the interface gone, not a bus fault.
+class LosableHidDevice extends FakeHidDevice {
+  gone = false;
+  closed = 0;
+  private errorCb: ((e: Error) => void) | null = null;
+  override on(ev: "data" | "error", cb: (arg: never) => void): void {
+    if (ev === "error") this.errorCb = cb as unknown as (e: Error) => void;
+    else super.on(ev, cb);
+  }
+  override write(d: number[]): number {
+    if (this.gone) throw new Error("Cannot write to hid device");
+    return super.write(d);
+  }
+  override close(): void { this.closed++; }
+  fail(message: string): void { this.errorCb!(new Error(message)); }
+}
+
+async function losable() {
+  const dev = new LosableHidDevice();
+  const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+  await t.connect();
+  dev.writes.length = 0;
+  const closed: string[] = [];
+  t.onClosed = (r) => closed.push(r);
+  return { dev, t, closed };
+}
+
+describe("KnxUsbTransport: losing the interface", () => {
+  test("a write the HID handle refuses is the interface lost, said once, and no later send touches the handle", async () => {
+    const { dev, t, closed } = await losable();
+    dev.gone = true;
+    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    expect(e).toBeInstanceOf(KnxError);
+    expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
+    expect(closed.length).toBe(1);
+    expect(closed[0]).toContain("Cannot write to hid device");
+    expect(dev.closed).toBe(1); // the dead handle is released, so a reopen can take the stick
+
+    const e2 = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    expect((e2 as KnxError).code).toBe("USB_INTERFACE_LOST");
+    expect(closed.length).toBe(1);
+  });
+
+  test("an error from the HID read side is the interface lost as well", async () => {
+    const { dev, t, closed } = await losable();
+    dev.fail("could not read from HID device");
+    expect(closed).toEqual(["the USB interface reported an error: could not read from HID device"]);
+    expect(dev.closed).toBe(1);
+    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
+    expect(dev.writes.length).toBe(0);
+    dev.fail("again");
+    expect(closed.length).toBe(1);
+  });
+
+  test("our own disconnect is not reported as a loss", async () => {
+    const { dev, t, closed } = await losable();
+    await t.disconnect();
+    dev.fail("closed by us");
+    expect(closed).toEqual([]);
+  });
+});
+
+describe("KnxUsbTransport: losing the interface, edges", () => {
+  test("a loss before anyone listens is told to the first listener", async () => {
+    const dev = new LosableHidDevice();
+    const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+    await t.connect();
+    dev.fail("gone before the bridge watched");
+    const closed: string[] = [];
+    t.onClosed = (r) => closed.push(r);
+    expect(closed).toEqual(["the USB interface reported an error: gone before the bridge watched"]);
+    t.onClosed = (r) => closed.push(r);
+    expect(closed.length).toBe(1); // told once, not to every later listener
+  });
+
+  test("an HID error during connect fails connect with that error", async () => {
+    const dev = new LosableHidDevice();
+    const t = new KnxUsbTransport({ path: "fake" }, fakeHidModule(dev));
+    const origWrite = dev.write.bind(dev);
+    let failed = false;
+    dev.write = (d: number[]) => {
+      const n = origWrite(d);
+      if (!failed) { failed = true; dev.fail("could not read from HID device"); }
+      return n;
+    };
+    const e = await t.connect().catch((x) => x);
+    expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
+    expect((e as Error).message).toContain("could not read from HID device");
+    expect(dev.closed).toBe(1);
+  });
+
+  test("a send waiting for its L_Data.con fails at once as lost, not 1.5 s later as unconfirmed", async () => {
+    const { dev, t } = await losable();
+    const started = Date.now();
+    const p = t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    await flush();
+    dev.fail("could not read from HID device");
+    const e = await p;
+    expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+});

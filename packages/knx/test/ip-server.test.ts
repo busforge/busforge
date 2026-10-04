@@ -222,6 +222,20 @@ describe("KnxIpServer: connection management", () => {
     // addressed to it, and both connection-oriented state machines would be corrupted.
   });
 
+  test("the refusal is logged with who holds the address and how long it has been silent", async () => {
+    const logs: string[] = [];
+    const sock = new FakeSocket();
+    const clock = { t: 1_000_000 };
+    const server = new KnxIpServer({ transport: new FakeBus(), createSocket: () => sock, createTcpListener: noopTcpListener, now: () => clock.t, log: (m) => logs.push(m) });
+    await server.start();
+    sock.deliver(connectReq(), CLIENT);
+    await tick();
+    clock.t += 37_000;
+    sock.deliver(connectReq(), CLIENT2);
+    await tick();
+    expect(logs.at(-1)).toBe("refused a connection from 198.51.100.51:55001: no free tunnel address (1.1.250 held by channel 1 for 198.51.100.50:55000, last heard 37 s ago)");
+  });
+
   test("two clients get two channels and two DISTINCT addresses when a pool is configured", async () => {
     const rig = await serve([IFACE_IA, SECOND_IA]);
     const a = await open(rig, CLIENT);
@@ -668,5 +682,125 @@ describe("KnxIpServer: refusals", () => {
     expect(bye.length).toBe(1);
     expect(bye[0]!.subarray(6)[0]).toBe(ch);
     expect(rig.sock.closed).toBe(true);
+  });
+});
+
+describe("KnxIpServer: the interface goes away", () => {
+  const req = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
+
+  test("open tunnels are disconnected, and a new one is refused with E_KNX_CONNECTION", async () => {
+    const rig = await serve();
+    const ch = await open(rig);
+
+    rig.server.interfaceLost("the USB interface refused a write: Cannot write to hid device");
+
+    const bye = rig.sock.ofService(SVC.DISCONNECT_REQ);
+    expect(bye.length).toBe(1);
+    expect(bye[0]!.subarray(6)[0]).toBe(ch);
+    expect(rig.server.channels.size).toBe(0);
+
+    rig.sock.clear();
+    rig.sock.deliver(connectReq(), CLIENT);
+    await tick();
+    // 0x27 E_KNX_CONNECTION: the server has no connection to the KNX subnetwork. A tunnel granted
+    // now would confirm every frame negatively, which reads as a dead line, not a missing interface.
+    expect(rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6)[1]).toBe(0x27);
+    // Nothing from the dead transport reaches anyone any more.
+    rig.bus.emit(cemiLData(iaToNum("1.2.32"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
+    await tick();
+    expect(rig.sock.ofService(SVC.TUNNEL_REQ).length).toBe(0);
+  });
+
+  test("a device-management connection is refused the same way while the interface is gone", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    rig.sock.deliver(connectReq(0x02, 0x03), CLIENT);
+    await tick();
+    expect(rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6)[1]).toBe(0x27);
+  });
+
+  test("a restored interface serves tunnels again, on the new transport only", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    const fresh = new FakeBus();
+    rig.server.interfaceRestored(fresh);
+    expect(rig.bus.onRawCemi).toBeNull();
+
+    const ch = await open(rig);
+    expect(ch).not.toBe(0);
+    rig.sock.deliver(tunnelReq(ch, 0, req), CLIENT);
+    await tick();
+    expect(fresh.written.length).toBe(1);
+    expect(rig.bus.written.length).toBe(0);
+    rig.sock.deliver(tunnelAck(ch, 0), CLIENT); // the client acknowledges its L_Data.con
+    await tick();
+
+    rig.sock.clear();
+    fresh.emit(cemiLData(iaToNum("1.2.32"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
+    await tick();
+    expect(rig.sock.ofService(SVC.TUNNEL_REQ).length).toBe(1);
+  });
+
+  test("an interface that comes back with another address is refused: the tunnels hand out the old one", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    const other = new FakeBus();
+    other.assignedIa = iaToNum("1.1.99");
+    expect(() => rig.server.interfaceRestored(other)).toThrow(/1\.1\.99/);
+    rig.sock.deliver(connectReq(), CLIENT);
+    await tick();
+    expect(rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6)[1]).toBe(0x27);
+  });
+});
+
+describe("KnxIpServer: restoring the interface, refusals", () => {
+  test("a restore while the interface is still serving is refused, so two transports never feed the tunnels", async () => {
+    const rig = await serve();
+    expect(() => rig.server.interfaceRestored(new FakeBus())).toThrow(/not gone/);
+    expect(rig.bus.onRawCemi).not.toBeNull();
+  });
+
+  test("a restore after stop() is refused", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    await rig.server.stop();
+    const fresh = new FakeBus();
+    expect(() => rig.server.interfaceRestored(fresh)).toThrow(/not running/);
+    expect(fresh.onRawCemi).toBeNull();
+  });
+
+  test("an interface that did not tell its address yet is a retry, not another interface", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    const silent = new FakeBus();
+    silent.assignedIa = 0;
+    let e: unknown;
+    try { rig.server.interfaceRestored(silent); } catch (x) { e = x; }
+    expect((e as { code: string }).code).toBe("BRIDGE_NO_ADDRESS");
+  });
+
+  test("the same serial back with another address is named as such, with the way out", async () => {
+    const rig = await serve();
+    rig.server.interfaceLost("gone");
+    const moved = new FakeBus();
+    moved.assignedIa = iaToNum("1.1.99");
+    let e: unknown;
+    try { rig.server.interfaceRestored(moved); } catch (x) { e = x; }
+    expect((e as { code: string }).code).toBe("BRIDGE_INTERFACE_CHANGED");
+    expect((e as Error).message).toContain("restart the bridge");
+  });
+
+  test("a write that loses the interface mid-tunnel drops the channel and confirms negatively to nobody", async () => {
+    const rig = await serve();
+    const ch = await open(rig);
+    rig.bus.sendCemi = () => { rig.server.interfaceLost("the USB interface refused a write"); return Promise.reject(new Error("USB_INTERFACE_LOST")); };
+    rig.sock.deliver(tunnelReq(ch, 0, cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]))), CLIENT);
+    await tick();
+    await tick();
+    expect(rig.server.channels.size).toBe(0);
+    expect(rig.sock.ofService(SVC.DISCONNECT_REQ).length).toBe(1);
+    // The L_Data.con belonged to the dropped channel; nothing is sent after the disconnect.
+    const after = rig.sock.sent.findIndex((x) => x.frame.readUInt16BE(2) === SVC.DISCONNECT_REQ);
+    expect(rig.sock.sent.slice(after + 1).filter((x) => x.frame.readUInt16BE(2) === SVC.TUNNEL_REQ).length).toBe(0);
   });
 });

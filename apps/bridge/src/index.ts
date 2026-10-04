@@ -1,6 +1,7 @@
 import { inspect } from "node:util";
 import { KnxIpServer, KnxUsbTransport, listUsbInterfaces, numToIa } from "@busforge/knx";
 import { parseArgs, selectInterface, ConfigError } from "./config.ts";
+import { superviseInterface } from "./supervise.ts";
 
 // busforge-bridge: puts a KNX-USB interface on the network as a KNXnet/IP tunnelling server.
 //
@@ -48,6 +49,7 @@ const iface = await (async () => {
 })();
 
 log(`using ${iface.product || "unnamed interface"} (${iface.vendorId.toString(16)}:${iface.productId.toString(16)})`);
+if (!iface.serial) log("this interface reports no USB serial: if it goes away, reopening it works only while no identical interface is attached");
 
 const usb = new KnxUsbTransport({ path: iface.path, vendorId: iface.vendorId, productId: iface.productId });
 await usb.connect();
@@ -63,6 +65,24 @@ const server = new KnxIpServer({
 });
 await server.start();
 
+// A HID path does not survive a re-enumeration, so a reopen names the stick by vendor, product and
+// serial, as a saved USB connection in the server does.
+const supervisor = superviseInterface({
+  initial: usb,
+  server,
+  open: async () => {
+    const t = new KnxUsbTransport({ vendorId: iface.vendorId, productId: iface.productId, serial: iface.serial });
+    try {
+      await t.connect();
+    } catch (e) {
+      await t.disconnect();
+      throw e;
+    }
+    return t;
+  },
+  log,
+});
+
 let stopping = false;
 const shutdown = async (sig: string) => {
   if (stopping) return;
@@ -71,8 +91,9 @@ const shutdown = async (sig: string) => {
   // Order matters: tell the clients first, THEN drop the bus. A client that is mid-download and
   // discovers the bus is gone only when its frames stop being confirmed cannot tell that from a
   // bus fault, and the device it was writing is left in whatever state the interruption found it.
+  supervisor.stop();
   await server.stop();
-  await usb.disconnect();
+  await supervisor.current()?.disconnect();
   process.exit(0);
 };
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
