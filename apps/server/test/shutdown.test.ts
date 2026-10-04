@@ -88,4 +88,11 @@ describe("shutdown on a signal", () => {
     expect(await new Response(proc.stderr).text()).toContain("shutdown cleanup failed");
     expectCheckpointed(dataDir, { [running]: "done", [queued]: "cancelled" });
   }, 15_000);
+
+  test("a checkpoint another connection blocks is reported and exits non-zero", async () => {
+    const { proc } = await start(JOB_MS, { HOLD_READER: "1" });
+    proc.kill("SIGTERM");
+    expect(await proc.exited).toBe(1);
+    expect(await new Response(proc.stderr).text()).toContain("closing the database failed");
+  }, 15_000);
 });

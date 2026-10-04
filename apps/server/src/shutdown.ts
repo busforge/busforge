@@ -19,13 +19,17 @@ export function installShutdown(state: Pick<AppState, "queue" | "bus" | "db">, s
       stopping = true;
       const w = describeActiveWrites();
       say(`received ${sig}, ${w ? `finishing ${w} before exiting` : "exiting"}`);
-      void Promise.resolve().then(() => state.queue.shutdown())
-        .then(() => state.bus.close())
-        .then(() => 0, (e) => { say("shutdown cleanup failed", e); return 1; })
-        .then((code) => {
-          try { closeDb(state.db); } catch (e) { say("closing the database failed", e); code = 1; }
+      void (async () => {
+        let code = 0;
+        try {
+          try { await state.queue.shutdown(); await state.bus.close(); }
+          catch (e) { code = 1; say("shutdown cleanup failed", e); }
+          try { closeDb(state.db); }
+          catch (e) { code = 1; say("closing the database failed", e); }
+        } finally {
           process.exit(code);
-        });
+        }
+      })();
     });
   }
 }
