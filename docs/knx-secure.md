@@ -418,10 +418,12 @@ Both answers were altered in the test script between the tunnel and the session,
 Driving a secure parameter flash needs a secure device a parameter flash can actually target, and
 two common classes of secure device cannot serve:
 
-- **A secure IP interface has no parameter image.** It is a `DefaultProcedure` device with **zero
-  parameter segments**, configured through properties rather than a parameter image, so a parameter
+- **A secure IP interface may have no parameter image.** The MDT IP Interface Secure (MV-0012) is a
+  `DefaultProcedure` device with **zero parameter segments**, configured through properties rather than a parameter image, so a parameter
   flash has nothing to write. Supporting it means building a property-based configuration path, a
-  separate unimplemented capability, not "adding DefaultProcedure".
+  separate unimplemented capability, not "adding DefaultProcedure". The MDT IP Interface/Router
+  (MV-07B0) does have a System B parameter segment, but it is the house's gateway (next point), and
+  its tunnelling entries are not modeled ([owned-products.md](owned-products.md)).
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
   restarts it, which drops the connection carrying the flash.
 

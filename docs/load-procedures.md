@@ -147,6 +147,17 @@ ProductProcedure and MergedProcedure in the corpus except two classes, both refu
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above.
 
+The System 7 **full download** walks the procedure's `full` steps (`planAbsoluteFullDownload`) and
+executes `Unload`, `Load`, `AbsSegment` (with the segment write), `TaskSegment`, `LoadCompleted`
+and `Restart`, and leaves `Connect`, `Disconnect` and `CompareProp` to the caller; any other step
+refuses the download (`FULL_DOWNLOAD_STEP_UNSUPPORTED`). Two verbs
+of the catalogue land there: `LdCtrlTaskCtrl1` (declared by six applications of the real catalogue fixtures, four of
+them owned, none of the MDT or ABB ones) and the absolute `LdCtrlLoadImageProp`. So the full download
+is refused today for the Auro presence detector (M-0081), the Gira Tastsensor 3 (M-0008), the
+Theben TheLuxa P300, the Theben Meteodata 140 S and the Steinel presence detector (M-008E) and the second Auro application (`M-0081_A-FF31`), although their capability flag still says
+`fullDownload` ([owned-products.md](owned-products.md)). Nothing is written before the refusal: the
+plan is built before the first write.
+
 Being dispositioned is not a hardware claim: which application programs have actually been
 flashed, and how far, is in [status.md](status.md).
 

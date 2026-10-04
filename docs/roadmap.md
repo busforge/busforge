@@ -113,6 +113,19 @@ started until the capability it depends on is hardware-proven.
   Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
+- **Offer only what the declared load procedure lets the planner run.** On 22 house units the
+  capability flag offers a full download (and on the Gira M-0008 a parameter flash) the planner then
+  refuses, and the M-0008 group-address flash writes its tables without the declared stamps of
+  objects 1 to 3. Derive the flags from the same coverage, decide what a never-programmed device of
+  these applications gets instead of the download, and refuse the uncovered GA flash
+  ([owned-products.md](owned-products.md)).
+- **Execute `LdCtrlTaskCtrl1` and the absolute `LdCtrlLoadImageProp`**, against an ETS capture of
+  a full download (and, for the M-0008, a parameter and group-address download) of one of the four
+  affected applications. All their units are installed in the house.
+- **Write or refuse an IP interface's tunnelling addresses.** The MDT IP Interface/Router plans a
+  full download that leaves its `AdditionalAddresses` out; refuse until an ETS capture shows what a
+  download onto such an interface writes. Its product data has a System B parameter model, so the
+  opaque-device item above applies to its plain reads, not to its application.
 
 ## KNX Data Secure
 
