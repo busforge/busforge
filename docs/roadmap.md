@@ -167,13 +167,10 @@ Two runs still to be made, then what the collector
   are now logged with the holder's peer and silence, which is what the next occurrence needs. Staged
   on the bench on 2026-10-04 (client gone without a FIN, nothing queued on the stream), the channel
   was released after the 120 s and the next connect served, so a channel that is never released did
-  not reproduce; a queue that does not drain was not staged. Open: whether the bridge should close a
-  TCP stream whose send queue stops draining before the 120 s run out. Bun's `node:net` (and its
-  native sockets) expose neither the kernel send queue nor `TCP_USER_TIMEOUT`. Keepalive does not help
-  a stream with unacknowledged data (retransmission governs it, not the keepalive timer); it would
-  only shorten the idle case staged on the bench. And a Wi-Fi stall of a few seconds that TCP recovers
-  from ([findings.md](findings.md) §25) must not cut a running download. (The dead USB handle of the
-  same day is fixed: the bridge refuses and reopens, see [connections.md](connections.md).)
+  not reproduce; a queue that does not drain was not staged. Such a stream is deliberately left to the
+  same reaper, after the 120 s KNXnet/IP defines (it frees the address whatever the socket's state),
+  with no earlier cut. (The dead USB handle of the same day is fixed: the bridge refuses and reopens.
+  Both in [connections.md](connections.md).)
 - **Sending: confirmation, extended frames, a shared sender address.** Over UDP the interface's
   L_Data.con is not read, so a sent telegram is reported as handed to the interface, not as on the bus
   (over TCP and USB it is). Secured
