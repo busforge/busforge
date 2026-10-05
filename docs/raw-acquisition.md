@@ -544,7 +544,9 @@ Busforge removed, and a warning box on what is not anonymized; and the file itse
 as it is saved. "Save file" hands that text to the browser's downloads folder as
 `busforge-diagnostic-<ia>-<yyyy-mm-dd-hh-mm>.json` (UTC, the same name in every language). Busforge
 sends it nowhere; the dialog says the user can attach it to a GitHub issue themselves, and promises
-nothing about what happens to it after that.
+nothing about what happens to it after that. A package that reaches the author is taken into the private corpus with its
+sender's consent and used in internal tests ([testing.md](testing.md#received-diagnostic-packages));
+the app says nothing about that, since no transfer route exists yet.
 
 **Lifetime.** The package lives in the server's memory, on its job (`DiagnosticStore`,
 `apps/server/src/collect.ts`): review and save work any number of times for 24 hours after the job,
@@ -554,6 +556,9 @@ packages.
 ### What the file holds
 
 Format `busforge-diagnostic/1` (`packages/product/src/diagnostic.ts`), plain JSON, unencrypted.
+Its shape may grow by fields a reader can do without; the intake check takes every shape a build has
+written (`plan.maxApduAlone` is absent from the packages of the first builds). A change that removes,
+renames or retypes a field is a new format version.
 
 | | |
 |---|---|

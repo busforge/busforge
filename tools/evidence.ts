@@ -61,6 +61,14 @@ export interface ImageComparison {
 // Who put the configuration a read-back compares against into the device, as the operator states it.
 export interface DeclaredOrigin { configuredBy: "busforge" | "ets" | "unknown"; priorBusforgeWrites: "none" | "some" | "unknown" }
 
+// What bytes read from a device written as `origin` states can stand for (docs/evidence-contract.md,
+// "Only independent sources can confirm the bytes"): only a device ETS configured and Busforge never
+// wrote is an independent reference; bytes Busforge wrote prove transfer at most.
+export function originReference(origin: DeclaredOrigin): "independently-commissioned-device" | "self-written" | "none" {
+  if (origin.configuredBy === "ets" && origin.priorBusforgeWrites === "none") return "independently-commissioned-device";
+  return origin.configuredBy === "busforge" ? "self-written" : "none";
+}
+
 // A read-back of a device's parameter memory compared with the image Busforge builds for the project.
 // What the comparison shows depends on who wrote the device: bytes Busforge wrote give transfer
 // evidence, bytes only ETS ever wrote give reference evidence, and an unknown writer gives neither.
@@ -73,8 +81,9 @@ export function readbackEvidence(
     ? { method: "device parameter memory byte-equal to the image Busforge builds from the project", detail: `${c.length} bytes` }
     : { detail: `${c.diffBytes} of ${c.length} bytes differ; a difference can also be project-versus-device drift` };
   const result: AxisResult = c.match ? { state: "pass", ...outcome } : { state: "fail", detail: outcome.detail };
-  const independent = origin.configuredBy === "ets" && origin.priorBusforgeWrites === "none";
-  const selfWritten = origin.configuredBy === "busforge";
+  const reference = originReference(origin);
+  const independent = reference === "independently-commissioned-device";
+  const selfWritten = reference === "self-written";
   const unattributed: AxisResult = { state: "not-assessed", detail: `${c.match ? "equal" : "different"}, but who wrote the device is not known` };
   return parseEvidenceRecord({
     schema: "busforge.evidence/1", id: `readback-${c.ia}-${run.recordedAt}`, recordedAt: run.recordedAt,
@@ -82,7 +91,7 @@ export function readbackEvidence(
     medium: "unknown", transport: run.transport,
     build: { server: null, runner: { name: "tools/readback.ts", revision: run.runnerRevision }, spec: null },
     scope: { operation: "readParams", channel: "tool", configuration: "the device's installed configuration, as the imported project states it", configurationFingerprint: null },
-    origin: { configuredBy: origin.configuredBy, reference: independent ? "independently-commissioned-device" : selfWritten ? "self-written" : "none", priorBusforgeWrites: origin.priorBusforgeWrites },
+    origin: { configuredBy: origin.configuredBy, reference, priorBusforgeWrites: origin.priorBusforgeWrites },
     results: {
       transfer: selfWritten ? result : independent ? NOT_ASSESSED : unattributed,
       reference: independent ? result : NOT_ASSESSED,

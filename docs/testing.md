@@ -44,6 +44,7 @@ corpus**:
 ├── catalogue/                 manufacturer ApplicationProgram XML, <id>.xml.gz
 ├── captures/                  logging-proxy captures of ETS and Busforge on the test bench, *.log
 ├── collections/               raw-acquisition packages of real installations, *.json (no test reads them)
+├── received/                  diagnostic packages users sent, one directory per package (see below)
 └── dca-theben-dali-e64/
     ├── backup-store.dat       a DALI gateway backup from a real installation
     └── backup-store.expected.json   the values the parse test expects to read from it
@@ -55,6 +56,7 @@ corpus**:
 | `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the bench devices' serial numbers |
 | `dca-theben-dali-e64/` | `plugins/dca-theben-dali-e64/test/parse.test.ts` | Project name, room names and DALI addresses of a real house |
 | `collections/` | nothing; the record behind a hardware claim in [raw-acquisition.md](raw-acquisition.md). Not in `CORPUS_FILES`: a corpus without it is complete | A real device's identity and memory |
+| `received/` | `tools/received.test.ts`, which loads every package in it. Not in `CORPUS_FILES`: a corpus without it has no received packages | A user's device, its address and memory, kept with their consent |
 
 What stays in the repository are the parts that only point into it: the golden hashes
 (`packages/product/test/fixtures/real/golden.json`) and the reference vectors into the captures
@@ -86,16 +88,16 @@ The status line is the last thing `bun run check` prints (`bun run corpus:status
 Without the corpus:
 
 ```
-private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 23 test files were skipped, not run:
+private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 25 test files were skipped, not run:
   apps/server/test/device-support-doc.test.ts
   ...
-  tools/raw-acquisition-vectors.test.ts
+  tools/received.test.ts
 ```
 
 With it:
 
 ```
-private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 23 test files that have them were enabled
+private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 25 test files that have them were enabled
 ```
 
 The local gate is the run **with** the corpus. Public CI runs without it, and that should be the
@@ -115,6 +117,120 @@ even in a file that has corpus tests, so it keeps running in public CI.
 The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
 `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
+
+### Received diagnostic packages
+
+A user can save a diagnostic package of a device from the app
+([raw-acquisition.md](raw-acquisition.md#diagnostic-package)) and send it in privately. The
+transfer itself is not built yet: no service, no invitation, no endpoint
+([roadmap.md](roadmap.md#raw-acquisition)). What exists is the local half: taking a file that arrived
+into the corpus, keeping a record of where it came from, using it in the tests, and deleting it.
+All of it is `tools/intake.ts` over `tools/received.ts`, and it works only on the corpus
+`BUSFORGE_CORPUS` names; a corpus inside the repository is refused.
+
+```
+<corpus>/received/<id>/
+├── package.json       the file as it arrived, byte for byte
+├── provenance.json    busforge-received/1: sender, issue, consent, who configured the device
+└── derived/           anything made from the package (optional); deleted with it
+```
+
+`<id>` is the first 16 hex digits of the file's SHA-256. Nothing from the file or from the sender
+reaches a path, and directories and files are created readable by the owner only.
+
+#### Taking a package in
+
+```bash
+bun run tools/intake.ts add ~/Downloads/busforge-diagnostic-1.1.203-2026-10-05-17-12.json \
+  --from="reporter of busforge/busforge#42, by the private transfer" \
+  --issue="busforge/busforge#42" \
+  --consent="kept for internal regression tests, deleted on request" --consented-at=2026-10-05 \
+  --configured-by=ets --prior-busforge-writes=none
+```
+
+Every flag but `--received-at` (default: today, UTC; not in the future) is required; without the consent there is no
+intake. The file is checked before anything is written, and refused (exit 1, the reason on stderr,
+nothing stored) when it is:
+
+| Refused | Why |
+|---|---|
+| empty, or larger than 8 MiB | The collector cannot produce more: its memory guard is 1 MiB, 2 MiB as hex |
+| not a regular file: a directory, a link, a FIFO | The file is opened without following a link and checked on the open descriptor, so the file read is the file checked |
+| an archive (gzip, zip, tar, 7z, rar, xz, bzip2, zstd) or a program (ELF, Mach-O, Windows, WebAssembly, a `#!` script) | Only the plain JSON file Busforge saves is taken. Nothing is unpacked, so no archive entry can name a path outside the corpus, and nothing is run |
+| not UTF-8, not a JSON object, not valid JSON | Broken data |
+| a format other than `busforge-diagnostic/1`, an uncleaned `busforge-raw-collect/1` package | The intake takes what the app's cleaning made, nothing else |
+| an unknown or missing field, a wrong type, bytes that are not lower-case hex, an unknown record space, outcome or stop reason, a bad individual address or mask, an end before the start | The schema of `DiagnosticPackage` (`packages/product/src/diagnostic.ts`), checked field by field, as every build so far has written it (see [raw-acquisition.md](raw-acquisition.md#what-the-file-holds) on the format's shape) |
+| a serial number record that still holds bytes | The package was not cleaned by Busforge |
+| a location in a record's target (`object`, `pid`, `start`, `count`, `address`, `length`, `propertyIndex`, `type`) that is not an integer | Written as a string, the serial number's PID 11 would not be recognised |
+| a control character in a name, an identifier or a flag | `list` prints them. Free text the collector or the link wrote (a reason, an error) may be empty or span lines and is taken as it is; every refusal message quotes the file with control characters, line separators and bidirectional overrides escaped as `\uXXXX` |
+| a file received before | Same SHA-256, same id |
+| consent dated after `--received-at`, or `--configured-by=busforge` with `--prior-busforge-writes=none` | The provenance contradicts itself |
+
+The file is copied, not moved: the copy the transfer left (a mail attachment, a download) is the
+operator's to delete.
+
+#### Who wrote the device: evidence strength
+
+`--configured-by` and `--prior-busforge-writes` record the sender's statement of who put the
+configuration into the device, in the vocabulary of the
+[evidence contract](evidence-contract.md#only-independent-sources-can-confirm-the-bytes), and
+`provenance.json` stores the `reference` that follows from it:
+
+| Sender says | `reference` | In the tests |
+|---|---|---|
+| configured by ETS, Busforge never wrote it | `independently-commissioned-device` | `asReference()` hands the package out as an independent reference for the bytes a configuration should give |
+| configured by Busforge | `self-written` | refused as a reference: Busforge's own bytes prove transfer at most |
+| anything else (ETS with Busforge writes since, or unknown) | `none` | refused as a reference |
+
+A test that compares Busforge's bytes with a received package takes it through `asReference()`, so a
+self-written dump can never stand where an independent reference is needed. The stored `reference`
+must follow from the stored origin; a hand edit that upgrades it is refused on load.
+
+#### In the tests
+
+`loadReceived()` returns every package sorted by id, each checked again on every load: its file must
+still have the SHA-256 its provenance records and pass today's check, and its directory may hold
+nothing but `package.json`, `provenance.json` and `derived/`, and no link anywhere (deleting a link
+would leave what it points at). `received/` itself must be a real directory outside the repository,
+not a link. `tools/received.test.ts` runs this
+over the real corpus (a corpus test) and prints how many packages it found: with no `received/`
+directory that is 0, and the test passes with nothing to check. Every other test in the file runs
+on synthetic packages made by `toDiagnosticPackage` in temporary directories, with or without the
+corpus.
+
+The same corpus test checks that no tracked file of the repository holds a received package's
+bytes: every aligned 16-byte chunk of a record's bytes with at least 8 different byte values is
+searched for in the hex digits of every tracked file (spaces, line breaks, capitals and `0x`
+prefixes do not hide a copy) and in its raw bytes (a `.bin` copy). A copy of 32 bytes or more is
+found; fill patterns are not looked for, and neither is a base64 copy. A test or a fixture may name a package by its id, never repeat its content. The corpus itself
+lies outside the repository and the Docker build context is an allowlist of source directories
+(`.dockerignore`), so neither a received package nor `tools/` reaches an image.
+
+#### Deleting a package
+
+```bash
+bun run tools/intake.ts list               # id, date received, IA, mask, reference, issue
+bun run tools/intake.ts remove <id>
+```
+
+`remove` deletes `received/<id>/` with everything in it, `derived/` included. It refuses, naming
+each file, while a copy is left elsewhere: any other file of the corpus (a gzipped one unpacked) or
+any tracked file of the repository that names the package's id or SHA-256 or holds a run of its
+bytes, found as the leak check above finds it. Whatever was made from the package there goes first,
+by hand. Other received packages are searched for the id and hash only: a second package of the same
+device holds the same bytes without being made from this one. Any other file that holds the same
+bytes from an independent source (an own capture of the same product with the same defaults) is
+named with `--independent=<path>`, once per file; its bytes then do not block, its naming the
+package still does. A link anywhere in the corpus is refused, since the search does not follow it. A damaged package (its provenance
+unreadable, its file changed, a link inside) is refused with the damage named, to be looked at and
+deleted by hand. It does not reach:
+
+- **Backups of the corpus.** The author's corpus is in a Time Machine backup; a
+  deleted package stays in the snapshots taken while it was there until Time Machine thins them.
+  A deletion request that has to cover backups needs those snapshots deleted by hand, or the corpus
+  excluded from the backup before the package is taken in.
+- **The copy the transfer left**, any copy outside the corpus and the repository, and copies
+  shorter than 32 bytes, of fill patterns or in base64, which the search does not look for.
 
 ### Why the golden snapshot is not a correctness proof
 

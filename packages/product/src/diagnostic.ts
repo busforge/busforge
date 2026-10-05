@@ -61,7 +61,7 @@ export interface DiagnosticContext {
 // Where a device's serial number is read: PID 11 of any interface object (the identity read and the
 // scan; element 0 is the element count, not the serial), and the memory resource the M112 plan names
 // for it.
-const isSerial = (r: CollectRecord) =>
+export const isSerialRecord = (r: Pick<CollectRecord, "space" | "target" | "step">) =>
   (r.space === "property" && r.target.pid === 11 && r.target.start !== 0)
   || ((r.space === "memory" || r.space === "memory-extended") && r.step === "serial number");
 
@@ -96,7 +96,7 @@ export function toDiagnosticPackage(pkg: CollectPackage, ctx: DiagnosticContext)
     const out: DiagnosticRecord = { ...r, detail: r.detail === undefined ? undefined : scrub(r.detail) };
     if (out.detail === undefined) delete out.detail;
     const value = r.bytes ?? r.raw ?? "";
-    if (!isSerial(r) || value.length === 0) return out;
+    if (!isSerialRecord(r) || value.length === 0) return out;
     const octets = value.length / 2;
     delete out.bytes;
     delete out.raw;

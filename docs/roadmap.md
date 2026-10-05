@@ -148,6 +148,11 @@ Two runs still to be made, then what the collector
 - **System 300 variant plans.** Read the management descriptor, then the resources of the variant
   it names (`MV-0300-0100…`).
 - **Discovery by `PID_IO_LIST`** on MV-2920, instead of the index scan.
+- **A private route for diagnostic packages.** A user who saved a package has no way to send it
+  privately; only the receiving end exists ([testing.md](testing.md#received-diagnostic-packages):
+  intake check, provenance, storage in the corpus, regression load, deletion). Still to choose and
+  build: the transfer service, with invitations that expire, a size and quota limit and access only
+  for the invited sender, and no anonymous public endpoint. The choice of service is open.
 - **Coupler filter tables.** `LcFilterMemory` on the memory- and property-configured couplers, and
   the relative filter table of MV-2920 behind the router object; needs a capture of a tool reading one.
 - **Product XML as the bound of a System B table** whose memory control block is absent, and a
