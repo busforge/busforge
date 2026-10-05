@@ -207,7 +207,7 @@ reads, no scan unless the device answers a first property description.
 
 | | |
 |---|---|
-| Owned | No device is known to be one. The one house instance whose product data declares MV-0012 is the MDT KNX IP interface SCN-IP000.03, which answers plain reads with descriptor `0xFFFF` and was read only through a secure identify ([status.md](status.md), device table; the inventory's `secure: false` for it is wrong). That identify, on 2026-06-30, returned MV-0012 (commits `bd5332d` and `f2b4b20`, no evidence record). An IP interface that reports a BCU1 mask need not hold a BCU1 memory layout; a collector run under its secure session would show it and has not been made (see [Known unknowns](#known-unknowns)). |
+| Owned | No device is known to be one. The one house instance whose product data declares MV-0012 is an MDT KNX IP interface SCN-IP000.03, which answers plain reads with descriptor `0xFFFF` ([status.md](status.md), device table; the inventory's `secure: false` for it is wrong). Its secure identify returned MV-0012 (commits `bd5332d` and `f2b4b20`, no evidence record); the collector run under its secure session read the same descriptor, `0x0012`, now with a package (see [House run](#house-run--the-mv-0012-ip-interface)). What it holds in memory is still not read: the plan's memory step was not attempted under that session. An IP interface that reports a BCU1 mask need not hold a BCU1 memory layout. |
 | Discovery | Descriptor only. BCU1 has no interface objects and declares no `AuthorizeLevels`, so no authorize, no property reads, no scan: requests the device does not implement are answered by silence and cost a timeout each (Calimero notes the same for descriptor type 2). |
 | Range derivation | The master data places everything in memory: manufacturer id `0x0104` (1 byte), application id `0x0104` (4 bytes), PEI type `0x0109`, hardware config `0x010C`, run error `0x010D`, association table pointer `0x0111`, group object table pointer `0x0112`, group address table `0x0116`, individual address `0x0117`, run status and programming mode `0x0060`. The pointers are one byte with the flavour `Ptr_StandardMemory100`; that the table then sits at `0x0100 + pointer` is read from the flavour's name (inferred). |
 | Plan | `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060`; that it also holds the application's parameters is inferred. 256 bytes in 12-byte chunks. Then the tables at their pointers if a pointer leads outside that window. |
@@ -450,11 +450,41 @@ protected, is inferred. The collector records such an answer as `refused` with t
 Not compared yet: a collector package with a Busforge read-back of the same device (the control
 case of System B and M112).
 
+### House run: the MV-0012 IP interface
+
+`tools/collect.ts` against the house device (MV-0012) through the house's own KNXnet/IP gateway, run
+by hand, secured with the tool key from the house project (the key never enters the package),
+read-only: one Sync, then the plan for the reported mask. The checkout was the commit before this
+section's, with uncommitted flash-path changes, none on the collector's path for this run (no
+application program was given; hence `-dirty` in the package's provenance). Whether the tunnel's
+server was this interface itself or the other house interface is not recorded.
+
+| Step | Outcome |
+|---|---|
+| Descriptor (type 0), secured | `0x0012`: MV-0012, family `system-1`, the same as the identify |
+| Plan | the BCU1 plan: no authorize, no interface objects, no identity reads, memory `0x0060` (1 byte) and `0x0100` to `0x01FF` (256 bytes) |
+| Memory | **not attempted**, one record for the whole step: "the device declares no maximum APDU length, so it takes standard frames only, and a secured memory request does not fit one" |
+| Totals | 1 request (the Sync, sent before the plan, not counted), 0 memory requests, 0 bytes, no stop, no limit, 0.06 s |
+
+The refusal is the collector's own, before anything was sent: a secured request carries 13 octets of
+framing (SCF, sequence, MAC, the secure APCI), and a classic memory read, with its count and address,
+then exceeds the 15 octets of a standard frame. The device was not asked for its maximum APDU length:
+the BCU1 plan reads no properties, so the record's "declares no" means "Busforge does not know one",
+not a device answer. The standard-frame bound is Busforge's assumption, and this device already
+exceeds it: the secured descriptor response of this run is 16 octets, and the secured property read
+of its serial (PID 11 of object 0) in the identify of 2026-06-30, with the same tool key, was 18
+octets and was answered. So the device has an object 0 and takes secured requests longer than a
+standard frame; whether it answers PID 56 (the same request shape as the serial read), and whether
+its memory then reads, is the next run.
+
+The package and the run's sequence counter stay out of the repository; the package is in the
+[private corpus](testing.md#the-private-corpus), `collections/`.
+
 ## Known unknowns
 
 | Unknown | Why it matters | How it gets settled |
 |---|---|---|
-| What the house device declared MV-0012 (the MDT IP interface) holds | it is the only owned device in an unsupported family on paper | **mask settled**: its secure identify reported MV-0012 (see [System 1](#system-1-bcu1-mv-0010-to-mv-0013-mv-1011-to-mv-1013-mv-3012-mv-4012)). What it holds: a collector run under that session (`tools/collect.ts --knxproj=…`), read-only, not made yet |
+| What the house device declared MV-0012 (the MDT IP interface) holds | it is the only owned device in an unsupported family on paper | **mask settled with a package**: the secure identify and the collector run under the same session both read MV-0012. **Memory still open**: the BCU1 plan reads no maximum APDU length, so Busforge holds the secured session to standard frames, and no secured memory read fits one (the device itself answered longer secured requests); the collector refused the step without sending it ([House run](#house-run--the-mv-0012-ip-interface)). Settled by a run that first reads PID 56 of object 0 under the session, if the device answers it |
 | BCU1 behaviour at all | no owned real BCU1 is known | a capture from a contributed device, through the diagnostic intake |
 | Whether M112 devices answer property descriptions | ETS never asked them | **settled for the bench devices** (2026-10-04): the ABB US/U 4.2 (MV-0701) describes objects 0 to 4, 21 properties, and the MDT BE-02001.02 (MV-0705) answers the scan as well. Other M112 products: not shown. |
 | Whether a free-key authorize is needed for any read the bench devices allow without it | Busforge reads PID 7 today without authorizing | **settled for the ABB US/U 4.2, the MDT BE-02001.02 and the secured GVS AMMA** (2026-10-04 evening): every read without it ended as it did with it, outcome and length, except three GVS values (object 0 PID 30, PID 220 of objects 7 and 11) that also change between two runs with it. Other devices: not shown. |

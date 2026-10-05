@@ -43,6 +43,7 @@ corpus**:
 <corpus>/
 ├── catalogue/                 manufacturer ApplicationProgram XML, <id>.xml.gz
 ├── captures/                  logging-proxy captures of ETS and Busforge on the test bench, *.log
+├── collections/               raw-acquisition packages of real installations, *.json (no test reads them)
 └── dca-theben-dali-e64/
     ├── backup-store.dat       a DALI gateway backup from a real installation
     └── backup-store.expected.json   the values the parse test expects to read from it
@@ -53,6 +54,7 @@ corpus**:
 | `catalogue/` | the real-catalogue golden, the flash, download, read-back and load-procedure tests, `tools/evidence-bundle.ts` | Manufacturers' catalogue data, with no licence to redistribute it |
 | `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the bench devices' serial numbers |
 | `dca-theben-dali-e64/` | `plugins/dca-theben-dali-e64/test/parse.test.ts` | Project name, room names and DALI addresses of a real house |
+| `collections/` | nothing; the record behind a hardware claim in [raw-acquisition.md](raw-acquisition.md). Not in `CORPUS_FILES`: a corpus without it is complete | A real device's identity and memory |
 
 What stays in the repository are the parts that only point into it: the golden hashes
 (`packages/product/test/fixtures/real/golden.json`) and the reference vectors into the captures
