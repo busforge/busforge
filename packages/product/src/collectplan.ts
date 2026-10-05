@@ -26,10 +26,14 @@ export interface MaskPlan {
   // The mask declares AuthorizeLevels; only then is the free key sent.
   authorize: boolean;
   // declared: the mask has interface objects. probe: unknown, one description request decides.
-  // none: requests the device does not implement cost a timeout each, so nothing is asked.
+  // none: requests the device does not implement cost a timeout each, so nothing is asked but
+  // what maxApduAlone names.
   objects: "declared" | "probe" | "none";
-  // Object 0 identity properties and PID 56.
+  // Object 0 identity properties.
   identity: boolean;
+  // PID 56 of object 0 (maximum APDU length) is read on every plan with declared objects; set, also
+  // on a plan without them, before its memory step: a secured memory read fits no standard frame.
+  maxApduAlone: boolean;
   // Interface object carrying the application id (PID 13).
   applicationObject: number | null;
   // Other property values the master data names as resources (pointers, stamps).
@@ -88,7 +92,7 @@ const GA_TABLE_0X4000: TableStep = { kind: "counted", name: "group address table
 const ASSOC_BY_PROPERTY: TableStep = { kind: "counted", name: "association table", at: { property: { object: 2, pid: 7, bytes: 2 } }, entryBytes: 2 };
 
 const base = (mask: string, family: string): MaskPlan => ({
-  mask, family, authorize: AUTHORIZE.has(mask), objects: "probe", identity: false, applicationObject: null,
+  mask, family, authorize: AUTHORIZE.has(mask), objects: "probe", identity: false, maxApduAlone: false, applicationObject: null,
   properties: [], loadStateObjects: [], memory: [], tables: [], segments: null, securityModeLast: false, notAttempted: [],
 });
 
@@ -148,6 +152,11 @@ export function planForMask(mask: string, app?: CollectApp | null): MaskPlan {
       // timeout. The EEPROM segment holds every resource but the run status; on BCU1 the table
       // pointers are one byte added to 0x0100, so the tables lie inside it.
       p.objects = "none";
+      // The one property read: an IP interface that reports this mask (the house's MDT SCN-IP000.03)
+      // answers secured property reads, and without a maximum APDU no secured memory read is sent. A
+      // real BCU1 is not expected to answer it (inferred), which costs one unanswered request with its
+      // retries and a reopened link.
+      p.maxApduAlone = true;
       p.segments = [{ address: 0x0060, length: 1 }, { address: 0x0100, length: 256 }];
       p.memory.push(
         { address: 0x0060, length: 1, name: "run status and programming mode", source: "master-data" },

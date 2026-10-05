@@ -1,6 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import { KnxDevice, APCI } from "@busforge/knx";
-import { collectDevice, planForMask, unreadableReason, CollectCancelled, COLLECT_LIMITS, type CollectPackage, type CollectRecord } from "../src/index.ts";
+import { KnxDevice, KnxError, APCI } from "@busforge/knx";
+import { collectDevice, planForMask, unreadableReason, CollectCancelled, COLLECT_LIMITS, type CollectDevice, type CollectPackage, type CollectRecord } from "../src/index.ts";
 import { SimSystemB, ALLOWED_APCIS } from "./collect-sim.ts";
 
 function setup() {
@@ -223,11 +223,127 @@ describe("raw acquisition on a System B device", () => {
   }, 20_000);
 });
 
+// A device that answers descriptor `0x0012` (BCU1), as the house's MDT IP interface does under its
+// secure session. `pid56` is how it answers PID 56 of object 0.
+function bcu1(secured: boolean, pid56: "absent" | "silent" | "mac-failed" | Buffer, silentMemoryReads = 0) {
+  const asked: string[] = [];
+  let reopened = 0;
+  let memoryReads = 0;
+  const dev: CollectDevice = {
+    secured,
+    descriptorType0: async () => { asked.push("descriptor"); return "MV-0012"; },
+    authorizeFreeKey: async () => { throw new Error("BCU1 declares no AuthorizeLevels"); },
+    propertyDescription: async () => { throw new Error("BCU1 plan scans no objects"); },
+    propReadCounted: async (obj, pid, start, count) => {
+      asked.push(`property ${obj}/${pid}`);
+      if (pid56 === "silent") throw new KnxError("DEVICE_NOT_ANSWERING", "no answer");
+      if (pid56 === "mac-failed") throw new KnxError("SECURE_ANSWER_REJECTED", "the answer's MAC does not verify");
+      if (pid56 === "absent") return { objectIndex: obj, pid, count: 0, start, value: Buffer.alloc(0) };
+      return { objectIndex: obj, pid, count, start, value: pid56 };
+    },
+    memReadPartial: async (addr, len, o) => {
+      asked.push(`memory 0x${addr.toString(16)}+${len}/${o.chunk}`);
+      o.beforeRequest?.();
+      if (memoryReads++ < silentMemoryReads) return { pieces: [], stopped: { address: addr, error: new KnxError("DEVICE_NOT_ANSWERING", "no answer") } };
+      return { pieces: [{ address: addr, length: len, bytes: Buffer.alloc(len, 0xaa) }], stopped: null };
+    },
+    funcPropExtStateRead: async () => { throw new Error("BCU1 plan reads no security mode"); },
+  };
+  return { dev, asked, reopen: async () => { reopened++; }, reopened: () => reopened };
+}
+const memoryStep = (p: CollectPackage) => p.records.filter((r) => r.space === "memory" || r.space === "memory-extended");
+
+describe("raw acquisition on a BCU1-mask device", () => {
+  test("secured: PID 56 of object 0 is read first, and the memory is read within the APDU it declares", async () => {
+    const { dev, asked, reopen } = bcu1(true, Buffer.from([0x00, 0x28]));
+    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(p.maxApdu).toBe(40);
+    // Read-only: the descriptor, the one property read, then memory; nothing else.
+    expect(asked[0]).toBe("descriptor");
+    expect(asked[1]).toBe("property 0/56");
+    expect(asked.slice(2).every((a) => a.startsWith("memory "))).toBe(true);
+    // 40 octets less 3 of APCI and address, less 13 of secure framing.
+    expect(asked.slice(2)).toEqual(["memory 0x60+1/24", "memory 0x100+256/24"]);
+    expect(memoryStep(p).map((r) => [r.target.address, r.target.length, r.outcome])).toEqual([[0x60, 1, "bytes"], [0x100, 256, "bytes"]]);
+  });
+
+  test("secured, PID 56 absent: the memory step is not attempted, and the record says the device declares none", async () => {
+    const { dev, asked, reopen } = bcu1(true, "absent");
+    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(p.maxApdu).toBeNull();
+    expect(asked).toEqual(["descriptor", "property 0/56"]);
+    expect(p.records.find((r) => r.step === "max-apdu")).toMatchObject({ outcome: "refused" });
+    expect(memoryStep(p)).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("the device declares no maximum APDU length (PID 56 of object 0 answered with element count 0)") }]);
+  });
+
+  test("secured, PID 56 unanswered: the memory step is not attempted, and the record says the read ended without an answer", async () => {
+    const { dev, asked, reopen, reopened } = bcu1(true, "silent");
+    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(asked).toEqual(["descriptor", "property 0/56"]);
+    expect(reopened()).toBe(1);
+    const m = memoryStep(p);
+    expect(m.map((r) => r.outcome)).toEqual(["not-attempted"]);
+    expect(m[0].detail).toContain("no maximum APDU length is known: the read of PID 56 of object 0 ended timeout");
+    expect(m[0].detail).not.toContain("declares");
+  });
+
+  test("plain, PID 56 unanswered: the memory is read in standard-frame chunks, as before", async () => {
+    const { dev, asked, reopen, reopened } = bcu1(false, "silent");
+    const p = await collectDevice(dev, { ia: "1.2.10", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(p.records.find((r) => r.step === "max-apdu")).toMatchObject({ outcome: "timeout" });
+    expect(reopened()).toBe(1);
+    expect(asked).toEqual(["descriptor", "property 0/56", "memory 0x60+1/12", "memory 0x100+256/12"]);
+    expect(memoryStep(p).every((r) => r.outcome === "bytes")).toBe(true);
+  });
+
+  test("an unanswered PID 56 does not count towards closing the device off", async () => {
+    // Two failed memory requests after it: with PID 56 counted, that would be three in a row.
+    const { dev, reopen, reopened } = bcu1(false, "silent", 2);
+    const p = await collectDevice(dev, { ia: "1.2.10", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(reopened()).toBe(3);
+    expect(memoryStep(p).filter((r) => r.outcome === "timeout")).toHaveLength(2);
+    expect(memoryStep(p).some((r) => r.outcome === "bytes")).toBe(true);
+  });
+
+  test("secured, PID 56 answered with a failed MAC: the record names the malformed read, not an absent property", async () => {
+    const { dev, reopen } = bcu1(true, "mac-failed");
+    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const m = memoryStep(p);
+    expect(m.map((r) => r.outcome)).toEqual(["not-attempted"]);
+    expect(m[0].detail).toContain("the read of PID 56 of object 0 ended malformed");
+  });
+
+  test("secured, a declared maximum APDU too short for a secured memory read: the memory step is not attempted and says so", async () => {
+    const { dev, asked, reopen } = bcu1(true, Buffer.from([0x00, 0x0f]));
+    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    expect(p.maxApdu).toBe(15);
+    expect(asked).toEqual(["descriptor", "property 0/56"]);
+    const m = memoryStep(p);
+    expect(m.map((r) => r.outcome)).toEqual(["not-attempted"]);
+    expect(m[0].detail).toContain("does not fit the device's maximum APDU length of 15");
+  });
+
+  test("a secured plan that does not read PID 56 says so, not that the device declares none", async () => {
+    const { dev, reopen } = bcu1(true, "absent");
+    // An unknown mask: the probing plan, no PID 56, and an empty memory plan apart from the chunk check.
+    const d = { ...dev, descriptorType0: async () => "MV-4711", propertyDescription: async () => { throw new KnxError("DEVICE_NOT_ANSWERING", "no answer"); } };
+    const p = await collectDevice(d, { ia: "1.2.90", signal: ctl().signal, reopen });
+    expect(p.records.some((r) => r.step === "max-apdu")).toBe(false);
+    expect(memoryStep(p)).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("no maximum APDU length is known: this plan does not read PID 56 of object 0") }]);
+  });
+});
+
 describe("raw acquisition plans", () => {
   test("BCU1: no authorize, no interface objects, the EEPROM segment and the run status", () => {
     const p = planForMask("MV-0012");
     expect(p.authorize).toBe(false);
     expect(p.objects).toBe("none");
+    expect(p.maxApduAlone).toBe(true);
     expect(p.memory.map((m) => [m.address, m.length])).toEqual([[0x60, 1], [0x100, 256]]);
   });
 

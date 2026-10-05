@@ -136,12 +136,13 @@ Two runs still to be made, then what the collector
 ([raw-acquisition.md](raw-acquisition.md#implementation)) records as not attempted.
 
 - **Read the house's MV-0012 IP interface's memory under its secure session.** The
-  run read its descriptor and refused the memory step: the BCU1 plan reads no maximum APDU length,
-  so Busforge holds the session to standard frames, which no secured memory read fits
+  run read its descriptor and refused the memory step: the BCU1 plan read no maximum APDU length,
+  so Busforge held the session to standard frames, which no secured memory read fits
   ([raw-acquisition.md](raw-acquisition.md#house-run--the-mv-0012-ip-interface)). The
-  device already answered secured requests longer than that (its serial read in June). Next: read
-  PID 56 of object 0 under the session first, then `0x0060` and `0x0100` to `0x01FF` within the
-  APDU it declares. Read-only, a house run by hand.
+  device already answered secured requests longer than that (its serial read in June). The plan
+  now reads PID 56 of object 0 first, then `0x0060` and `0x0100` to `0x01FF` within the APDU the
+  device declares, if that is long enough for a secured memory read (tests only). Next: run the collector again under the session. Read-only, a house
+  run by hand.
 - **Compare a package with a read-back.** On a System B and an M112 bench device, the collector's
   table and segment bytes against a Busforge read-back of the same device, as the control case.
 - **System 300 variant plans.** Read the management descriptor, then the resources of the variant

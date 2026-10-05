@@ -116,6 +116,8 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
   let phase: "generic" | "scan" | "memory" = "generic";
   let failures = 0;
   let authorize = false;
+  // The reason no maximum APDU length is known, for as long as none is.
+  let noMaxApdu = "no maximum APDU length is known: this plan does not read PID 56 of object 0";
 
   const checkJob = () => {
     if (opts.signal.aborted) throw new Stop("cancelled", "the job was cancelled");
@@ -235,10 +237,20 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
         rec({ step: "authorize", space: "authorize", target: { key: "free" }, source: "master-data", outcome: "bytes", bytes: a.value.toString(16).padStart(2, "0") });
       }
     }
-    if (plan.objects === "declared") {
+    if (plan.objects === "declared" || plan.maxApduAlone) {
       opts.onProgress?.("identity");
       const m = await readProperty("max-apdu", 0, 56, 1, 1, "master-data");
-      pkg.maxApdu = m === null ? null : m.length >= 2 ? m.readUInt16BE(0) : m.length === 1 ? m[0] : null;
+      pkg.maxApdu = m === null ? null : m.length >= 2 ? m.readUInt16BE(0) : m[0];
+      if (m === null) {
+        const outcome = pkg.records.findLast((r) => r.step === "max-apdu")?.outcome;
+        noMaxApdu = outcome === "refused" ? "the device declares no maximum APDU length (PID 56 of object 0 answered with element count 0)"
+          : `no maximum APDU length is known: the read of PID 56 of object 0 ended ${outcome ?? "without a record"}`;
+        // On a plan without interface objects no answer is expected, so it does not count towards
+        // closing the device off.
+        if (plan.objects !== "declared") failures = 0;
+      }
+    }
+    if (plan.objects === "declared") {
       if (plan.identity) {
         for (const pid of [11, 12, 15, 25, 78, 9]) await readProperty("identity", 0, pid, 1, 1, "master-data");
       }
@@ -289,13 +301,19 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
   pkg.finishedAt = now();
   return pkg;
 
+  // The request sizes for this session, or why no secured request fits.
+  function chunksOrWhy(): ReturnType<typeof transferChunks> | string {
+    if (pkg.maxApdu === null && dev.secured) return `${noMaxApdu}, so the secured session is held to standard frames, and a secured memory request does not fit one`;
+    try { return transferChunks(pkg.maxApdu, dev.secured); }
+    catch (e) { return e instanceof Error ? e.message : String(e); }
+  }
+
   // Objects by index, each object's properties by index, then the values the session may read.
   async function scan(): Promise<void> {
     // Data bytes one property response carries: the classic memory figure less the two octets a
     // property response spends more (object, PID, count and start against a 2-byte address).
-    let budget: number | string;
-    try { budget = transferChunks(pkg.maxApdu, dev.secured).classicRead - 2; }
-    catch (e) { budget = e instanceof Error ? e.message : String(e); }
+    const c = chunksOrWhy();
+    const budget = typeof c === "string" ? c : c.classicRead - 2;
     let anyAnswer = false;
     for (let obj = 0; obj < L.maxObjects; obj++) {
       const first = await ask({ step: "scan", space: "property-description", target: { object: obj, propertyIndex: 0 }, source: "device" }, () => dev.propertyDescription(obj, 0, 0));
@@ -366,10 +384,9 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
   }
 
   async function memoryPlan(plan: MaskPlan, loadStates: Map<number, number>): Promise<void> {
-    let chunks: ReturnType<typeof transferChunks>;
-    try { chunks = transferChunks(pkg.maxApdu, dev.secured); }
-    catch (e) {
-      rec({ step: "memory", space: "memory", target: {}, source: "master-data", outcome: "not-attempted", detail: e instanceof Error ? e.message : String(e) });
+    const chunks = chunksOrWhy();
+    if (typeof chunks === "string") {
+      rec({ step: "memory", space: "memory", target: {}, source: "master-data", outcome: "not-attempted", detail: chunks });
       return;
     }
     const range = async (step: string, r: MemoryRange, source: RangeSource): Promise<Buffer | null> => {

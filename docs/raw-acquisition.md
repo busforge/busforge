@@ -76,8 +76,9 @@ T_Connect
   DeviceDescriptor type 0 ......... mask, or MV-FFFF: secured and no key -> stop here
   [mask declares AuthorizeLevels]
     Authorize FFFFFFFF ............ level (ETS gets 0 from all four bench devices)
-  [mask has interface objects]
+  [mask has interface objects, or the BCU1 plan]
     PID 56 on object 0 ............ max APDU, or absent (count 0) -> classic chunks
+  [mask has interface objects]
     identity properties ........... object 0: PID 11 serial, 12 manufacturer, 15 order info,
                                     25 version, 78 hardware type, 9 firmware revision;
                                     PID 13 (application id) on the application object
@@ -210,9 +211,9 @@ reads, no scan unless the device answers a first property description.
 | | |
 |---|---|
 | Owned | No device is known to be one. The one house instance whose product data declares MV-0012 is an MDT KNX IP interface SCN-IP000.03, which answers plain reads with descriptor `0xFFFF` ([status.md](status.md), device table; the inventory's `secure: false` for it is wrong). Its secure identify returned MV-0012 (commits `bd5332d` and `f2b4b20`, no evidence record); the collector run under its secure session read the same descriptor, `0x0012`, now with a package (see [House run](#house-run--the-mv-0012-ip-interface)). What it holds in memory is still not read: the plan's memory step was not attempted under that session. An IP interface that reports a BCU1 mask need not hold a BCU1 memory layout. |
-| Discovery | Descriptor only. BCU1 has no interface objects and declares no `AuthorizeLevels`, so no authorize, no property reads, no scan: requests the device does not implement are answered by silence and cost a timeout each (Calimero notes the same for descriptor type 2). |
+| Discovery | Descriptor, then one property read: PID 56 of object 0 (maximum APDU length), before the memory step. BCU1 has no interface objects and declares no `AuthorizeLevels`, so no authorize, no other property read, no scan: requests the device does not implement are answered by silence and cost a timeout each (Calimero notes the same for descriptor type 2). PID 56 is the exception because the one owned device with this mask, an IP interface, answers secured property reads, and without a maximum APDU no secured memory read fits (see [House run](#house-run--the-mv-0012-ip-interface)); a real BCU1 is not expected to answer it (inferred), which costs one unanswered request with its retries (a few seconds) and a reopened link, and does not count towards closing the device off. Without a usable value (absent, unanswered, answered malformed or with a failed MAC) a plain session reads in 12-byte chunks and a secured one refuses its memory step, and the record says how the PID 56 read ended; a secured session also refuses it when the declared length is too short for a secured memory read. |
 | Range derivation | The master data places everything in memory: manufacturer id `0x0104` (1 byte), application id `0x0104` (4 bytes), PEI type `0x0109`, hardware config `0x010C`, run error `0x010D`, association table pointer `0x0111`, group object table pointer `0x0112`, group address table `0x0116`, individual address `0x0117`, run status and programming mode `0x0060`. The pointers are one byte with the flavour `Ptr_StandardMemory100`; that the table then sits at `0x0100 + pointer` is read from the flavour's name (inferred). |
-| Plan | `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060`; that it also holds the application's parameters is inferred. 256 bytes in 12-byte chunks. Then the tables at their pointers if a pointer leads outside that window. |
+| Plan | PID 56 of object 0, then `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060`; that it also holds the application's parameters is inferred. 256 bytes in 12-byte chunks, or in chunks sized to the maximum APDU the device declares. Then the tables at their pointers if a pointer leads outside that window. |
 | Credentials | None. |
 | Stop | A pointer outside `0x0100` to `0x01FF` is recorded and not followed (inferred: on BCU1 it would be a corrupt table). |
 
@@ -490,6 +491,15 @@ octets and was answered. So the device has an object 0 and takes secured request
 standard frame; whether it answers PID 56 (the same request shape as the serial read), and whether
 its memory then reads, is the next run.
 
+Since this run the BCU1 plan reads PID 56 of object 0 before its memory step, and a refused memory
+step names its cause: "the device declares no maximum APDU length" only when the device answered
+PID 56 with element count 0; "no maximum APDU length is known" with the read's outcome (timeout,
+connection closed, malformed, which includes an answer whose MAC fails) when the read gave no value;
+"this plan does not read PID 56 of object 0" for a plan that does not ask it (the probing plan of an
+unknown mask, the memory-only coupler plans); and the declared length when it is too short for a
+secured memory read. Shown by tests against a simulated device only; the house device has not been
+asked yet.
+
 The package and the run's sequence counter stay out of the repository; the package is in the
 [private corpus](testing.md#the-private-corpus), `collections/`.
 
@@ -565,7 +575,7 @@ cancelled. A cancel during a failed request opens no new link.
 
 | Unknown | Why it matters | How it gets settled |
 |---|---|---|
-| What the house device declared MV-0012 (the MDT IP interface) holds | it is the only owned device in an unsupported family on paper | **mask settled with a package**: the secure identify and the collector run under the same session both read MV-0012. **Memory still open**: the BCU1 plan reads no maximum APDU length, so Busforge holds the secured session to standard frames, and no secured memory read fits one (the device itself answered longer secured requests); the collector refused the step without sending it ([House run](#house-run--the-mv-0012-ip-interface)). Settled by a run that first reads PID 56 of object 0 under the session, if the device answers it |
+| What the house device declared MV-0012 (the MDT IP interface) holds | it is the only owned device in an unsupported family on paper | **mask settled with a package**: the secure identify and the collector run under the same session both read MV-0012. **Memory still open**: the run's BCU1 plan read no maximum APDU length, so Busforge held the secured session to standard frames, and no secured memory read fits one (the device itself answered longer secured requests); the collector refused the step without sending it ([House run](#house-run--the-mv-0012-ip-interface)). The plan now reads PID 56 of object 0 first (tests only). Settled by running the collector again under the session: if the device declares a maximum APDU long enough for a secured memory read, the memory is read within it; if not, the record says why |
 | BCU1 behaviour at all | no owned real BCU1 is known | a capture from a contributed device, through the diagnostic intake |
 | Whether M112 devices answer property descriptions | ETS never asked them | **settled for the bench devices** (2026-10-04): the ABB US/U 4.2 (MV-0701) describes objects 0 to 4, 21 properties, and the MDT BE-02001.02 (MV-0705) answers the scan as well. Other M112 products: not shown. |
 | Whether a free-key authorize is needed for any read the bench devices allow without it | Busforge reads PID 7 today without authorizing | **settled for the ABB US/U 4.2, the MDT BE-02001.02 and the secured GVS AMMA** (2026-10-04 evening): every read without it ended as it did with it, outcome and length, except three GVS values (object 0 PID 30, PID 220 of objects 7 and 11) that also change between two runs with it. Other devices: not shown. |
