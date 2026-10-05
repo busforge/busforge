@@ -80,7 +80,6 @@ Or with the `docker-compose.yml` in the repository, which runs as-is and takes e
 site-specific value from the environment:
 
 ```bash
-BUSFORGE_IMAGE=busforge:latest \
 BUSFORGE_DATA=/srv/busforge/data \
 BUSFORGE_MASTER_KEY=<32 random bytes> \
   docker compose up -d
@@ -88,7 +87,7 @@ BUSFORGE_MASTER_KEY=<32 random bytes> \
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BUSFORGE_IMAGE` | `busforge:latest` | Image to run, including a registry prefix if it is not local, e.g. `ghcr.io/busforge/busforge:latest` for the published image ([Continuous integration](#continuous-integration)) |
+| `BUSFORGE_IMAGE` | `ghcr.io/busforge/busforge:latest` | Image to run: by default the published image ([Continuous integration](#continuous-integration)); `busforge:latest` for one built locally as above |
 | `BUSFORGE_DATA` | named volume `busforge-data` | Host path for the data directory, if you want it on a specific (backed-up) filesystem |
 | `BUSFORGE_MASTER_KEY` | unset | Passed through only when set, so an empty value can never look like a configured key |
 

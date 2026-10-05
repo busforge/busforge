@@ -16,7 +16,7 @@
 #       ports: ["127.0.0.1:3000:3000"]
 services:
   busforge:
-    image: ${BUSFORGE_IMAGE:-busforge:latest}
+    image: ${BUSFORGE_IMAGE:-ghcr.io/busforge/busforge:latest}
     container_name: busforge
     restart: unless-stopped
     # `docker stop` sends SIGTERM, and the server then finishes a running device write (read-back
