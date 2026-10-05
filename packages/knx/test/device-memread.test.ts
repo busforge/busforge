@@ -4,7 +4,7 @@ import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts
 
 // A minimal in-memory transport that answers MemoryRead like a real M112 device with an
 // internal read boundary: it refuses (empty response) any single read that spans the byte
-// pair (B-1, B), exactly as the house M-0048/M-0008 devices do around 0x4008/0x4009.
+// pair (B-1, B), exactly as the house's M-0048/M-0008 devices do around 0x4008/0x4009.
 // Each readable byte's value is (address & 0xff), so a correct read is trivially checkable.
 class FakeBoundaryTransport implements KnxTransport {
   assignedIa = 0x0001;
