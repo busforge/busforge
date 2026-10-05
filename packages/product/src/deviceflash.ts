@@ -395,6 +395,33 @@ export interface AbsFullDownloadPlan {
   imageBytes: number;
 }
 
+// The declared "full" steps planAbsoluteFullDownload executes, with the attributes each needs. Connect,
+// disconnect and the app-id CompareProp are the caller's (System7Profile.downloadFull).
+const ABS_FULL_STEP_ATTRS: Record<string, readonly string[]> = {
+  LdCtrlUnload: ["LsmIdx"], LdCtrlLoad: ["LsmIdx"], LdCtrlLoadCompleted: ["LsmIdx"],
+  LdCtrlAbsSegment: ["LsmIdx", "Address", "Size"], LdCtrlTaskSegment: ["LsmIdx", "Address"],
+  LdCtrlRestart: [], LdCtrlConnect: [], LdCtrlDisconnect: [], LdCtrlCompareProp: [],
+};
+
+export interface StepRefusal { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" | "FULL_DOWNLOAD_STEP_MALFORMED" | "LOAD_PROCEDURE_UNSUPPORTED"; message: string }
+
+// Why the absolute full download cannot run this declared procedure, or null when it can. The planner
+// refuses with exactly this, and capabilities() offers the full download only where it is null, so the
+// UI never offers a download the planner then refuses.
+export function absoluteFullStepRefusal(procedure: LoadProcedures): StepRefusal | null {
+  const steps = flattenSteps(procedure, "full");
+  if (steps.length === 0) {
+    return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `the application declares no full-download steps (load procedure style ${procedure.style}); refusing to commission it from a recipe Busforge would have to invent` };
+  }
+  for (const s of steps) {
+    const needs = ABS_FULL_STEP_ATTRS[s.verb];
+    if (!needs) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe` };
+    const missing = needs.find((a) => s.attrs[a] === undefined);
+    if (missing) return { code: "FULL_DOWNLOAD_STEP_MALFORMED", message: `${s.verb} is missing its ${missing}; refusing to build a partial download` };
+  }
+  return null;
+}
+
 export function planAbsoluteFullDownload(
   app: AppConfig,
   values: Map<string, string>,
@@ -407,6 +434,11 @@ export function planAbsoluteFullDownload(
   // `propertyMapped`: a declared segment without <Data> is the device's own (declared, not written).
   opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } },
 ): AbsFullDownloadPlan {
+  // A declared step we cannot execute, or whose attributes we cannot read, is a recipe we cannot
+  // run; refuse before building anything rather than emit a plan that silently omits it. Same stance
+  // as the par path's coverage gate, but on the "full" step list the planner actually runs.
+  const refusal = absoluteFullStepRefusal(procedure);
+  if (refusal) throw new ProductError(refusal.code, refusal.message);
   const propertyMapped = opts.propertyMapped;
   // The two group tables live in the segments the app names; every other declared segment is the
   // application image (params overlaid on <Data>, or plain <Data>). If the app names a table
@@ -470,9 +502,6 @@ export function planAbsoluteFullDownload(
   const plan: LoadPlan = [];
   const segments: AbsFullSegment[] = [];
   let imageBytes = 0;
-  // A declared step whose attributes we cannot read is a recipe we cannot execute; refuse rather
-  // than emit a plan that silently omits it. Same stance as the par path's coverage gate, but on
-  // the "full" step list the planner actually runs.
   const need = <T>(v: T | undefined, verb: string, what: string): T => {
     if (v === undefined) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `${verb} is missing its ${what}; refusing to build a partial download`);
     return v;

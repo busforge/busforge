@@ -122,6 +122,10 @@ export interface DeviceConfigView {
   // device's state, such as linkBaseGaps below, come on top). readbackSupport is the read subset,
   // kept for the read-back honesty text.
   capabilities?: DeviceCapabilities;
+  // Why an operation capabilities() withholds is withheld, where the application itself is the reason
+  // (its declared load procedure): the error code the server answers that write with, for the UI to
+  // say instead of only greying it out. Attached by the server.
+  refusals?: Partial<Record<keyof DeviceCapabilities, string>>;
   // What was shown on hardware for this device's Product and application program, per operation
   // (compatibility.ts buildMatrix over the evidence bundle the server ships). Attached by the server.
   compatibility?: Record<MatrixOperation, OperationVerdict>;

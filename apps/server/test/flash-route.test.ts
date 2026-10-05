@@ -97,7 +97,14 @@ async function acknowledgeUntested(state: AppState, projectId: string, deviceId:
   expect((await handleApi(req(`/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
 }
 // The real M-0081 (MV-0705, flashParams+flashLinks capable) is the default device for these tests.
+// Its declared load procedure has a step the full download cannot execute (LdCtrlTaskCtrl1), so the
+// tests that drive the download route use the MDT BE-02001.02 (MV-0705, every write offered).
 const m0081Project = (state: AppState) => projectWithApp(state, realAppXml());
+const mdtProject = (state: AppState) => projectWithApp(state, catalogueXml("M-0083_A-00B6-32-9642.xml.gz"));
+// P-7_R-6 is a memory-backed number on the MDT that leaves the com-object table alone; MD-2_M-2_MI-1_O-3-0_R-11
+// is com-object 0 (channel 1's first module instance) in the default view.
+const MDT_PARAM_REF = "M-0083_A-00B6-32-9642_P-7_R-6";
+const MDT_LINK_KEY = "MD-2_M-2_MI-1_O-3-0_R-11";
 
 // A real write answers 202 with its queued task; its outcome is collected from the task.
 async function programmed(state: AppState, response: Promise<Response | null> | Response | null) {
@@ -456,6 +463,82 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
   });
 });
 
+// An application whose declared load procedure has a step the full download cannot execute
+// (LdCtrlTaskCtrl1 on the M-0081): the full download is refused with the planner's own code, and a
+// device of it that the surgical flash cannot safely start from is pointed at ETS instead of at the
+// download it cannot have. The M-0008 also declares LdCtrlLoadImageProp on the objects the parameter
+// and group-address flash write, so both are refused with LOAD_STEP_UNSUPPORTED.
+corpusDescribe("an application whose load procedure the full download cannot run", () => {
+  const TABLE_CHANGING_M0081 = "M-0081_A-FE01-11-75D9_P-4_R-4"; // 1 activates com-object 8
+  const never = (state: AppState, projectId: string, deviceId: string) =>
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+
+  test("the download route refuses with the planner's code and never reaches the download", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    downloadImpl = async () => { throw new Error("the full download must not be reached"); };
+    try {
+      for (const route of ["download", "download?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+      }
+    } finally { downloadImpl = realDownload; }
+  });
+
+  test("a never-programmed device is refused on the parameter and the group-address flash, naming ETS", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    never(state, projectId, deviceId);
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    try {
+      for (const route of ["flash", "flash?dry=1", "flash-ga", "flash-ga?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("NEVER_PROGRAMMED_USE_ETS");
+      }
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+
+  test("a change that rewrites the com-object table names ETS, not the download", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_M0081, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    try {
+      for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_ETS");
+      }
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+
+  test("M-0008: the parameter and group-address flash are refused with LOAD_STEP_UNSUPPORTED, never reached", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"));
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    try {
+      for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("LOAD_STEP_UNSUPPORTED");
+      }
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+
+  test("the device view carries the refusal codes next to the withheld capabilities", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"));
+    const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(view.capabilities).toMatchObject({ flashParams: false, flashLinks: false, fullDownload: false });
+    expect(view.refusals).toEqual({ flashParams: "LOAD_STEP_UNSUPPORTED", flashLinks: "LOAD_STEP_UNSUPPORTED", fullDownload: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
+  });
+});
+
 // Jung 400021SE (module device): "Kanalfunktion" of channel 1 is a module-instance parameter with no
 // device memory, yet it decides which com-objects the channel has (8 = door/window status removes
 // #253 and #254). A download programmed with it compiled the device's com-object table for that
@@ -467,7 +550,7 @@ corpusDescribe("a memory-less module parameter that shapes the com-object table"
 
   test("a never-programmed device: surgical flashes are refused, only a verified download clears it", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
+    const { projectId, deviceId } = await mdtProject(state);
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
     const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
@@ -511,18 +594,18 @@ function setProgrammingResult(run: () => Promise<FlashResult>) {
   gaFlashImpl = run;
   downloadImpl = run;
 }
-function linkBaseline(state: AppState, projectId: string, deviceId: string): number[] {
+function linkBaseline(state: AppState, projectId: string, deviceId: string, key = MDT_LINK_KEY): number[] {
   return (state.db.query("SELECT ga_raw AS raw FROM device_link_base WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ? ORDER BY slot")
-    .all(projectId, deviceId, LINK_KEY) as { raw: number }[]).map((r) => r.raw);
+    .all(projectId, deviceId, key) as { raw: number }[]).map((r) => r.raw);
 }
 
 for (const route of programmingRoutes) {
   for (const timing of ["queued", "running"] as const) {
     corpusTest(`${route}: edits while ${timing} retain submitted baselines`, async () => {
       const state = freshState();
-      const { projectId, deviceId } = await m0081Project(state);
-      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "2");
-      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040b]);
+      const { projectId, deviceId } = await mdtProject(state);
+      setDeviceParam(state.db, projectId, deviceId, MDT_PARAM_REF, "2");
+      setDeviceLink(state.db, projectId, deviceId, MDT_LINK_KEY, [0x040b]);
       const gate = Promise.withResolvers<void>();
       const started = Promise.withResolvers<void>();
       const blocker = timing === "queued" ? state.queue.enqueue(
@@ -535,24 +618,24 @@ for (const route of programmingRoutes) {
         for (let i = 0; i < 50 && state.queue.list(projectId).length < 2; i++) await Promise.resolve();
         expect(state.queue.list(projectId)).toHaveLength(2);
       }
-      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
-      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040c]);
+      setDeviceParam(state.db, projectId, deviceId, MDT_PARAM_REF, "1");
+      setDeviceLink(state.db, projectId, deviceId, MDT_LINK_KEY, [0x040c]);
       gate.resolve();
       await blocker;
       expect((await submitted).state).toBe("done");
-      if (route !== "flash-ga") expect(getDeviceParamBase(state.db, projectId, deviceId).get(PARAM_REF)).toBe("2");
+      if (route !== "flash-ga") expect(getDeviceParamBase(state.db, projectId, deviceId).get(MDT_PARAM_REF)).toBe("2");
       if (route !== "flash") expect(linkBaseline(state, projectId, deviceId)).toEqual([0x040b]);
       const drift = getDeviceChangedKeys(state.db, projectId, deviceId);
-      expect(drift.params.has(PARAM_REF)).toBe(true);
-      expect(drift.links.has(LINK_KEY)).toBe(true);
+      expect(drift.params.has(MDT_PARAM_REF)).toBe(true);
+      expect(drift.links.has(MDT_LINK_KEY)).toBe(true);
     });
   }
   for (const outcome of ["unverified", "failed", "dry"] as const) {
     corpusTest(`${route}: ${outcome} cannot adopt submitted values`, async () => {
       const state = freshState();
-      const { projectId, deviceId } = await m0081Project(state);
-      setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
-      setDeviceLink(state.db, projectId, deviceId, LINK_KEY, [0x040b]);
+      const { projectId, deviceId } = await mdtProject(state);
+      setDeviceParam(state.db, projectId, deviceId, MDT_PARAM_REF, "1");
+      setDeviceLink(state.db, projectId, deviceId, MDT_LINK_KEY, [0x040b]);
       const beforeParams = getDeviceParamBase(state.db, projectId, deviceId);
       const beforeLinks = linkBaseline(state, projectId, deviceId);
       setProgrammingResult(async () => {
@@ -574,7 +657,7 @@ for (const route of programmingRoutes) {
   for (const mutation of ["replace", "readdress", "recreate"] as const) {
     corpusTest(`${route}: ${mutation} while queued refuses before programming`, async () => {
       const state = freshState();
-      const { projectId, deviceId } = await m0081Project(state);
+      const { projectId, deviceId } = await mdtProject(state);
       const gate = Promise.withResolvers<void>();
       const blocker = state.queue.enqueue({ projectId, deviceId, deviceName: "blocker", ia: "1.1.10", kind: "read", writes: false }, () => gate.promise);
       let wrote = false;
@@ -595,7 +678,7 @@ for (const route of programmingRoutes) {
   }
   corpusTest(`${route}: deletion during execution refuses adoption and reports task failure`, async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
+    const { projectId, deviceId } = await mdtProject(state);
     const before = getDeviceParamBase(state.db, projectId, deviceId);
     setProgrammingResult(async () => {
       state.db.run("DELETE FROM devices WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
@@ -669,7 +752,7 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
   for (const route of programmingRoutes) {
     test(`${route}: a second write to the same device is refused while the first is in flight`, async () => {
       const state = freshState();
-      const { projectId, deviceId } = await m0081Project(state);
+      const { projectId, deviceId } = await mdtProject(state);
       const gate = Promise.withResolvers<void>();
       let writes = 0;
       setProgrammingResult(async () => { writes++; await gate.promise; return flashed(true); });
@@ -689,7 +772,7 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
 
   test("a shutting-down server refuses a write before taking its restore point", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
+    const { projectId, deviceId } = await mdtProject(state);
     setProgrammingResult(async () => flashed(true));
     const snapshots = () => (state.db.query("SELECT count(*) AS n FROM snapshots WHERE project_id = ?").get(projectId) as { n: number }).n;
     const before = snapshots();
@@ -779,7 +862,7 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
     tmps.push(dir);
     const dbPath = join(dir, "busforge.db");
     const before = createState({ dbPath, dataDir: dir, now: () => 1000 });
-    const { projectId, deviceId } = await m0081Project(before);
+    const { projectId, deviceId } = await mdtProject(before);
     const started = Promise.withResolvers<void>();
     let writes = 0;
     // Never settles: the process "dies" mid-write.

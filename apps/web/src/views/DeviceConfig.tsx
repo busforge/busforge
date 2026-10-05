@@ -138,6 +138,10 @@ export function DeviceConfig() {
     ...(hasComObjects && (caps ? caps.flashLinks : true) ? ["ga" as const] : []),
   ];
 
+  // The writes the application itself keeps Busforge from running (its declared load procedure), with
+  // the reason the server refuses them with, instead of a button that is merely missing or greyed out.
+  const refusedNotes = Object.entries(view?.refusals ?? {}).map(([op, code]) => t("device.refusedItem", { op: t(`untested.op.${op}`), reason: t(`errors.${code}`) }));
+
   // Honest read-back disclosure: every way the shown change state was NOT confirmed
   // against the hardware. Device-class limits (params/links unsupported) plus the
   // type-level blind spot: text and colour parameters are not image-representable, so
@@ -679,6 +683,14 @@ export function DeviceConfig() {
         </div>
       )}
 
+      {refusedNotes.length > 0 && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300" data-testid="device-refusals">
+          <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-3.5 shrink-0" /> {t("device.refusedTitle")}</p>
+          <ul className="mt-1 list-disc space-y-0.5 pb-0.5 pl-5 text-amber-700/90 dark:text-amber-300/90">
+            {refusedNotes.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        </div>
+      )}
       {/* What this device's values are never compared with the device for. Not the product's test
           state (the compatibility badge): a fully tested product has these gaps too. Collapsed, the
           title and the count stay visible. */}

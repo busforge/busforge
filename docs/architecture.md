@@ -290,8 +290,9 @@ structural flash, which writes the change the way ETS's partial download does
 ([load-procedures.md](load-procedures.md#structural-flash)); the flash dialog writes it once even when
 both the configuration and the group addresses preview it. Where the family cannot, the route
 refuses: with `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where it can commission from scratch (the dialog
-offers the full download on the device's existing address), otherwise with the plain
-`COM_OBJECT_TABLE_STALE`. The dialog also offers the full download as a choice of its own wherever
+offers the full download on the device's existing address), with `COM_OBJECT_TABLE_STALE_USE_ETS`
+where only the application's declared load procedure keeps Busforge from a full download, otherwise
+with the plain `COM_OBJECT_TABLE_STALE`. The dialog also offers the full download as a choice of its own wherever
 the family can commission.
 
 The load brackets themselves (which load state machine, which steps, when the device is restarted)

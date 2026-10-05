@@ -320,6 +320,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
+  view.refusals = Object.fromEntries(Object.entries(classify(app).operationRefusals()).map(([op, r]) => [op, r.code]));
   const productRef = getDeviceProductRef(db, projectId, deviceId);
   if (productRef) {
     view.compatibility = deviceCompatibility(productRef, app.id, view.capabilities);
@@ -351,7 +352,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
   return extra ? { ...wire, ...extra } : wire;
 }
 

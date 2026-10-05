@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { offersFullDownload, leftDeviceUnloaded } from "./flashRecovery.ts";
+import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad } from "./flashRecovery.ts";
 
 describe("offersFullDownload", () => {
   test("a refusal only a full download can answer offers it whatever the family", () => {
@@ -17,6 +17,22 @@ describe("offersFullDownload", () => {
   test("any other error offers nothing", () => {
     expect(offersFullDownload("FLASH_UNVERIFIED", true)).toBe(false);
     expect(offersFullDownload(undefined, true)).toBe(false);
+  });
+
+  test("a refusal that names ETS offers no download", () => {
+    expect(offersFullDownload("NEVER_PROGRAMMED_USE_ETS", false)).toBe(false);
+    expect(offersFullDownload("COM_OBJECT_TABLE_STALE_USE_ETS", false)).toBe(false);
+  });
+});
+
+describe("etsCompletesLoad", () => {
+  test("a device left unloaded names ETS exactly where the full download is refused", () => {
+    for (const code of ["DEVICE_NOT_PROGRAMMED", "FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE", "GA_FLASH_BROKE_APPLICATION"]) {
+      expect(etsCompletesLoad(code, false)).toBe(true);
+      expect(etsCompletesLoad(code, true)).toBe(false);
+    }
+    expect(etsCompletesLoad("FLASH_UNVERIFIED", false)).toBe(false);
+    expect(etsCompletesLoad(undefined, false)).toBe(false);
   });
 });
 

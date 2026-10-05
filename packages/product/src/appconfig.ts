@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
+import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -188,6 +189,9 @@ export interface AppConfig {
   segments: CfgSegment[]; // memory segments (Code/RelativeSegment), for the image projection
   absoluteSegments: CfgAbsSegment[]; // Code/AbsoluteSegment (MV-0705 parameter model)
   groupTables: GroupTableCapacity; // declared <AddressTable>/<AssociationTable> reserved sizes
+  // The application's declared <LoadProcedures>: what a download of it must execute, so what the
+  // profile can offer (capabilities()) follows from it.
+  loadProcedures: LoadProcedures;
   translations: Translations;
   dynamic: DynNode[];
   moduleDefs: Map<string, ModuleDefModel>;
@@ -324,6 +328,7 @@ export function parseAppConfig(xml: string): AppConfig {
     parameterByteOrder,
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
+    loadProcedures: loadProceduresOf(root),
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,
     paramFauxIndent: parseParamFauxIndent(xml),
   };

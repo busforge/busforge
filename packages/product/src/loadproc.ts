@@ -62,7 +62,11 @@ function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
 
 export function parseLoadProcedures(xml: string): LoadProcedures {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
-  const root = p.parse(xml) as ONode[];
+  return loadProceduresOf(p.parse(xml) as ONode[]);
+}
+
+// The same, from a document already parsed by the order-preserving parser (parseAppConfig).
+export function loadProceduresOf(root: ONode[]): LoadProcedures {
   const app = deepFirst(root, "ApplicationProgram");
   const styleAttr = app ? attrsOf(app).LoadProcedureStyle : undefined;
   const style: LoadProcedureStyle =
@@ -300,13 +304,23 @@ export interface ParCoverage {
   checks: DeclaredPropCheck[];
 }
 
+// The interface object (load-state machine) a step addresses: LsmIdx, else ObjIdx; undefined for a
+// step addressed to none (connect, restart, disconnect).
+export const stepObject = (s: LdStep): number | undefined =>
+  s.attrs.LsmIdx !== undefined ? Number(s.attrs.LsmIdx) : s.attrs.ObjIdx !== undefined ? Number(s.attrs.ObjIdx) : undefined;
+
 // Assess every par-applicable step of a procedure. The caller must refuse the flash when
-// `blocked` is non-empty; `checks` are the CompareProp pre-flights it must run.
-export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relative"): ParCoverage {
+// `blocked` is non-empty; `checks` are the CompareProp pre-flights it must run. `objects` narrows
+// the assessment to the steps addressed to those interface objects (a write that touches only them).
+export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relative", objects?: ReadonlySet<number>): ParCoverage {
   const blocked: ParCoverage["blocked"] = [];
   const skipped: ParCoverage["skipped"] = [];
   const checks: DeclaredPropCheck[] = [];
   for (const step of flattenSteps(lp, "par")) {
+    if (objects) {
+      const o = stepObject(step);
+      if (o === undefined || !objects.has(o)) continue;
+    }
     const d = assessParStep(step, model);
     if (d.kind === "blocked") blocked.push({ verb: step.verb, detail: d.detail });
     else if (d.kind === "skipped") skipped.push({ verb: step.verb, reason: d.reason });

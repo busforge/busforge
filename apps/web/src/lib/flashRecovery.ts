@@ -10,6 +10,12 @@ export function offersFullDownload(code: string | undefined, canFullDownload: bo
   return DOWNLOAD_CODES.has(code) || (canFullDownload && UNLOADED_CODES.has(code));
 }
 
+// Whether the device's load can only be completed by ETS: it was left unloaded, or found so, and
+// Busforge cannot download its application in full.
+export function etsCompletesLoad(code: string | undefined, canFullDownload: boolean): boolean {
+  return !!code && !canFullDownload && UNLOADED_CODES.has(code);
+}
+
 // Write errors after which the device no longer runs a complete application: no further target
 // may be written to it before a full download.
 const WRITE_LEFT_UNLOADED_CODES = new Set(["FLASH_INTERRUPTED_UNLOADED", "GA_FLASH_BROKE_APPLICATION"]);

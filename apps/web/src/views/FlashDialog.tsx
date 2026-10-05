@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
-import { offersFullDownload, leftDeviceUnloaded } from "../lib/flashRecovery.ts";
+import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad } from "../lib/flashRecovery.ts";
 
 export type FlashTarget = "params" | "ga";
 const runDry = (t: FlashTarget, projectId: string, deviceId: string) =>
@@ -113,6 +113,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // bracket, a preview found a load-state machine not LOADED, or a GA flash stopped the application),
   // where the family can take one.
   const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, canFullDownload));
+  const needsEts = list.some((x) => x.p.error instanceof ApiError && etsCompletesLoad(x.p.error.code, canFullDownload));
   // The operations the writes on offer run: each previewed target (or the structural flash covering
   // them) and, once taken, the full download. An untested one needs the acknowledgement first.
   const writeOps: MatrixOperation[] = dl
@@ -239,6 +240,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
             </div>
           ))}
           {isConnError && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
+          {needsEts && <p className="text-xs text-muted-foreground" data-testid="flash-needs-ets">{t("flash.etsCompletesLoad")}</p>}
           {dl && (
             <div className="flex flex-col gap-0.5 border-t border-border pt-2">
               <span className="text-xs font-medium text-muted-foreground">{t("flash.partFullDownload")}</span>

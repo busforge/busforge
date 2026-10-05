@@ -35,13 +35,20 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 
 // A surgical flash writes only what differs from the programmed baseline. A device nothing from this
 // project was ever verified on has no baseline to differ from, and may run another application or
-// none, so it takes a full download first (the flash dialog offers it on this code). A family that
-// cannot be downloaded in full keeps the surgical flash, the only way it is programmed; its verified
-// result then ends the state (gaEndsNever, paramsEndNever).
+// none, so it takes a full download first (the flash dialog offers it on this code). Where the
+// application's own load procedure keeps Busforge from downloading it in full, it is refused just the
+// same, pointing at ETS: its procedure declares no application check a surgical flash could run first.
+// A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
+// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever).
 const canDownloadFull = (app: AppConfig | null) => !!app && classify(app).capabilities().fullDownload;
+const onlyEtsDownloads = (app: AppConfig | null) => !!app && classify(app).operationRefusals().fullDownload !== undefined;
 function refuseNeverProgrammed(dev: { neverProgrammed: boolean }, app: AppConfig | null): void {
-  if (dev.neverProgrammed && canDownloadFull(app)) {
+  if (!dev.neverProgrammed) return;
+  if (canDownloadFull(app)) {
     throw new ApiError("NEVER_PROGRAMMED_USE_DOWNLOAD", "no configuration of this project has been verified on this device since it was placed or its product replaced; a full download commissions it first", 400);
+  }
+  if (onlyEtsDownloads(app)) {
+    throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this application in full; commission it with ETS first", 400);
   }
 }
 
@@ -135,9 +142,9 @@ function comObjectTableGuard(
   if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
   const caps = classify(app).capabilities();
   if (caps.structuralFlash) return "structural";
-  return caps.fullDownload
-    ? err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400)
-    : err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
+  if (caps.fullDownload) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
+  if (onlyEtsDownloads(app)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this application in full, so apply it with ETS", 400);
+  return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 
 // The structural flash both flash routes run for a change that alters the com-object table. It writes
@@ -479,10 +486,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // device's tables while reporting success.
     const gaApp = loadApp(state, id, deviceId);
     if (gaApp && !classify(gaApp).capabilities().flashLinks) {
-      // A WRITE-capability refusal, not the read-side GROUP_TABLE_UNREADABLE: this fires only
-      // for a recognised-but-unimplemented family (UnsupportedProfile). System B and MV-0705
-      // both program group addresses, so they never reach here.
-      return err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
+      // A WRITE-capability refusal, not the read-side GROUP_TABLE_UNREADABLE: the application declares
+      // a step the flash cannot execute on the tables it writes (its own code), or the family is
+      // recognised but not implemented (UnsupportedProfile).
+      const why = classify(gaApp).operationRefusals().flashLinks;
+      return why ? err(why.code, why.message) : err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
     const dryGa = url.searchParams.get("dry") === "1";
     // The links carry the LIVE configuration's com-object numbers, so the profile checks them
@@ -531,6 +539,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
     if (app && !classify(app).capabilities().fullDownload) {
+      const why = classify(app).operationRefusals().fullDownload;
+      if (why) return err(why.code, why.message);
       return fullDownloadRefusedForTunnelingEntries(app)
         ? err("FULL_DOWNLOAD_TUNNELING_ENTRIES", "this interface's tunnelling addresses are not written by Busforge; a full download would reallocate it without them")
         : err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
@@ -574,7 +584,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     refuseNeverProgrammed(dev, flApp);
     const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp);
     if (flApp && !classify(flApp).capabilities().flashParams) {
-      return err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
+      const why = classify(flApp).operationRefusals().flashParams;
+      return why ? err(why.code, why.message) : err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
     }
     const dryParams = url.searchParams.get("dry") === "1";
     const secure = secureCredsFor(state, id, deviceId);

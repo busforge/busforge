@@ -127,7 +127,8 @@ trusting a row that does not.
   stale. The route sees it first: where the family claims `structuralFlash` it runs the structural
   flash instead, which authors the table with the parameters and group tables in one bracket
   ([load-procedures.md](load-procedures.md#structural-flash)); otherwise it refuses
-  (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where a full download can rewrite the table). The group-address flash is
+  (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where a full download can rewrite the table,
+  `COM_OBJECT_TABLE_STALE_USE_ETS` where the application's load procedure refuses that download). The group-address flash is
   gated for a second reason: its association table numbers com-objects from the live
   configuration, so an association onto an object the device's table does not configure would be
   a link to nothing, and the verify (which only re-reads the tables we wrote) would still report

@@ -141,22 +141,38 @@ ProductProcedure and MergedProcedure in the corpus except two classes, both refu
 
 - **Devices whose procedure declares uncomputable load-image stamps.** One absolute-segment
   sensor family (`M-0008`) declares three `LdCtrlLoadImageProp` load-image/MCB stamps the engine
-  cannot compute, so the coverage guard throws `LOAD_STEP_UNSUPPORTED` rather than run a partial
-  recipe. That family has no full-download path either, so `par` would have been its only
-  writable operation.
+  cannot compute, so the coverage guard refuses with `LOAD_STEP_UNSUPPORTED` rather than run a partial
+  recipe, in the parameter flash and in the group-address flash (below). That family has no
+  full-download path either, so none of its writes is offered.
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above.
+
+The System 7 **group-address flash** writes the address and association tables (objects 1 and 2)
+and, where the application names the com-object table's segment, the linked bits in it (object 3).
+The same par policy holds for the declared steps addressed to those objects (`LsmIdx` or `ObjIdx` 1,
+2, and 3 where it rewrites the linked bits): a blocked one refuses the flash with
+`LOAD_STEP_UNSUPPORTED` before the device is asked anything, and `TaskCtrl1`, `TaskSegment` and
+`Unload` stay documented skips. A declared `CompareProp` is a read of the device, not a step on these
+tables, and the group-address flash runs none, as before (the ABB US/U 4.2 declares its
+application-id check on object 3; its parameter flash runs it, its group-address flash does not).
+Whether the group-address flash should run the application's checks first is an open question
+([owned-products.md](owned-products.md)).
 
 The System 7 **full download** walks the procedure's `full` steps (`planAbsoluteFullDownload`) and
 executes `Unload`, `Load`, `AbsSegment` (with the segment write), `TaskSegment`, `LoadCompleted`
 and `Restart`, and leaves `Connect`, `Disconnect` and `CompareProp` to the caller; any other step
-refuses the download (`FULL_DOWNLOAD_STEP_UNSUPPORTED`). Two verbs
+refuses the download (`FULL_DOWNLOAD_STEP_UNSUPPORTED`; a step missing an attribute it needs,
+`FULL_DOWNLOAD_STEP_MALFORMED`; no full-download steps at all, `LOAD_PROCEDURE_UNSUPPORTED`). Two verbs
 of the catalogue land there: `LdCtrlTaskCtrl1` (declared by six applications of the real catalogue fixtures, four of
 them owned, none of the MDT or ABB ones) and the absolute `LdCtrlLoadImageProp`. So the full download
-is refused today for the Auro presence detector (M-0081), the Gira Tastsensor 3 (M-0008), the
-Theben TheLuxa P300, the Theben Meteodata 140 S and the Steinel presence detector (M-008E) and the second Auro application (`M-0081_A-FF31`), although their capability flag still says
-`fullDownload` ([owned-products.md](owned-products.md)). Nothing is written before the refusal: the
-plan is built before the first write.
+is refused for the Auro presence detector (M-0081), the Gira Tastsensor 3 (M-0008), the
+Theben TheLuxa P300, the Theben Meteodata 140 S and the Steinel presence detector (M-008E) and the second Auro application (`M-0081_A-FF31`),
+and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
+flag says `fullDownload` exactly where the planner runs the declared steps, and the parameter and
+group-address flash are offered exactly where their coverage blocks nothing (`operationRefusals`,
+pinned per catalogue fixture against a table written from the declared verbs in
+`packages/product/test/offer-what-plans.test.ts`; [owned-products.md](owned-products.md)). The
+refusal comes before the device is asked anything, its declared checks included.
 
 Being dispositioned is not a hardware claim: which application programs have actually been
 flashed, and how far, is in [status.md](status.md).

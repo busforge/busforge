@@ -8,7 +8,7 @@ import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, type AbsFullSegment } from "./deviceflash.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -242,18 +242,64 @@ function refuseTunnelingEntries(app: AppConfig): void {
     `this application declares ${app.maxTunnelingUserEntries} tunnelling address(es) (MaxTunnelingUserEntries), which no Busforge path writes; refusing a full download that would reallocate the interface without them`);
 }
 
-// Guard a par download against its own declared load procedure: every par-applicable
-// step must have an explicit disposition (executed / caller / documented skip). A step
-// the model cannot execute blocks the flash: running a partial recipe and reporting
-// "programmed and verified" is exactly the silent-skip class this codebase refuses.
+// An operation the application itself keeps Busforge from running, with the code and message the
+// operation refuses with. capabilities() withholds exactly the operations a profile's
+// operationRefusals() names, and the server answers with the same code before anything is queued, so
+// the UI can say why instead of offering a write that is then refused.
+export interface OperationRefusal { code: string; message: string }
+export type OperationRefusals = Partial<Record<"flashParams" | "flashLinks" | "fullDownload", OperationRefusal>>;
+
+function refuseWith(r: OperationRefusal): never {
+  throw new ProductError(r.code, r.message);
+}
+function refuse(r: OperationRefusal | null | undefined): void {
+  if (r) refuseWith(r);
+}
+
+// Every step a par-style write is held to must have an explicit disposition (executed / caller /
+// documented skip). A step the model cannot execute blocks the write: running a partial recipe and
+// reporting "programmed and verified" is exactly the silent-skip class this codebase refuses.
+function parRefusal(coverage: ParCoverage, what: string): OperationRefusal | null {
+  if (!coverage.blocked.length) return null;
+  const details = [...new Set(coverage.blocked.map((b) => b.detail))].join("; ");
+  return { code: "LOAD_STEP_UNSUPPORTED", message: `the device's load procedure declares ${coverage.blocked.length} step(s) this ${what} cannot execute yet (${details}); refusing to flash rather than run a partial recipe` };
+}
+
+// Guard a par download against its own declared load procedure.
 function assertParCoverage(proc: LoadProcedures, model: "absolute" | "relative"): ParCoverage {
   const coverage = assessParCoverage(proc, model);
-  if (coverage.blocked.length) {
-    const details = [...new Set(coverage.blocked.map((b) => b.detail))].join("; ");
-    throw new ProductError("LOAD_STEP_UNSUPPORTED",
-      `the device's load procedure declares ${coverage.blocked.length} step(s) this parameter download cannot execute yet (${details}); refusing to flash rather than run a partial recipe`);
-  }
+  refuse(parRefusal(coverage, "parameter download"));
   return coverage;
+}
+
+// The absolute parameter flash follows the procedure the application declares; without one there is
+// no bracket to follow.
+function absoluteParRefusal(proc: LoadProcedures): OperationRefusal | null {
+  if (proc.style === "DefaultProcedure" || proc.blocks.length === 0) {
+    return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `device declares no usable load procedure (style ${proc.style}); cannot flash safely` };
+  }
+  return parRefusal(assessParCoverage(proc, "absolute"), "parameter download");
+}
+
+// What a System 7 group-address flash writes and is held to. Besides the address and association
+// tables (objects 1 and 2), the com-object table's linked bits where the application names that
+// table's segment (object 3). A memory-mapped device (MV-0700/0701) whose application names none is
+// refused: its table cannot be located, and a newly linked object would be left without its linked
+// bit. A property-mapped one (MV-0705) keeps the device's table untouched (l3 null): its full download
+// is refused without that segment, so the table there was written by another tool. The declared steps
+// addressed to those objects must each have a disposition, as for the parameter flash. A declared
+// CompareProp is a read of the device, not a step on these tables: the group-address flash runs none,
+// and whether it should run the application's checks first is an open question (owned-products.md).
+function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; size: number } | null } | { refusal: OperationRefusal } {
+  const segId = cfg.groupTables.comObjectSegment;
+  const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);
+  const l3 = seg && seg.data.length > 0 ? { address: seg.address, size: seg.data.length } : null;
+  if (!l3 && isMemoryMappedLsm(mask)) {
+    return { refusal: { code: "FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", message: "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their link flag" } };
+  }
+  const tableSteps = { ...cfg.loadProcedures, blocks: cfg.loadProcedures.blocks.map((b) => ({ ...b, steps: b.steps.filter((st) => st.verb !== "LdCtrlCompareProp") })) };
+  const refusal = parRefusal(assessParCoverage(tableSteps, "absolute", new Set([OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])])), "group-address flash");
+  return refusal ? { refusal } : { l3 };
 }
 
 // Run the procedure's declared CompareProp pre-flights (the hardware/application check
@@ -529,6 +575,9 @@ export abstract class DeviceProfile {
   // deliberately take NO live parameter state (every implementation ignored it, and the
   // callers paid two DB reads per call to feed it).
   abstract capabilities(): DeviceCapabilities;
+  // Why capabilities() withholds a write the profile would otherwise offer, where the application
+  // itself is the reason (its declared load procedure, the tables a write would have to touch).
+  operationRefusals(): OperationRefusals { return {}; }
   abstract readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback>;
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
@@ -569,11 +618,32 @@ export class SystemBProfile extends DeviceProfile {
   capabilities(): DeviceCapabilities {
     // Parameters are decoded from the LSM4 segment; a relative device WITHOUT one has nowhere
     // to read them from, so don't claim its params verify. Group tables are always present.
-    const hasParamSegment = this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
-    // A full download needs the parameter segment to fill AND an application to author the
-    // com-object table from; without either there is nothing to commission.
-    const fullDownload = hasParamSegment && !!this.cfg && !declaresTunnelingEntries(this.cfg);
-    return { readParams: hasParamSegment, readLinks: true, flashParams: true, flashLinks: true, fullDownload, structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) };
+    const hasParamSegment = this.hasParamSegment();
+    const refused = this.operationRefusals();
+    return {
+      readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: true,
+      fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
+      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) && !refused.flashParams,
+    };
+  }
+
+  // Both downloads run the mask's base bracket parameterized by the application's fragments, so a
+  // fragment step without a disposition refuses the parameter flash and the full download alike. The
+  // procedure is checked before the tunnelling entries, so it is the reason given where both apply.
+  override operationRefusals(): OperationRefusals {
+    if (!this.cfg) return {};
+    const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
+    return par ? { flashParams: par, ...(this.hasParamSegment() ? { fullDownload: par } : {}) } : {};
+  }
+
+  private hasParamSegment(): boolean {
+    return this.cfg ? toAppModel(this.cfg).segments.some((s) => s.lsm === LSM) : false;
+  }
+
+  // A full download needs the parameter segment to fill AND an application to author the
+  // com-object table from; without either there is nothing to commission.
+  private fullDownloadOffered(): boolean {
+    return this.hasParamSegment() && !!this.cfg && !declaresTunnelingEntries(this.cfg);
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -582,9 +652,9 @@ export class SystemBProfile extends DeviceProfile {
 
   private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
-    refuseTunnelingEntries(cfg);
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
+    refuseTunnelingEntries(cfg);
     // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
     // AMMA). Threaded into the plan so the allocation and the sparse image write agree with it.
     const fillByte = relParamFillByte(proc);
@@ -649,11 +719,11 @@ export class SystemBProfile extends DeviceProfile {
   // table is built from the same active-configuration projection the read-back and the staleness
   // gate use, and the result is verified by reading it back off the device afterwards.
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
-    refuseTunnelingEntries(this.requireCfg("full download"));
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
     const proc = parseLoadProcedures(ctx.appXml);
     const coverage = assertParCoverage(proc, "relative");
+    refuseTunnelingEntries(this.requireCfg("full download"));
     await runDeclaredChecks(dev, coverage);
     const { plan, imageBytes, target, comObj, addr, assoc, security } = this.planSystemBFull(mask, { ...ctx, proc });
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
@@ -1065,14 +1135,44 @@ export class System7Profile extends DeviceProfile {
     // (buildComObjectTableMv0705). Byte-verified against two ETS captures of the MDT BE-02001.02 and
     // live-hardware certified on it: full download verified=true, and the device answers
     // group communication on a flashed link, unchanged across a bus power-cycle (docs/commissioning.md).
-    const canAuthor = !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
-      this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
-      (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
+    //
+    // Each write is offered only where its planner can run the procedure the application declares
+    // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
+    // M-0081, M-0008, M-0048, M-008E applications), a parameter or group-address flash with a step
+    // addressed to what it writes that has no disposition (the M-0008 LdCtrlLoadImageProp).
+    const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
     const canStructure = canAuthor && !!this.cfg && this.cfg.groupTables.comObjectSegment !== undefined && structuralFlashProven(this.cfg);
-    const canFull = canAuthor && !!this.cfg && !declaresTunnelingEntries(this.cfg);
-    return { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: canFull, structuralFlash: canStructure };
+    const refused = this.operationRefusals();
+    return {
+      readParams: true, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
+      fullDownload: this.fullDownloadOffered() && !refused.fullDownload, structuralFlash: canStructure && !refused.flashParams,
+    };
+  }
+
+  override operationRefusals(): OperationRefusals {
+    const cfg = this.cfg;
+    if (!cfg) return {};
+    const out: OperationRefusals = {};
+    const par = absoluteParRefusal(cfg.loadProcedures);
+    if (par) out.flashParams = par;
+    const ga = system7GaScope(cfg, this.mask);
+    if ("refusal" in ga) out.flashLinks = ga.refusal;
+    // Checked before the tunnelling entries, so the procedure is the reason given where both apply.
+    const full = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures) : null;
+    if (full) out.fullDownload = full;
+    return out;
+  }
+
+  private canAuthor(): boolean {
+    return !!this.cfg && this.cfg.absoluteSegments.length > 0 &&
+      this.cfg.groupTables.addressSegment !== undefined && this.cfg.groupTables.associationSegment !== undefined &&
+      (isMemoryMappedLsm(this.mask) || this.cfg.groupTables.comObjectSegment !== undefined);
+  }
+
+  private fullDownloadOffered(): boolean {
+    return this.canAuthor() && !!this.cfg && !declaresTunnelingEntries(this.cfg);
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -1105,10 +1205,8 @@ export class System7Profile extends DeviceProfile {
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("parameter flash");
     const proc = parseLoadProcedures(ctx.appXml);
-    if (proc.style === "DefaultProcedure" || proc.blocks.length === 0) {
-      throw new ProductError("LOAD_PROCEDURE_UNSUPPORTED", `device declares no usable load procedure (style ${proc.style}); cannot flash safely`);
-    }
-    const coverage = assertParCoverage(proc, "absolute");
+    refuse(absoluteParRefusal(proc));
+    const coverage = assessParCoverage(proc, "absolute");
     // Same com-object-table staleness gate as System B: the absolute path keeps the device's
     // com-object table too, so a parameter that changes the active object set or its flags
     // would silently invalidate it. See comobjtable.ts.
@@ -1173,10 +1271,13 @@ export class System7Profile extends DeviceProfile {
 
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
     refuseSecureTables(ctx, this.family);
+    const cfg = this.requireCfg("group address flash");
+    const scope = system7GaScope(cfg, mask);
+    if ("refusal" in scope) refuseWith(scope.refusal);
     // Same com-object staleness gate as System B: the flash keeps every config byte of the device's
     // com-object table but the linked bit, so an association onto an object that table does not
     // configure is a link to nothing.
-    assertComObjectTableStable(this.requireCfg("group address flash"), ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
+    assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
     // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
     // and byte-matched, and the revert restored the device exactly.
@@ -1202,7 +1303,7 @@ export class System7Profile extends DeviceProfile {
     // download (comobjbuild.ts withLinkedCommFlags). Keeping the device's table would leave a newly
     // linked object silent, so where the application names the table's segment only that bit is
     // changed in the table the device holds, and the table is verified with the group tables.
-    const l3Seg = this.comObjSegment(mask);
+    const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
     // A memory-mapped device gets only the bytes that differ, as ETS writes it (planMv0705GaFlash);
@@ -1294,22 +1395,6 @@ export class System7Profile extends DeviceProfile {
     }));
   }
 
-  // Where the device's com-object table sits, from the segment the application names. A memory-mapped
-  // device (MV-0700/0701) whose application names none is refused: its table cannot be located, and a
-  // newly linked object would be left without its linked bit. A property-mapped one (MV-0705) keeps
-  // the device's table untouched (null): its full download is refused without that segment, so the
-  // table there was written by another tool.
-  private comObjSegment(mask: string): { address: number; size: number } | null {
-    const cfg = this.requireCfg("group address flash");
-    const segId = cfg.groupTables.comObjectSegment;
-    const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);
-    if (seg && seg.data.length > 0) return { address: seg.address, size: seg.data.length };
-    if (isMemoryMappedLsm(mask)) {
-      throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their link flag");
-    }
-    return null;
-  }
-
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
     refuseSecureTables(inputs, this.family);
     const { plan, segments, imageBytes } = this.planSystem7Full(mask, inputs);
@@ -1324,6 +1409,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
+    refuse(absoluteFullStepRefusal(proc));
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
@@ -1375,8 +1461,10 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
-    refuseTunnelingEntries(cfg);
     const proc = parseLoadProcedures(ctx.appXml);
+    // A step the planner cannot execute refuses the download before the device is asked anything.
+    refuse(absoluteFullStepRefusal(proc));
+    refuseTunnelingEntries(cfg);
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
     // device already holds this application (re-commission); an all-zero read = a virgin device

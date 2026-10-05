@@ -115,7 +115,9 @@ The full download is also the **resolution when a surgical flash cannot proceed*
 parameter or group-address edit that would change the com-object table (a channel toggled, a
 flag flipped) is written as a structural flash where the family supports it
 ([load-procedures.md](load-procedures.md#structural-flash)); where it does not but can commission
-from scratch, the refusal carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`) and the
+from scratch, the refusal carries a distinct code (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`; where the
+application's declared load procedure has a step the full download cannot execute,
+`COM_OBJECT_TABLE_STALE_USE_ETS`, which names ETS and offers nothing) and the
 UI offers the full download instead, run on the device's existing address, with no
 programming-mode press and no address reassignment. The flash dialog also offers the full download
 as an action of its own. It offers it as the way forward for a device that has its address but never
