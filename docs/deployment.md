@@ -88,7 +88,7 @@ BUSFORGE_MASTER_KEY=<32 random bytes> \
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BUSFORGE_IMAGE` | `busforge:latest` | Image to run, including a registry prefix if it is not local |
+| `BUSFORGE_IMAGE` | `busforge:latest` | Image to run, including a registry prefix if it is not local, e.g. `ghcr.io/busforge/busforge:latest` for the published image ([Continuous integration](#continuous-integration)) |
 | `BUSFORGE_DATA` | named volume `busforge-data` | Host path for the data directory, if you want it on a specific (backed-up) filesystem |
 | `BUSFORGE_MASTER_KEY` | unset | Passed through only when set, so an empty value can never look like a configured key |
 
@@ -167,7 +167,7 @@ so a slow line and retries can stretch a download well past the measured ones; 3
 room for that. The grace period only costs time when
 a write is actually running. Every write's start and end are recorded in the `tasks` table, so the
 bound can be checked against real downloads. A deploy pipeline that replaces the container must wait
-at least as long; the NAS deploy job allows 45 minutes.
+at least as long.
 
 The grace period covers `docker stop` and container replacement. A **host** shutdown or a restart of
 the Docker daemon is also bounded by the daemon's and the init system's own timeouts (dockerd's
@@ -330,19 +330,37 @@ the proxy.
 
 ## Continuous integration
 
-The pipeline in `.forgejo/workflows/ci.yml` runs `bun run check` (typecheck, lint, tests, web
-build) on every push and pull request. That job is the gate; nothing downstream runs if it fails.
+The public pipeline is `.github/workflows/ci.yml` on GitHub Actions:
+
+```
+push, PR, tag ──▶ check ──┬─ (main only) ─▶ version ──▶ build ──▶ fresh-container start ──▶ latest
+                          │                                                             └─▶ release
+                          └─ (PR, tag) end here
+```
+
+`check` runs `bun install --frozen-lockfile` and `bun run check` (typecheck, lint, tests, web
+build) in the `oven/bun:1.3` image the Dockerfile builds with, on every push to `main`, every pull
+request against `main`, every `v*` tag pushed by hand (the tag the release job pushes with the
+workflow's token starts no run) and every manual dispatch; only a run on `main` goes on past it. It runs **without** the private corpus, so the corpus tests are skipped
+and the job's log ends with `private corpus: absent (BUSFORGE_CORPUS unset); ...` and the list of
+their files ([testing.md](testing.md#the-private-corpus)). That job is the gate; nothing downstream
+runs if it fails.
 
 On `main`, CI then computes the next version from the commit subjects since the last `v*` tag
-(`feat:` → minor, any `type!:` or a `BREAKING CHANGE` body → major, everything else → patch), builds
-the image with that version baked in and pushes it to the project's container registry tagged by
-commit. The pushed image is then started in a fresh container without a data volume, and must
-report the commit it was built from on `/api/version`. That start is the release gate: only then is
-`latest` moved to the image, and the release job tags the commit, re-tags the image with the version and creates a release with the
-changelog. It skips when nothing changed since the last tag.
+(`feat:` → minor, any `type!:` or `BREAKING CHANGE` in a subject → major, everything else → patch;
+only the subjects are read), builds the image with that version baked in and pushes it to
+`ghcr.io/<owner>/<repository>` (lower case,
+`ghcr.io/busforge/busforge` for the public repository) tagged `main-<commit>`, with the workflow's
+own `GITHUB_TOKEN` (`packages: write` for that job only). The pushed image is then started in a
+fresh container without a data volume, and must report the commit it was built from on
+`/api/version`. That start is the release gate: only then is `latest` moved to the image, and the
+release job tags the commit `v<version>`, tags the image with the version and creates a GitHub
+release with the changelog. It skips when nothing changed since the last tag.
 
-Deploying to the author's own NAS is a separate job after the build. It writes its site-specific
-compose overlay and pulls `latest`; a release neither waits for it nor fails with it.
+Deploying a running instance is not part of the public pipeline. A site that runs its own forge,
+registry or deployment keeps that pipeline and its compose overlay to itself. The author's
+(`.forgejo/workflows/ci.yml`, Forgejo and a NAS) is still in this tree and leaves it before the
+repository is published ([roadmap.md](roadmap.md#publication)).
 
 The hardware smoke framework is never part of CI. It needs a real bus and a real device; see
 [testing.md](testing.md).

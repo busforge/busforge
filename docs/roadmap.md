@@ -242,6 +242,12 @@ Two runs still to be made, then what the collector
   hold all of it, and so does `.forgejo/workflows/ci.yml`, the author's own pipeline, which has to
   leave the tree before the public push. The history rewrite that removes
   them is prepared, not run; the public repository is pushed only after it.
+- **The public CI is untested on GitHub.** `.github/workflows/ci.yml` passes actionlint and its
+  check runs locally in the same image, but the build, the push to ghcr.io and the release have not
+  run on GitHub yet ([deployment.md](deployment.md#continuous-integration)). A package the workflow
+  pushes first is private on ghcr.io until it is made public, and an organisation has to allow
+  Actions to create packages. A release job that fails after pushing its tag cannot be re-run: the
+  next run finds HEAD at that tag and skips the release (as in the author's own pipeline).
 - **Evidence records still point at the old capture paths.** The reference records in
   `docs/evidence/reference/` name their capture as `tools/fixtures/<capture>.log`; those files now
   live in the corpus under `captures/`. The `sha256` beside each path still identifies the file.
