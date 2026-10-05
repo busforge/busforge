@@ -190,7 +190,7 @@ export class KnxIpTunnel implements KnxTransport {
     // Advertise a NAT-mode HPAI (0.0.0.0:0) so the gateway replies to the
     // observed packet source instead of an address we name. Required behind NAT
     // (e.g. the server in a Docker bridge network, where our real local address
-    // is an unroutable 172.x/192.168.x container IP); on a flat LAN the packet
+    // is an unroutable private container IP); on a flat LAN the packet
     // source is our real address anyway, so this works in both cases.
     const nat = hpai("0.0.0.0", 0);
     const body = Buffer.concat([nat, nat, Buffer.from([0x04, 0x04, 0x02, 0x00])]);
