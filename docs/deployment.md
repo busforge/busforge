@@ -87,7 +87,7 @@ BUSFORGE_MASTER_KEY=<32 random bytes> \
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BUSFORGE_IMAGE` | `ghcr.io/busforge/busforge:latest` | Image to run: by default the published image ([Continuous integration](#continuous-integration)); `busforge:latest` for one built locally as above |
+| `BUSFORGE_IMAGE` | `ghcr.io/busforge/busforge:latest` | Image to run: by default the published image ([Continuous integration](#continuous-integration)); `busforge:latest` for one built locally as above. Until the first public release that image does not exist, and the default fails to pull |
 | `BUSFORGE_DATA` | named volume `busforge-data` | Host path for the data directory, if you want it on a specific (backed-up) filesystem |
 | `BUSFORGE_MASTER_KEY` | unset | Passed through only when set, so an empty value can never look like a configured key |
 
