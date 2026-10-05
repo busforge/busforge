@@ -255,10 +255,6 @@ Two runs still to be made, then what the collector
 - **Evidence records still point at the old capture paths.** The reference records in
   `docs/evidence/reference/` name their capture as `tools/fixtures/<capture>.log`; those files now
   live in the corpus under `captures/`. The `sha256` beside each path still identifies the file.
-- **22 smoke report copies no longer match their recorded hash.** The report copies in
-  `docs/evidence/runs/**/<run>.json` had the author's home directory in their backup paths; those
-  were replaced, so the `source.sha256` their `.evidence.json` records carry is the hash of the
-  report as it was written, not of the copy in the tree. Nothing checks it today.
 - **The smoke runner still records absolute paths.** `tools/smoke/runner.ts` writes the absolute
   report path as a record's `artifact`, and the server's backup paths in a report are absolute, so
   the next kept run brings a home directory back into `docs/evidence/**` and, through
