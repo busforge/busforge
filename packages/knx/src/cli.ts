@@ -1,8 +1,11 @@
 import { KnxIpTunnel } from "./connection.ts";
 import { KnxDevice } from "./device.ts";
 
-const ip = process.argv[2] ?? "203.0.113.41";
-const target = process.argv[3] ?? "1.2.55";
+const [ip, target] = process.argv.slice(2);
+if (!ip || !target) {
+  console.error("usage: bun run knx <gateway-ip> <device-ia>   e.g. bun run knx 203.0.113.41 1.2.55");
+  process.exit(2);
+}
 
 const tun = new KnxIpTunnel(ip);
 await tun.connect();
