@@ -93,7 +93,7 @@ rather than generating a fresh key that cannot open them.
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
 | Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |
-| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `PUT .../tool-key` (stored only after the device answered a secure Sync under it), `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful). A real `assign-ia`, `flash`, `flash-ga` or `download` answers `202` with its task; the dry runs, reads and identify answer with their result |
+| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../collect` (a read-only diagnostic package, [raw-acquisition.md](raw-acquisition.md#diagnostic-package)), `PUT .../tool-key` (stored only after the device answered a secure Sync under it), `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful). A real `assign-ia`, `flash`, `flash-ga` or `download` answers `202` with its task, and so does `collect`, whose package is `GET /api/projects/:id/diagnostics/:taskId`; the dry runs, reads and identify answer with their result |
 | Bus and tasks | `GET/POST /api/projects/:id/bus/{status,connect,disconnect}`, `GET /api/projects/:id/tasks`, `GET .../tasks/:taskId`, `POST .../tasks/:taskId/cancel`, `WS /api/projects/:id/bus/monitor` |
 
 Three more groups are documented where the feature they belong to is: restore points and the
@@ -112,7 +112,8 @@ kept. The full model, the catalog/project split and the restore-point semantics 
 Only three things live outside the database: the SQLite file itself, the master key that seals
 Data Secure tool keys (`data/master.key`, or `BUSFORGE_MASTER_KEY`), and flash backups
 (`data/projects/<id>/backups/`, raw device memory dumps taken before every surgical write,
-deliberately kept as plain files and never served over the API).
+deliberately kept as plain files and never served over the API). Diagnostic packages are not
+persisted at all: they live in the server's memory on their job, for at most 24 hours.
 
 ## The bus: one interface, one queue
 
@@ -121,7 +122,7 @@ a single conversation. Reads and flashes therefore cannot run in parallel. Inste
 concurrent request, the server queues it (`apps/server/src/taskqueue.ts`):
 
 - Jobs run strictly FIFO, one at a time. Task kinds are `read`, `flash-params`, `flash-ga`,
-  `assign-ia`, `download`.
+  `flash-structure`, `assign-ia`, `download`, `secure-activate`, `collect`.
 - Each job reports a phase and chunk-level progress (`connect`, `backup`, `params`, `links`,
   `write`, `verify`, and the address-assignment phases), which the header indicator shows live.
 - **Cancelling a queued task is always allowed.** A *running* task that writes nothing (a read, a

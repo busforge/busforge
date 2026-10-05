@@ -151,8 +151,7 @@ Two runs still to be made, then what the collector
   the relative filter table of MV-2920 behind the router object; needs a capture of a tool reading one.
 - **Product XML as the bound of a System B table** whose memory control block is absent, and a
   plausibility bound on one that is present (PID 23's capacity, the application's declared sizes):
-  today a wrong PID 27 size is held only by the 64 KB budget.
-- **A UI** to start a collection and show its package.
+  today a wrong PID 27 size is held only by the 1 MiB memory guard and the 10-minute bound.
 
 ## KNX Data Secure
 

@@ -32,8 +32,15 @@ export interface CollectRecord {
   detail?: string;
   at: number;
 }
-// "error": a failure in the collector itself; the package keeps what was read before it.
-export type StopReason = "cancelled" | "duration" | "unresponsive" | "descriptor-malformed" | "secured-no-key" | "interface" | "error";
+// "error": a failure in the collector itself; the package keeps what was read before it. A cancelled
+// job has no package: collectDevice throws CollectCancelled instead.
+export type StopReason = "duration" | "unresponsive" | "descriptor-malformed" | "secured-no-key" | "interface" | "error";
+
+// The caller cancelled the job. Everything read up to then is dropped with it.
+export class CollectCancelled extends Error {
+  readonly code = "COLLECT_CANCELLED";
+  constructor() { super("the collection was cancelled; nothing it read is kept"); this.name = "CollectCancelled"; }
+}
 
 export interface CollectPackage {
   format: "busforge-raw-collect/1";
@@ -54,13 +61,13 @@ export interface CollectPackage {
   finishedAt: number;
 }
 
-// Starting values from docs/raw-acquisition.md, to be calibrated on bench runs.
+// docs/raw-acquisition.md, "Bounds". The duration and the failures in a row are the bounds a user is
+// told about. memoryBytes only guards against a device that states a wrong table size; at the request
+// rates of the bench (about 4 per second) the duration ends a job long before it.
 export const COLLECT_LIMITS = {
-  scanRequests: 1500,        // descriptions and values together
-  memoryBytes: 64 * 1024,
-  memoryRequests: 6000,
-  durationMs: 15 * 60_000,
+  durationMs: 10 * 60_000,
   failuresInARow: 3,
+  memoryBytes: 1024 * 1024,
   propertyBytes: 1024,       // per property, past element 0
   maxObjects: 64,
   maxPropertyIndex: 255,
@@ -75,10 +82,14 @@ export interface CollectOptions {
   app?: CollectApp | null;
   now?: () => number;
   limits?: Partial<typeof COLLECT_LIMITS>;
+  // When the job's clock started, if before this call (the server takes the bus and connects first).
+  startedAt?: number;
   // false: no free-key authorize even where the mask declares one, to compare what a device answers
   // without it (tools/collect.ts). The package records the step as not attempted.
   authorize?: boolean;
   onProgress?: (phase: string, done?: number, total?: number) => void;
+  // Called before each request with the number of requests issued so far, this one included.
+  onRequest?: (requests: number) => void;
 }
 
 const LOADED = 1; // PID_LOAD_STATE_CONTROL state Loaded
@@ -87,7 +98,7 @@ const hex = (b: Buffer) => b.toString("hex");
 // reading its value is not defined (inferred).
 const unreadablePdt = (pdt: number) => pdt >= 0x37 && pdt <= 0x3f;
 
-class Stop extends Error { constructor(public reason: StopReason, detail: string) { super(detail); } }
+class Stop extends Error { constructor(public reason: StopReason | "cancelled", detail: string) { super(detail); } }
 class PhaseLimit extends Error {}
 
 type Failure = { outcome: "timeout" | "connection-closed" | "malformed"; detail: string };
@@ -95,7 +106,7 @@ type Failure = { outcome: "timeout" | "connection-closed" | "malformed"; detail:
 export async function collectDevice(dev: CollectDevice, opts: CollectOptions): Promise<CollectPackage> {
   const now = opts.now ?? (() => Date.now());
   const L = { ...COLLECT_LIMITS, ...opts.limits };
-  const startedAt = now();
+  const startedAt = opts.startedAt ?? now();
   const pkg: CollectPackage = {
     format: "busforge-raw-collect/1", ia: opts.ia, mask: null, family: null, secured: dev.secured, authorizeLevel: null, maxApdu: null,
     plan: null, records: [], limits: [], stop: null,
@@ -110,12 +121,11 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     if (opts.signal.aborted) throw new Stop("cancelled", "the job was cancelled");
     if (now() - startedAt > L.durationMs) throw new Stop("duration", `the job ran past its ${L.durationMs / 60_000} minutes`);
   };
-  // Count one request against the job and its phase; a phase out of budget ends that phase only.
+  // Count one request against the job and its phase.
   const beforeRequest = () => {
     checkJob();
-    if (phase === "scan" && pkg.counts.scanRequests >= L.scanRequests) throw new PhaseLimit(`interface-object scan: ${L.scanRequests} requests`);
-    if (phase === "memory" && pkg.counts.memoryRequests >= L.memoryRequests) throw new PhaseLimit(`memory plan: ${L.memoryRequests} requests`);
     pkg.counts.requests++;
+    opts.onRequest?.(pkg.counts.requests);
     if (phase === "scan") pkg.counts.scanRequests++;
     if (phase === "memory") pkg.counts.memoryRequests++;
   };
@@ -134,6 +144,8 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
   // malformed answer counts too: a late answer to an earlier request shifts every answer after it by
   // one, and only a new connection ends that.
   const failed = async () => {
+    // A cancelled job opens no new link.
+    checkJob();
     failures++;
     if (failures >= L.failuresInARow) throw new Stop("unresponsive", `${failures} requests in a row failed; the device is closed off as unresponsive`);
     try {
@@ -243,8 +255,7 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     if (plan.objects !== "none") {
       opts.onProgress?.("scan");
       phase = "scan";
-      try { await scan(); }
-      catch (e) { if (e instanceof PhaseLimit) pkg.limits.push(e.message); else throw e; }
+      await scan();
       phase = "generic";
     }
 
@@ -270,8 +281,11 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
       }
     }
   } catch (e) {
-    pkg.stop = e instanceof Stop ? { reason: e.reason, detail: e.message } : { reason: "error", detail: e instanceof Error ? e.message : String(e) };
+    if (e instanceof Stop && e.reason === "cancelled") throw new CollectCancelled();
+    pkg.stop = e instanceof Stop ? { reason: e.reason as StopReason, detail: e.message } : { reason: "error", detail: e instanceof Error ? e.message : String(e) };
   }
+  // A cancel that came after the last request still drops the package.
+  if (opts.signal.aborted) throw new CollectCancelled();
   pkg.finishedAt = now();
   return pkg;
 

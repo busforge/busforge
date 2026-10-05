@@ -18,3 +18,4 @@ export * from "./securityobject.ts";
 export * from "./manufacturers.ts";
 export * from "./collectplan.ts";
 export * from "./collect.ts";
+export * from "./diagnostic.ts";

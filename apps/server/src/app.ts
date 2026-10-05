@@ -22,6 +22,7 @@ import * as groupRoutes from "./routes/groups.ts";
 import * as spaceRoutes from "./routes/spaces.ts";
 import * as deviceRoutes from "./routes/devices.ts";
 import * as deviceOpRoutes from "./routes/deviceops.ts";
+import { DiagnosticStore } from "./collect.ts";
 
 // Re-exported for tests and any callers that still import these from app.ts;
 // their home is the service layer (deviceservice.ts).
@@ -41,6 +42,8 @@ export interface AppState {
   // Parsed application programs cached per application-program id; catalog entries
   // are immutable manufacturer data, so this never needs invalidation within a run.
   appCache: Map<string, AppConfig>;
+  // Diagnostic packages of finished collect jobs, in memory only (collect.ts).
+  diagnostics: DiagnosticStore;
 }
 
 const DEFAULT_DATA_DIR = join(import.meta.dir, "..", "data");
@@ -68,7 +71,7 @@ export function createState(opts?: { dbPath?: string; dataDir?: string; now?: ()
   const masterKey = getMasterKey(dataDir);
   closeUnfinishedTasks(db, now());
   const queue = new TaskQueue(now, (run) => bus.withExclusiveOperation(run), new SqliteTaskStore(db));
-  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue };
+  return { db, bus, dataDir, masterKey, now, appCache: new Map(), queue, diagnostics: new DiagnosticStore(now) };
 }
 
 // The /api/projects/* route modules, dispatched in order. Their route patterns are

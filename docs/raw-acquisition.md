@@ -3,7 +3,8 @@
 How Busforge reads identity, interface-object properties and bounded memory ranges from a KNX
 device it cannot program, without writing anything and without inventing a byte. The collector is
 built to this design; [Implementation](#implementation) says where, what it adds to the design and
-what it leaves out. Nothing here is a verification claim beyond the bench runs listed there
+what it leaves out, and [Diagnostic package](#diagnostic-package) how a user runs it from the app
+and what the file they save holds. Nothing here is a verification claim beyond the bench runs listed there
 ([status.md](status.md) holds the claims).
 
 The rule that shapes every section: **a range is either read, refused with a reason, or not
@@ -64,7 +65,7 @@ from `nonVolatileStart + address` with no range check at all (thelsing `bau_syst
 
 **No state.** The collector changes neither the device, nor the desired project values, nor the
 programmed baseline. It runs as a bus job (so it takes the bus exclusively and closes the
-monitor, see [Collector design](#collector-design)) and writes only its own package.
+monitor, see [Collector design](#collector-design)) and produces only its own package.
 
 ## The generic stage
 
@@ -131,9 +132,10 @@ application's `AssociationTable MaxEntries`: 1600 on the Jung 400021SE, 1000 on 
 So on these two devices the device states its own table capacity; that this holds generally, and
 that no product XML is needed to bound the read, is inferred from two devices.
 
-**Stop conditions for the scan:** an object index past 63, a property index past 255, a device
+**Stop conditions for the scan:** an object index past 63, a property index past 255, or a device
 that does not answer the first description request (recorded as "property descriptions
-unsupported", and the scan ends), or the scan's share of the request budget.
+unsupported", and the scan ends). The scan has no request budget of its own; the job's duration
+bounds it (see [Bounds](#bounds)).
 
 ## Per memory model
 
@@ -292,25 +294,33 @@ What the collector has to be, in the terms of the code that exists.
 - **A job, not a request.** A new task kind `collect`, `writes: false`, submitted to the
   `TaskQueue`, which already takes `Bus.withExclusiveOperation`. The bus monitor is closed for the
   duration; the package records when it closed and when the job released the bus, so the UI can
-  say what the user missed. Cancellation is the job's `AbortSignal`; a cancelled job keeps what
-  it read.
+  say what the user missed. Cancellation is the job's `AbortSignal`; a cancelled job leaves no
+  package, everything it read is dropped (`CollectCancelled`).
 - **Plan, then execute.** The plan is computed from the mask (and, when the project holds it, the
   product XML) before the first request, stored in the package, and only then executed. A
   reviewer can see what was going to be read even when the device stopped answering.
-- **Bounds, per phase.** The interface-object scan gets at most 1500 requests (descriptions and
-  values together), so it cannot use up what the memory plan needs. The memory plan gets 64 KB,
-  which on the classic 12-byte path is about 5500 requests, and is capped at 6000. The whole job
-  stops after 15 minutes, and a device that fails three requests in a row is closed off as
-  unresponsive. These are starting values, to be calibrated on the first bench runs. Each limit
-  hit is recorded as such, never as "complete".
+- **Bounds.** Two bounds a user is told about: the whole job stops after 10 minutes, and a device
+  that fails three requests in a row is closed off as unresponsive. A third bound guards memory
+  only, see [Bounds](#bounds). Each bound hit is recorded as such, never as "complete".
 - **Secure devices.** With a tool key on file, the job opens the existing secure session and the
   same plan runs through it. The key, the serial-derived session material and any security-object
   content stay out of the package.
 - **No baseline.** The job never calls the read-back adoption (`replaceParamBase`,
   `replaceLinkBase`); it writes only the package. The test for this compares the database before
   and after.
-- **Provenance.** Busforge version and commit, transport kind and route, IA, the mask read, the
-  authorize level obtained, timestamps per step.
+- **Provenance.** Busforge version and commit, the connection's kind (not its host, port or USB
+  serial), IA, the mask read, the authorize level obtained, timestamps per step.
+
+### Bounds
+
+| Bound | Value | Why |
+|---|---|---|
+| Duration | 10 minutes, from when the job takes the bus | The bus is the job's alone while it runs, and the monitor is closed. At the bench's rate of about 4 requests a second, the bench devices took between 0.1 s and 157 s ([Bench runs](#bench-runs-2026-10-04)). |
+| Failures in a row | 3 | A device that leaves three requests unanswered (or answers them malformed) is closed off as unresponsive; each failure reopens the link first. |
+| Memory | 1 MiB, internal | Only a guard against a device that states a wrong table size (a wrong PID 27 on System B leads the read straight to the address its own PID 7 names). Ten minutes at 4 requests a second read about 115 KB on the 48-byte extended path, so the duration ends a job long before this bound, also on future devices with extended memory. The dialog does not name it. |
+
+The interface-object scan and the memory plan have no request counts of their own. Per property,
+values are read within 1024 bytes past element 0 (see [Implementation](#implementation)).
 
 ## Reference vectors
 
@@ -353,17 +363,20 @@ BCU2, System 300, a coupler or an interface.
 | Read services that keep refusals: `authorizeFreeKey`, `propertyDescription`, `propReadCounted`, `memReadPartial` | `packages/knx/src/device.ts` |
 | Plan per mask | `packages/product/src/collectplan.ts` |
 | Execution, bounds, records | `packages/product/src/collect.ts` |
-| Session, package file, provenance | `apps/server/src/collect.ts` |
-| The same collector from the command line, over a TCP tunnel, optionally without the free-key authorize. It writes the package with the tool's own provenance (commit, target) and stores no device sequence after a secured session: it prints it. | `tools/collect.ts` |
+| Session, provenance, the package's lifetime in memory | `apps/server/src/collect.ts` |
+| Cleaning into a diagnostic package | `packages/product/src/diagnostic.ts` |
+| Consent, progress, review and saving | `apps/web/src/views/DiagnosticDialog.tsx` |
+| The same collector from the command line, over a TCP tunnel, optionally without the free-key authorize. It writes the uncleaned package with the tool's own provenance (commit, target), writes nothing when interrupted, and stores no device sequence after a secured session: it prints it. | `tools/collect.ts` |
 | One memory read outside any plan, plain, and the device's answer | `tools/memread.ts` |
 
 **API.** `POST /api/projects/:id/devices/:deviceId/collect` queues a task of kind `collect`
-(`writes: false`) and answers 202 with it; the task's result is the verdict (`complete`, `limited`,
-or `stopped:<reason>` for what the device did: unresponsive, secured without a key, the duration
-bound). A collection that breaks off at the interface or in Busforge itself ends the task as an
-error, `COLLECT_FAILED`. `GET /api/projects/:id/collections/:taskId` returns the package. The package
-is a JSON file under the data directory, `projects/<projectId>/collections/<taskId>.json`, written
-also when the job is cancelled or the device stops answering. No table of the database holds it.
+(`writes: false`) and answers 202 with it; while it runs, the task's `done` counts the requests sent.
+The task's result is the verdict (`complete`, `limited`, or `stopped:<reason>` for what the device
+did: unresponsive, secured without a key, the duration bound). A collection that breaks off at the
+interface or in Busforge itself ends the task as an error, `COLLECT_FAILED`; its package is kept. A
+cancelled task has no package. `GET /api/projects/:id/diagnostics/:taskId` returns the cleaned
+[diagnostic package](#diagnostic-package), or `DIAGNOSTIC_NOT_FOUND` once it is gone. Neither the
+database nor the data directory holds a package: it lives in the server's memory, on its job.
 
 **What it adds to the design.**
 
@@ -374,19 +387,19 @@ also when the job is cancelled or the device stops answering. No table of the da
   fresh connection (`T_Disconnect`, `T_Connect`, the free-key authorize again, since the access
   level is the connection's). Three failed requests in a row stop the job as unresponsive; the
   authorize on the new connection answering does not reset that count.
-- The budgets count requests as the collector issues them. The transport's own repetitions of
-  one request (`KNX_TRIES`, three by default), `T_Connect`, `T_Disconnect` and the Data Secure Sync
-  of each new connection are not counted. The 15 minutes are checked before each request, so the
-  job can overrun them by the request in flight and one reconnect, some seconds.
-- **On System B, PID 27 alone bounds a table read**, as designed, held only by the 64 KB memory
-  budget. A device reporting a wrong memory control block size therefore gets up to 64 KB read from
-  the address its own PID 7 names. A plausibility bound (PID 23's capacity, the application's
-  declared sizes) is in the backlog.
+- The request counts in the package count requests as the collector issues them. The transport's
+  own repetitions of one request (`KNX_TRIES`, three by default), `T_Connect`, `T_Disconnect` and
+  the Data Secure Sync of each new connection are not counted. The 10 minutes are checked before
+  each request, so the job can overrun them by the request in flight and one reconnect, some seconds.
+- **On System B, PID 27 alone bounds a table read**, as designed, held only by the 1 MiB memory
+  guard and the 10 minutes. A device reporting a wrong memory control block size therefore gets read
+  from the address its own PID 7 names until one of them ends the job. A plausibility bound (PID 23's
+  capacity, the application's declared sizes) is in the backlog.
 - Property values are read within a budget of **1024 bytes per property** past element 0. A batch
   of elements the device refuses is asked again one element at a time, and a single refused
   element ends that property: the GVS AMMA answers element 1 of two properties (object 0 PID 223,
-  object 7 PID 220) and refuses every element after it, which without this rule spent the whole
-  scan budget on a thousand refusals.
+  object 7 PID 220) and refuses every element after it, which without this rule spent a thousand
+  requests on refusals.
 - A memory range planned from the product XML or from the device must be covered by declared
   segments; adjacent segments join (the ABB's application segment `0x4600` + 7790 runs from
   `0x4000` + 8192 into `0x6000` + 22016). A master-data resource is a location in its own right.
@@ -399,8 +412,8 @@ also when the job is cancelled or the device stops answering. No table of the da
 
 **What it leaves out**, each as a `not-attempted` record in the package and a backlog entry in
 [roadmap.md](roadmap.md#raw-acquisition): the System 300 variant plans, discovery by `PID_IO_LIST`
-(MV-2920, scanned by index instead), every coupler filter table, the product XML as the bound of a
-System B table without a memory control block, and a UI.
+(MV-2920, scanned by index instead), every coupler filter table, and the product XML as the bound of a
+System B table without a memory control block.
 
 ### Bench runs, 2026-10-04
 
@@ -415,7 +428,7 @@ same results; the cancel was run once, on the build before the review fixes.
 | GVS AMMA (MV-07B0) | plain, no key on file | stopped after the descriptor (`0xFFFF`): secured, no key | 1 | 0 | 0.1 s |
 | GVS AMMA (MV-07B0) | secured | limited only by the property budget (object 3 PID 23); tables of objects 1 to 4 read through PID 7 and PID 27; security mode read last. It answers the description of object 6, property index 23, with the description of PID 1 at index 0, in every run: recorded as malformed, the link reopened, the rest of object 6 not described | 459 | 3896 | 94 s |
 | Jung 400021SE (MV-07B0) | secured | as the GVS; tables at `0xF000` to `0x16000`, the three above `0xFFFF` through the extended read | 636 | 10366 | 157 s |
-| ABB US/U 4.2 | plain, cancelled after 12 s | task `cancelled`, package kept with 129 records from the scan | 123 | 0 | 12 s |
+| ABB US/U 4.2 | plain, cancelled after 12 s | task `cancelled`, package kept with 129 records from the scan (that build kept a cancelled job's package; a cancel now drops it, see [Diagnostic package](#diagnostic-package)) | 123 | 0 | 12 s |
 
 Database: on the plain runs only the task list changed. On the two secured runs `device_security`
 changed in `seq_group` of those two devices and nothing else. No device memory was refused on any
@@ -479,6 +492,74 @@ its memory then reads, is the next run.
 
 The package and the run's sequence counter stay out of the repository; the package is in the
 [private corpus](testing.md#the-private-corpus), `collections/`.
+
+## Diagnostic package
+
+How a user runs the collector from the app, and what leaves Busforge when they save the result. The
+UI says "diagnostic package" (German "Diagnosepaket"), never "export": export is the project
+archive ([export-format.md](export-format.md)).
+
+```
+device page: "Create diagnostic package"
+  └─ consent .................................. one fixed scope, one click
+       └─ progress ............................ steps, requests sent, time of at most 10:00
+            ├─ cancel ......................... no package, nothing read is kept
+            ├─ plan ran to its end ............ review: complete
+            └─ bound, silent device, link ..... review: incomplete, and why
+                 review (contents | file) ──► "Save file" into the browser's downloads folder
+```
+
+**Entry.** An icon button in the device page's action bar, next to "Read from device", for every
+device: also one Busforge cannot program or has no application program for. A collect task in the
+bus queue opens the same dialog at its progress or its review.
+
+**Consent, once, for one fixed scope.** The dialog says what is read (identity, every readable
+interface-object property but never the security object, only the memory ranges planned for the
+device's mask, decided after the first reads), the two bounds (at most 10 minutes, stop after 3
+failures in a row; no byte or request figures), that an open monitor is closed and not reopened, and
+that the result stays on this computer. A device with a tool key on file gets one more line: it is
+read through the stored tool key, and the key does not enter the package. One click starts the job;
+there are no levels to choose.
+
+**Progress and cancel.** The steps of the plan, the requests sent and the time against the 10
+minutes. The dialog cannot be dismissed while the job runs. **Cancel drops everything**: the job
+ends `cancelled`, no package is made, nothing read survives. A job that ends at the duration bound,
+at an unresponsive device, at a secured device without a key or at a failed link does produce a
+package, and the review names it incomplete and why (a device that never answered at all is told
+apart from one that stopped answering midway). The review names no byte or request figures.
+
+**Review before saving.** Two tabs: what the package holds (interface objects, properties, memory
+bytes, refused or unattempted reads, the connection kind, the times, the Busforge version), what
+Busforge removed, and a warning box on what is not anonymized; and the file itself, in full, exactly
+as it is saved. "Save file" hands that text to the browser's downloads folder as
+`busforge-diagnostic-<ia>-<yyyy-mm-dd-hh-mm>.json` (UTC, the same name in every language). Busforge
+sends it nowhere; the dialog says the user can attach it to a GitHub issue themselves, and promises
+nothing about what happens to it after that.
+
+**Lifetime.** The package lives in the server's memory, on its job (`DiagnosticStore`,
+`apps/server/src/collect.ts`): review and save work any number of times for 24 hours after the job,
+not across a server restart. No uncleaned original is kept anywhere, and there is no list of
+packages.
+
+### What the file holds
+
+Format `busforge-diagnostic/1` (`packages/product/src/diagnostic.ts`), plain JSON, unencrypted.
+
+| | |
+|---|---|
+| Kept | IA, mask, family, `secured`, authorize level, maximum APDU, the plan, every record (step, service, target, source, outcome, reason, timestamp), the bounds hit, the stop reason, the counts, start and end, when the job took the bus, closed the monitor and released the bus, Busforge version and commit, the connection's kind: `ip` with its transport, or `usb` with the interface's vendor and product id |
+| Removed | project, device and task id; the connection's host and port; the USB interface's serial number; the device's serial number wherever the plan reads it (PID 11 of any interface object, in the identity read and in the scan, and the M112 `serial number` memory resource), recorded as `"removed": "serial number, 6 bytes"` in place of the bytes |
+| Unchanged, labelled not anonymized | every memory byte and property value. They can hold installation data (group addresses, parameter texts, coordinates, the IP and MAC address of an IP interface that is itself the device read), and Busforge cannot tell which. A device that also keeps its serial inside a larger memory range keeps it there; the review says so |
+
+Text the link put into the package (a stop reason, an error, a record's reason, a reason in the plan)
+is searched for the host, the ids, the USB serial and the device serial, and for any IPv4 or IPv6
+address literal (IPv6 in every written form: compressed, with a zone, bracketed with a port) (a host saved by name reaches error texts as its address); each is replaced by
+`<removed>`.
+
+**Cancel after the end.** A cancel that reaches the server after the read has already finished
+cannot cancel the task, but it still drops the package: `POST .../tasks/:taskId/cancel` answers
+`{ "cancelled": "discarded" }` for a finished collect task, and the dialog shows the read as
+cancelled. A cancel during a failed request opens no new link.
 
 ## Known unknowns
 

@@ -16,7 +16,7 @@
 // sequence the device used, and a Busforge data directory keeps the older one it holds.
 //
 // Exit 0: the plan ran to its end. Exit 3: the package is written, but the collection stopped or hit a
-// bound (its `stop` and `limits` say which).
+// bound (its `stop` and `limits` say which). Exit 130: interrupted, nothing written.
 //
 // The package is the device's memory and identity. For a device of a real installation, write it to
 // a gitignored location and do not commit it.
@@ -25,7 +25,7 @@ import { dirname } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { KnxIpTunnel, KnxDevice, SecureSession, iaToNum } from "../packages/knx/src/index.ts";
 import { loadKnxproj } from "../packages/project/src/index.ts";
-import { collectDevice, parseAppConfig, type CollectApp } from "../packages/product/src/index.ts";
+import { collectDevice, parseAppConfig, CollectCancelled, type CollectApp } from "../packages/product/src/index.ts";
 import { gitRevision } from "./evidence.ts";
 
 const USAGE = "usage: bun run tools/collect.ts <host[:port]> <ia> <out.json> [--app=<app.xml[.gz]>] [--no-authorize] [--knxproj=<file> --password-env=<VAR>]";
@@ -80,7 +80,7 @@ if (projPath) {
 }
 
 const ctl = new AbortController();
-// The first interrupt ends the collection and keeps its package; a second one exits at once.
+// The first interrupt ends the collection and writes nothing; a second one exits at once.
 process.on("SIGINT", () => { if (ctl.signal.aborted) process.exit(130); ctl.abort(); });
 const tun = KnxIpTunnel.tcp(m[1], port);
 let session: SecureSession | undefined;
@@ -90,17 +90,26 @@ try {
   const dev = new KnxDevice(tun, ia, session);
   try {
     await dev.connect();
-    const pkg = await collectDevice(dev, {
-      ia, app, signal: ctl.signal, authorize,
-      reopen: async () => { await dev.disconnect(); await dev.connect(); },
-      onProgress: (phase) => console.error(`[collect] ${phase}`),
-    });
-    const provenance = { tool: "tools/collect.ts", commit: gitRevision(), target, authorize, app: appPath ?? null };
-    writeFileSync(out, JSON.stringify({ ...pkg, provenance }, null, 1));
-    const outcomes = new Map<string, number>();
-    for (const r of pkg.records) outcomes.set(`${r.space} ${r.outcome}`, (outcomes.get(`${r.space} ${r.outcome}`) ?? 0) + 1);
-    console.log(JSON.stringify({ mask: pkg.mask, authorizeLevel: pkg.authorizeLevel, stop: pkg.stop, limits: pkg.limits, counts: pkg.counts, seconds: (pkg.finishedAt - pkg.startedAt) / 1000, outcomes: Object.fromEntries(outcomes) }, null, 1));
-    if (pkg.stop || pkg.limits.length > 0) process.exitCode = 3;
+    let pkg;
+    try {
+      pkg = await collectDevice(dev, {
+        ia, app, signal: ctl.signal, authorize,
+        reopen: async () => { await dev.disconnect(); await dev.connect(); },
+        onProgress: (phase) => console.error(`[collect] ${phase}`),
+      });
+    } catch (e) {
+      if (!(e instanceof CollectCancelled)) throw e;
+      console.error(`[collect] ${e.message}; ${out} is not written`);
+      process.exitCode = 130;
+    }
+    if (pkg) {
+      const provenance = { tool: "tools/collect.ts", commit: gitRevision(), target, authorize, app: appPath ?? null };
+      writeFileSync(out, JSON.stringify({ ...pkg, provenance }, null, 1));
+      const outcomes = new Map<string, number>();
+      for (const r of pkg.records) outcomes.set(`${r.space} ${r.outcome}`, (outcomes.get(`${r.space} ${r.outcome}`) ?? 0) + 1);
+      console.log(JSON.stringify({ mask: pkg.mask, authorizeLevel: pkg.authorizeLevel, stop: pkg.stop, limits: pkg.limits, counts: pkg.counts, seconds: (pkg.finishedAt - pkg.startedAt) / 1000, outcomes: Object.fromEntries(outcomes) }, null, 1));
+      if (pkg.stop || pkg.limits.length > 0) process.exitCode = 3;
+    }
   } finally {
     await dev.disconnect().catch(() => {});
   }

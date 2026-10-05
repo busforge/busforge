@@ -7,10 +7,12 @@
 import type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
   DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
+  DiagnosticPackage, DiagnosticRecord,
 } from "@busforge/product";
 export type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
   DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
+  DiagnosticPackage, DiagnosticRecord,
 };
 
 // neverProgrammed: no configuration of this project has been verified on the device since it was
@@ -394,6 +396,13 @@ export const api = {
     fetch(`/api/projects/${id}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" }).then((r) => jsonOrThrow<{ ok: true }>(r)),
 
   tasks: (id: string): Promise<Task[]> => fetch(`/api/projects/${id}/tasks`).then((r) => jsonOrThrow<Task[]>(r)),
+  task: (id: string, taskId: string): Promise<Task> => fetch(`/api/projects/${id}/tasks/${encodeURIComponent(taskId)}`).then((r) => jsonOrThrow<Task>(r)),
+  // Queue a diagnostic package of the device (a read-only collect job); answers the queued task.
+  createDiagnostic: (id: string, deviceId: string): Promise<Task> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/collect`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r)),
+  // The cleaned package of a finished collect task, while its job lives.
+  diagnostic: (id: string, taskId: string): Promise<DiagnosticPackage> =>
+    fetch(`/api/projects/${id}/diagnostics/${encodeURIComponent(taskId)}`).then((r) => jsonOrThrow<DiagnosticPackage>(r)),
   cancelTask: (id: string, taskId: string): Promise<{ cancelled: string }> =>
     fetch(`/api/projects/${id}/tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }).then((r) => jsonOrThrow<{ cancelled: string }>(r)),
 

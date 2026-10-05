@@ -1,4 +1,4 @@
-import { parseAppConfig, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
+import { parseAppConfig, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
@@ -13,7 +13,7 @@ import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERH
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
 import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
-import { runCollection, readCollection } from "../collect.ts";
+import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -288,10 +288,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(buildDeviceView(state, id, deviceId, body.lang, { readback: rb }));
   }
 
-  // /api/projects/:id/devices/:deviceId/collect  -> raw acquisition (docs/raw-acquisition.md): read
-  // the device's identity, interface objects and planned memory ranges into a package of its own,
-  // whether or not Busforge can program the device. Nothing is written to the device, the project or
-  // a baseline. Answers 202 with the task; the package is GET .../collections/:taskId.
+  // /api/projects/:id/devices/:deviceId/collect  -> a diagnostic package (docs/raw-acquisition.md): read
+  // the device's identity, interface objects and planned memory ranges, whether or not Busforge can
+  // program the device. Nothing is written to the device, the project or a baseline. Answers 202 with
+  // the task; the cleaned package is GET .../diagnostics/:taskId while its job lives. A cancelled job
+  // leaves no package.
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "collect" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const dev = getDeviceForFlash(db, id, deviceId);
@@ -312,26 +313,38 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "collect", writes: false },
       async (progress, signal) => {
-        const pkg = await runCollection({
-          dataDir: state.dataDir, projectId: id, deviceId, taskId, ia: dev.ia, connection: conn, secure, app, signal,
-          onProgress: progress, monitorClosed: bus.lastInterruption, now: state.now,
-        });
+        let pkg;
+        try {
+          pkg = await runCollection({
+            projectId: id, deviceId, taskId, ia: dev.ia, connection: conn, secure, app, signal,
+            onProgress: progress, monitorClosed: bus.lastInterruption, now: state.now,
+          });
+        } catch (e) {
+          if (e instanceof CollectCancelled) throw new CancelledError();
+          throw e;
+        }
+        if (signal.aborted) throw new CancelledError();
+        state.diagnostics.put(taskId, id, pkg);
         // A link or collector failure is the task's failure; what the device itself did (silence, no
-        // key, a bound) is the collection's result. The package is on disk either way.
+        // key, the duration bound) is the collection's result. The package is kept either way.
         if (pkg.stop?.reason === "interface" || pkg.stop?.reason === "error") {
-          throw new ApiError("COLLECT_FAILED", `the collection broke off (${pkg.stop.reason}): ${pkg.stop.detail}; what was read before is in its package`, 502);
+          throw new ApiError("COLLECT_FAILED", `the collection broke off (${pkg.stop.reason}): ${pkg.stop.detail}; its diagnostic package says how far it got`, 502);
         }
         return { kind: pkg.stop ? `stopped:${pkg.stop.reason}` : pkg.limits.length ? "limited" : "complete" };
       },
     );
     taskId = task.id;
+    // A task that ended cancelled keeps no package, even one put down before the cancel took.
+    void state.queue.wait(task.id).then((t) => { if (t?.state === "cancelled") state.diagnostics.delete(task.id); });
     return json(task, 202);
   }
 
-  // /api/projects/:id/collections/:taskId  -> the package a collect task wrote.
-  if (seg.length === 5 && seg[3] === "collections" && req.method === "GET") {
-    const pkg = readCollection(state.dataDir, id, seg[4]);
-    if (!pkg) return err("COLLECTION_NOT_FOUND", "no package for this task", 404);
+  // /api/projects/:id/diagnostics/:taskId  -> the diagnostic package of a collect task, while it lives.
+  if (seg.length === 5 && seg[3] === "diagnostics" && req.method === "GET") {
+    const taskId = decodeURIComponent(seg[4]);
+    const task = state.queue.get(taskId);
+    const pkg = task && task.projectId === id && (task.state === "done" || task.state === "error") ? state.diagnostics.get(id, taskId) : null;
+    if (!pkg) return err("DIAGNOSTIC_NOT_FOUND", "no diagnostic package for this task: it was cancelled, failed before reading, is older than 24 hours, or the server restarted since", 404);
     return json(pkg);
   }
 
@@ -639,6 +652,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!task || task.projectId !== id) return err("TASK_NOT_FOUND", "task not found", 404);
     const cancelled = state.queue.cancel(task.id);
     if (cancelled) return json({ cancelled });
+    // A collect that finished before the cancel arrived: the cancel still discards its package.
+    if (task.kind === "collect" && task.state !== "queued" && task.state !== "running") {
+      state.diagnostics.delete(task.id);
+      return json({ cancelled: "discarded" });
+    }
     if (task.state === "running" && task.writes) {
       return err("TASK_WRITE_NOT_CANCELLABLE", "a running write cannot be cancelled: stopping it mid-write can leave the device reset; wait for its result", 409);
     }

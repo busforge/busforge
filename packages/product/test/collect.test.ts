@@ -1,6 +1,6 @@
 import { test, expect, describe, afterEach } from "bun:test";
 import { KnxDevice, APCI } from "@busforge/knx";
-import { collectDevice, planForMask, unreadableReason, type CollectPackage, type CollectRecord } from "../src/index.ts";
+import { collectDevice, planForMask, unreadableReason, CollectCancelled, COLLECT_LIMITS, type CollectPackage, type CollectRecord } from "../src/index.ts";
 import { SimSystemB, ALLOWED_APCIS } from "./collect-sim.ts";
 
 function setup() {
@@ -125,13 +125,13 @@ describe("raw acquisition on a System B device", () => {
     expect(sim.apcis).toEqual([APCI.DEVICE_DESCRIPTOR_READ]);
   });
 
-  test("the scan budget ends the scan, not the job, and is named as a limit", async () => {
-    const { dev, reopen } = setup();
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen, limits: { scanRequests: 10 } });
-    expect(p.counts.scanRequests).toBe(10);
-    expect(p.limits).toEqual(["interface-object scan: 10 requests"]);
-    expect(p.stop).toBeNull();
-    expect(memRecords(p, "group address table")[0].outcome).toBe("bytes");
+  test("the bounds a user is told about: ten minutes and three failures in a row; no request counts", () => {
+    expect(COLLECT_LIMITS.durationMs).toBe(10 * 60_000);
+    expect(COLLECT_LIMITS.failuresInARow).toBe(3);
+    expect(Object.keys(COLLECT_LIMITS)).not.toContain("scanRequests");
+    expect(Object.keys(COLLECT_LIMITS)).not.toContain("memoryRequests");
+    // The memory guard is far above what ten minutes can read (about 4 requests a second, 48 bytes each).
+    expect(COLLECT_LIMITS.memoryBytes).toBeGreaterThan(4 * 48 * 600);
   });
 
   test("the memory budget cuts the plan and records the rest as not attempted", async () => {
@@ -143,13 +143,37 @@ describe("raw acquisition on a System B device", () => {
     expect(assoc.at(-1)).toMatchObject({ outcome: "not-attempted", detail: expect.stringContaining("memory budget") });
   });
 
-  test("a cancelled job keeps what it read", async () => {
+  test("a cancelled job drops everything it read", async () => {
     const { dev, reopen } = setup();
     const c = ctl();
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen, onProgress: (phase) => { if (phase === "scan") c.abort(); } });
-    expect(p.stop?.reason).toBe("cancelled");
-    expect(p.records.find((r) => r.step === "descriptor")?.outcome).toBe("bytes");
-    expect(p.records.some((r) => r.step === "identity" && r.outcome === "bytes")).toBe(true);
+    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen, onProgress: (phase) => { if (phase === "scan") c.abort(); } });
+    expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
+  });
+
+  test("a cancel after the last request drops the package too", async () => {
+    const { sim, dev, reopen } = setup();
+    const c = ctl();
+    sim.mask = "ffff"; // stops after the descriptor
+    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen, onRequest: () => c.abort() });
+    expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
+  });
+
+  test("a cancel during a request that fails opens no new link and drops the package", async () => {
+    process.env.KNX_TRIES = "1";
+    const { sim, dev, reopen, reopened } = setup();
+    const c = ctl();
+    sim.silent = (a) => { if (a === APCI.MEMORY_READ) { c.abort(); return true; } return false; };
+    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen });
+    expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
+    expect(reopened()).toBe(0);
+  }, 20_000);
+
+  test("a stopped job keeps its package; only a cancel drops it", async () => {
+    const { sim, dev, reopen } = setup();
+    sim.mask = "ffff";
+    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    expect(p.stop?.reason).toBe("secured-no-key");
+    expect(p.records).toHaveLength(1);
   });
 
   test("a table reference outside the 24-bit address space is not attempted, and the job goes on", async () => {

@@ -1,11 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, AlertTriangle, Ban, Boxes, CheckCircle2, Clock, Cpu, Download, KeyRound, Loader2, Network, Plug, PlugZap, Rocket, ScanSearch, Tag, Usb, X } from "lucide-react";
+import { useState } from "react";
+import { AlertCircle, AlertTriangle, Ban, Boxes, CheckCircle2, Clock, Cpu, Download, FileJson, KeyRound, Loader2, Network, Plug, PlugZap, Rocket, Stethoscope, Tag, Usb, X } from "lucide-react";
 import { toast } from "sonner";
 import type { BusStatus, ConnectionType, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
 import { qk, useBusStatus, useConnections, useProject, useTasks } from "../queries.ts";
 import { ConnectionManager, connDetail } from "../views/ConnectionManager.tsx";
+import { DiagnosticDialog } from "../views/DiagnosticDialog.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Button } from "@/components/ui/button";
@@ -13,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { errMsg, localizeError } from "../lib/apiError.ts";
 
-const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network, "flash-structure": Boxes, "assign-ia": Tag, download: Rocket, "secure-activate": KeyRound, collect: ScanSearch };
+const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network, "flash-structure": Boxes, "assign-ia": Tag, download: Rocket, "secure-activate": KeyRound, collect: Stethoscope };
 const pct = (t: Task) => (t.total > 0 ? Math.round((t.done / t.total) * 100) : null);
 const dotColor = (s: BusStatus) => (s === "connected" ? "bg-ok" : s === "connecting" ? "bg-primary" : "bg-muted-foreground");
 // A flash mid-write would corrupt the device, so only queued tasks and running reads can be cancelled.
@@ -30,6 +32,8 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   const { data: tasks = [] } = useTasks(projectId);
   const { data: bus } = useBusStatus(projectId);
   const status: BusStatus = bus?.status ?? "disconnected";
+  // The collect task whose diagnostic package is open, from its row.
+  const [diagnostic, setDiagnostic] = useState<Task | null>(null);
   const cancel = useMutation({
     mutationFn: (taskId: string) => api.cancelTask(projectId, taskId),
     onError: (e) => toast.error(t("task.cancelError"), { description: errMsg(t, e) }),
@@ -75,9 +79,20 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
         {tasks.length === 0 ? (
           <div className="px-1 pb-1 text-xs text-muted-foreground">{t("task.none")}</div>
         ) : (
-          <div className="space-y-1">{tasks.map((task) => <TaskRow key={task.id} task={task} t={t} onCancel={cancellable(task) ? () => cancel.mutate(task.id) : undefined} canceling={cancel.isPending} />)}</div>
+          <div className="space-y-1">{tasks.map((task) => (
+            <TaskRow
+              key={task.id} task={task} t={t} onCancel={cancellable(task) ? () => cancel.mutate(task.id) : undefined} canceling={cancel.isPending}
+              onView={task.kind === "collect" && task.state !== "cancelled" && task.state !== "interrupted" ? () => setDiagnostic(task) : undefined}
+            />
+          ))}</div>
         )}
       </PopoverContent>
+      {diagnostic && (
+        <DiagnosticDialog
+          open onOpenChange={(o) => { if (!o) setDiagnostic(null); }} projectId={projectId} taskId={diagnostic.id}
+          device={{ id: diagnostic.deviceId, ia: diagnostic.ia, name: diagnostic.deviceName }}
+        />
+      )}
     </Popover>
   );
 }
@@ -186,7 +201,7 @@ function StatusDot({ status }: { status: BusStatus }) {
   );
 }
 
-function TaskRow({ task, t, onCancel, canceling }: { task: Task; t: (k: string, o?: Record<string, unknown>) => string; onCancel?: () => void; canceling?: boolean }) {
+function TaskRow({ task, t, onCancel, canceling, onView }: { task: Task; t: (k: string, o?: Record<string, unknown>) => string; onCancel?: () => void; canceling?: boolean; onView?: () => void }) {
   const Icon = KIND_ICON[task.kind];
   const p = pct(task);
   const phaseLabel = task.phase ? t(`task.phase.${task.phase}`) : "";
@@ -202,6 +217,11 @@ function TaskRow({ task, t, onCancel, canceling }: { task: Task; t: (k: string, 
           {task.state === "error" && <AlertCircle className="size-3.5 text-destructive" />}
           {task.state === "cancelled" && <Ban className="size-3.5 text-muted-foreground" />}
           {task.state === "interrupted" && <AlertTriangle className={cn("size-3.5", task.writes ? "text-destructive" : "text-muted-foreground")} />}
+          {onView && (
+            <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-foreground" title={t("diagnostic.view")} onClick={onView} data-testid="task-view-diagnostic">
+              <FileJson className="size-3.5" />
+            </Button>
+          )}
           {onCancel && (
             <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" title={t(task.state === "running" ? "task.cancelRead" : "task.cancel")} disabled={canceling} onClick={onCancel}>
               <X className="size-3.5" />

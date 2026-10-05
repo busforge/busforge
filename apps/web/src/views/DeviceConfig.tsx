@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,7 @@ import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
 import { CommissionDialog } from "./CommissionDialog.tsx";
 import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
 import { ToolKeyDialog } from "./ToolKeyDialog.tsx";
+import { DiagnosticDialog } from "./DiagnosticDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -126,6 +127,7 @@ export function DeviceConfig() {
   const [secureOpen, setSecureOpen] = useState(false);
   const [toolKeyOpen, setToolKeyOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
+  const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -514,6 +516,8 @@ export function DeviceConfig() {
           {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
           {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
           {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
+          {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
+          {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
           {flashTargetsAvail.length > 0 && (
             <div className="flex">
               <Button
@@ -604,6 +608,10 @@ export function DeviceConfig() {
           projectId={projectId} device={device}
           onActivated={() => void qc.invalidateQueries({ queryKey: qk.project(projectId) })}
         />
+      )}
+
+      {device && (
+        <DiagnosticDialog key={device.id} open={diagnosticOpen} onOpenChange={setDiagnosticOpen} projectId={projectId} device={device} />
       )}
 
       {device && (
