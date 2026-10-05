@@ -1,19 +1,35 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { parseDaliStore } from "../src/parse.ts";
 import { groupLabel, isPopulatedSlot, isPresentEcg } from "../src/model.ts";
+import { corpusPath } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
-// The fixture is a real backup-store recorded from a DALI gateway (UTF-16 XML).
-const bytes = readFileSync(join(import.meta.dir, "fixtures", "backup-store.dat"));
-const dev = parseDaliStore(bytes);
+// The fixture is a real backup-store recorded from an e64 (UTF-16 XML). It and the values read
+// from it belong to that installation, so both come from the private corpus (tools/corpus.ts).
+interface Expected {
+  individualAddress: string;
+  project: string;
+  canRestore: boolean;
+  ecg0: { index: number; description: string; flags: number; groupIndex: number };
+  ecg1Description: string;
+}
 
-describe("parseDaliStore (Theben e64)", () => {
+corpusDescribe("parseDaliStore (Theben e64)", () => {
+  const bytes = readFileSync(corpusPath("dca-theben-dali-e64/backup-store.dat"));
+  const want = JSON.parse(readFileSync(corpusPath("dca-theben-dali-e64/backup-store.expected.json"), "utf8")) as Expected;
+  // A value missing from the corpus file would quietly weaken an assertion; refuse it instead.
+  const shape = (o: object, keys: string[]) => keys.every((k) => (o as Record<string, unknown>)[k] !== undefined);
+  if (!shape(want, ["individualAddress", "project", "canRestore", "ecg0", "ecg1Description"]) || !shape(want.ecg0, ["index", "description", "flags", "groupIndex"])) {
+    throw new Error("backup-store.expected.json lacks an expected value");
+  }
+  const dev = parseDaliStore(bytes);
+
   test("decodes the device header from UTF-16 bytes", () => {
     expect(dev.type).toBe("e64");
-    expect(dev.individualAddress).toBe("1.2.7");
-    expect(dev.project).toBe("house");
-    expect(dev.canRestore).toBe(true);
+    expect(dev.individualAddress).toBe(want.individualAddress);
+    expect(dev.project).toBe(want.project);
+    expect(dev.canRestore).toBe(want.canRestore);
   });
 
   test("parses the fixed-size DALI tables", () => {
@@ -25,8 +41,8 @@ describe("parseDaliStore (Theben e64)", () => {
 
   test("reads real fixture names, group links and addresses", () => {
     const e0 = dev.ecgs[0];
-    expect(e0).toMatchObject({ index: 0, description: "Bedroom 1", flags: 4, groupIndex: 6 });
-    expect(dev.ecgs[1].description).toBe("Kitchen 6");
+    expect(e0).toMatchObject(want.ecg0);
+    expect(dev.ecgs[1].description).toBe(want.ecg1Description);
     // The logical ECG links to a physical slot that carries a real long address.
     const slot = dev.devEcgs.find((d) => d.index === e0.shortAddress)!;
     expect(slot.longAddress).not.toBe("FFFFFF");
@@ -34,7 +50,7 @@ describe("parseDaliStore (Theben e64)", () => {
   });
 
   test("group labels resolve and empty slots are detectable", () => {
-    expect(groupLabel(dev.groups, dev.ecgs[0].groupIndex)).toBe(dev.groups[6].description);
+    expect(groupLabel(dev.groups, dev.ecgs[0].groupIndex)).toBe(dev.groups[want.ecg0.groupIndex].description);
     expect(dev.devEcgs.filter(isPopulatedSlot).length).toBeGreaterThan(0);
     expect(dev.ecgs.filter(isPresentEcg).length).toBeGreaterThan(0);
   });

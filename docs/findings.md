@@ -838,7 +838,8 @@ own state. What the byte means to the firmware is not known.
 ## 28. What ETS writes when a parameter change alters the com-object table
 
 ETS 6.4.1, "Programmieren > Partiell", four captures on 2026-10-01 (`scratchpad/cap-1001`, local; trimmed
-fixtures in `tools/fixtures/*-ets-partial-structure.log` and `mdt-be02001-ets-fulldownload-b7.log`):
+fixtures `captures/*-ets-partial-structure.log` and `captures/mdt-be02001-ets-fulldownload-b7.log` of the
+[private corpus](testing.md#the-private-corpus)):
 the Jung 400021SE with K2 switched from "Schalten" to "Dimmen und Farbtemperatur" and back (decrypted
 with the exported project's keys), and the MDT BE-02001.02 with input B switched from "Kontaktzustand
 senden" to the two-object short/long function, downloaded once in full by ETS, then switched back.

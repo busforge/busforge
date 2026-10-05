@@ -1,13 +1,12 @@
-import { test, expect, describe } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { test, expect } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
 import {
   parseAppConfig, classify, toAppModel, buildDeviceConfig,
   buildAbsoluteSegmentTargets, decodeAbsoluteImage,
   buildParameterImage, buildRelativeSegmentTarget, decodeParameterImage,
 } from "@busforge/product";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // Direct coverage of DeviceProfile.readState, the seam where a device read becomes the
 // programmed baseline + drift. The route tests stub readDeviceState out (readback-route.test.ts),
@@ -16,8 +15,7 @@ import {
 // (b) are relevant under the project's or the device's configuration (configFor). Expectations are decoded INDEPENDENTLY in the test from the seeded
 // bytes, so a wrong projection cannot pass by comparing the code against itself.
 
-const REAL = join(import.meta.dir, "fixtures", "real");
-const app = (f: string) => parseAppConfig(gunzipSync(readFileSync(join(REAL, f))).toString("utf8"));
+const app = (f: string) => parseAppConfig(catalogueXml(f));
 const APP_PROGRAM = 4; // OBJ.APP_PROGRAM: System B parameter segment number
 
 // A byte-addressed mock exposing only what readState calls: tableAddr + memRead. Group-table
@@ -42,7 +40,7 @@ class MockReadDevice {
 const asDev = (m: MockReadDevice) => m as unknown as KnxDevice;
 const seedBytes = (dev: MockReadDevice, base: number, bytes: Buffer) => { for (let i = 0; i < bytes.length; i++) dev.mem.set(base + i, bytes[i]); };
 
-describe("System 7 (MV-0705) readState: parameter drift projection", () => {
+corpusDescribe("System 7 (MV-0705) readState: parameter drift projection", () => {
   const cfg = app("M-0081_A-FE01-11-75D9.xml.gz"); // hasModules false, hardware-proven read-back
   const liveParams = new Map<string, string>();     // manufacturer defaults
   const profile = classify(cfg);
@@ -105,7 +103,7 @@ describe("System 7 (MV-0705) readState: parameter drift projection", () => {
   });
 });
 
-describe("System B (MV-07B0) readState: parameter drift projection", () => {
+corpusDescribe("System B (MV-07B0) readState: parameter drift projection", () => {
   const cfg = app("M-0162_A-0004-11-F245.xml.gz"); // hasModules false: readState image == buildParameterImage(toAppModel(cfg), 4, params)
   const liveParams = new Map<string, string>();
   const profile = classify(cfg);
@@ -165,7 +163,7 @@ describe("System B (MV-07B0) readState: parameter drift projection", () => {
   });
 });
 
-describe("read-back does not launder an unobservable parameter into the programmed baseline", () => {
+corpusDescribe("read-back does not launder an unobservable parameter into the programmed baseline", () => {
   // The Theben 493B's channel-active parameter (P-57) has NO memory offset: it lives only in
   // the project, and the device cannot be asked about it. If an unflashed edit to it were
   // adopted into the "programmed" baseline just because the device cannot contradict it, the
@@ -222,7 +220,7 @@ describe("read-back does not launder an unobservable parameter into the programm
   });
 });
 
-describe("System B readState covers TOP-LEVEL UNION parameters", () => {
+corpusDescribe("System B readState covers TOP-LEVEL UNION parameters", () => {
   // The DALI gateway places 178 top-level union parameters,
   // 16 of which the config view exposes for editing and the surgical flash target OWNS (it
   // writes those bytes). Read-back must therefore see them: a model that drops union params
@@ -304,7 +302,7 @@ describe("System B readState covers TOP-LEVEL UNION parameters", () => {
 // device's value of another parameter makes visible (a sensor type the project leaves at "none")
 // must still enter the baseline, or a later flash of the project resets it without anyone seeing
 // the difference. Found on the house's OpenKNX RaumController.
-describe("readState records settings that only the device's configuration makes visible", () => {
+corpusDescribe("readState records settings that only the device's configuration makes visible", () => {
   const cfg = app("M-0048_A-9071-20-F258-O00EF.xml.gz");
   const profile = classify(cfg);
   const model = toAppModel(cfg, { includeUnions: true, instances: [] });

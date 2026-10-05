@@ -1,5 +1,9 @@
 # Real catalogue fixtures
 
+The fixtures themselves are not in this repository: they are the `catalogue/` directory of the
+private corpus ([`docs/testing.md`](../../../../../docs/testing.md#the-private-corpus)). This
+directory keeps only `golden.json`, their per-fixture counts and content hashes.
+
 Every distinct manufacturer `ApplicationProgram` found across a real multi-manufacturer KNX
 installation (13 products, 6 manufacturers), plus bench products added for ETS-capture tests, gzipped, used by `real-catalogue.test.ts` to pin the
 parser and the image projection against real catalogue data: every parameter type kind, unions,
@@ -14,8 +18,8 @@ plaintext inside every `.knxproj`. They contain no project, device, group-addres
 data: that lives in the encrypted project instance (`0.xml`), which is never included here. Each
 file was verified free of topology, device-instance and group-address content before committing.
 
-They remain the respective manufacturers' catalogue data, included here for testing. They are not
-part of what this project licenses onward.
+They remain the respective manufacturers' catalogue data, which is why they stay in the private
+corpus and out of this repository.
 
 ## What this proves
 
@@ -31,14 +35,14 @@ per-segment image + decode hashes). After an **intentional, reviewed** change to
 image projection, regenerate it:
 
 ```
-bun run packages/product/test/real-catalogue.gen.ts
+BUSFORGE_CORPUS=/absolute/path/to/busforge-corpus bun run packages/product/test/real-catalogue.gen.ts
 ```
 
 and review the diff: a changed hash is a changed parse or image output.
 
 ## Adding a device
 
-Drop another `<id>.xml.gz` here (gzip the plaintext ApplicationProgram XML), confirm it carries no
-personal data (no `<DeviceInstance>`, `<GroupAddress>` or `<Topology>` elements, and no owner
-name), and run the generator. The test asserts that the fixture set and the golden stay in
+Drop another `<id>.xml.gz` into the corpus's `catalogue/` (gzip the plaintext ApplicationProgram
+XML), confirm it carries no personal data (no `<DeviceInstance>`, `<GroupAddress>` or `<Topology>`
+elements, and no owner name), add it to `CORPUS_FILES` in `tools/corpus.ts`, and run the generator. The test asserts that the fixture set and the golden stay in
 lock-step, so a new fixture without a regenerated golden fails.

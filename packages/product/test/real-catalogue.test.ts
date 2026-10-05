@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
@@ -12,14 +13,16 @@ import {
 } from "./real-catalogue.snapshot.ts";
 
 // Regression coverage against real manufacturer catalogue data: one device per
-// manufacturer (Gira, Theben, Basalte, MDT x2, Steinel), gzipped under
-// fixtures/real/ with no personal data (manufacturer ApplicationProgram XML only).
+// manufacturer (Gira, Theben, Basalte, MDT x2, Steinel), the catalogue/ files of the private
+// corpus (manufacturer ApplicationProgram XML only, no personal data).
 // Every parser/projection change is pinned by fixtures/real/golden.json; after an
-// intentional change, regenerate with: bun run packages/product/test/real-catalogue.gen.ts
+// intentional change, regenerate with (the corpus exported):
+//   bun run packages/product/test/real-catalogue.gen.ts
 const golden: Record<string, AppSnapshot> = JSON.parse(readFileSync(join(REAL_DIR, "golden.json"), "utf8"));
-const fixtures = listRealFixtures();
 
-describe("real catalogue (per-manufacturer regression)", () => {
+corpusDescribe("real catalogue (per-manufacturer regression)", () => {
+  const fixtures = listRealFixtures();
+
   test("fixtures and golden stay in lock-step", () => {
     // Every distinct application program across all of the owner's projects.
     expect(fixtures.length).toBeGreaterThanOrEqual(13);

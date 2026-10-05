@@ -1,9 +1,8 @@
-import { test, expect, describe } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { test, expect } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
 import { parseAppConfig, classify, declaresTunnelingEntries, parseLoadProcedures, type FullDownloadCtx } from "@busforge/product";
+import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // An IP interface's tunnelling addresses (MaxTunnelingUserEntries, the project's AdditionalAddresses)
 // live outside the parameter image and the load procedure, and no Busforge path writes them. A full
@@ -11,17 +10,17 @@ import { parseAppConfig, classify, declaresTunnelingEntries, parseLoadProcedures
 // writes and the read-back are not. The oracle is the application's own attribute, read here from
 // the raw XML independently of parseAppConfig.
 
-const REAL = join(import.meta.dir, "fixtures", "real");
-const xmlOf = (f: string) => gunzipSync(readFileSync(join(REAL, f))).toString("utf8");
+const xmlOf = catalogueXml;
 const declared = (xml: string) => /<ApplicationProgram\b[^>]*\bMaxTunnelingUserEntries="([^"]*)"/.exec(xml)?.[1];
 
 const IP_INTERFACE = "M-0083_A-0137-20-7EB2.xml.gz"; // MDT IP Interface/Router, System B, Data Secure
-const ipXml = xmlOf(IP_INTERFACE);
 
 // Any access to the device fails the test: the refusal must come before any bus traffic.
 const untouchable = new Proxy({}, { get: (_t, p) => { throw new Error(`device touched: ${String(p)}`); } }) as unknown as KnxDevice;
 
-describe("full download of an application with tunnelling entries", () => {
+corpusDescribe("full download of an application with tunnelling entries", () => {
+  const ipXml = xmlOf(IP_INTERFACE);
+
   test("the application declares four entries, and the parser reads them", () => {
     expect(declared(ipXml)).toBe("4");
     expect(parseAppConfig(ipXml).maxTunnelingUserEntries).toBe(4);
@@ -60,7 +59,7 @@ describe("full download of an application with tunnelling entries", () => {
   });
 });
 
-describe("an application refused for its structure keeps that code", () => {
+corpusDescribe("an application refused for its structure keeps that code", () => {
   // The ABB US/U 4.2 (memory-mapped System 7) without its address-table segment cannot be
   // commissioned anyway; with entries declared, the planner answers what the download route does.
   const abb = parseAppConfig(xmlOf("M-0002_A-A001-13-63C2.xml.gz"));
@@ -75,7 +74,7 @@ describe("an application refused for its structure keeps that code", () => {
 
 // No System 7 application in the catalogue declares tunnelling entries; the MDT BE-02001.02
 // (MV-0705, full download hardware-proven) with the attribute added stands in for one.
-describe("the System 7 path refuses the same way", () => {
+corpusDescribe("the System 7 path refuses the same way", () => {
   const be = xmlOf("M-0083_A-00B6-32-9642.xml.gz");
   const xml = be.replace(/<ApplicationProgram\b/, '<ApplicationProgram MaxTunnelingUserEntries="2"');
   const cfg = parseAppConfig(xml);
@@ -95,8 +94,8 @@ describe("the System 7 path refuses the same way", () => {
   });
 });
 
-describe("applications without tunnelling entries are unaffected", () => {
-  const fixtures = readdirSync(REAL).filter((f) => f.endsWith(".xml.gz"));
+corpusDescribe("applications without tunnelling entries are unaffected", () => {
+  const fixtures = listCatalogue();
 
   test.each(fixtures)("%s: the gate follows the declared attribute", (f) => {
     const xml = xmlOf(f);

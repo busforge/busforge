@@ -4,6 +4,7 @@ import { planAbsoluteSegmentFlash, planAbsoluteFullDownload } from "../src/devic
 import { parseLoadProcedures } from "../src/loadproc.ts";
 import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
+import { corpusTest } from "../../../tools/corpus-test.ts";
 
 // A minimal Data-less MV-0705 app: P-1 and P-3 are active (offsets 0 and 2), P-2 is a
 // parameter that owns offset 1 but is NOT referenced in the active tree, offset 3 is a
@@ -104,7 +105,7 @@ test("a device already matching the config yields an empty plan (no writes)", ()
   expect(plan.segments[0].runs).toEqual([]);
 });
 
-test("adjacent owned bytes coalesce into a single contiguous run", () => {
+corpusTest("adjacent owned bytes coalesce into a single contiguous run", () => {
   // Override both active params; their bytes are 0 and 2, still non-adjacent here, so
   // assert the coalescing on the real M-0081 device whose visible params are dense.
   const realApp = parseAppConfig(readRealFixture("M-0081_A-FE01-11-75D9.xml.gz"));
@@ -126,7 +127,7 @@ test("adjacent owned bytes coalesce into a single contiguous run", () => {
   }
 });
 
-test("a memory-mapped full download authors the com-object table as ETS does", () => {
+corpusTest("a memory-mapped full download authors the com-object table as ETS does", () => {
   // ABB US/U 4.2 (MV-0701), com-object table AS-43FE: [count][2 B] then 4-byte entries, config byte
   // at 3+4n+2. ETS 6 captures, 2026-09-25/26: at application defaults no object is configured and
   // every config byte is the template's 0xdf with the link bit 0x04 cleared (0xdb); with channel A
@@ -149,7 +150,7 @@ test("a memory-mapped full download authors the com-object table as ETS does", (
 
 // A byte an absolute segment's parameters own only in part keeps the device's other bits on a
 // parameter flash (every partly owned byte of a real System 7 application, device bits all set).
-test("an absolute parameter flash writes only the owned bits of a shared byte", () => {
+corpusTest("an absolute parameter flash writes only the owned bits of a shared byte", () => {
   const app = parseAppConfig(readRealFixture("M-0083_A-00B6-32-9642.xml.gz"));
   const targets = buildAbsoluteSegmentTargets(app, new Map());
   const partly = targets.flatMap((t) => t.owned.map((m, i) => ({ t, i, m })).filter(({ m }) => m !== 0 && m !== 0xff));

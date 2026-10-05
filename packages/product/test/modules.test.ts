@@ -1,9 +1,10 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect } from "bun:test";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
 import { buildDeviceConfig } from "../src/config.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // The Theben M-0048_A-493B channel device (HMG/RMG/JMG heating actuators) is the
 // reference for module/channel per-instance memory offsets. These tests pin the
@@ -13,7 +14,7 @@ import { readRealFixture } from "./real-catalogue.snapshot.ts";
 // (67/67 instances reproduced the project 0.xml exactly); see docs/device-memory-model.md.
 const APP = "M-0048_A-493B-21-B471";
 
-describe("module instances (Theben 493B channel device)", () => {
+corpusDescribe("module instances (Theben 493B channel device)", () => {
   const xml = readRealFixture(`${APP}.xml.gz`);
   const app = parseAppConfig(xml);
 
@@ -122,7 +123,7 @@ describe("module instances (Theben 493B channel device)", () => {
 // source, not against its own output.
 const MDT = "M-0083_A-00B6-32-9642";
 
-describe("module instances (MDT M-0083 MV-0705 device, literal-arg modules)", () => {
+corpusDescribe("module instances (MDT M-0083 MV-0705 device, literal-arg modules)", () => {
   const xml = readRealFixture(`${MDT}.xml.gz`);
   const app = parseAppConfig(xml);
 
@@ -180,7 +181,7 @@ describe("module instances (MDT M-0083 MV-0705 device, literal-arg modules)", ()
   });
 });
 
-describe("unresolved module arguments refuse instead of guessing (no silent base-0 placement)", () => {
+corpusDescribe("unresolved module arguments refuse instead of guessing (no silent base-0 placement)", () => {
   const xml = readRealFixture(`${APP}.xml.gz`);
   const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
 

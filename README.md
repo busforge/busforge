@@ -74,6 +74,19 @@ bun run dev:web        # web UI on :5173, proxies /api
 bun run check          # typecheck, lint, tests and build across every workspace
 ```
 
+Some tests need files this repository does not carry: manufacturer catalogue data, ETS
+captures from the test bench and a DALI gateway backup from a real installation. They sit in
+a private corpus outside the repository. Without it, `bun run check` runs everything else,
+skips those tests by name (`[needs private corpus] ...`) and ends with a status line listing
+their files; that is how it runs in public CI. With the corpus, export its absolute path first:
+
+```bash
+export BUSFORGE_CORPUS=/path/to/busforge-corpus
+bun run check          # last line: private corpus: present at /path/to/busforge-corpus; ...
+```
+
+See [`docs/testing.md`](docs/testing.md#the-private-corpus) for the layout and the rules.
+
 Or self-host the container:
 
 ```bash
@@ -128,11 +141,11 @@ by, sponsored by, or certified by the KNX Association** or any device manufactur
   (which embeds the manufacturer data they legally obtained) or download `.knxprod` from the
   manufacturer. Parsing files you own and speaking the standardized KNX management protocol
   is legitimate interoperability.
-- The **source tree's test suite** is not tooling only today: it carries manufacturer
-  catalogue fixtures (`packages/product/test/fixtures/real`), which remain the
-  manufacturers' data and are not licensed onward by Busforge, and two keyring files from
-  the xknx test suite under the MIT license
-  (`packages/project/test/fixtures/knxkeys`). None of it enters the container image.
+- The **source tree** carries no manufacturer catalogue files either: the tests that need
+  real application programs read them from a private corpus outside the repository (see
+  [Run it](#run-it)). Its test suite does carry two keyring files from the xknx test suite
+  under the MIT license (`packages/project/test/fixtures/knxkeys`), which do not enter the
+  container image.
 
 ## License
 

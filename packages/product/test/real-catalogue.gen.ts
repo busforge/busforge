@@ -1,8 +1,9 @@
 // Regenerate the golden snapshot for the real catalogue fixtures. Run after an
 // intentional, reviewed change to the parser or image projection:
-//   bun run packages/product/test/real-catalogue.gen.ts
-// It reads the committed fixtures/real/*.xml.gz (no project file needed) and writes
-// fixtures/real/golden.json. real-catalogue.test.ts asserts against that golden.
+//   BUSFORGE_CORPUS=<corpus dir> bun run packages/product/test/real-catalogue.gen.ts
+// It reads the catalogue/*.xml.gz of the private corpus (tools/corpus.ts; no project file
+// needed) and writes fixtures/real/golden.json; without the corpus it refuses.
+// real-catalogue.test.ts asserts against that golden.
 //
 // Before overwriting, it prints a HUMAN-READABLE diff of what changed against the
 // current golden: shape counts, per-segment sizes, owned/skipped byte counts, and
@@ -13,6 +14,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listRealFixtures, readRealFixture, snapshot, REAL_DIR, type AppSnapshot } from "./real-catalogue.snapshot.ts";
+import { catalogueDir } from "../../../tools/corpus.ts";
 
 const GOLDEN = join(REAL_DIR, "golden.json");
 
@@ -56,6 +58,7 @@ function diffSnapshot(a: AppSnapshot | undefined, b: AppSnapshot): string[] {
   return out;
 }
 
+catalogueDir(); // refuses before anything is read or written when the corpus is absent
 const old = readOldGolden();
 const golden: Record<string, AppSnapshot> = {};
 let changed = 0;

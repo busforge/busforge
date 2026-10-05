@@ -1,13 +1,14 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import {
   APCI, CEMI, SVC, iaToNum, parseApdu, parseCemiLData,
   decodeDeviceDescriptorResponse, decodePropertyValueResponse, decodeAuthorizeResponse, decodePropertyDescription,
   decodeFunctionPropertyExtState, decodeMemoryRead, decodeMemoryResponse, encodeAuthorizeFreeKey, encodePropertyDescriptionRead,
 } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
+import { catalogueXml, captureText } from "./corpus.ts";
+import { corpusTest } from "./corpus-test.ts";
 
 // The reference vectors of docs/raw-acquisition.md point at lines of the bench captures (ETS, the
 // collector, single memory reads). This test keeps them honest: every vector must decode, from the
@@ -44,7 +45,7 @@ function codec(service: string, tpdu: Buffer, apci: number, data: Buffer): Recor
 }
 
 function apduAt(file: string, line: number) {
-  const text = readFileSync(join(FIXTURES, file), "utf8").split("\n")[line - 1];
+  const text = captureText(file).split("\n")[line - 1];
   if (!text) throw new Error(`${file}:${line} does not exist`);
   const frame = Buffer.from(text.slice(text.indexOf("| ") + 2).trim(), "hex");
   if (frame.readUInt16BE(2) !== SVC.TUNNEL_REQ) throw new Error(`${file}:${line} is not a tunnelling request`);
@@ -108,7 +109,7 @@ describe("raw acquisition reference vectors", () => {
   test("the fixture is not empty", () => expect(vectors.length).toBeGreaterThan(0));
 
   for (const v of vectors) {
-    test(`${v.id} decodes from ${v.file}:${v.line}`, () => {
+    corpusTest(`${v.id} decodes from ${v.file}:${v.line}`, () => {
       const { code, src, dst, tpdu, control, apci, data } = apduAt(v.file, v.line);
       expect(control).toBe(false);
       // A request is the tool's frame to the device, a response the device's frame from the bus.
@@ -130,12 +131,12 @@ describe("raw acquisition reference vectors", () => {
 
   // docs/raw-acquisition.md derives a table's capacity from the device's property description.
   // On both System B bench devices it equals the application's declared association table size.
-  test("the described association table capacity equals the application's MaxEntries", () => {
+  corpusTest("the described association table capacity equals the application's MaxEntries", () => {
     const apps: Record<string, string> = { "propdesc-response-jung": "M-0004_A-7072-21-99A7-O000A.xml.gz", "propdesc-response-gvs": "M-0085_A-0072-30-69AA.xml.gz" };
     for (const [id, file] of Object.entries(apps)) {
       const v = vectors.find((x) => x.id === id);
       if (!v) throw new Error(`vector ${id} is missing`);
-      const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", file))).toString("utf8");
+      const xml = catalogueXml(file);
       expect(parseAppConfig(xml).groupTables.associationMaxEntries).toBe(v.decoded.maxElements as number);
     }
   });

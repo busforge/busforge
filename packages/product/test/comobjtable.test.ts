@@ -1,13 +1,12 @@
-import { test, expect, describe } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { test, expect } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
 import {
   parseAppConfig, classify, ProductError,
   comObjectTable, diffComObjectTables,
   buildRelativeSegmentTarget, buildAbsoluteSegmentTargets, buildDeviceConfig, resolveModuleInstances,
 } from "@busforge/product";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // The com-object table (L3) staleness gate. Busforge writes parameters (L4) and the group
 // tables (L1/L2) but keeps the device's com-object table. A parameter that changes which
@@ -15,8 +14,7 @@ import {
 // anyway would leave the device behaving unlike what the UI shows while reporting success.
 // This suite pins the refusal on REAL application programs, across both memory models.
 
-const REAL = join(import.meta.dir, "fixtures", "real");
-const app = (f: string) => parseAppConfig(gunzipSync(readFileSync(join(REAL, f))).toString("utf8"));
+const app = (f: string) => parseAppConfig(catalogueXml(f));
 const LSM = 4;
 
 // A device stub that throws on any bus call it was not given. Writes are never stubbed, so a
@@ -33,7 +31,7 @@ const ctxFor = (appXml: string, params: Map<string, string>, base = new Map<stri
   persistBackups: () => { throw new Error("BACKUP-PERSISTED"); },
 });
 
-describe("diffComObjectTables", () => {
+corpusDescribe("diffComObjectTables", () => {
   const cfg = app("M-0162_A-0004-11-F245.xml.gz");
   const base = comObjectTable(cfg, new Map());
 
@@ -71,8 +69,8 @@ describe("diffComObjectTables", () => {
   });
 });
 
-describe("System B flash refuses when the com-object table would go stale", () => {
-  const xml = gunzipSync(readFileSync(join(REAL, "M-0048_A-493B-21-B471.xml.gz"))).toString("utf8");
+corpusDescribe("System B flash refuses when the com-object table would go stale", () => {
+  const xml = catalogueXml("M-0048_A-493B-21-B471.xml.gz");
   const cfg = parseAppConfig(xml);
   const profile = classify(cfg);
   const CHANNEL_ACTIVE = "M-0048_A-493B-21-B471_P-57_R-57"; // the Theben channel-active parameter
@@ -122,13 +120,13 @@ describe("System B flash refuses when the com-object table would go stale", () =
   });
 });
 
-describe("the GROUP-ADDRESS flash is gated too (the parameter flash alone is not enough)", () => {
+corpusDescribe("the GROUP-ADDRESS flash is gated too (the parameter flash alone is not enough)", () => {
   // Without this, the exact configuration the parameter flash refuses could still be pushed as a
   // GA flash: the association table numbers its com-objects from the LIVE config, so it would
   // point group addresses at objects the device's kept-from-device com-object table never
   // configured (a link to nothing), and the verify, which only re-reads the tables it just wrote,
   // would still report verified: true.
-  const xml = gunzipSync(readFileSync(join(REAL, "M-0048_A-493B-21-B471.xml.gz"))).toString("utf8");
+  const xml = catalogueXml("M-0048_A-493B-21-B471.xml.gz");
   const cfg = parseAppConfig(xml);
   const profile = classify(cfg);
   const CHANNEL_ACTIVE = "M-0048_A-493B-21-B471_P-57_R-57";
@@ -159,8 +157,8 @@ describe("the GROUP-ADDRESS flash is gated too (the parameter flash alone is not
   });
 });
 
-describe("System 7 (absolute) flash applies the same gate", () => {
-  const xml = gunzipSync(readFileSync(join(REAL, "M-008E_A-7079-10-9C41.xml.gz"))).toString("utf8");
+corpusDescribe("System 7 (absolute) flash applies the same gate", () => {
+  const xml = catalogueXml("M-008E_A-7079-10-9C41.xml.gz");
   const cfg = parseAppConfig(xml);
   const profile = classify(cfg);
   const OBJ_ADDING = "M-008E_A-7079-10-9C41_P-11_R-11"; // 0 -> 1 activates com-objects 53, 54, ...

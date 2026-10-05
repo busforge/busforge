@@ -14,9 +14,10 @@ import { parseAppConfig } from "@busforge/product";
 import { loadKnxproj, appProgramId } from "@busforge/project";
 import type { KnxDevice } from "@busforge/knx";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
-import { gunzipSync } from "node:zlib";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 
-const realAppXml = (n: string) => gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", n))).toString("utf8");
+const realAppXml = catalogueXml;
 const realApp = (n: string) => parseAppConfig(realAppXml(n));
 
 // Export is a POST that returns the binary .busforge artifact (gzip, AES-sealed
@@ -84,7 +85,7 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
   });
 });
 
-describe("device profile capabilities (read vs flash, per memory model)", () => {
+corpusDescribe("device profile capabilities (read vs flash, per memory model)", () => {
   // Read and write are independent capabilities. MV-0705 supports both (absolute params +
   // System-7 group tables); GA flash is hardware-verified on TP. System B does both too.
   test("System 7 (MV-0705) absolute-segment device: reads, flashes, AND full-downloads", () => {
@@ -967,7 +968,7 @@ describe("device configuration", () => {
     return { projectId, deviceId };
   }
 
-  test("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
+  corpusTest("flash-ga is no longer gated on an MV-0705 device (capability guard passes)", async () => {
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
     // Keep routing, capability checks and session setup real; stop at the network boundary.
@@ -987,7 +988,7 @@ describe("device configuration", () => {
     }
   });
 
-  test("a write to a product untested on hardware is refused until acknowledged once for the project", async () => {
+  corpusTest("a write to a product untested on hardware is refused until acknowledged once for the project", async () => {
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
     const connect = spyOn(KnxIpTunnel.prototype, "connect").mockRejectedValue(new KnxError("TEST_TRANSPORT_FAILURE", "injected tunnel connection failure"));
@@ -1019,7 +1020,7 @@ describe("device configuration", () => {
     }
   });
 
-  test("a Product tested on hardware for the operation writes without any acknowledgement", async () => {
+  corpusTest("a Product tested on hardware for the operation writes without any acknowledgement", async () => {
     const state = freshState();
     const { projectId, deviceId } = await mv0705Device(state);
     const jung = evidenceBundle().products.find((p) => p.productRef.startsWith("M-0004_"))!;
@@ -1035,7 +1036,7 @@ describe("device configuration", () => {
     }
   });
 
-  test("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {
+  corpusTest("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {
     // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile, flashLinks
     // false. The write guard must refuse with its OWN code (not the read-side
     // GROUP_TABLE_UNREADABLE), so the message can say "recognised family, GA programming not

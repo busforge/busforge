@@ -1,22 +1,22 @@
 // Collects the kept evidence records (docs/evidence/runs/**/*.evidence.json and
 // docs/evidence/reference/*.json) into the bundle the server ships, and renders the compatibility
 // page docs/compatibility.md from the same matrix. Each tested Product's capabilities come from its
-// application program in packages/product/test/fixtures/real; a Product without one is refused.
+// application program in the catalogue/ of the private corpus (tools/corpus.ts); a Product without
+// one is refused, and so is a run without the corpus.
 //
-//   bun run tools/evidence-bundle.ts          # fail when the bundle or the page is stale
-//   bun run tools/evidence-bundle.ts --write  # regenerate both
+//   BUSFORGE_CORPUS=<dir> bun run tools/evidence-bundle.ts          # fail when the bundle or the page is stale
+//   BUSFORGE_CORPUS=<dir> bun run tools/evidence-bundle.ts --write  # regenerate both
 import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import {
   parseEvidenceRecord, checkEvidenceSet, parseEvidenceBundle, buildMatrix, classify, parseAppConfig,
   EVIDENCE_BUNDLE_SCHEMA, MATRIX_OPERATIONS, type EvidenceBundle, type EvidenceRecord, type MatrixProduct,
   type MatrixRow, type OperationState, type MatrixOperation,
 } from "../packages/product/src/index.ts";
+import { catalogueDir, catalogueXml } from "./corpus.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const EVIDENCE = join(ROOT, "docs", "evidence");
-const FIXTURES = join(ROOT, "packages", "product", "test", "fixtures", "real");
 export const BUNDLE_PATH = join(ROOT, "apps", "server", "src", "evidence-bundle.json");
 export const PAGE_PATH = join(ROOT, "docs", "compatibility.md");
 
@@ -46,9 +46,9 @@ export function collectRecords(): EvidenceRecord[] {
 }
 
 function appOf(appProgramId: string) {
-  const file = join(FIXTURES, `${appProgramId}.xml.gz`);
-  if (!existsSync(file)) throw new Error(`${appProgramId}: has evidence but no application program in ${FIXTURES}, so its capabilities are unknown`);
-  return parseAppConfig(gunzipSync(readFileSync(file)).toString("utf8"));
+  const dir = catalogueDir();
+  if (!existsSync(join(dir, `${appProgramId}.xml.gz`))) throw new Error(`${appProgramId}: has evidence but no application program in ${dir}, so its capabilities are unknown`);
+  return parseAppConfig(catalogueXml(`${appProgramId}.xml.gz`));
 }
 
 export function generateBundle(records = collectRecords()): EvidenceBundle {

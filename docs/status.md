@@ -137,7 +137,7 @@ Notes attached to that table:
   every union has no active member, and ETS writes the member marked `DefaultUnionParameter`;
   Busforge's full download now does the same (module-instance unions excepted, no capture covers
   them); the parameter flash writes them as well, as ETS's partial download does. The whole
-  download is byte-equal to the ETS one (2026-09-25 capture, `tools/fixtures/`).
+  download is byte-equal to the ETS one (2026-09-25 capture, `captures/` of the [private corpus](testing.md#the-private-corpus)).
 - **GVS AMMA: a parameter flash wrote idle union bits.** The parameter flash owned whole bytes, so
   beside a 2-bit parameter it wrote the `<Data>` template's 1s into the disabled channel's idle
   unions, where the device held (and ETS writes) 0s. The firmware read them as configuration and,
@@ -297,13 +297,13 @@ report a device family as working on the strength of a passing test suite.
 - **Our image equals what ETS would write** is only checked where an ETS capture of the same
   device exists, all for the full download: the MDT BE-02001.02 (defaults and one link), the ABB
   US/U 4.2, the GVS AMMA and the Jung 400021SE (project configurations), every segment byte for byte (`tools/etsdiff.ts`,
-  captures in `tools/fixtures/`, records in [evidence/reference/](evidence/reference/)). The Jung
+  captures in the private corpus, records in [evidence/reference/](evidence/reference/)). The Jung
   400021SE (module device) as well. For the parameter flash one ETS partial download of the Jung
   exists: it writes the two MCB regions after the allocation, as Busforge's parameter flash does,
   and its parameter bytes match Busforge's image. For the group-address flash one ETS partial
   download per bench device exists (links plus, on the ABB, GVS and Jung, a parameter
   change): every byte ETS wrote, group tables and com-object table included, equals Busforge's
-  image for that configuration (`tools/etsdiff.test.ts`, captures in `tools/fixtures/`, records per
+  image for that configuration (`tools/etsdiff.test.ts`, captures in the private corpus, records per
   flash operation `*-partial-links.json` in [evidence/reference/](evidence/reference/)). Everywhere else the read-back proves `device == our image` and can never prove
   `our image == ETS`. That blind spot has hidden a codec bug and the `LegacyPatchAlways` bug.
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds

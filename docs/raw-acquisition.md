@@ -16,9 +16,9 @@ product" are exactly what this design exists to avoid.
 | Source | What it gives | Where |
 |---|---|---|
 | KNX master data, `MaskVersion` resources | Per mask: where each system resource lives (memory address, pointer, interface-object property), its length and read access. | `knx_master.xml` inside every `.knxproj`. Checked against ETS 6 master data version 298 (`scratchpad/ets-captures/bench-2026-09-25.knxproj`, local) and the copy under `reference/vendor/Kaenx.Konnect` (local, gitignored): identical for every mask quoted here that the master data contains. MV-0311, MV-1311, MV-2311, MV-2010, MV-2110, MV-0810, MV-0811, MV-0AFD, MV-0AFE, MV-3012 and MV-4012 are in neither file; Busforge knows them from its own registry (`packages/product/src/masks.ts`). |
-| ETS 6 captures of the four bench devices | What a real tool reads before it writes, and how the devices answer. | `tools/fixtures/*-ets-*.log`, turned into checked vectors (see [Reference vectors](#reference-vectors)). |
-| Captures of the collector on the bench | What the devices answer to the requests ETS never sends: the description scan, absent properties. | `tools/fixtures/*-collect-scan.log`, checked vectors as well. |
-| A capture of single memory reads on the bench | How a device refuses a memory read. | `tools/fixtures/bench-memory-refused.log` (`tools/memread.ts`), checked vectors as well. |
+| ETS 6 captures of the four bench devices | What a real tool reads before it writes, and how the devices answer. | `captures/*-ets-*.log` of the [private corpus](testing.md#the-private-corpus), turned into checked vectors (see [Reference vectors](#reference-vectors)). |
+| Captures of the collector on the bench | What the devices answer to the requests ETS never sends: the description scan, absent properties. | `captures/*-collect-scan.log` of the private corpus, checked vectors as well. |
+| A capture of single memory reads on the bench | How a device refuses a memory read. | `captures/bench-memory-refused.log` of the private corpus (`tools/memread.ts`), checked vectors as well. |
 | Calimero (`calimero-core`, `ManagementClientImpl`, `ManagementProceduresImpl`) | Service formats, chunking, how negative answers look. | github.com/calimero-project/calimero-core |
 | xknx (`xknx/management/procedures`) | `DMP_InterfaceObjectScan_R`, memory-read and authorize procedures, return codes. | github.com/XKNX/xknx |
 | thelsing/knx (OpenKNX stack) | Device-side behaviour: what a property description or an out-of-range read returns. | github.com/thelsing/knx |

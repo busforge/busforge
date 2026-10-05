@@ -1,9 +1,10 @@
 import { putGroupSenders } from "../src/db/groupSenders.ts";
 import { test, expect, describe, mock, afterAll } from "bun:test";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
@@ -52,9 +53,7 @@ afterAll(() => { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; dow
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
-const realAppXml = gunzipSync(readFileSync(join(
-  import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0081_A-FE01-11-75D9.xml.gz",
-))).toString("utf8");
+const realAppXml = () => catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
 
 // Hand-chosen refs from the real M-0081 app program: P-6_R-6 is a memory-backed
 // Value-typed parameter that is image-writable AND com-object-table-neutral, so a
@@ -98,7 +97,7 @@ async function acknowledgeUntested(state: AppState, projectId: string, deviceId:
   expect((await handleApi(req(`/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
 }
 // The real M-0081 (MV-0705, flashParams+flashLinks capable) is the default device for these tests.
-const m0081Project = (state: AppState) => projectWithApp(state, realAppXml);
+const m0081Project = (state: AppState) => projectWithApp(state, realAppXml());
 
 // A real write answers 202 with its queued task; its outcome is collected from the task.
 async function programmed(state: AppState, response: Promise<Response | null> | Response | null) {
@@ -113,7 +112,7 @@ const post = (state: AppState, path: string) => handleApi(req(path, { method: "P
 const flashed = (verified: boolean): FlashResult =>
   ({ kind: "flashed", mask: "MV-0705", imageBytes: 1, diffBytes: 1, verified, backup: "x" });
 
-describe("POST /flash: baseline adoption is gated on verified", () => {
+corpusDescribe("POST /flash: baseline adoption is gated on verified", () => {
   test("verified:false -> 200, but the param baseline is NOT adopted (drift stays)", async () => {
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);
@@ -172,15 +171,13 @@ describe("POST /flash: baseline adoption is gated on verified", () => {
   });
 });
 
-describe("POST /flash: keepDrift wiring for params the flash can never write", () => {
+corpusDescribe("POST /flash: keepDrift wiring for params the flash can never write", () => {
   test("a memory-backed TEXT override keeps its changed chip across a verified flash; a VALUE override is adopted", async () => {
     const state = freshState();
     // M-0083 A-0137 (System B) carries memory-backed TypeText params. The image codec
     // cannot represent text, so a flash never writes them; adopting such an override
     // into the baseline would fake it as programmed.
-    const a0137 = gunzipSync(readFileSync(join(
-      import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0083_A-0137-20-7EB2.xml.gz",
-    ))).toString("utf8");
+    const a0137 = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
     const form = new FormData();
     form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
     form.set("password", "tester12");
@@ -244,7 +241,7 @@ describe("POST /flash: keepDrift wiring for params the flash can never write", (
   });
 });
 
-describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
+corpusDescribe("POST /flash-ga: link baseline adoption is gated on verified", () => {
   test("verified:false -> changed link stays as drift", async () => {
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);
@@ -278,41 +275,13 @@ describe("POST /flash-ga: link baseline adoption is gated on verified", () => {
 // baselines; where it can only commission from scratch the route points at a full download
 // (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD); otherwise it refuses (COM_OBJECT_TABLE_STALE). The surgical
 // orchestrators are never reached in any of these cases.
-describe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash (or is refused)", () => {
-  const readReal = (f: string) => gunzipSync(readFileSync(join(
-    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f,
-  ))).toString("utf8");
+corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash (or is refused)", () => {
+  const readReal = catalogueXml;
   const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: full download, no structural flash
   const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30"; // System B: activates a com-object
   const jung = readReal("M-0004_A-7072-21-99A7-O000A.xml.gz"); // System B, proven for the structural flash
   const TABLE_CHANGING_JUNG = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142"; // 8 removes #253, #254
 
-  // A device that can flash but CANNOT full-download: System B with NO parameter segment (no LSM4
-  // RelativeSegment -> hasParamSegment false -> fullDownload false, flashParams still true). Its P-1
-  // is a project-only param (no <Memory>) that activates com-object 5 via a choose, so it changes the
-  // com-object table without a segment to write. No corpus fixture is flashable-but-not-full-
-  // downloadable any more (un-gating MV-0705 made every flashable real device full-download-capable),
-  // so this branch is exercised on a synthetic app. Modelled on the M-00FA app in comobjbuild.test.ts.
-  const noParamSegApp = `<?xml version="1.0" encoding="utf-8"?>
-<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00FA"><ApplicationPrograms>
-<ApplicationProgram Id="M-00FA_A-A012-55-0000" ApplicationNumber="40978" ApplicationVersion="85" MaskVersion="MV-07B0" DefaultLanguage="de-DE" Name="NoParamSeg">
-<Static>
-<ParameterTypes><ParameterType Id="M-00FA_A-A012-55-0000_PT-1"><TypeRestriction Base="Value" SizeInBit="1"><Enumeration Text="nein" Value="0"/><Enumeration Text="ja" Value="1"/></TypeRestriction></ParameterType></ParameterTypes>
-<Parameters><Parameter Id="M-00FA_A-A012-55-0000_P-1" ParameterType="M-00FA_A-A012-55-0000_PT-1" Text="Kanal aktiv" Value="0"/></Parameters>
-<ParameterRefs><ParameterRef Id="M-00FA_A-A012-55-0000_P-1_R-1" RefId="M-00FA_A-A012-55-0000_P-1"/></ParameterRefs>
-<ComObjectTable>
-<ComObject Id="M-00FA_A-A012-55-0000_O-1" Number="1" Name="Heartbeat" Text="In Betrieb" ObjectSize="1 Byte" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
-<ComObject Id="M-00FA_A-A012-55-0000_O-5" Number="5" Name="Presence" Text="Präsenz" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
-</ComObjectTable>
-<ComObjectRefs><ComObjectRef Id="M-00FA_A-A012-55-0000_O-1_R-1" RefId="M-00FA_A-A012-55-0000_O-1"/><ComObjectRef Id="M-00FA_A-A012-55-0000_O-5_R-5" RefId="M-00FA_A-A012-55-0000_O-5"/></ComObjectRefs>
-</Static>
-<Dynamic><ParameterBlock Id="M-00FA_A-A012-55-0000_PB-1" Name="Basis" Text="Basis">
-<ParameterRefRef RefId="M-00FA_A-A012-55-0000_P-1_R-1"/>
-<ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-1_R-1"/>
-<choose ParamRefId="M-00FA_A-A012-55-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-5_R-5"/></when></choose>
-</ParameterBlock></Dynamic>
-</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
-  const TABLE_CHANGING_NOSEG = "M-00FA_A-A012-55-0000_P-1_R-1"; // activates com-object 5
 
   test("param flash, System B -> the structural flash runs, the surgical flash never does, and a verified one adopts both baselines", async () => {
     const state = freshState();
@@ -367,26 +336,6 @@ describe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash
     } finally { structureImpl = realStructure; }
   });
 
-  test("a never-programmed device of a family that cannot full-download keeps its surgical flash, which ends the state", async () => {
-    const state = freshState();
-    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
-    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
-    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
-    paramFlashImpl = async () => flashed(true);
-    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
-    expect(np()).toBe(0);
-  });
-
-  test("param flash, family that cannot full-download -> plain COM_OBJECT_TABLE_STALE (no download offered)", async () => {
-    const state = freshState();
-    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
-    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_NOSEG, "1");
-    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE");
-  });
-
   test("the GA flash is routed the same way: an L3-changing param runs the structural flash", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, jung);
@@ -410,14 +359,61 @@ describe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash
   });
 });
 
+describe("POST /flash: a family that cannot full-download", () => {
+  // A device that can flash but CANNOT full-download: System B with NO parameter segment (no LSM4
+  // RelativeSegment -> hasParamSegment false -> fullDownload false, flashParams still true). Its P-1
+  // is a project-only param (no <Memory>) that activates com-object 5 via a choose, so it changes the
+  // com-object table without a segment to write. No corpus fixture is flashable-but-not-full-
+  // downloadable any more (un-gating MV-0705 made every flashable real device full-download-capable),
+  // so this branch is exercised on a synthetic app. Modelled on the M-00FA app in comobjbuild.test.ts.
+  const noParamSegApp = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00FA"><ApplicationPrograms>
+<ApplicationProgram Id="M-00FA_A-A012-55-0000" ApplicationNumber="40978" ApplicationVersion="85" MaskVersion="MV-07B0" DefaultLanguage="de-DE" Name="NoParamSeg">
+<Static>
+<ParameterTypes><ParameterType Id="M-00FA_A-A012-55-0000_PT-1"><TypeRestriction Base="Value" SizeInBit="1"><Enumeration Text="nein" Value="0"/><Enumeration Text="ja" Value="1"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="M-00FA_A-A012-55-0000_P-1" ParameterType="M-00FA_A-A012-55-0000_PT-1" Text="Kanal aktiv" Value="0"/></Parameters>
+<ParameterRefs><ParameterRef Id="M-00FA_A-A012-55-0000_P-1_R-1" RefId="M-00FA_A-A012-55-0000_P-1"/></ParameterRefs>
+<ComObjectTable>
+<ComObject Id="M-00FA_A-A012-55-0000_O-1" Number="1" Name="Heartbeat" Text="In Betrieb" ObjectSize="1 Byte" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+<ComObject Id="M-00FA_A-A012-55-0000_O-5" Number="5" Name="Presence" Text="Präsenz" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+</ComObjectTable>
+<ComObjectRefs><ComObjectRef Id="M-00FA_A-A012-55-0000_O-1_R-1" RefId="M-00FA_A-A012-55-0000_O-1"/><ComObjectRef Id="M-00FA_A-A012-55-0000_O-5_R-5" RefId="M-00FA_A-A012-55-0000_O-5"/></ComObjectRefs>
+</Static>
+<Dynamic><ParameterBlock Id="M-00FA_A-A012-55-0000_PB-1" Name="Basis" Text="Basis">
+<ParameterRefRef RefId="M-00FA_A-A012-55-0000_P-1_R-1"/>
+<ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-1_R-1"/>
+<choose ParamRefId="M-00FA_A-A012-55-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-00FA_A-A012-55-0000_O-5_R-5"/></when></choose>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const TABLE_CHANGING_NOSEG = "M-00FA_A-A012-55-0000_P-1_R-1"; // activates com-object 5
+
+  test("a never-programmed device of a family that cannot full-download keeps its surgical flash, which ends the state", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
+    paramFlashImpl = async () => flashed(true);
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(np()).toBe(0);
+  });
+
+  test("param flash, family that cannot full-download -> plain COM_OBJECT_TABLE_STALE (no download offered)", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_NOSEG, "1");
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash`, { method: "POST" }), state))!;
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE");
+  });
+});
+
 
 // MDT IP Interface/Router (A-0137) declares tunnelling entries no Busforge path writes, so its full
 // download is refused with its own code; the surgical flashes stay, and a never-programmed one is not
 // sent to the download it cannot run.
-describe("an IP interface with tunnelling entries", () => {
-  const a0137 = gunzipSync(readFileSync(join(
-    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0083_A-0137-20-7EB2.xml.gz",
-  ))).toString("utf8");
+corpusDescribe("an IP interface with tunnelling entries", () => {
+  const a0137 = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
 
   test("the download route refuses with FULL_DOWNLOAD_TUNNELING_ENTRIES and never reaches the download", async () => {
     const state = freshState();
@@ -433,9 +429,7 @@ describe("an IP interface with tunnelling entries", () => {
   });
 
   test("an interface whose family is refused anyway (MV-0012) keeps FULL_DOWNLOAD_UNSUPPORTED", async () => {
-    const a0138 = gunzipSync(readFileSync(join(
-      import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0083_A-0138-21-F18E-O0072.xml.gz",
-    ))).toString("utf8");
+    const a0138 = catalogueXml("M-0083_A-0138-21-F18E-O0072.xml.gz");
     expect(a0138).toContain('MaxTunnelingUserEntries="4"');
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0138);
@@ -467,10 +461,8 @@ describe("an IP interface with tunnelling entries", () => {
 // #253 and #254). A download programmed with it compiled the device's com-object table for that
 // value, so the baseline must record it: otherwise switching back looks like no change and the
 // surgical parameter flash leaves the device on the other table while reporting success.
-describe("a memory-less module parameter that shapes the com-object table", () => {
-  const jungXml = gunzipSync(readFileSync(join(
-    import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0004_A-7072-21-99A7-O000A.xml.gz",
-  ))).toString("utf8");
+corpusDescribe("a memory-less module parameter that shapes the com-object table", () => {
+  const jungXml = catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz");
   const CHANNEL_FUNCTION = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142";
 
   test("a never-programmed device: surgical flashes are refused, only a verified download clears it", async () => {
@@ -526,7 +518,7 @@ function linkBaseline(state: AppState, projectId: string, deviceId: string): num
 
 for (const route of programmingRoutes) {
   for (const timing of ["queued", "running"] as const) {
-    test(`${route}: edits while ${timing} retain submitted baselines`, async () => {
+    corpusTest(`${route}: edits while ${timing} retain submitted baselines`, async () => {
       const state = freshState();
       const { projectId, deviceId } = await m0081Project(state);
       setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "2");
@@ -556,7 +548,7 @@ for (const route of programmingRoutes) {
     });
   }
   for (const outcome of ["unverified", "failed", "dry"] as const) {
-    test(`${route}: ${outcome} cannot adopt submitted values`, async () => {
+    corpusTest(`${route}: ${outcome} cannot adopt submitted values`, async () => {
       const state = freshState();
       const { projectId, deviceId } = await m0081Project(state);
       setDeviceParam(state.db, projectId, deviceId, PARAM_REF, "1");
@@ -580,7 +572,7 @@ for (const route of programmingRoutes) {
     });
   }
   for (const mutation of ["replace", "readdress", "recreate"] as const) {
-    test(`${route}: ${mutation} while queued refuses before programming`, async () => {
+    corpusTest(`${route}: ${mutation} while queued refuses before programming`, async () => {
       const state = freshState();
       const { projectId, deviceId } = await m0081Project(state);
       const gate = Promise.withResolvers<void>();
@@ -601,7 +593,7 @@ for (const route of programmingRoutes) {
       expect(wrote).toBe(false);
     });
   }
-  test(`${route}: deletion during execution refuses adoption and reports task failure`, async () => {
+  corpusTest(`${route}: deletion during execution refuses adoption and reports task failure`, async () => {
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);
     const before = getDeviceParamBase(state.db, projectId, deviceId);
@@ -615,7 +607,7 @@ for (const route of programmingRoutes) {
   });
 }
 
-test("a removed hidden override retains its unobservable baseline", async () => {
+corpusTest("a removed hidden override retains its unobservable baseline", async () => {
   const state = freshState();
   const { projectId, deviceId } = await m0081Project(state);
   const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
@@ -625,7 +617,7 @@ test("a removed hidden override retains its unobservable baseline", async () => 
   expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
 });
 
-test("a baseline learned by an earlier queued job survives a later unwritten submission", async () => {
+corpusTest("a baseline learned by an earlier queued job survives a later unwritten submission", async () => {
   const state = freshState();
   const { projectId, deviceId } = await m0081Project(state);
   const hidden = "M-0081_A-FE01-11-75D9_P-16_R-16";
@@ -644,7 +636,7 @@ test("a baseline learned by an earlier queued job survives a later unwritten sub
   expect(getDeviceParamBase(state.db, projectId, deviceId).get(hidden)).toBe("1");
 });
 
-describe("programming jobs outlive the request that submitted them", () => {
+corpusDescribe("programming jobs outlive the request that submitted them", () => {
   test("a write answers 202 with its task before the device is touched, and the task carries the outcome", async () => {
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);
@@ -809,8 +801,8 @@ describe("programming jobs outlive the request that submitted them", () => {
 // A device with a stored tool key is driven over Data Secure. On System B the GA flash and the full
 // download load its security object with the project's group keys; the credentials and the keys
 // reach the profile. Where the memory model does not load it, those writes refuse.
-describe("a Data Secure device: its table writes carry the security object", () => {
-  const readReal = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", f))).toString("utf8");
+corpusDescribe("a Data Secure device: its table writes carry the security object", () => {
+  const readReal = catalogueXml;
   const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz");
   const mdt0705 = readReal("M-0083_A-00B6-32-9642.xml.gz");
   const groupKey = Buffer.alloc(16, 0x5a);
@@ -923,7 +915,7 @@ describe("a Data Secure device: its table writes carry the security object", () 
 
   test("a parameter change that needs the com-object table rewritten runs the structural flash with the device's credentials and group keys", async () => {
     const state = freshState();
-    const jungApp = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0004_A-7072-21-99A7-O000A.xml.gz"))).toString("utf8");
+    const jungApp = catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz");
     const { projectId, deviceId } = await secureProject(state, jungApp);
     setDeviceParam(state.db, projectId, deviceId, "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142", "8");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
@@ -961,8 +953,8 @@ describe("a Data Secure device: its table writes carry the security object", () 
   });
 });
 
-describe("a Data Secure device: a security object that no longer matches is shown", () => {
-  const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
+corpusDescribe("a Data Secure device: a security object that no longer matches is shown", () => {
+  const m0162 = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
   const security = async (state: AppState, projectId: string, deviceId: string) =>
     (((await (await handleApi(req(`/api/projects/${projectId}`), state))!.json()) as any).devices.find((d: any) => d.id === deviceId).changes.security ?? null) as string | null;
   async function setup(state: AppState) {
@@ -1054,8 +1046,8 @@ describe("a Data Secure device: a security object that no longer matches is show
   });
 });
 
-describe("a Data Secure device: addressing and activation", () => {
-  const m0162 = gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", "M-0162_A-0004-11-F245.xml.gz"))).toString("utf8");
+corpusDescribe("a Data Secure device: addressing and activation", () => {
+  const m0162 = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
   const secureProject = async (state: AppState) => {
     const p = await projectWithApp(state, m0162);
     putDeviceSecurity(state.db, p.projectId, [{ deviceId: p.deviceId, toolKey: Buffer.alloc(16, 1), serialNumber: Buffer.from("00fa01020304", "hex"), sequenceNumber: "1", source: "import" }], state.masterKey);

@@ -13,7 +13,7 @@ describes the machinery, not the claims.
 | Level | Where | Proves | Does not prove |
 |---|---|---|---|
 | Unit / codec tests | `packages/knx/test`, `packages/product/test`, `packages/project/test` | Frame and APDU encoding, DPT and parameter codecs, `.knxproj` decryption and parsing, load-plan construction, mask classification | That any of it matches what a device expects |
-| Fixture snapshots (golden) | `packages/product/test/real-catalogue.test.ts` | **Stability**: the parse and the image projection over 13 real manufacturer application programs are byte-for-byte unchanged since the last reviewed regeneration | Correctness. A wrong output stays wrong until a device says otherwise |
+| Fixture snapshots (golden) | `packages/product/test/real-catalogue.test.ts` (needs the [private corpus](#the-private-corpus)) | **Stability**: the parse and the image projection over 13 real manufacturer application programs are byte-for-byte unchanged since the last reviewed regeneration | Correctness. A wrong output stays wrong until a device says otherwise |
 | Coverage lock | same file, "every UI-exposed param is image-placeable" | Every parameter the config view exposes has a place in the image. The two projections cannot drift apart | That the placement is the one ETS would pick |
 | Round-trip lock | same file, "the parameter image codec round-trips" | `build → decode` is its own inverse on every real fixture, so a codec cannot silently lose or shift a value | That the encoding matches the device's reading of it |
 | Doc lock | `apps/server/test/device-support-doc.test.ts` | [device-support.md](device-support.md) stays in sync with the mask registry: a new or changed mask fails the suite until the table is updated | Anything about hardware |
@@ -32,6 +32,87 @@ is not a deterministic failure because automatic transport selection falls back 
 
 The hardware smoke framework is deliberately **not** part of `bun run check`. It needs a KNX
 interface, a powered bus and a device, and sometimes a finger on a programming button.
+
+## The private corpus
+
+Some tests need files the repository does not carry, because they are third-party data or were
+recorded on a real installation. They live in a directory outside the repository, the **private
+corpus**:
+
+```
+<corpus>/
+├── catalogue/                 manufacturer ApplicationProgram XML, <id>.xml.gz
+├── captures/                  logging-proxy captures of ETS and Busforge on the test bench, *.log
+└── dca-theben-dali-e64/
+    ├── backup-store.dat       a DALI gateway backup from a real installation
+    └── backup-store.expected.json   the values the parse test expects to read from it
+```
+
+| Directory | Read by | Why it is not in the repository |
+|---|---|---|
+| `catalogue/` | the real-catalogue golden, the flash, download, read-back and load-procedure tests, `tools/evidence-bundle.ts` | Manufacturers' catalogue data, with no licence to redistribute it |
+| `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the bench devices' serial numbers |
+| `dca-theben-dali-e64/` | `plugins/dca-theben-dali-e64/test/parse.test.ts` | Project name, room names and DALI addresses of a real house |
+
+What stays in the repository are the parts that only point into it: the golden hashes
+(`packages/product/test/fixtures/real/golden.json`) and the reference vectors into the captures
+(`tools/fixtures/raw-acquisition-vectors.json`). The exact list of files a corpus must hold is
+`CORPUS_FILES` in `tools/corpus.ts`.
+
+### Running with and without it
+
+The corpus is found through one environment variable and nothing else:
+
+```bash
+export BUSFORGE_CORPUS=/absolute/path/to/busforge-corpus
+bun run check
+```
+
+It has to be exported. Bun loads the `.env` files of the directory a process starts in, and `bun
+run --filter` does not pass the root's on to the workspaces' `bun test`, so a corpus named in a
+`.env` would reach the status line and not the tests, or some workspaces and not others. A `.env`
+(or `.env.local`, `.env.test`, ...) in the repository root or in a workspace that sets
+`BUSFORGE_CORPUS` is therefore refused.
+
+| `BUSFORGE_CORPUS` | What `bun run check` does |
+|---|---|
+| unset | Runs every test that does not need the corpus. Each corpus test is registered as skipped under the name `[needs private corpus] <name>` (a `corpusDescribe` suite as one skip, `<name> (whole suite)`) and announced while the suite runs, as `[needs private corpus] not run: <name>`, since `bun test` prints skipped tests by name only on a terminal; they count in bun's `skip` total. The check ends with the status line and the files concerned. |
+| an absolute path to a complete corpus | Runs every test. The status line says where the corpus is. |
+| anything else: relative, not a directory, a file missing | Fails. Every test file that uses the corpus stops with the reason (for an incomplete corpus, each missing file is named), so the check stops at its test step and never reaches the status line; `bun run corpus:status` alone fails with the same reason. |
+
+The status line is the last thing `bun run check` prints (`bun run corpus:status` prints it alone).
+Without the corpus:
+
+```
+private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 23 test files were skipped, not run:
+  apps/server/test/device-support-doc.test.ts
+  ...
+  tools/raw-acquisition-vectors.test.ts
+```
+
+With it:
+
+```
+private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 23 test files that have them were enabled
+```
+
+The local gate is the run **with** the corpus. Public CI runs without it, and that should be the
+only place where corpus tests are skipped: nothing stops a local run without the variable from
+going green, which is why its last line says so.
+
+### Writing a test that needs it
+
+Read corpus files only through `tools/corpus.ts` (`catalogueXml`, `listCatalogue`, `captureText`,
+`capturePath`, `corpusPath`); each of them refuses when the corpus is absent. Register the test
+with `corpusTest` or, for a suite that reads the corpus while it is being collected,
+`corpusDescribe` from `tools/corpus-test.ts`. Without the corpus a `corpusDescribe` body is not run
+at all and stands as one skipped test; a read at module top level would throw, so it belongs in a
+test or a `corpusDescribe` body. A test that does not touch the corpus stays an ordinary `test`,
+even in a file that has corpus tests, so it keeps running in public CI.
+
+The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
+`packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
+as paths and needs no corpus of its own.
 
 ### Why the golden snapshot is not a correctness proof
 

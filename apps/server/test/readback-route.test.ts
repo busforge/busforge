@@ -1,9 +1,10 @@
-import { test, expect, describe, mock, afterAll } from "bun:test";
+import { test, expect, mock, afterAll } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import type { Database } from "bun:sqlite";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // Read-back route honesty guards:
 // 1) an unsupported device class is REFUSED (400) with no baseline fabricated,
@@ -34,8 +35,7 @@ afterAll(() => { readImpl = realRead; gaFlashImpl = realGaFlash; });
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
-const REAL_DIR = join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real");
-const realXml = (n: string) => gunzipSync(readFileSync(join(REAL_DIR, n))).toString("utf8");
+const realXml = catalogueXml;
 
 const tmps: string[] = [];
 afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
@@ -74,7 +74,7 @@ const baselineRows = (db: Database, projectId: string) => ({
   links: db.query("SELECT device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? ORDER BY device_id, com_obj_ref_id, slot").all(projectId),
 });
 
-describe("POST /read-back", () => {
+corpusDescribe("POST /read-back", () => {
   test("unsupported device class (MV-0012) -> 400 DEVICE_READBACK_UNSUPPORTED, baseline untouched", async () => {
     const state = freshState();
     // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile,

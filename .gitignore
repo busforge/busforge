@@ -42,3 +42,7 @@ tools/smoke/reports/
 
 # Local engineering tickets, specs and investigation notes
 /.scratch/
+
+# local environment (BUSFORGE_CORPUS is exported, not set here: see docs/testing.md)
+.env
+.env.*

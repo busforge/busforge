@@ -1,10 +1,11 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { iaToNum, ownedRuns } from "../packages/knx/src/index.ts";
 import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites } from "../packages/product/src/index.ts";
+import { catalogueDir, catalogueXml, captureText, capturePath } from "./corpus.ts";
+import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
@@ -103,12 +104,12 @@ describe("segment comparison", () => {
 // to the TUNNELLING_REQ lines: application defaults with no links, and the same with input A's
 // object #0 linked to 3/3/1. The debounce time P-7 carries LegacyPatchAlways: its <Data> byte is
 // 0x32 (50 ms), and ETS writes the parameter's value 0x1e (30 ms) over it.
-describe("MDT BE-02001.02 full download against ETS", () => {
-  const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real/M-0083_A-00B6-32-9642.xml.gz"))).toString("utf8");
+corpusDescribe("MDT BE-02001.02 full download against ETS", () => {
+  const xml = catalogueXml("M-0083_A-00B6-32-9642.xml.gz");
   const cfg = parseAppConfig(xml);
   const run = (capture: string, links: { comObjNum: number; gaRaws: number[] }[]) => {
     const build = classify(cfg).planFullDownload(cfg.mask, { ia: DEV, params: new Map(), links, proc: parseLoadProcedures(xml) });
-    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", capture), "utf8"), iaToNum(DEV));
+    const cap = parseCapture(captureText(capture), iaToNum(DEV));
     return compareSegments(build.segments.map((seg) => ({ seg, address: seg.address, baseSource: "declared" })), memoryImage(cap.writes), etsAllocations(cap), []);
   };
   const summary = (r: ReturnType<typeof run>) => r.segments.map((s) => [s.id.split("_").pop(), s.compared, s.divergences.length, s.busforgeOnly]);
@@ -133,13 +134,13 @@ describe("MDT BE-02001.02 full download against ETS", () => {
 
 // ETS 6 full download of the GVS AMMA-04/06.S (System B, fill 0xFF) at application defaults, where
 // every output is disabled and no com-object is active; trimmed to the frames to and from 1.1.203.
-describe("GVS AMMA full download against ETS", () => {
+corpusDescribe("GVS AMMA full download against ETS", () => {
   test("every byte matches: silent com-object table, and each idle union holds its default member", () => {
-    const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real/M-0085_A-0072-30-69AA.xml.gz"))).toString("utf8");
+    const xml = catalogueXml("M-0085_A-0072-30-69AA.xml.gz");
     const cfg = parseAppConfig(xml);
     const ia = iaToNum("1.1.203");
     const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.203", params: new Map(), links: [], proc: parseLoadProcedures(xml) });
-    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "gvs-amma-ets-fulldownload-defaults.log"), "utf8"), ia);
+    const cap = parseCapture(captureText("gvs-amma-ets-fulldownload-defaults.log"), ia);
     const refs = reportedTableReferences(cap);
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 2816, 0], [3, 1066, 0], [2, 2, 0], [1, 2, 0]]);
@@ -149,13 +150,13 @@ describe("GVS AMMA full download against ETS", () => {
 
 // ETS 6 full download of the Jung 400021SE (System B, module device, segment above 64 KB) at the
 // project's configuration: two module instances, no links; trimmed to the frames to and from 1.1.204.
-describe("Jung 400021SE full download against ETS", () => {
+corpusDescribe("Jung 400021SE full download against ETS", () => {
   test("every byte matches, including the union a hidden ParameterRef's own default would flip", () => {
-    const xml = gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real/M-0004_A-7072-21-99A7-O000A.xml.gz"))).toString("utf8");
+    const xml = catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz");
     const cfg = parseAppConfig(xml);
     const ia = iaToNum("1.1.204");
     const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: new Map(), links: [], proc: parseLoadProcedures(xml) });
-    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "jung-400021se-ets-fulldownload.log"), "utf8"), ia);
+    const cap = parseCapture(captureText("jung-400021se-ets-fulldownload.log"), ia);
     const refs = reportedTableReferences(cap);
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.divergences.map((d) => d.offset)])).toEqual([[4, []], [3, []], [2, []], [1, []]]);
@@ -165,8 +166,8 @@ describe("Jung 400021SE full download against ETS", () => {
 // ETS 6 partial downloads after linking objects to group addresses (and, on ABB and GVS, enabling
 // a channel), 2026-09-26, trimmed per device. Every byte ETS wrote must equal the image Busforge
 // builds for the same configuration: parameters, com-object table and group tables.
-describe("partial downloads with links against ETS", () => {
-  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+corpusDescribe("partial downloads with links against ETS", () => {
+  const real = catalogueXml;
   const cases: { name: string; ia: string; app: string; params: [string, string][]; links: [number, string][] }[] = [
     { name: "Jung 400021SE", ia: "1.1.204", app: "M-0004_A-7072-21-99A7-O000A.xml.gz", links: [[253, "3/3/2"], [254, "3/3/3"]],
       params: [["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_P-496_R-106", "1"]] },
@@ -180,7 +181,7 @@ describe("partial downloads with links against ETS", () => {
       const xml = real(c.app);
       const cfg = parseAppConfig(xml);
       const build = classify(cfg).planFullDownload(cfg.mask, { ia: c.ia, params: new Map(c.params), links: c.links.map(([n, ga]) => ({ comObjNum: n, gaRaws: [parseGa(ga)] })), proc: parseLoadProcedures(xml) });
-      const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", `${file[c.ia]}-ets-partial-links.log`), "utf8"), iaToNum(c.ia));
+      const cap = parseCapture(captureText(`${file[c.ia]}-ets-partial-links.log`), iaToNum(c.ia));
       const refs = reportedTableReferences(cap);
       const r = compareSegments(build.segments.map((seg) => ({ seg, address: seg.address ?? refs.get(seg.lsm) ?? null, baseSource: "t" })), memoryImage(cap.writes), etsAllocations(cap), []);
       const compared = r.segments.reduce((n, s) => n + s.compared, 0);
@@ -193,8 +194,8 @@ describe("partial downloads with links against ETS", () => {
 // The same partial downloads, for the System B parameter segment: ETS reallocates it without fill
 // and writes exactly the bytes its parameter model owns. Busforge's parameter flash, merged over the
 // device's segment as the full download left it, must write the same bytes with the same values.
-describe("System B parameter flash against ETS's partial download", () => {
-  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+corpusDescribe("System B parameter flash against ETS's partial download", () => {
+  const real = catalogueXml;
   const cases: { name: string; ia: string; app: string; file: string; params: [string, string][] }[] = [
     { name: "Jung 400021SE", ia: "1.1.204", app: "M-0004_A-7072-21-99A7-O000A.xml.gz", file: "jung-400021se",
       params: [["M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"], ["M-0004_A-7072-21-99A7-O000A_P-496_R-106", "1"]] },
@@ -209,7 +210,7 @@ describe("System B parameter flash against ETS's partial download", () => {
       const { image } = mergeRelativeTarget(Buffer.from(before), target);
       const ours = new Map<number, number>();
       for (const r of ownedRuns(image, target.owned)) r.bytes.forEach((b, i) => ours.set(r.offset + i, b));
-      const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", `${c.file}-ets-partial-links.log`), "utf8"), iaToNum(c.ia));
+      const cap = parseCapture(captureText(`${c.file}-ets-partial-links.log`), iaToNum(c.ia));
       const base = reportedTableReferences(cap).get(4)!;
       const ets = new Map([...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + target.size).map(([a, b]) => [a - base, b]));
       expect([...ours.keys()].sort((a, b) => a - b)).toEqual([...ets.keys()].sort((a, b) => a - b));
@@ -222,15 +223,15 @@ describe("System B parameter flash against ETS's partial download", () => {
 // switched from "Dimmen und Farbtemperatur" back to "Schalten" (secured; decrypted, the security
 // object's writes left out). MDT BE-02001.02: input B switched from the two-object short/long function
 // back to "Kontaktzustand senden" (object 8 goes), after an ETS full download with the two-object one.
-describe("structural flash against ETS's partial download", () => {
-  const real = (f: string) => gunzipSync(readFileSync(join(import.meta.dir, "../packages/product/test/fixtures/real", f))).toString("utf8");
+corpusDescribe("structural flash against ETS's partial download", () => {
+  const real = catalogueXml;
 
   test("MDT BE-02001.02: Busforge writes exactly the bytes ETS changed, with ETS's values, LSM by LSM", () => {
     const xml = real("M-0083_A-00B6-32-9642.xml.gz");
     const cfg = parseAppConfig(xml);
     const ia = iaToNum(DEV);
-    const before = memoryImage(parseCapture(readFileSync(join(import.meta.dir, "fixtures", "mdt-be02001-ets-fulldownload-b7.log"), "utf8"), ia).writes);
-    const ets = memoryImage(parseCapture(readFileSync(join(import.meta.dir, "fixtures", "mdt-be02001-ets-partial-structure.log"), "utf8"), ia).writes);
+    const before = memoryImage(parseCapture(captureText("mdt-be02001-ets-fulldownload-b7.log"), ia).writes);
+    const ets = memoryImage(parseCapture(captureText("mdt-be02001-ets-partial-structure.log"), ia).writes);
     const params = new Map<string, string>();
     const instances = resolveModuleInstances(cfg, params);
     const view = buildDeviceConfig(cfg, params, undefined, instances);
@@ -262,7 +263,7 @@ describe("structural flash against ETS's partial download", () => {
       ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-154_R-220", "Taster"], ["M-0004_A-7072-21-99A7-O000A_MD-1_M-200_MI-1_P-150_R-243", "Taster"],
     ];
     const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: new Map(params), links: [{ comObjNum: 253, gaRaws: [parseGa("0/0/1")] }], proc: parseLoadProcedures(xml) });
-    const cap = parseCapture(readFileSync(join(import.meta.dir, "fixtures", "jung-400021se-ets-partial-structure.log"), "utf8"), iaToNum("1.1.204"));
+    const cap = parseCapture(captureText("jung-400021se-ets-partial-structure.log"), iaToNum("1.1.204"));
     const refs = reportedTableReferences(cap);
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 25, 0], [3, 7, 0], [2, 6, 0], [1, 4, 0]]);
@@ -290,8 +291,8 @@ describe("structural flash against ETS's partial download", () => {
 
 // The CLI's partial mode, end to end: one record per Busforge flash operation that the partial
 // download touched, and none for an operation whose segments ETS left alone.
-describe("etsdiff --partial evidence", () => {
-  const realDir = join(import.meta.dir, "../packages/product/test/fixtures/real");
+corpusDescribe("etsdiff --partial evidence", () => {
+  const realDir = catalogueDir();
   const cli = async (args: string[]) => {
     const out = join(tmpdir(), `etsdiff-partial-${crypto.randomUUID()}.json`);
     const p = Bun.spawnSync(["bun", "run", join(import.meta.dir, "etsdiff.ts"), ...args, "--partial", `--evidence=${out}`], { stdout: "pipe", stderr: "pipe" });
@@ -300,23 +301,23 @@ describe("etsdiff --partial evidence", () => {
     return { exitCode: p.exitCode, records: written?.map((r) => [r.scope.operation, r.results.reference.state]) ?? null, details: written?.map((r) => r.results.reference.detail) ?? [], stderr: p.stderr.toString() };
   };
   test("GVS AMMA: parameters and links, one pass each", async () => {
-    const r = await cli([join(import.meta.dir, "fixtures/gvs-amma-ets-partial-links.log"), `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, "--ia=1.1.203",
+    const r = await cli([capturePath("gvs-amma-ets-partial-links.log"), `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, "--ia=1.1.203",
       "--param=M-0085_A-0072-30-69AA_P-20_R-20=1", "--param=M-0085_A-0072-30-69AA_UP-142_R-142=1", "--link=2:3/3/6"]);
     expect([r.exitCode, r.records]).toEqual([0, [["flashParams", "pass"], ["flashLinks", "pass"]]]);
   });
   test("MDT BE-02001.02: links only, so no parameter record", async () => {
-    const r = await cli([join(import.meta.dir, "fixtures/mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1", "--link=6:3/3/5"]);
+    const r = await cli([capturePath("mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1", "--link=6:3/3/5"]);
     expect([r.exitCode, r.records]).toEqual([0, [["flashLinks", "pass"]]]);
   });
   test("a configuration ETS did not download fails, and its record says so", async () => {
-    const r = await cli([join(import.meta.dir, "fixtures/mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1"]);
+    const r = await cli([capturePath("mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, "--ia=1.1.56", "--link=0:3/3/1"]);
     expect([r.exitCode, r.records]).toEqual([1, [["flashLinks", "fail"]]]);
   });
   // GVS AMMA (System B): the parameter segment is placed by the device's table reference and
   // matches; ETS also allocated the association table (a fill and no write) but the capture holds
   // no table reference for it, so that segment could not be compared.
   test("a table ETS allocated but the capture cannot place is a failed record, not a silent pass", async () => {
-    const xml = gunzipSync(readFileSync(join(realDir, "M-0085_A-0072-30-69AA.xml.gz"))).toString("utf8");
+    const xml = catalogueXml("M-0085_A-0072-30-69AA.xml.gz");
     const cfg = parseAppConfig(xml);
     const params = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.203", params: new Map(), links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 4)!;
     const base = 0x3fc6;

@@ -1,18 +1,16 @@
-import { test, expect, describe } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { test, expect } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
 import { parseAppConfig, ProductError } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // The LoadProcedure coverage guard on the real flash entrypoints: a par download whose
 // procedure declares steps outside the explicit disposition policy must refuse with a
 // coded error BEFORE touching the bus, and declared CompareProp pre-flights must run
 // (and abort) before any write. Uses the real catalogue app programs.
 
-const REAL = join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real");
-const fixture = (n: string) => gunzipSync(readFileSync(join(REAL, n))).toString("utf8");
+const fixture = catalogueXml;
 
 const ctxFor = (appXml: string) => ({
   deviceId: "d", appXml, params: new Map<string, string>(), baseParams: new Map<string, string>(), dryRun: false,
@@ -26,7 +24,7 @@ const dev = (overrides: Partial<Record<keyof KnxDevice, unknown>> = {}) =>
     get: (_t, prop) => (prop in overrides ? (overrides as any)[prop] : () => { throw new Error(`unexpected bus call: ${String(prop)}`); }),
   }) as unknown as KnxDevice;
 
-describe("LoadProcedure par coverage guard", () => {
+corpusDescribe("LoadProcedure par coverage guard", () => {
   test("M-0008 (absolute, declares LoadImageProp) refuses with LOAD_STEP_UNSUPPORTED before any bus call", async () => {
     const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz");
     const profile = classify(parseAppConfig(xml));

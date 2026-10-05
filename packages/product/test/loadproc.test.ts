@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
+import { corpusTest } from "../../../tools/corpus-test.ts";
 import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
@@ -8,7 +9,7 @@ import { maskInfo } from "../src/masks.ts";
 // assert the parser covers the full LdCtrl vocabulary present in the data, with no
 // unknown verb slipping through (which would mean a device we cannot flash blind).
 
-test("every real catalogue load procedure parses with a recognized style", () => {
+corpusTest("every real catalogue load procedure parses with a recognized style", () => {
   for (const f of listRealFixtures()) {
     const lp = parseLoadProcedures(readRealFixture(f));
     expect(["ProductProcedure", "MergedProcedure", "DefaultProcedure"]).toContain(lp.style);
@@ -18,7 +19,7 @@ test("every real catalogue load procedure parses with a recognized style", () =>
   }
 });
 
-test("no unknown LdCtrl verb appears across the whole real catalogue", () => {
+corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () => {
   const allVerbs = new Set<string>();
   const allUnknown = new Set<string>();
   for (const f of listRealFixtures()) {
@@ -36,7 +37,7 @@ test("no unknown LdCtrl verb appears across the whole real catalogue", () => {
   }
 });
 
-test("ProductProcedure is a single self-contained block (M-0081, the proven device)", () => {
+corpusTest("ProductProcedure is a single self-contained block (M-0081, the proven device)", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0081_A-FE01-11-75D9.xml.gz"));
   expect(lp.style).toBe("ProductProcedure");
   expect(lp.blocks.length).toBe(1);
@@ -51,13 +52,13 @@ test("ProductProcedure is a single self-contained block (M-0081, the proven devi
   expect(abs.some((s) => s.attrs.Address === "16896" && s.attrs.LsmIdx === "3")).toBe(true);
 });
 
-test("DefaultProcedure (legacy) is recorded as an explicit gap, not a crash", () => {
+corpusTest("DefaultProcedure (legacy) is recorded as an explicit gap, not a crash", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0083_A-0138-21-F18E-O0072.xml.gz"));
   expect(lp.style).toBe("DefaultProcedure");
   expect(lp.blocks).toEqual([]);
 });
 
-test("MergedProcedure operation selection (par vs full) picks different fragments", () => {
+corpusTest("MergedProcedure operation selection (par vs full) picks different fragments", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0162_A-0004-11-F245.xml.gz")); // PSU, relative
   expect(lp.style).toBe("MergedProcedure");
   const par = flattenSteps(lp, "par");
@@ -149,14 +150,14 @@ test("par policy: documented skips and executed steps", () => {
   expect(assessParStep(step("LdCtrlDisconnect"), "relative").kind).toBe("caller");
 });
 
-test("par policy: CompareProp becomes an executable pre-flight check", () => {
+corpusTest("par policy: CompareProp becomes an executable pre-flight check", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0083_A-00B4-32-3919.xml.gz"));
   const cov = assessParCoverage(lp, "absolute");
   expect(cov.blocked).toEqual([]);
   expect(cov.checks).toEqual([{ obj: 0, pid: 78, expect: Buffer.from("0000000002AA00000000", "hex") }]);
 });
 
-test("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImageProp), everything else is fully dispositioned", () => {
+corpusTest("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImageProp), everything else is fully dispositioned", () => {
   for (const f of listRealFixtures()) {
     const xml = readRealFixture(f);
     const model = maskInfo(parseAppConfig(xml).mask).memoryModel;
@@ -174,7 +175,7 @@ test("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImag
   }
 });
 
-test("the declared MCB entries of a System B full download, as ETS sends them", () => {
+corpusTest("the declared MCB entries of a System B full download, as ETS sends them", () => {
   // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the
   // 10-byte InlineData (Jung 400021SE capture, 2026-09-25). Declared Verify="false": only the region
   // size has to come back in the echo.
@@ -187,7 +188,7 @@ test("the declared MCB entries of a System B full download, as ETS sends them", 
   expect(declaredMcbWrites(parseLoadProcedures(readRealFixture("M-0162_A-0004-11-F245.xml.gz")), 212)).toEqual([]);
 });
 
-test("declared MCB entries that cannot be written faithfully are refused, not adapted", () => {
+corpusTest("declared MCB entries that cannot be written faithfully are refused, not adapted", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0048_A-493B-21-B471.xml.gz"));
   // regions that do not cover the parameter segment
   expect(() => declaredMcbWrites(lp, 2004)).toThrow("cover 2003 bytes");

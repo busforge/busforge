@@ -6,108 +6,111 @@ import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeS
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
+import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 
 // M-0081 is a real MV-0705 (absolute-segment) device. Its image build is hardware
 // byte-verified on 13 instances (docs/device-memory-model.md); these tests pin the
 // behaviour that produces that match WITHOUT embedding real device memory (which is
 // gitignored): the segment parses, the build is surgical (only visible parameters
 // touch the <Data> default), and an override lands exactly at the parameter's bytes.
-const xml = readRealFixture("M-0081_A-FE01-11-75D9.xml.gz");
-const app = parseAppConfig(xml);
-const model = parseApplication(xml);
+corpusDescribe("the real M-0081 absolute segment", () => {
+  const xml = readRealFixture("M-0081_A-FE01-11-75D9.xml.gz");
+  const app = parseAppConfig(xml);
+  const model = parseApplication(xml);
 
-test("parses the AbsoluteSegment with its fixed address and default image", () => {
-  const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-4200"));
-  expect(seg).toBeDefined();
-  expect(seg!.address).toBe(16896);
-  expect(seg!.size).toBe(256);
-  expect(seg!.data.length).toBe(256); // default image present, not blank
-});
+  test("parses the AbsoluteSegment with its fixed address and default image", () => {
+    const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-4200"));
+    expect(seg).toBeDefined();
+    expect(seg!.address).toBe(16896);
+    expect(seg!.size).toBe(256);
+    expect(seg!.data.length).toBe(256); // default image present, not blank
+  });
 
-test("decodeAbsoluteImage reads back the values the absolute build wrote (round-trip, MV-0705 read-back)", () => {
-  // Build the absolute image the same way the flash/read-back path does, then decode it.
-  // Every integer/enum value the build placed must decode back identically, i.e.
-  // decodeAbsoluteImage is the inverse of the encode used by buildAbsoluteSegmentTargets.
-  const instances = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
-  const m = toAppModel(app, { includeUnions: true, instances });
-  const targets = buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances });
-  const active = buildDeviceConfig(app, new Map(), undefined, instances).imageValues;
-  const seg = targets.find((t) => t.size > 0)!;
-  const decoded = decodeAbsoluteImage(m, seg.id, seg.bytes);
-  // Expected counts, derived from the fixture XML (not from running this loop):
-  // AS-4200 is targeted by exactly 48 <Parameter><Memory CodeSegment=...AS-4200>
-  // entries (grep count), all typed 8-bit Value/Number (integer-decodable, so none
-  // are skipped by the codec), and exactly 611 <ParameterRef> elements point at
-  // those 48 parameters (grep count) -> decoded carries one entry per such ref.
-  expect(decoded.size).toBe(611);
-  let checked = 0;
-  for (const [ref, v] of decoded) {
-    const a = active.get(ref);
-    if (a !== undefined && /^-?\d+$/.test(a)) { expect(v).toBe(a); checked++; }
-  }
-  // `active` (imageValues) is the default-config walk of the fixture's <Dynamic>:
-  // each ParameterBlock's unconditional ParameterRefRefs plus the branches of
-  // chooses whose gate's catalogue default matches a <when> test. Re-deriving that
-  // walk independently from the XML (defaults from Parameter/@Value overridden by
-  // ParameterRef/@Value; 7 of the 17 reachable chooses take a branch) reaches 33
-  // refs, of which exactly these 18 resolve to AS-4200 parameters, all with
-  // integer defaults: R-3, R-4, R-6, R-7, R-9, R-10, R-11, R-12, R-15, R-21,
-  // R-36, R-38, R-39, R-42, R-45, R-48, R-50, R-106. So the decode/active
-  // cross-check above must fire for exactly those 18, no fewer (a visibility or
-  // codec regression that silently shrinks the overlap must fail here).
-  expect(checked).toBe(18);
-});
+  test("decodeAbsoluteImage reads back the values the absolute build wrote (round-trip, MV-0705 read-back)", () => {
+    // Build the absolute image the same way the flash/read-back path does, then decode it.
+    // Every integer/enum value the build placed must decode back identically, i.e.
+    // decodeAbsoluteImage is the inverse of the encode used by buildAbsoluteSegmentTargets.
+    const instances = app.hasModules ? resolveModuleInstances(app, new Map()) : [];
+    const m = toAppModel(app, { includeUnions: true, instances });
+    const targets = buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances });
+    const active = buildDeviceConfig(app, new Map(), undefined, instances).imageValues;
+    const seg = targets.find((t) => t.size > 0)!;
+    const decoded = decodeAbsoluteImage(m, seg.id, seg.bytes);
+    // Expected counts, derived from the fixture XML (not from running this loop):
+    // AS-4200 is targeted by exactly 48 <Parameter><Memory CodeSegment=...AS-4200>
+    // entries (grep count), all typed 8-bit Value/Number (integer-decodable, so none
+    // are skipped by the codec), and exactly 611 <ParameterRef> elements point at
+    // those 48 parameters (grep count) -> decoded carries one entry per such ref.
+    expect(decoded.size).toBe(611);
+    let checked = 0;
+    for (const [ref, v] of decoded) {
+      const a = active.get(ref);
+      if (a !== undefined && /^-?\d+$/.test(a)) { expect(v).toBe(a); checked++; }
+    }
+    // `active` (imageValues) is the default-config walk of the fixture's <Dynamic>:
+    // each ParameterBlock's unconditional ParameterRefRefs plus the branches of
+    // chooses whose gate's catalogue default matches a <when> test. Re-deriving that
+    // walk independently from the XML (defaults from Parameter/@Value overridden by
+    // ParameterRef/@Value; 7 of the 17 reachable chooses take a branch) reaches 33
+    // refs, of which exactly these 18 resolve to AS-4200 parameters, all with
+    // integer defaults: R-3, R-4, R-6, R-7, R-9, R-10, R-11, R-12, R-15, R-21,
+    // R-36, R-38, R-39, R-42, R-45, R-48, R-50, R-106. So the decode/active
+    // cross-check above must fire for exactly those 18, no fewer (a visibility or
+    // codec regression that silently shrinks the overlap must fail here).
+    expect(checked).toBe(18);
+  });
 
-test("builds one absolute-segment image at the fixed address, sized from the segment", () => {
-  const imgs = buildAbsoluteSegmentImages(app, new Map());
-  expect(imgs.length).toBe(1);
-  expect(imgs[0].id).toMatch(/AS-4200$/);
-  expect(imgs[0].address).toBe(16896);
-  expect(imgs[0].bytes.length).toBe(256);
-});
+  test("builds one absolute-segment image at the fixed address, sized from the segment", () => {
+    const imgs = buildAbsoluteSegmentImages(app, new Map());
+    expect(imgs.length).toBe(1);
+    expect(imgs[0].id).toMatch(/AS-4200$/);
+    expect(imgs[0].address).toBe(16896);
+    expect(imgs[0].bytes.length).toBe(256);
+  });
 
-test("the default build only differs from the raw <Data> at visible-parameter offsets", () => {
-  const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-4200"))!;
-  const built = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
-  // Every byte that differs from the manufacturer default must be owned by a
-  // parameter that targets this segment (no stray writes outside parameter memory).
-  const ownedBytes = new Set<number>();
-  for (const ref of model.refs.values()) {
-    const p = model.params.get(ref.paramId);
-    if (!p || p.codeSegment !== seg.id || p.offset === undefined) continue;
-    const t = model.types.get(p.typeId);
-    const bytes = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
-    for (let b = 0; b < bytes; b++) ownedBytes.add(p.offset + b);
-  }
-  for (let i = 0; i < built.length; i++) if (built[i] !== seg.data[i]) expect(ownedBytes.has(i)).toBe(true);
-});
+  test("the default build only differs from the raw <Data> at visible-parameter offsets", () => {
+    const seg = app.absoluteSegments.find((s) => s.id.endsWith("AS-4200"))!;
+    const built = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
+    // Every byte that differs from the manufacturer default must be owned by a
+    // parameter that targets this segment (no stray writes outside parameter memory).
+    const ownedBytes = new Set<number>();
+    for (const ref of model.refs.values()) {
+      const p = model.params.get(ref.paramId);
+      if (!p || p.codeSegment !== seg.id || p.offset === undefined) continue;
+      const t = model.types.get(p.typeId);
+      const bytes = t && t.sizeInBit >= 8 ? t.sizeInBit >> 3 : 1;
+      for (let b = 0; b < bytes; b++) ownedBytes.add(p.offset + b);
+    }
+    for (let i = 0; i < built.length; i++) if (built[i] !== seg.data[i]) expect(ownedBytes.has(i)).toBe(true);
+  });
 
-test("overriding a visible parameter changes only that parameter's byte", () => {
-  // Pick a visible, single-byte enum/number parameter that targets the segment.
-  const view = buildDeviceConfig(app, new Map());
-  const visible = new Map<string, string>();
-  for (const blk of view.blocks) for (const it of blk.items) if (it.kind === "param") visible.set(it.param.refId, it.param.value);
+  test("overriding a visible parameter changes only that parameter's byte", () => {
+    // Pick a visible, single-byte enum/number parameter that targets the segment.
+    const view = buildDeviceConfig(app, new Map());
+    const visible = new Map<string, string>();
+    for (const blk of view.blocks) for (const it of blk.items) if (it.kind === "param") visible.set(it.param.refId, it.param.value);
 
-  let target: { refId: string; offset: number; next: string } | undefined;
-  for (const ref of model.refs.values()) {
-    if (!visible.has(ref.id)) continue;
-    const p = model.params.get(ref.paramId);
-    const t = p && model.types.get(p.typeId);
-    if (!p || p.offset === undefined || !t || t.sizeInBit !== 8 || (t.base !== "Number" && t.base !== "Value")) continue;
-    const cur = Number(visible.get(ref.id) ?? "0");
-    const next = String(cur === 1 ? 2 : 1); // a different in-range small value
-    if (String(cur) === next) continue;
-    target = { refId: ref.id, offset: p.offset, next };
-    break;
-  }
-  expect(target).toBeDefined();
+    let target: { refId: string; offset: number; next: string } | undefined;
+    for (const ref of model.refs.values()) {
+      if (!visible.has(ref.id)) continue;
+      const p = model.params.get(ref.paramId);
+      const t = p && model.types.get(p.typeId);
+      if (!p || p.offset === undefined || !t || t.sizeInBit !== 8 || (t.base !== "Number" && t.base !== "Value")) continue;
+      const cur = Number(visible.get(ref.id) ?? "0");
+      const next = String(cur === 1 ? 2 : 1); // a different in-range small value
+      if (String(cur) === next) continue;
+      target = { refId: ref.id, offset: p.offset, next };
+      break;
+    }
+    expect(target).toBeDefined();
 
-  const base = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
-  const overridden = buildAbsoluteSegmentImages(app, new Map([[target!.refId, target!.next]]))[0].bytes;
-  const diffs: number[] = [];
-  for (let i = 0; i < base.length; i++) if (base[i] !== overridden[i]) diffs.push(i);
-  expect(diffs).toEqual([target!.offset]);
-  expect(overridden[target!.offset]).toBe(Number(target!.next));
+    const base = buildAbsoluteSegmentImages(app, new Map())[0].bytes;
+    const overridden = buildAbsoluteSegmentImages(app, new Map([[target!.refId, target!.next]]))[0].bytes;
+    const diffs: number[] = [];
+    for (let i = 0; i < base.length; i++) if (base[i] !== overridden[i]) diffs.push(i);
+    expect(diffs).toEqual([target!.offset]);
+    expect(overridden[target!.offset]).toBe(Number(target!.next));
+  });
 });
 
 // Access="None" internal parameters are hidden from the UI but ETS still writes them
@@ -344,7 +347,7 @@ test("verifyRelativeOwned checks only owned bytes; unowned drift does not fail i
 // the JME channel-module region; owning its default 2 was the spurious 2-byte "drift").
 const APP = "M-0048_A-493B-21-B471";
 
-test("a top-level param displaced by an active module instance is not owned", () => {
+corpusTest("a top-level param displaced by an active module instance is not owned", () => {
   const app = parseAppConfig(readRealFixture(`${APP}.xml.gz`));
   // HMG 6 T: P-57 = 6 instantiates six MD-7 channel modules over the parameter memory.
   const env = new Map([[`${APP}_P-57_R-57`, "6"]]);
@@ -435,7 +438,7 @@ test("a non-canonical DPT-9 <Data> pattern decodes to its value but re-encodes t
   expect([...copy.subarray(2)]).toEqual([0xca, 0xb4]); // normalized, no longer DE AD
 });
 
-test("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does not crash the build)", () => {
+corpusTest("a >48-bit ETS-computed 'Objektlink' union member is never owned (and does not crash the build)", () => {
   const app = parseAppConfig(readRealFixture(`${APP}.xml.gz`));
   // The 928-bit "Objektlink" union sits at offset 842 (CodeSegment RS-04). Since ETS
   // evaluates every matching <when>, an active branch can reach one of its members; the
@@ -489,9 +492,9 @@ test("a non-byte-aligned wide field owns EVERY byte it spans (not just the first
   expect(verifyRelativeOwned(deviceKeptLastByte, target)).toBe(false);
 });
 
-test("a LegacyPatchAlways parameter is written with its value, and a user's edit reaches the image", () => {
+corpusTest("a LegacyPatchAlways parameter is written with its value, and a user's edit reaches the image", () => {
   // MDT BE-02001.02 P-7 "Debounce time" (visible, editable) carries LegacyPatchAlways; its <Data>
-  // byte is 0x32, and two ETS captures (tools/fixtures) write the parameter's value 0x1e over it.
+  // byte is 0x32, and two ETS captures (captures/ in the private corpus) write the parameter's value 0x1e over it.
   const mdt = parseAppConfig(readRealFixture("M-0083_A-00B6-32-9642.xml.gz"));
   const ref = [...mdt.refs.values()].find((r) => r.id.endsWith("_P-7_R-6"))!;
   expect(mdt.params.get(ref.paramId)?.patchAlways).toBe(true);
@@ -509,7 +512,7 @@ test("a LegacyPatchAlways parameter is written with its value, and a user's edit
 // flash write, and golden.json (buildParameterImage) does not cover it. Fingerprints of bytes/owned/
 // owned-count at application defaults. The full download owns the default member of every idle
 // union (GVS capture); the surgical flash does not, so it keeps a device's own bytes there.
-test("the relative images of the full download and the parameter flash stay pinned", () => {
+corpusTest("the relative images of the full download and the parameter flash stay pinned", () => {
   const h = (b: Buffer | boolean[]) => createHash("sha256").update(Buffer.isBuffer(b) ? b : Buffer.from(b.map((x) => (x ? 1 : 0)))).digest("hex").slice(0, 16);
   const pinned: [string, string, string][] = [
     ["M-0004_A-7072-21-99A7-O000A.xml.gz", "ac1f3be247fc3306/55d68d3167e051f6/186", "ac1f3be247fc3306/55d68d3167e051f6/186"],
@@ -532,7 +535,7 @@ test("the relative images of the full download and the parameter flash stay pinn
 // the parameter's two bits, the full download owns the whole byte (it writes the union defaults,
 // as ETS does). Writing the template's bits beside the parameter set idle union bits that the
 // device's firmware then acted on.
-test("a sub-byte parameter owns only its own bits of the byte it shares", () => {
+corpusTest("a sub-byte parameter owns only its own bits of the byte it shares", () => {
   const app = parseAppConfig(readRealFixture("M-0085_A-0072-30-69AA.xml.gz"));
   const values = new Map([["M-0085_A-0072-30-69AA_P-20_R-20", "1"], ["M-0085_A-0072-30-69AA_UP-142_R-142", "1"]]);
   expect(buildRelativeSegmentTarget(app, values, 4)!.owned[64]).toBe(0xc0);

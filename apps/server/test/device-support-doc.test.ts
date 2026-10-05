@@ -1,11 +1,12 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
 import { MASKS, parseAppConfig, type SystemFamily, type MemoryModel } from "@busforge/product";
 import { classify, classifyByMask, type DeviceCapabilities } from "../src/deviceprofile.ts";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusTest } from "../../../tools/corpus-test.ts";
 
-const realApp = (n: string) => parseAppConfig(gunzipSync(readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "real", n))).toString("utf8"));
+const realApp = (n: string) => parseAppConfig(catalogueXml(n));
 // The doc cells a device's capabilities() render to. Keeping this here makes the VERDICT
 // constant below a PRESENTATION of real capabilities(), not an independent claim.
 const cells = (c: DeviceCapabilities): [string, string, string] => [
@@ -54,9 +55,12 @@ describe("docs/device-support.md stays in sync with the mask registry", () => {
   // The VERDICT constant is only honest if it reflects what classify().capabilities() actually
   // returns. Pin each implemented memory model to a real device's live capabilities, so a future
   // gate flip (e.g. flashLinks back to false) fails here instead of letting the doc lie.
-  test("VERDICT for each memory model matches classify().capabilities()", () => {
+  corpusTest("VERDICT for each memory model matches classify().capabilities()", () => {
     expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities())).toEqual(VERDICT.relative); // System B
     expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities())).toEqual(VERDICT.absolute); // System 7
+  });
+
+  test("VERDICT for an unimplemented family matches classifyByMask().capabilities()", () => {
     // A recognised-but-unimplemented family resolves to UnsupportedProfile: every aspect false.
     expect(cells(classifyByMask("MV-0010").capabilities())).toEqual(VERDICT.bcu1);
   });

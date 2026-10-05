@@ -235,21 +235,29 @@ Two runs still to be made, then what the collector
 
 ## Publication
 
-- **Decide the public test corpus before the source goes public.** The container image carries no
-  test data ([deployment.md](deployment.md#what-the-image-contains)), but the source tree does: the
-  manufacturer catalogue fixtures under `packages/product/test/fixtures/real`, the ETS bench
-  captures under `tools/fixtures` (they carry the bench devices' serial numbers), and the DALI
-  gateway backup the DCA plugin's tests parse (it carries the house's room names). Each needs a
-  distribution basis, a synthetic replacement, or to stay out of the public repository, and the
-  same choice applies to history: a public repository either starts from a cleaned history or from
-  a fresh one.
-- **Decide where public images are published** and whether the Forgejo pipeline, which names the
-  author's own registry and NAS, is part of the public repository.
-- **Site-specific values in the tracked tree.** The evidence bundle the server ships
-  (`apps/server/src/evidence-bundle.json`) and `docs/evidence/**` record artifact paths under the
-  author's home directories, the knx CLI defaults to the house gateway's address, and
-  `docs/findings.md` names the bench host's address. None is a secret, but a public build should
-  record repository-relative paths and take the gateway as an argument.
+- **Publish from a cleaned history.** The tree no longer carries the manufacturer catalogue
+  files, the ETS bench captures or the DALI gateway backup: the tests read them from the private
+  corpus ([testing.md](testing.md#the-private-corpus)), and the serials, private addresses, home
+  paths and internal host names in the tree outside `.forgejo/` are replaced. Older commits still
+  hold all of it, and so does `.forgejo/workflows/ci.yml`, the author's own pipeline, which has to
+  leave the tree before the public push. The history rewrite that removes
+  them is prepared, not run; the public repository is pushed only after it.
+- **Evidence records still point at the old capture paths.** The reference records in
+  `docs/evidence/reference/` name their capture as `tools/fixtures/<capture>.log`; those files now
+  live in the corpus under `captures/`. The `sha256` beside each path still identifies the file.
+- **22 smoke report copies no longer match their recorded hash.** The report copies in
+  `docs/evidence/runs/**/<run>.json` had the author's home directory in their backup paths; those
+  were replaced, so the `source.sha256` their `.evidence.json` records carry is the hash of the
+  report as it was written, not of the copy in the tree. Nothing checks it today.
+- **The smoke runner still records absolute paths.** `tools/smoke/runner.ts` writes the absolute
+  report path as a record's `artifact`, and the server's backup paths in a report are absolute, so
+  the next kept run brings a home directory back into `docs/evidence/**` and, through
+  `tools/evidence-bundle.ts --write`, into the shipped bundle. It should record repository-relative
+  paths; until then, check new records by hand.
+- **Public CI pins less than the local gate.** Without the corpus nothing ties the relative and
+  absolute rows of the `device-support.md` verdict to `classify().capabilities()`, and the
+  evidence bundle's Product capabilities are not re-derived; a synthetic System B and System 7
+  application would cover the first.
 
 ## Product and UI
 

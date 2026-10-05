@@ -1,16 +1,15 @@
-import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { parseApplication } from "../src/application.ts";
 import { buildParameterImage, decodeParameterImage } from "../src/image.ts";
 import { buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import { planAbsoluteSegmentFlash } from "../src/deviceflash.ts";
+import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 
 // Golden-master snapshot of a manufacturer ApplicationProgram, used to pin the
-// parse + image projection against real catalogue data (one device per
-// manufacturer, gzipped under fixtures/real/, no personal data). The snapshot is a
+// parse + image projection against real catalogue data (the catalogue/ files of the private
+// corpus, tools/corpus.ts; golden.json under fixtures/real/ holds only hashes). The snapshot is a
 // content hash of the byte-relevant image model plus, where a default image builds,
 // its byte hash and the decoded read-back hash. For absolute-segment (MV-0705) devices
 // it additionally pins the default absolute build (bytes + owned/verify masks) and the
@@ -44,13 +43,8 @@ export interface AppSnapshot {
   flashPlan?: { segments: number; perSegment: Record<string, { address: number; size: number; ownedBytes: number; skippedUnowned: number }> };
 }
 
-export function listRealFixtures(): string[] {
-  return readdirSync(REAL_DIR).filter((f) => f.endsWith(".xml.gz")).sort();
-}
-
-export function readRealFixture(name: string): string {
-  return gunzipSync(readFileSync(join(REAL_DIR, name))).toString("utf8");
-}
+export const listRealFixtures = listCatalogue;
+export const readRealFixture = catalogueXml;
 
 export function snapshot(xml: string): AppSnapshot {
   const app = parseAppConfig(xml);

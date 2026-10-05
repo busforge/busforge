@@ -44,7 +44,7 @@ export interface DaliEcg {
   shortAddress: number;
   flags: CommissioningFlag;
   type: LampType;
-  description: string;      // installer name, e.g. "Kitchen 6"
+  description: string;      // installer name, e.g. "Kitchen 1"
 }
 
 export interface DaliSceneItem { itemKind: "Group" | "ECG"; itemIndex: number; valuePercent: number; }
