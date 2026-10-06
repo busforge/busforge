@@ -1,14 +1,14 @@
-import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, type AbsFullSegment } from "./deviceflash.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, planCapturedSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -322,7 +322,7 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // the group tables together.
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
-  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string }
+  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string }
 ) & { structural?: true };
 
@@ -331,6 +331,9 @@ export type FlashResult = (
 // model-specific pieces; the safety-critical sequencing lives in runFlashOp.
 interface FlashOp {
   imageBytes: number;
+  // The full download's image (deviceflash.ts fullDownloadImageDigest), reported by its dry run so a
+  // caller can check the plan it compared with the device is the one this server writes.
+  imageDigest?: string;
   diffBytes: number;
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
@@ -379,7 +382,7 @@ async function runFlashOp(
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
   if (op.diffBytes === 0 && !op.loadIncomplete) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
-  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup };
+  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
   await op.write();
@@ -453,6 +456,10 @@ export interface FullDownloadCtx extends WriteGate {
   params: Map<string, string>;
   links: ComObjectLink[];
   moduleInstances?: ModuleInstance[];
+  // The device's own com-object flags and priority set in the project, by object number
+  // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
+  // is authored. Absent: the project sets none.
+  comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
   dryRun: boolean;
   // Read and persist the device's CURRENT memory to .bin files BEFORE the unload/rewrite destroys it,
   // as a recovery copy for a full download that lands on a device holding a configuration we cannot
@@ -491,6 +498,10 @@ export interface GaFlashCtx extends WriteGate {
   params: Map<string, string>;
   baseParams: Map<string, string>;
   moduleInstances?: ModuleInstance[];
+  // The device's own com-object flags and priority set in the project, by object number
+  // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
+  // is authored. Absent: the project sets none.
+  comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
   dryRun: boolean;
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
@@ -510,6 +521,10 @@ export interface StructureFlashCtx extends WriteGate {
   baseParams: Map<string, string>;
   links: ComObjectLink[];
   moduleInstances?: ModuleInstance[];
+  // The device's own com-object flags and priority set in the project, by object number
+  // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
+  // is authored. Absent: the project sets none.
+  comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
   dryRun: boolean;
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
@@ -524,6 +539,10 @@ export interface FullDownloadInputs {
   moduleInstances?: ModuleInstance[];
   proc: LoadProcedures;
   security?: SecureTablesCtx;
+  // The device's own com-object flags and priority set in the project, by object number
+  // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
+  // is authored. Absent: the project sets none.
+  comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
 }
 // One segment a full download writes. `address` is null where the device assigns it (a System B
 // relative segment, allocated during the download); `fillByte` is set where the allocation pre-fills
@@ -578,6 +597,10 @@ export abstract class DeviceProfile {
   // Why capabilities() withholds a write the profile would otherwise offer, where the application
   // itself is the reason (its declared load procedure, the tables a write would have to touch).
   operationRefusals(): OperationRefusals { return {}; }
+  // Whether this profile's full download loads the application into a device that does not hold it
+  // (a factory device, another application, or one a broken-off write left unloaded), so it is the
+  // way back for such a device. Where it is false, ETS is.
+  fullDownloadLoadsApplication(): boolean { return this.capabilities().fullDownload; }
   abstract readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback>;
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
@@ -690,7 +713,7 @@ export class SystemBProfile extends DeviceProfile {
     // The linked objects are exactly those the association table connects; ETS clears the
     // Communication flag on every other object, so the com-object table build needs to know them.
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
-    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
+    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
 
     // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
@@ -963,7 +986,7 @@ export class SystemBProfile extends DeviceProfile {
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
-    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, linked);
+    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
@@ -1064,7 +1087,7 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
-    const comObj = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
+    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
     const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const mcb = declaredMcbWrites(proc, target.size, "par");
@@ -1126,6 +1149,10 @@ export class SystemBProfile extends DeviceProfile {
 // live at fixed EEPROM addresses (driven by the device's declared LoadProcedure); group tables
 // use the System-7 layout. Read-back, parameter flash and GA flash are all hardware-verified
 // on twisted-pair (M-0081): identity flash, re-point and revert each byte-matched.
+// The bits of a System 7 com-object config byte a project override can set (buildComObjectTableMv0705):
+// priority, read, write, transmit. Its communication bit follows the links.
+const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "transmit", "priority"];
+
 export class System7Profile extends DeviceProfile {
   readonly memoryModel = "absolute" as const;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
@@ -1146,8 +1173,9 @@ export class System7Profile extends DeviceProfile {
     //
     // Each write is offered only where its planner can run the procedure the application declares
     // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
-    // M-0081, M-0008, M-0048, M-008E applications), a parameter or group-address flash with a step
-    // addressed to what it writes that has no disposition (the M-0008 LdCtrlLoadImageProp).
+    // M-0081, M-0048, M-008E applications), a parameter or group-address flash with a step addressed
+    // to what it writes that has no disposition. M-0008 declares both and is offered all three: ETS
+    // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7).
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
@@ -1171,6 +1199,12 @@ export class System7Profile extends DeviceProfile {
     const full = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures) : null;
     if (full) out.fullDownload = full;
     return out;
+  }
+
+  // A captured application's full download keeps the application the device holds (downloadFull
+  // refuses FULL_DOWNLOAD_APPLICATION_NOT_LOADED), so a unit left without it goes back to ETS.
+  override fullDownloadLoadsApplication(): boolean {
+    return super.fullDownloadLoadsApplication() && !(this.cfg && etsCapturedSystem7(this.cfg.loadProcedures));
   }
 
   private canAuthor(): boolean {
@@ -1289,7 +1323,7 @@ export class System7Profile extends DeviceProfile {
     // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
     // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
     // and byte-matched, and the revert restored the device exactly.
-    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
+    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsCapturedSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -1311,6 +1345,13 @@ export class System7Profile extends DeviceProfile {
     // download (comobjbuild.ts withLinkedCommFlags). Keeping the device's table would leave a newly
     // linked object silent, so where the application names the table's segment only that bit is
     // changed in the table the device holds, and the table is verified with the group tables.
+    // That bit is the object's communication flag; a project that sets it otherwise than the links do
+    // cannot be written by this flash, and the other bits stay as the device holds them.
+    if (scope.l3 && ctx.comObjectOverrides?.size) {
+      const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
+      refuseUnwritableOverrides(buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects, ctx.comObjectOverrides,
+        ["read", "write", "transmit", "update", "readOnInit", "priority"], "the group-address flash, which sets only the communication bit from the links");
+    }
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
@@ -1321,6 +1362,12 @@ export class System7Profile extends DeviceProfile {
       assoc: await dev.memRead(await loadedTableAddr(dev, OBJ.ASSOC_TABLE, "association table"), assoc.length),
       comObj: curL3 ?? undefined,
     } : undefined;
+    // A captured application's tables move with the address table's length, so they are re-declared
+    // as ETS's partial download does (planCapturedSystem7GaFlash); planned here, so a table that does
+    // not fit is refused before anything is written.
+    const plan = etsCapturedSystem7(cfg.loadProcedures)
+      ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3).plan
+      : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
@@ -1335,7 +1382,7 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current), { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1366,7 +1413,8 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
-    const comObjectTable = { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) };
+    refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, MV0705_OVERRIDABLE, "the System 7 com-object table");
+    const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) };
     const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
     const images = absoluteStructuralImages(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), { baseValues: ctx.baseParams, baseInstances, moduleInstances: instances, comObjectTable });
     await runDeclaredChecks(dev, coverage);
@@ -1436,8 +1484,10 @@ export class System7Profile extends DeviceProfile {
     // with the linked set from the group-address links (comobjbuild.ts buildComObjectTableMv0705;
     // MDT BE-02001.02 and ABB US/U 4.2 ETS captures).
     const comObjectTable = cfg.groupTables.comObjectSegment !== undefined
-      ? { active: view.imageComObjects, linked: new Set(ctx.links.map((l) => l.comObjNum)) }
+      ? { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) }
       : undefined;
+    refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, comObjectTable ? MV0705_OVERRIDABLE : [],
+      comObjectTable ? "the System 7 com-object table" : "this full download, which writes the application's own com-object table");
     // These devices persist to EEPROM as each segment is written, so the closing A_Restart only
     // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
     // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
@@ -1487,6 +1537,25 @@ export class System7Profile extends DeviceProfile {
           `object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but this application is ${c.expect.toString("hex")}; refusing to commission a different application onto this device`);
       }
     }
+    // A captured application's full download leaves the application's load-state machine as it is and
+    // rewrites its data (etsCapturedSystem7): every ETS capture of it ran on a device that held this
+    // application, loaded, and read its program id first. Loading it into a device that does not is
+    // not captured, so such a device is refused before anything is written.
+    if (etsCapturedSystem7(proc)) {
+      // ETS authorizes with the free key first and is granted level 0 (gira-m0008-ets-fulldownload.log);
+      // a device that grants less was not captured taking this download.
+      const level = await dev.authorizeFreeKey();
+      if (level !== 0) {
+        throw new ProductError("FULL_DOWNLOAD_ACCESS_LEVEL", `the device grants access level ${level} to the free key where the ETS capture of this application's download shows level 0; refusing to start a download it may refuse halfway`);
+      }
+      const want = programIdStamp(cfg);
+      const id = await dev.propRead(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
+      const state = await lsmState(dev, OBJ.COMOBJ_TABLE);
+      if (!id.equals(want) || state !== STATE.LOADED) {
+        throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
+          `the device holds program id ${id.toString("hex") || "(none)"} in load state ${state} where this application is ${want.toString("hex")}, loaded; Busforge's full download of this application keeps the loaded application, as ETS's does, and loading it into a device that does not hold it is not captured`);
+      }
+    }
 
     const { plan, segments, imageBytes } = this.planSystem7Full(mask, { ...ctx, proc });
 
@@ -1511,6 +1580,7 @@ export class System7Profile extends DeviceProfile {
     const memMappedLsms = isMemoryMappedLsm(mask);
     return runFlashOp(dev, mask, ctx, {
       imageBytes,
+      imageDigest: fullDownloadImageDigest(segments),
       diffBytes: imageBytes, // a full download owns every byte it writes
       backup: `${ctx.deviceId}-full-${stamp}`,
       backups,

@@ -40,6 +40,10 @@ export interface ProjectExport {
   deviceLinks: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
   deviceLinkBase: { deviceId: string; comObjRefId: string; slot: number; gaRaw: number }[];
   deviceModules: { deviceId: string; instances: unknown }[];
+  // The com-object flags and priority the project sets per device (device_comobj_overrides), the
+  // attributes as ETS stores them. Required: an artifact without it would write every object with its
+  // application's flags.
+  deviceComObjOverrides: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
   catalog: Record<string, string>; // appProgramId -> application-program XML
   baggage: { name: string; dataBase64: string }[];
   // Restore points and the recorded bus log. Optional so an artifact from before
@@ -132,6 +136,9 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceLinks: linkRows(db, "device_links", projectId),
     deviceLinkBase: linkRows(db, "device_link_base", projectId),
     deviceModules,
+    deviceComObjOverrides: (db.query("SELECT device_id AS deviceId, seq, com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? ORDER BY device_id, seq")
+      .all(projectId) as { deviceId: string; seq: number; comObjRefId: string; attrs: string }[])
+      .map((r) => ({ ...r, attrs: JSON.parse(r.attrs) as Record<string, string> })),
     catalog,
     baggage,
     snapshots,

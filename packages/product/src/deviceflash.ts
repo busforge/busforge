@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -373,6 +374,8 @@ export function planAbsoluteParFlash(
       for (const r of runs) plan.push({ op: "writeMem", address: r.address, bytes: r.bytes });
       plan.push({ op: "loadCompleted", lsm });
     }
+    // A captured application's stamps are read after the last LoadCompleted (gira-m0008-ets-partial-params.log).
+    for (const r of imageStampReads(procedure)) plan.push({ op: "readProp", ...r });
     if (has("LdCtrlRestart")) plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true });
   }
   return { plan, changedBytes, segments, unplaceable };
@@ -424,6 +427,7 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures): StepRefusal 
   if (steps.length === 0) {
     return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `the application declares no full-download steps (load procedure style ${procedure.style}); refusing to commission it from a recipe Busforge would have to invent` };
   }
+  if (etsCapturedSystem7(procedure)) return capturedStepRefusal(steps);
   for (const s of steps) {
     const needs = ABS_FULL_STEP_ATTRS[s.verb];
     if (!needs) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe` };
@@ -431,6 +435,99 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures): StepRefusal 
     if (missing) return { code: "FULL_DOWNLOAD_STEP_MALFORMED", message: `${s.verb} is missing its ${missing}; refusing to build a partial download` };
   }
   return null;
+}
+
+// ── ETS-captured System 7 downloads (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS) ─────────
+//
+// What each declared full step becomes, as the captures show it. Anything outside this list refuses.
+const TABLE_LSMS = [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE] as const;
+const APP_LSM = OBJ.COMOBJ_TABLE; // LSM 3: the application's segments, the com-object table among them
+const CAPTURED_STEPS: { verb: string; lsms?: readonly number[]; what: string }[] = [
+  { verb: "LdCtrlConnect", what: "the caller's session" }, { verb: "LdCtrlDisconnect", what: "the caller's session" },
+  { verb: "LdCtrlCompareProp", what: "the caller's pre-flight" }, { verb: "LdCtrlRestart", what: "sent" },
+  { verb: "LdCtrlUnload", lsms: [1, 2, 3], what: "sent for the tables, not for the application" },
+  { verb: "LdCtrlLoad", lsms: [1, 2, 3], what: "sent" }, { verb: "LdCtrlLoadCompleted", lsms: [1, 2, 3], what: "sent" },
+  { verb: "LdCtrlAbsSegment", lsms: [1, 2, 3], what: "re-declared at the built size for the tables; for the application, its data written" },
+  { verb: "LdCtrlTaskSegment", lsms: [1, 2, 3, 5], what: "sent for the tables, not for the application or LSM 5" },
+  { verb: "LdCtrlTaskCtrl1", lsms: [3], what: "not sent" }, { verb: "LdCtrlLoadImageProp", what: "a read of PID 27" },
+];
+
+function capturedStepRefusal(steps: ReturnType<typeof flattenSteps>): StepRefusal | null {
+  for (const s of steps) {
+    const known = CAPTURED_STEPS.find((c) => c.verb === s.verb);
+    const l = lsmIdx(s);
+    if (!known || (known.lsms && (l === undefined || !known.lsms.includes(l)))) {
+      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb}${l !== undefined ? ` LsmIdx ${l}` : ""}, which no ETS capture of this application shows; refusing to run a partial recipe` };
+    }
+  }
+  return null;
+}
+
+interface AbsDecl { lsm: number; segType: number; address: number; size: number; access: number; memType: number; segFlags: number }
+const absDecl = (s: ReturnType<typeof flattenSteps>[number]): AbsDecl | null => {
+  const lsm = lsmIdx(s), address = stepAddress(s), size = stepSize(s);
+  return lsm === undefined || address === undefined || size === undefined ? null : { lsm, segType: segType(s), address, size, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s) };
+};
+
+// The address and association tables of a captured application, re-declared as ETS declares them:
+// the two declared segments taken as one region, the address table's segment exactly as long as the
+// table and the association table's directly behind it with the rest of the region. Each load-state
+// machine is unloaded first, and its task segment declared at the table's new address.
+export interface CapturedTables { steps: LoadStep[]; addrAt: number; assocAt: number }
+export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }): CapturedTables {
+  const steps = flattenSteps(procedure, "full");
+  const decl = (lsm: number): AbsDecl => {
+    const ds = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map(absDecl);
+    if (ds.length !== 1 || !ds[0]) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `the load procedure declares ${ds.length} readable segment(s) for load-state machine ${lsm}, where the ETS capture shows one table segment; refusing to place the table`);
+    if (!steps.some((s) => s.verb === "LdCtrlTaskSegment" && lsmIdx(s) === lsm)) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `the load procedure declares no task segment for load-state machine ${lsm}; the ETS capture declares one`);
+    return ds[0];
+  };
+  const [d1, d2] = TABLE_LSMS.map(decl);
+  const segAt = (id: string | undefined) => app.absoluteSegments.find((s) => s.id === id)?.address;
+  if (segAt(app.groupTables.addressSegment) !== d1.address || segAt(app.groupTables.associationSegment) !== d2.address || d1.address + d1.size !== d2.address) {
+    throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `the table segments (${d1.address}+${d1.size}, ${d2.address}+${d2.size}) are not the application's address and association tables one behind the other; the ETS capture places the tables in one such region, refusing to guess another layout`);
+  }
+  const cap = app.groupTables;
+  if ((cap.addressMaxEntries !== undefined && tables.addr.length > 3 + 2 * cap.addressMaxEntries) || (cap.associationMaxEntries !== undefined && tables.assoc.length > 1 + 2 * cap.associationMaxEntries)) {
+    throw new ProductError("GA_TABLE_TOO_LARGE", `the tables need address ${tables.addr.length} B / association ${tables.assoc.length} B, more entries than the application declares (${cap.addressMaxEntries} addresses, ${cap.associationMaxEntries} associations); remove links or assign fewer group addresses`);
+  }
+  const region = d1.size + d2.size;
+  if (tables.addr.length + tables.assoc.length > region) {
+    throw new ProductError("GA_TABLE_TOO_LARGE", `the address table (${tables.addr.length} B) and the association table (${tables.assoc.length} B) need more than the ${region} B the application reserves for both; remove links or assign fewer group addresses`);
+  }
+  const addrAt = d1.address, assocAt = d1.address + tables.addr.length;
+  const manufacturer = appManufacturerNumber(app);
+  const bracket = (d: AbsDecl, at: number, size: number, bytes: Buffer): LoadStep[] => [
+    { op: "load", lsm: d.lsm },
+    { op: "absSegment", lsm: d.lsm, segType: d.segType, address: at, size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
+    { op: "writeMem", address: at, bytes },
+    { op: "taskSegment", lsm: d.lsm, address: at, peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
+    { op: "loadCompleted", lsm: d.lsm },
+  ];
+  return {
+    addrAt, assocAt,
+    steps: [
+      { op: "unload", lsm: d1.lsm }, { op: "unload", lsm: d2.lsm },
+      ...bracket(d1, addrAt, tables.addr.length, tables.addr),
+      ...bracket(d2, assocAt, region - tables.addr.length, tables.assoc),
+    ],
+  };
+}
+
+const appManufacturerNumber = (app: AppConfig): number => Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
+
+// The stamp reads (LdCtrlLoadImageProp) and the restart that close every captured download.
+function capturedClose(procedure: LoadProcedures, requireReboot: boolean): LoadStep[] {
+  return [...imageStampReads(procedure).map((r): LoadStep => ({ op: "readProp", ...r })), { op: "restart", requireReboot }];
+}
+
+// A captured application's group-address flash, as ETS's partial download after a link change writes
+// it (gira-m0008-ets-partial-links.log): both tables re-declared and written, the com-object table
+// written in the application's load bracket without unloading it, the stamps read, the restart.
+export function planCapturedSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true): CapturedTables & { plan: LoadPlan } {
+  const t = planCapturedTableBrackets(app, procedure, tables);
+  const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, { op: "writeMem", address: comObj.address, bytes: comObj.bytes }, { op: "loadCompleted", lsm: APP_LSM }] : [];
+  return { ...t, plan: [...t.steps, ...app3, ...capturedClose(procedure, requireReboot)] };
 }
 
 export function planAbsoluteFullDownload(
@@ -465,10 +562,10 @@ export function planAbsoluteFullDownload(
   const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
   const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
   const comObjTableAddr = opts.comObjectTable ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
-  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
+  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa, { order: etsCapturedSystem7(procedure) ? "ets-captured" : "object" });
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
-  const manufacturer = Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
+  const manufacturer = appManufacturerNumber(app);
 
   // Returns the bytes to write to a segment, or null to declare the segment in the LSM bracket but
   // write NOTHING to it (a property-mapped device fills its own computed segments, e.g. the RAM/
@@ -513,6 +610,35 @@ export function planAbsoluteFullDownload(
   const plan: LoadPlan = [];
   const segments: AbsFullSegment[] = [];
   let imageBytes = 0;
+
+  // A captured application: the tables in ETS's region, then the application's data segments in their
+  // declared order inside one load bracket, without unloading or declaring them (a segment without
+  // <Data> is the device's own and is not written, as ETS writes none). Busforge writes every segment
+  // whole where ETS leaves out the bytes it believes the device already holds (its differential
+  // download, from the stamps it read in the previous download): Busforge keeps no such record, and
+  // every byte it writes is read back after the restart.
+  if (etsCapturedSystem7(procedure)) {
+    const t = planCapturedTableBrackets(app, procedure, { addr, assoc });
+    const tableSeg = (id: string | undefined, address: number, image: Buffer, source: "addrTable" | "assocTable", lsm: number): AbsFullSegment =>
+      ({ id: id ?? `@${address}`, address, lsm, source, image, verify: new Array<boolean>(image.length).fill(true) });
+    segments.push(tableSeg(app.groupTables.addressSegment, t.addrAt, addr, "addrTable", OBJ.ADDR_TABLE), tableSeg(app.groupTables.associationSegment, t.assocAt, assoc, "assocTable", OBJ.ASSOC_TABLE));
+    const appWrites: LoadStep[] = [];
+    for (const s of flattenSteps(procedure, "full")) {
+      if (s.verb !== "LdCtrlAbsSegment" || lsmIdx(s) !== APP_LSM) continue;
+      const d = absDecl(s);
+      if (!d) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `${s.verb} is missing its LsmIdx, Address or Size; refusing to build a partial download`);
+      const seg = segByAddr.get(d.address);
+      if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${d.address} the application does not define; refusing to write an image we cannot build`);
+      if (seg.data.length === 0) continue;
+      const built = imageFor(d.address, d.size);
+      if (!built) continue;
+      appWrites.push({ op: "writeMem", address: d.address, bytes: built.image });
+      segments.push({ id: segByAddr.get(d.address)!.id, address: d.address, lsm: APP_LSM, source: built.source, image: built.image, verify: built.verify });
+    }
+    plan.push(...t.steps, { op: "load", lsm: APP_LSM }, ...appWrites, { op: "loadCompleted", lsm: APP_LSM }, ...capturedClose(procedure, opts.requireReboot ?? true));
+    return { plan, segments, imageBytes: segments.reduce((n, s) => n + s.image.length, 0) };
+  }
+
   const need = <T>(v: T | undefined, verb: string, what: string): T => {
     if (v === undefined) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `${verb} is missing its ${what}; refusing to build a partial download`);
     return v;
@@ -547,4 +673,17 @@ export function planAbsoluteFullDownload(
     }
   }
   return { plan, segments, imageBytes };
+}
+
+// A digest of a full download's image: every segment's address (0xFFFFFFFF where the device assigns
+// it), length and bytes, in plan order. Two plans with the same digest write the same bytes.
+export function fullDownloadImageDigest(segments: readonly { address: number | null; image: Buffer }[]): string {
+  const h = createHash("sha256");
+  for (const s of segments) {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(s.address ?? 0xffffffff, 0);
+    head.writeUInt32BE(s.image.length, 4);
+    h.update(head).update(s.image);
+  }
+  return h.digest("hex");
 }

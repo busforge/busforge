@@ -8,7 +8,7 @@ import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -126,6 +126,28 @@ describe("projects", () => {
     const data = exportProject(db, "p1", 5, MK)!;
     importProjectExport(db, data, "p2", 6, MK);
     expect(getProject(db, "p2")!.groupAddressLevels).toBe(2);
+  });
+
+  test("the com-object flags a project sets survive the import and a .busforge round-trip; a product replacement drops them", () => {
+    const xml = sampleXml.replace(/<ComObjectInstanceRef RefId="([^"]+)"/, '<ComObjectInstanceRef RefId="$1" ReadFlag="Enabled" Priority="High"');
+    const proj = parseProject(xml, undefined, "Demo");
+    const [dev] = proj.deviceComObjOverrides;
+    expect(dev.overrides).toHaveLength(1);
+    const db = fresh();
+    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    const want = [{ comObjRefId: dev.overrides[0].comObjRefId, attrs: { ReadFlag: "Enabled", Priority: "High" } }];
+    expect(getDeviceComObjOverrides(db, "p1", dev.deviceId)).toEqual(want);
+    const MK = Buffer.alloc(32, 7);
+    const data = exportProject(db, "p1", 5, MK)!;
+    expect(data.deviceComObjOverrides).toEqual([{ deviceId: dev.deviceId, seq: 0, ...want[0] }]);
+    importProjectExport(db, data, "p2", 6, MK);
+    expect(getDeviceComObjOverrides(db, "p2", dev.deviceId)).toEqual(want);
+    // an artifact without them is refused, not imported as "none set"
+    const { deviceComObjOverrides: _, ...without } = data;
+    expect(() => validateExport(without)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    expect(() => validateExport({ ...data, deviceComObjOverrides: [{ deviceId: "d", seq: 0, comObjRefId: "r", attrs: { ReadFlag: 1 } }] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    expect(getDeviceComObjOverrides(db, "p1", dev.deviceId)).toEqual([]);
   });
 
   test("a device's link-baseline gaps survive a .busforge round-trip", () => {
@@ -647,14 +669,14 @@ describe("device security persistence", () => {
   });
 
   test("validateExport rejects a malformed deviceSecurity entry as a coded 400", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], baggage: [], catalog: {} };
     expect(() => validateExport({ ...base, deviceSecurity: [{ deviceId: "d" }] })).toThrow(/deviceSecurity/);
     try { validateExport({ ...base, deviceSecurity: [{ deviceId: "d", toolKey: "x", serialNumber: "y", sequenceNumber: "1", source: "bogus" }] }); expect.unreachable(); }
     catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
   });
 
   test("validateExport rejects a malformed device entry (missing string fields) as a coded 400", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], baggage: [], catalog: {} };
     // A version-valid artifact with a device missing appRef must fail cleanly, not crash
     // later in busforgeGaps' appProgramId(appRef).split(...) as a generic 500.
     try { validateExport({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n" }] }); expect.unreachable(); }
@@ -664,7 +686,7 @@ describe("device security persistence", () => {
   });
 
   test("validateExport rejects a .busforge with duplicate device instance ids (same code as knxproj import)", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], baggage: [], catalog: {} };
     // A tampered artifact with two devices sharing an id must fail cleanly with the coded
     // DUPLICATE_DEVICE_INSTANCE before insert, not hit the raw unique index mid-transaction
     // (a generic 500). Both import paths (knxproj + .busforge) refuse consistently.
@@ -814,7 +836,7 @@ describe("baggage (DCA blobs)", () => {
   });
 
   test("a .busforge artifact with an oversized baggage blob is refused before anything is stored", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], catalog: {} };
     const big = Buffer.alloc(32 * 1024 * 1024 + 3).toString("base64");
     expect(catchCode(() => validateExport({ ...base, baggage: [{ name: "DI-1_big.bin", dataBase64: big }] }))).toBe("BAGGAGE_TOO_LARGE");
     expect(() => validateExport({ ...base, baggage: [{ name: "DI-1_ok.bin", dataBase64: Buffer.from("ok").toString("base64") }] })).not.toThrow();

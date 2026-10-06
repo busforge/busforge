@@ -42,7 +42,7 @@ corpus**:
 ```
 <corpus>/
 ├── catalogue/                 manufacturer ApplicationProgram XML, <id>.xml.gz
-├── captures/                  logging-proxy captures of ETS and Busforge on the test bench, *.log
+├── captures/                  logging-proxy captures of ETS and Busforge, on the test bench and the house bus, *.log
 ├── collections/               raw-acquisition packages of real installations, *.json (no test reads them)
 ├── received/                  diagnostic packages users sent, one directory per package (see below)
 └── dca-theben-dali-e64/
@@ -53,7 +53,7 @@ corpus**:
 | Directory | Read by | Why it is not in the repository |
 |---|---|---|
 | `catalogue/` | the real-catalogue golden, the flash, download, read-back and load-procedure tests, `tools/evidence-bundle.ts` | Manufacturers' catalogue data, with no licence to redistribute it |
-| `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the bench devices' serial numbers |
+| `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the devices' serial numbers, and the house captures a real installation's addresses |
 | `dca-theben-dali-e64/` | `plugins/dca-theben-dali-e64/test/parse.test.ts` | Project name, room names and DALI addresses of a real house |
 | `collections/` | nothing; the record behind a hardware claim in [raw-acquisition.md](raw-acquisition.md). Not in `CORPUS_FILES`: a corpus without it is complete | A real device's identity and memory |
 | `received/` | `tools/received.test.ts`, which loads every package in it. Not in `CORPUS_FILES`: a corpus without it has no received packages | A user's device, its address and memory, kept with their consent |
@@ -62,6 +62,21 @@ What stays in the repository are the parts that only point into it: the golden h
 (`packages/product/test/fixtures/real/golden.json`) and the reference vectors into the captures
 (`tools/fixtures/raw-acquisition-vectors.json`). The exact list of files a corpus must hold is
 `CORPUS_FILES` in `tools/corpus.ts`.
+
+### Taking a capture
+
+A capture is the log of `tools/knxproxy.ts`, a KNXnet/IP-over-TCP proxy that passes every frame
+between a tool and a KNXnet/IP server on and logs it in the format `tools/etsdiff.ts` reads:
+
+```bash
+PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=$PWD/<name>.log \
+  PROXY_ADVERTISE=<this host's ip>:3672 bun run tools/knxproxy.ts
+```
+
+ETS gets this host and port as a KNXnet/IP TCP interface. `PROXY_ADVERTISE` matters for ETS 6: it
+follows the control endpoint in the server's search answer and connects there directly, so without
+the rewrite the log ends after the search. Check that the log holds ETS's `CONNECT_REQ` before
+starting a download.
 
 ### Running with and without it
 

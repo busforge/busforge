@@ -98,8 +98,9 @@ reports success.
 | **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation), and a `WriteProp` an ETS capture shows for that application (the GVS AMMA's object 4 PID 67 = `01`, below) | performed by the planner/executor or the proven base bracket |
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`. This is a check ETS runs that was previously skipped silently |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
+| **executed (read)** | absolute: `LoadImageProp` **to PID 27** on an application ETS is captured downloading (the Gira M-0008, [below](#ets-captured-system-7-downloads)): a property read of the stamps after the last `LoadCompleted` | ETS reads them there and writes nothing |
 | **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** (ETS 6 sends nothing for it) | deliberately not executed, each with hardware or capture evidence |
-| **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices, `WriteProp` to any other PID without such a capture, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
+| **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on any other absolute application, `WriteProp` to any other PID without such a capture, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
 
 PID 27 is the memory-control-block table: per region of a segment, its size, a control byte and
 a CRC the device computes. A System B application may declare the regions of its parameter
@@ -113,8 +114,9 @@ declared entries right after the allocation, exactly as ETS does: the first 8 by
 (`PROPERTY_WRITE_REFUSED`); an entry declared `Verify="false"` only has to come back with its
 region size, because the device may fill in the CRC. Entries whose regions do not add up to the segment, that address
 another object or carry data beyond the entry are refused (`LOAD_STEP_UNSUPPORTED`). ETS sends no
-write for `LoadImageProp`; it reads the device's CRCs back afterwards. No evidence exists for
-absolute devices, so both verbs block on them.
+write for `LoadImageProp`; it reads the device's CRCs back afterwards. On an absolute device a
+declared `WriteProp` to PID 27 blocks; `LoadImageProp` is the stamp read the Gira M-0008 captures
+show, on that application only, and blocks everywhere else.
 
 A `CompareProp` honours its `Mask`, so a manufacturer that masks out its own manufacturer id
 and version and checks only the application number is compared the way it asks to be.
@@ -159,7 +161,7 @@ step names every download (`all`) and ETS ends its partial download with it. On 
 writes inside the secure session, six full downloads, two parameter flashes and two group-address
 flashes, each echoed `01`, each followed by the restart; the device then passed its behaviour,
 persistence and restore checks ([status.md](status.md), trace and before/after probe in
-[evidence/runs/2026-10-06/](evidence/runs/2026-10-06/)). A read of PID 67 answers with no element,
+evidence/runs/2026-10-06/). A read of PID 67 answers with no element,
 right before and right after the run, although its description says readable at level 3; ETS never reads it either, so the
 echo is the check.
 
@@ -182,11 +184,9 @@ Surveyed from the real catalogue (`parseLoadProcedures` plus the coverage test i
 `packages/product/test/loadproc.test.ts`). The step policy above dispositions every
 ProductProcedure and MergedProcedure in the corpus except two classes, both refused:
 
-- **Devices whose procedure declares uncomputable load-image stamps.** One absolute-segment
-  sensor family (`M-0008`) declares three `LdCtrlLoadImageProp` load-image/MCB stamps the engine
-  cannot compute, so the coverage guard refuses with `LOAD_STEP_UNSUPPORTED` rather than run a partial
-  recipe, in the parameter flash and in the group-address flash (below). That family has no
-  full-download path either, so none of its writes is offered.
+- **Absolute applications declaring `LdCtrlLoadImageProp` without an ETS capture.** None in the
+  corpus since the Gira M-0008 was captured (2026-10-06, [below](#ets-captured-system-7-downloads));
+  a new one is refused with `LOAD_STEP_UNSUPPORTED` in the parameter and the group-address flash.
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above.
 
@@ -205,12 +205,13 @@ The System 7 **full download** walks the procedure's `full` steps (`planAbsolute
 executes `Unload`, `Load`, `AbsSegment` (with the segment write), `TaskSegment`, `LoadCompleted`
 and `Restart`, and leaves `Connect`, `Disconnect` and `CompareProp` to the caller; any other step
 refuses the download (`FULL_DOWNLOAD_STEP_UNSUPPORTED`; a step missing an attribute it needs,
-`FULL_DOWNLOAD_STEP_MALFORMED`; no full-download steps at all, `LOAD_PROCEDURE_UNSUPPORTED`). Two verbs
-of the catalogue land there: `LdCtrlTaskCtrl1` (declared by six applications of the real catalogue fixtures, four of
-them owned, none of the MDT or ABB ones) and the absolute `LdCtrlLoadImageProp`. So the full download
-is refused for the Auro presence detector (M-0081), the Gira Tastsensor 3 (M-0008), the
-Theben TheLuxa P300, the Theben Meteodata 140 S and the Steinel presence detector (M-008E) and the second Auro application (`M-0081_A-FF31`),
-and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
+`FULL_DOWNLOAD_STEP_MALFORMED`; no full-download steps at all, `LOAD_PROCEDURE_UNSUPPORTED`). One verb
+of the catalogue lands there: `LdCtrlTaskCtrl1` (declared by six applications of the real catalogue
+fixtures, four of them owned, none of the MDT or ABB ones). The Gira M-0008 declares it too, but ETS
+does not send it there, and that application's full download runs as captured
+([below](#ets-captured-system-7-downloads)). So the full download is refused for the Auro presence
+detector (M-0081), the Theben TheLuxa P300, the Theben Meteodata 140 S, the Steinel presence detector
+(M-008E) and the second Auro application (`M-0081_A-FF31`), and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
 flag says `fullDownload` exactly where the planner runs the declared steps, and the parameter and
 group-address flash are offered exactly where their coverage blocks nothing (`operationRefusals`,
 pinned per catalogue fixture against a table written from the declared verbs in
@@ -219,6 +220,123 @@ refusal comes before the device is asked anything, its declared checks included.
 
 Being dispositioned is not a hardware claim: which application programs have actually been
 flashed, and how far, is in [status.md](status.md).
+
+`AbsSegment` and `TaskSegment` go to the memory control `0x0104` on every System 7 device, the
+property-mapped MV-0705 included (the MDT BE-02001.02 full download is hardware-proven so). ETS
+writes them to the load-state machine's PID 5 on that mask instead, 10 bytes each
+(`03 00 addr size access memtype flags 00` and `03 02 addr pei manufacturer application version`;
+MDT BE-02001.02 and Gira M-0008 captures). Busforge does that only for the applications below; the
+switch for the others waits for a bench run ([roadmap.md](roadmap.md)).
+
+## ETS-captured System 7 downloads
+
+For some System 7 applications ETS does not send the declared procedure step by step. Busforge
+then sends what an ETS capture of that application shows (`ETS_CAPTURED_SYSTEM7_APPS`,
+`packages/product/src/loadproc.ts`), and nothing for an application without one. One so far: the
+Gira Tastsensor 3 Komfort, `M-0008_A-10D7-11-2783-O000A` (`DynamicTableManagement="true"`),
+captured on the house bus: a full download, a parameter download, a group-address
+download and the partial download that reverted both (private corpus
+`captures/gira-m0008-ets-*.log`, with the excerpt of ETS's own log beside each, which names every
+`LdCtrl*` step it executes).
+
+| Declared | What ETS sends, and Busforge with it |
+| --- | --- |
+| `Unload` 1, 2, 3 | 1 and 2. The application (LSM 3) is never unloaded |
+| `AbsSegment` 1 (16384+243), 2 (16627+241) | the two segments as one region: LSM 1 as long as the address table, LSM 2 directly behind it with the rest (a 17-byte table: 16384+17 and 16401+467) |
+| `TaskSegment` 1, 2 | at the table's address |
+| `AbsSegment` 3 (seven segments, one a RAM segment without `<Data>`), `TaskSegment` 3, `TaskCtrl1` 3 | not sent: `Load` 3, the data segments written, `LoadCompleted` 3 |
+| `LoadImageProp` 1, 2, 3 (`Count="6"`), PID 27 | after the last `LoadCompleted`: `PropertyValue_Read` 1/27, 2/27, 3/27 elements 1 to 6; nothing written |
+| `TaskSegment` 5 (after `Restart`) | not sent |
+
+The parameter download is `Load` 3, the changed bytes, `LoadCompleted` 3, the stamp reads, the
+restart; the group-address download re-declares the two tables as above, writes the com-object
+table in an LSM 3 bracket, reads the stamps and restarts. Busforge's parameter, group-address and
+full download run exactly these sequences (`planAbsoluteParFlash`, `planCapturedSystem7GaFlash`,
+`planAbsoluteFullDownload`), pinned against the captures in `tools/etsdiff.test.ts`. Where Busforge
+departs from ETS, deliberately:
+
+- **It writes whole segments.** ETS reads the stamps before a download and leaves out every byte it
+  believes the device already holds ("Differential Download: removed 785 identical bytes"): its
+  full download writes 37 bytes: the address table without the device's own address, the
+  association table and the 3-byte segment `AS-454E`, which has `SegFlags="0"` and so no stamp that
+  could tell ETS it is unchanged. Busforge keeps no stamps; it writes every table and data segment
+  of the application and reads each back after the restart. That includes bytes no capture shows
+  ETS writing at all, not even in the revert that rewrote the whole parameter image: 80 of the 256
+  bytes of `AS-444E` and the last 8 of the com-object table segment `AS-41E5`, which Busforge
+  writes from the segments' `<Data>` templates. Whether the firmware keeps state of its own there is
+  not known; the read-back proves only that the device holds Busforge's bytes. Before the house
+  unit's download the bytes planned were compared with a read of the unit and all equalled it
+ ; the product path itself has no such comparison, and whether to write these bytes is
+  open ([roadmap.md](roadmap.md)). The parameter flash compares against
+  a read of the device instead and writes the bytes that differ, so it leaves out `AS-454E` where
+  ETS writes it with the bytes the device already holds.
+- **It declares the table segments as PID 5 writes**, as ETS does; this is the one System 7
+  download that does (above).
+- **It authorizes as ETS does.** The full download sends `A_Authorize` with the free key first and
+  goes on only if the device grants level 0, as it granted ETS (`FULL_DOWNLOAD_ACCESS_LEVEL`
+  otherwise, before anything is written).
+- **It does not switch on verify mode.** ETS reads object 0 PID 14 and writes `04` before its first
+  memory write and takes the device's echo of each write; Busforge reads every write back, the
+  proof the MV-0705 parameter flash is hardware-proven on.
+- **No wire capture of Busforge's run.** The full download ran on the house unit 1.1.x on
+  verified, every byte equal to the unit's content before and after (824 of them as
+  ETS writes them, the other 88 no ETS capture writes)
+  (record); it did not go through the
+  logging proxy, so the sequence on the wire is pinned by the tests, not by a capture of the run.
+  The parameter and group-address flash have not run on a unit.
+- **The full download needs the application in the device.** Every capture ran on a device holding
+  this application, which ETS reads first (object 3 PID 13). What ETS sends to a device without it
+  is not shown, so Busforge refuses that full download (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`)
+  unless object 3 holds this program id and is loaded.
+
+The captures also show the order of the association table for objects with several addresses: each
+object's first link by object number, then the other links by object number and group index.
+`buildGroupTablesMv0705` writes that order for the applications below only (`order: "ets-captured"`),
+taking the first link as the project stores it (its sending address); every other System 7 device
+keeps the order by object, then group index. Two limits: in the captures every object's first address
+is also its lowest, so they do not tell "the sending address first" from "the lowest index first";
+and no capture of another System 7 product with a multi-address object exists.
+
+What the byte comparisons prove: the tables, the com-object table and the wire sequence are checked
+against ETS directly. The parameter bytes are compared for a configuration Busforge decoded from
+ETS's own image of the revert (the house project is password-protected and not in the corpus), so
+for them the test proves Busforge's decode and encode agree on ETS's bytes, not that it would build
+them from the project. Object 64's config byte is the exception that proves the import: ETS writes
+`0x4f` where the application's flags give `0x47`, because the house project sets the object's read
+flag on this unit ([below](#project-level-com-object-flags)); the test gives that override as the
+import stores it, and fails on exactly that byte without it.
+
+## Project-level com-object flags
+
+ETS lets a project set an object's flags and priority per device, over the application's, and keeps
+them on the device's `ComObjectInstanceRef` (`ReadFlag`, `WriteFlag`, `CommunicationFlag`,
+`TransmitFlag`, `UpdateFlag`, `ReadOnInitFlag` as `Enabled`/`Disabled`, `Priority`). Its downloads
+write them into the com-object table.
+
+```
+0.xml ComObjectInstanceRef ──import──▶ device_comobj_overrides (attributes verbatim)
+                                              │ resolveComObjOverrides: ref id → object number
+                                              ▼            of the current configuration
+        full download · structural flash · System B group-address flash
+                     withInstanceOverrides(application flags, overrides) → com-object table
+```
+
+Busforge imports them (also in the `.busforge` export, which refuses an artifact without them) and
+lays them over the application's flags in every write that authors the table. It refuses instead
+where it cannot do that faithfully:
+
+| Case | Refusal |
+| --- | --- |
+| a value outside the schema | `COM_OBJECT_OVERRIDE_INVALID` |
+| a ref id that is no object of the configuration's com-object table, nor of the application or an absent module instance (those are not written, and neither is their override) | `COM_OBJECT_OVERRIDE_UNRESOLVED` |
+| one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
+| System 7: update, read-on-init or communication set differently from the application (the config byte has no bit for the first two; its communication bit follows the links), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
+
+The surgical parameter flashes keep the table the device holds. The System 7 group-address flash
+keeps it too, but sets each object's communication bit from the links; a project that sets an
+object's communication flag differently from the application is refused there as well. Its other
+flags stay as the device holds them. A product replacement drops the old application's overrides with its other
+configuration.
 
 ## Structural flash
 

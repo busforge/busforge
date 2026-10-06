@@ -847,7 +847,7 @@ describe("busforge re-import (export round-trip)", () => {
     expect(r1!.status).toBe(400);
     expect(((await r1!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
 
-    const r2 = await reimport(state, { busforgeExport: 999, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [] });
+    const r2 = await reimport(state, { busforgeExport: 999, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [] });
     expect(r2!.status).toBe(400);
     expect(((await r2!.json()) as any).error.code).toBe("BUSFORGE_VERSION_UNSUPPORTED");
 
@@ -857,7 +857,7 @@ describe("busforge re-import (export round-trip)", () => {
 
     // A version-1 artifact missing fields importProjectExport dereferences (catalog,
     // baggage) or with a malformed project must fail cleanly as 400, not crash mid-insert.
-    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [] };
+    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [] };
     for (const partial of [
       { busforgeExport: 1, project: { name: "x" }, ...arrays, baggage: [] }, // no catalog
       { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {} }, // no baggage

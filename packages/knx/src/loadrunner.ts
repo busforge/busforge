@@ -1,5 +1,5 @@
 import { KnxDevice, PID, OBJECT_TYPE_SECURITY } from "./device.ts";
-import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, securityLsmEvent, LSM, STATE } from "./flash.ts";
+import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, declareAbsSegmentProp, declareTaskSegmentProp, securityLsmEvent, LSM, STATE } from "./flash.ts";
 import { KnxError } from "./errors.ts";
 import { loadedTableAddr } from "./grouptable-read.ts";
 
@@ -29,13 +29,18 @@ export type LoadStep =
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
   | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0) — a full download does, a par download does not
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
-  // Declare an absolute segment to a memory-mapped LSM (LdCtrlAbsSegment): the segment must be
-  // declared to the LSM before its data is written. Only meaningful with memMappedLsms; asserts
-  // the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
-  | { op: "absSegment"; lsm: number; segType: number; address: number; size: number; access: number; memType: number; segFlags: number }
+  // Declare an absolute segment to an LSM (LdCtrlAbsSegment): the segment must be declared to the LSM
+  // before its data is written. Written to the memory-mapped control 0x0104, or with `viaProperty` as
+  // the LSM's PID 5 write (set only by the planners of applications ETS is captured downloading that
+  // way); asserts the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
+  | { op: "absSegment"; lsm: number; segType: number; address: number; size: number; access: number; memType: number; segFlags: number; viaProperty?: true }
   // Declare the task segment (LdCtrlTaskSegment) with the application identity the device checks
-  // at LoadCompleted. Memory-mapped LSMs only.
-  | { op: "taskSegment"; lsm: number; address: number; peiType: number; manufacturer: number; appNumber: number; version: number }
+  // at LoadCompleted, over the same transport as absSegment.
+  | { op: "taskSegment"; lsm: number; address: number; peiType: number; manufacturer: number; appNumber: number; version: number; viaProperty?: true }
+  // Read elements of a property and require an answer (LdCtrlLoadImageProp on the absolute
+  // applications ETS is captured downloading: it reads the segment stamps, PID 27, after the last
+  // LoadCompleted and writes nothing). The values are handed to RunOpts.onRead.
+  | { op: "readProp"; obj: number; pid: number; start: number }
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
@@ -85,6 +90,8 @@ export interface RunOpts {
   // Drive the LSMs over the memory-mapped interface (0x0104 / 46825+lsm) instead of PID-5
   // property writes. Set for the BIM M112 masks MV-0700/0701; false/absent everywhere else.
   memMappedLsms?: boolean;
+  // The answer to each readProp step.
+  onRead?: (obj: number, pid: number, start: number, data: Buffer) => void;
   // re-read pause after restart is the caller's concern; the runner just fires restart
 }
 
@@ -113,6 +120,9 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
   // returns the old bytes. The operation's read-back after the restart proves what was stored.
   const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeMem" || s.op === "verifyMode");
   let confirmed: boolean | undefined;
+  // A readProp that fails is reported when the plan has run to its end: it comes after the last
+  // LoadCompleted, and stopping there would leave the new configuration loaded but never restarted.
+  let unread: Error | undefined;
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i];
     if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") confirmed = await dev.writesConfirmed();
@@ -140,12 +150,24 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       // rejected declaration flips the LSM to ERROR; carrying on would write data into a machine
       // that will refuse LoadCompleted, so stop here.
       case "absSegment": {
-        await declareAbsSegmentMM(dev, step.lsm, step.segType, step.address, step.size, step.access, step.memType, step.segFlags);
+        if (step.viaProperty && opts.memMappedLsms) throw new Error(`LSM ${step.lsm}: an AbsSegment declared as a property write on a device whose LSMs are memory-mapped`);
+        await (step.viaProperty ? declareAbsSegmentProp : declareAbsSegmentMM)(dev, step.lsm, step.segType, step.address, step.size, step.access, step.memType, step.segFlags);
         const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
         if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after AbsSegment @${step.address} (got ${stateName(s)})`);
         break;
       }
-      case "taskSegment": await declareTaskSegmentMM(dev, step.lsm, step.address, step.peiType, step.manufacturer, step.appNumber, step.version); break;
+      case "taskSegment":
+        if (step.viaProperty && opts.memMappedLsms) throw new Error(`LSM ${step.lsm}: a TaskSegment declared as a property write on a device whose LSMs are memory-mapped`);
+        await (step.viaProperty ? declareTaskSegmentProp : declareTaskSegmentMM)(dev, step.lsm, step.address, step.peiType, step.manufacturer, step.appNumber, step.version);
+        break;
+      case "readProp": {
+        try {
+          const v = await dev.propReadCounted(step.obj, step.pid, step.start, 1);
+          if (v.count === 0) throw new KnxError("PROPERTY_READ_EMPTY", `object ${step.obj} PID ${step.pid} element ${step.start}: the device answered with no element, where the load procedure reads one`);
+          opts.onRead?.(step.obj, step.pid, step.start, v.value);
+        } catch (e) { unread ??= e instanceof Error ? e : new KnxError("PROPERTY_READ_EMPTY", String(e)); }
+        break;
+      }
       case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
       case "verifyMode": if (!confirmed) await dev.setVerifyMode(step.on); break;
@@ -221,6 +243,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       }
     }
   }
+  if (unread !== undefined) throw unread;
 }
 
 // The runs of consecutive bytes that hold an owned bit.

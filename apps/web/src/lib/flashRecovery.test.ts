@@ -7,7 +7,7 @@ describe("offersFullDownload", () => {
     expect(offersFullDownload("NEVER_PROGRAMMED_USE_DOWNLOAD", false)).toBe(true);
   });
 
-  test("a device left without a running application offers it where the family can take one", () => {
+  test("a device left without a running application offers it where the full download loads the application", () => {
     for (const code of ["DEVICE_NOT_PROGRAMMED", "FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE", "GA_FLASH_BROKE_APPLICATION"]) {
       expect(offersFullDownload(code, true)).toBe(true);
       expect(offersFullDownload(code, false)).toBe(false);
@@ -26,7 +26,7 @@ describe("offersFullDownload", () => {
 });
 
 describe("etsCompletesLoad", () => {
-  test("a device left unloaded names ETS exactly where the full download is refused", () => {
+  test("a device left unloaded names ETS exactly where the full download does not load the application", () => {
     for (const code of ["DEVICE_NOT_PROGRAMMED", "FLASH_INTERRUPTED_UNLOADED", "DEVICE_LOAD_INCOMPLETE", "GA_FLASH_BROKE_APPLICATION"]) {
       expect(etsCompletesLoad(code, false)).toBe(true);
       expect(etsCompletesLoad(code, true)).toBe(false);

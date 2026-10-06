@@ -147,6 +147,21 @@ describe("0.xml parser", () => {
     expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2, 2] }]);
   });
 
+  test("keeps the com-object flags and priority the project sets on a device, verbatim, linked or not", () => {
+    const set = xml0.replace(
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" />',
+      '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" ReadFlag="Enabled" TransmitFlag="Disabled" Text="ignored" /><ComObjectInstanceRef RefId="O-2_R-2" Priority="High" UpdateFlag="Enabled" />',
+    );
+    const p = parseProject(set, undefined, "fallback");
+    expect(p.deviceComObjOverrides).toEqual([{ deviceId: "P-TEST-0_DI-1", overrides: [
+      { comObjRefId: "O-1_R-1", attrs: { ReadFlag: "Enabled", TransmitFlag: "Disabled" } },
+      { comObjRefId: "O-2_R-2", attrs: { UpdateFlag: "Enabled", Priority: "High" } },
+    ] }]);
+    // the link of the overridden object is still imported
+    expect(p.deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
+    expect(proj.deviceComObjOverrides).toEqual([]);
+  });
+
   test("parses a secure device's <Security> tool key, omitting non-secure devices", () => {
     // Synthetic key/serial (never a real device's), injected as a <Security> child of DI-1.
     const secured = xml0.replace(

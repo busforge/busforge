@@ -37,7 +37,7 @@
 //      only 138 (the highest active object of a near-default config) sent the firmware off the end of
 //      its group-object array on boot, and the device death-looped and reverted to factory. ETS sizes
 //      to 1359. The declared maximum comes from buildDeviceConfig (maxComObjectNumber).
-import type { AppConfig, ComObjPriority } from "./appconfig.ts";
+import type { AppConfig, ComObjFlags, ComObjPriority } from "./appconfig.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 
@@ -245,4 +245,74 @@ export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<num
     else out[at] &= ~0x04;
   }
   return out;
+}
+
+// ── A device's own com-object flags (project level) ─────────────────────────
+//
+// ETS lets the project set an object's flags and priority per device, over what the application
+// declares, and stores them on the device's ComObjectInstanceRef (ReadFlag, WriteFlag,
+// CommunicationFlag, TransmitFlag, UpdateFlag, ReadOnInitFlag as "Enabled"/"Disabled", Priority as
+// Low/High/Alert). Its download writes them into the com-object table: on the Gira M-0008 object
+// 64's config byte is 0x4f where the application's flags give 0x47 (read flag set,
+// captures/gira-m0008-ets-partial-revert.log). An absent attribute leaves the application's value.
+export interface ComObjInstanceOverride { flags: Partial<ComObjFlags>; priority?: ComObjPriority }
+
+const OVERRIDE_FLAGS: [string, keyof ComObjFlags][] = [
+  ["ReadFlag", "read"], ["WriteFlag", "write"], ["CommunicationFlag", "comm"],
+  ["TransmitFlag", "transmit"], ["UpdateFlag", "update"], ["ReadOnInitFlag", "readOnInit"],
+];
+export const COM_OBJ_OVERRIDE_ATTRS: readonly string[] = [...OVERRIDE_FLAGS.map(([a]) => a), "Priority"];
+
+// The override the stored attributes set. A value outside the schema's is refused: a flag guessed
+// either way is a wrong bit in the table every group telegram consults.
+export function comObjInstanceOverride(attrs: Readonly<Record<string, string>>): ComObjInstanceOverride {
+  const out: ComObjInstanceOverride = { flags: {} };
+  for (const [attr, value] of Object.entries(attrs)) {
+    const flag = OVERRIDE_FLAGS.find(([a]) => a === attr)?.[1];
+    if (flag) {
+      if (value !== "Enabled" && value !== "Disabled") {
+        throw new ProductError("COM_OBJECT_OVERRIDE_INVALID", `the project sets ${attr}="${value}" on a communication object, which is neither Enabled nor Disabled; refusing to guess the flag`);
+      }
+      out.flags[flag] = value === "Enabled";
+    } else if (attr === "Priority") {
+      if (value !== "Low" && value !== "High" && value !== "Alert") {
+        throw new ProductError("COM_OBJECT_OVERRIDE_INVALID", `the project sets the priority "${value}" on a communication object, which is not one of Low, High, Alert; refusing to guess it`);
+      }
+      out.priority = value;
+    } else {
+      throw new ProductError("COM_OBJECT_OVERRIDE_INVALID", `a stored com-object override carries the attribute ${attr}, which is not a flag or the priority`);
+    }
+  }
+  return out;
+}
+
+// The active objects with the device's own flags and priority laid over the application's. An
+// override on an object the configuration does not activate is not written, as the object is not.
+export function withInstanceOverrides(active: ReadonlyMap<number, CfgComObjImage>, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined): Map<number, CfgComObjImage> {
+  const out = new Map(active);
+  for (const [n, o] of overrides ?? []) {
+    const obj = out.get(n);
+    if (!obj) continue;
+    out.set(n, { ...obj, flags: { ...obj.flags, ...o.flags }, priority: o.priority ?? obj.priority });
+  }
+  return out;
+}
+
+// Refuse a write whose com-object table cannot carry an override the project sets: one that changes
+// a flag or the priority the table has no bit for (the System 7 config byte has none for update and
+// read-on-init, and takes its communication bit from the links), or any override where the write
+// does not author the table at all. Writing on would leave the object behaving as the application
+// says while the project says otherwise.
+export type OverridableBit = keyof ComObjFlags | "priority";
+export function refuseUnwritableOverrides(active: ReadonlyMap<number, CfgComObjImage>, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined, writable: readonly OverridableBit[], where: string): void {
+  for (const [n, o] of overrides ?? []) {
+    const obj = active.get(n);
+    if (!obj) continue;
+    const changed: OverridableBit[] = (Object.keys(o.flags) as (keyof ComObjFlags)[]).filter((k) => o.flags[k] !== obj.flags[k]);
+    if (o.priority !== undefined && o.priority !== obj.priority) changed.push("priority");
+    const lost = changed.filter((k) => !writable.includes(k));
+    if (lost.length) {
+      throw new ProductError("COM_OBJECT_OVERRIDE_UNWRITABLE", `the project sets ${lost.join(", ")} of communication object #${n} differently from the application, and ${where} cannot carry that; refusing to write the object as the application declares it`);
+    }
+  }
 }

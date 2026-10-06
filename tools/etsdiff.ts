@@ -44,8 +44,8 @@
 // Controls 0x03 0x0B) gives the segment size and fill ETS asked for: a byte ETS allocated with a fill
 // and never wrote holds that fill, and is compared as such.
 //
-// THE CAPTURE. Run ETS through the Busforge bridge with the logging proxy (scratchpad/knxproxy.ts)
-// and do a full download. Lines consumed: `... ETS->BRIDGE ... TUNNELLING_REQ ... | <frame-hex>`
+// THE CAPTURE. Run ETS through the logging proxy (tools/knxproxy.ts, docs/testing.md "Taking a
+// capture") and do a full download. Lines consumed: `... ETS->BRIDGE ... TUNNELLING_REQ ... | <frame-hex>`
 // (ETS's requests) and `... BRIDGE->ETS ... TUNNELLING_REQ ... | <frame-hex>` (the device's answers).
 import { gunzipSync } from "node:zlib";
 import { iaToNum, OBJ } from "../packages/knx/src/index.ts";
@@ -359,7 +359,7 @@ async function main(): Promise<number> {
   console.log(`device ${subject.ia} "${subject.name}"  app ${subject.appRef}  mask ${cfg.mask} (${profile.memoryModel})`);
   console.log(`  configuration: ${subject.configuration}`);
   console.log(`  ETS capture: ${cap.writes.length} memory writes to ${subject.ia} (${mem.size} distinct bytes), ${cap.propWrites.length} property writes${cap.otherDestination ? `, ${cap.otherDestination} memory writes to other devices ignored` : ""}`);
-  const declaredUnwritten = cfg.absoluteSegments.filter((s) => !build.segments.some((b) => b.address === s.address));
+  const declaredUnwritten = cfg.absoluteSegments.filter((s) => !build.segments.some((b) => b.address === s.address || b.id === s.id));
   if (declaredUnwritten.length) console.log(`  declared segments Busforge writes nothing to: ${declaredUnwritten.map((s) => `${s.id.split("_").pop()} @${hex(s.address)} (${s.size}B)`).join(", ")}`);
   let divergent = 0, compared = 0, busforgeOnly = 0, etsOnly = 0;
   for (const r of diff.segments) {

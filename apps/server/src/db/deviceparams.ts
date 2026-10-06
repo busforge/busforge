@@ -71,6 +71,20 @@ export function getDeviceProductRef(db: Database, projectId: string, deviceId: s
   return r?.productRef ?? null;
 }
 
+// The com-object flags and priority the project sets on a device (stored com-object ref id as in
+// device_links, the attributes as ETS stores them), in the order the project lists them.
+export function getDeviceComObjOverrides(db: Database, projectId: string, deviceId: string): { comObjRefId: string; attrs: Record<string, string> }[] {
+  const rows = db.query("SELECT com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? AND device_id = ? ORDER BY seq")
+    .all(projectId, deviceId) as { comObjRefId: string; attrs: string }[];
+  return rows.map((r) => {
+    const attrs = JSON.parse(r.attrs) as unknown;
+    if (!attrs || typeof attrs !== "object" || Array.isArray(attrs) || Object.values(attrs).some((v) => typeof v !== "string")) {
+      throw new Error(`device_comobj_overrides row ${projectId}/${deviceId}/${r.comObjRefId} is not an attribute map (corrupt store)`);
+    }
+    return { comObjRefId: r.comObjRefId, attrs: attrs as Record<string, string> };
+  });
+}
+
 // A device's com-object -> GA links (comObjRefId -> ga raws, ordered by slot).
 export function getDeviceLinks(db: Database, projectId: string, deviceId: string): Map<string, number[]> {
   const rows = db.query("SELECT com_obj_ref_id AS refId, ga_raw AS gaRaw FROM device_links WHERE project_id = ? AND device_id = ? ORDER BY com_obj_ref_id, slot")
@@ -115,7 +129,7 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.

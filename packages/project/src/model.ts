@@ -44,6 +44,15 @@ export interface DeviceModules { deviceId: string; instances: ModuleInstanceData
 export interface DeviceLink { comObjRefId: string; gaRaws: number[]; }
 export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
 
+// The com-object flags and priority the project sets on one device over its application's (from 0.xml
+// ComObjectInstanceRef ReadFlag, WriteFlag, CommunicationFlag, TransmitFlag, UpdateFlag,
+// ReadOnInitFlag, Priority). `attrs` holds each attribute present, verbatim; what a value means is
+// decided where the com-object table is written. comObjRefId as in DeviceLink. One entry per
+// ComObjectInstanceRef carrying any of them, in document order (two can share a RefId).
+export const COM_OBJ_INSTANCE_ATTRS = ["ReadFlag", "WriteFlag", "CommunicationFlag", "TransmitFlag", "UpdateFlag", "ReadOnInitFlag", "Priority"] as const;
+export interface ComObjInstanceAttrs { comObjRefId: string; attrs: Record<string, string>; }
+export interface DeviceComObjOverrides { deviceId: string; overrides: ComObjInstanceAttrs[]; }
+
 // A Data-Secure device's commissioning secrets, parsed from the device's
 // <Security> element in 0.xml (present only when the device is secure-commissioned).
 // toolKey/serialNumber are base64 exactly as ETS stores them (16- and 6-byte values);
@@ -127,6 +136,7 @@ export interface Project {
   deviceParams: DeviceParams[];   // per-device parameter values from 0.xml
   deviceModules: DeviceModules[]; // per-device module instances from 0.xml
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
+  deviceComObjOverrides: DeviceComObjOverrides[]; // per-device com-object flags/priority the project sets, from 0.xml
   deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
   groupKeys: GroupKey[]; // Data-Secure group keys from 0.xml (only secured group addresses)
   secureSenders: SecureSender[]; // bus interfaces assigned to group addresses (0.xml BusInterface Connectors)

@@ -11,7 +11,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -162,6 +162,7 @@ function structuralFlash(
   const params = getDeviceParams(db, projectId, deviceId);
   const baseParams = getDeviceParamBase(db, projectId, deviceId);
   const modules = getDeviceModules(db, projectId, deviceId);
+  const comObjectOverrides = resolveComObjOverrides(state, projectId, deviceId);
   const dry = url.searchParams.get("dry") === "1";
   let fingerprint: string | null = null;
   return programOrPreview(state,
@@ -173,7 +174,7 @@ function structuralFlash(
       return flashDeviceStructure({
         projectId, deviceId, ia: dev.ia, appXml,
         connection: conn, dataDir: state.dataDir, ...tables.ctx,
-        params, baseParams, links: resolved.links, moduleInstances: modules,
+        params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides,
         dryRun: dry, onProgress: progress, ...gate,
       });
     }, commit, () => {
@@ -512,6 +513,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaParams = getDeviceParams(db, id, deviceId);
     const gaBase = getDeviceParamBase(db, id, deviceId);
     const gaModules = getDeviceModules(db, id, deviceId);
+    const gaOverrides = resolveComObjOverrides(state, id, deviceId);
     // If wiring these links would leave the device's kept-from-device com-object table stale, the
     // structural flash writes it (or the full download, or a refusal). Pre-enqueue.
     const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined);
@@ -527,7 +529,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         gaFingerprint = tables.fingerprint;
         return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
-          params: gaParams, baseParams: gaBase, moduleInstances: gaModules,
+          params: gaParams, baseParams: gaBase, moduleInstances: gaModules, comObjectOverrides: gaOverrides,
           connection: conn, dataDir: state.dataDir, ...tables.ctx,
           dryRun: dryGa, onProgress: progress, ...gate,
         });
@@ -563,6 +565,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
     const dlParams = getDeviceParams(db, id, deviceId);
     const dlModules = getDeviceModules(db, id, deviceId);
+    const dlOverrides = resolveComObjOverrides(state, id, deviceId);
     const dryDl = url.searchParams.get("dry") === "1";
     let dlFingerprint: string | null = null;
     return programOrPreview(state,
@@ -573,7 +576,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return downloadDeviceFull({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, dataDir: state.dataDir, ...tables.ctx,
-          params: dlParams, links: resolved.links, moduleInstances: dlModules,
+          params: dlParams, links: resolved.links, moduleInstances: dlModules, comObjectOverrides: dlOverrides,
           dryRun: dryDl, onProgress: progress, ...gate,
         });
       }, commit, () => {

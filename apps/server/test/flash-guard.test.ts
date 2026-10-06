@@ -25,8 +25,9 @@ const dev = (overrides: Partial<Record<keyof KnxDevice, unknown>> = {}) =>
   }) as unknown as KnxDevice;
 
 corpusDescribe("LoadProcedure par coverage guard", () => {
-  test("M-0008 (absolute, declares LoadImageProp) refuses with LOAD_STEP_UNSUPPORTED before any bus call", async () => {
-    const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz");
+  test("an absolute application declaring LoadImageProp without an ETS capture refuses with LOAD_STEP_UNSUPPORTED before any bus call", async () => {
+    // The M-0008 procedure under another application id: the captured stamp read is not carried over.
+    const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz").replaceAll("M-0008_A-10D7-11-2783-O000A", "M-0008_A-10D7-11-2783-O000B");
     const profile = classify(parseAppConfig(xml));
     const err = await profile.flashParameters(dev(), "0705", ctxFor(xml)).then(() => null, (e) => e);
     expect(err).toBeInstanceOf(ProductError);

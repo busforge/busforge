@@ -116,6 +116,11 @@ export function secureTablesUnsupported(): ApiError {
   return new ApiError("SECURE_TABLES_UNSUPPORTED", "this device runs KNX Data Secure; writing its group tables or commissioning it also needs its security object loaded (group keys, security flags), which busforge does not do for this device family", 400);
 }
 
+// The writes that author a com-object table take the device's own com-object flags from the project
+// (deviceservice.ts resolveComObjOverrides). Required here, where the product layer lets it be absent,
+// so no route can write a table without them.
+type ProjectComObjOverrides = { comObjectOverrides: NonNullable<FullDownloadCtx["comObjectOverrides"]> };
+
 // Program a device\'s parameter segment from its stored configuration.
 export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
   const profile = classify(parseAppConfig(opts.appXml));
@@ -136,7 +141,7 @@ function refuseSessionWithoutSecurityObject(opts: { secure?: SecureCreds; securi
 // the app\'s declared table capacity (<AddressTable>/<AssociationTable> MaxEntries); the
 // GA-flash growth guard depends on it. Without the cfg it would fall back to "no growth
 // beyond the current table" and refuse every legitimate add.
-export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & { appXml: string }): Promise<FlashResult> {
+export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides & { appXml: string }): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
@@ -146,7 +151,7 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
 
 // Write a parameter change that alters the com-object table: parameters, the com-object table they
 // imply and the group tables, in one bracket (profile.flashStructure).
-export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
@@ -157,7 +162,7 @@ export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBacku
 // Commission a device from nothing: application id, parameter image, com-object table and group
 // tables in one bracket. Unlike a parameter download this AUTHORS the com-object table, because a
 // virgin device has none to keep. Hardware-verified only where docs/commissioning.md says so.
-export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));

@@ -929,3 +929,28 @@ the failure and stopped with `MASK_MISMATCH` ("device mask MV-44A508"); where it
 half-loaded device answered is not established (open ticket). The kill was one run with one cut point;
 other cut points (after LoadCompleted, inside the table writes) were not tried.
 
+## 32. ETS does not run the Gira M-0008's declared procedure
+
+ETS 6 downloads of the Gira Tastsensor 3 Komfort (`M-0008_A-10D7-11-2783-O000A`, MV-0705,
+`DynamicTableManagement="true"`) on the house unit 1.1.x, a full, a parameter, a
+group-address and a reverting partial download, each with ETS's own log of the steps it executed
+(private corpus `captures/gira-m0008-ets-*.log`, `gira-m0008-ets6log-*.txt`):
+
+- The address and association table segments are taken as one region. ETS declares LSM 1 exactly as
+  long as the address table and LSM 2 directly behind it (`16384+17`, `16401+467` for the declared
+  `16384+243`, `16627+241`); one more group address moves the association table by two bytes
+  (`16384+19`, `16403+465`). Each is unloaded first, LSM 3 never.
+- The application (LSM 3) is loaded, written and completed, without `LdCtrlAbsSegment`,
+  `LdCtrlTaskSegment` or the declared `LdCtrlTaskCtrl1`, in every one of the five downloads.
+- `LdCtrlLoadImageProp` is a read: PID 27 of objects 1, 2 and 3 (six elements, one per segment
+  declared with `SegFlags="128"`), after the last `LoadCompleted`. Before the next download ETS reads
+  object 3's stamps again and skips every byte it takes the device to hold; the 3-byte segment
+  declared with `SegFlags="0"` has no stamp and is written every time.
+- On this mask the segment declarations are PID 5 writes (`03 00 …`, `03 02 …`), as on the MDT
+  BE-02001.02, where Busforge sends them to memory `0x0104` (the control register of the
+  memory-mapped masks) and the device accepts that (hardware-proven full download).
+- The association table lists each object's first address (the one it sends on) first, by object
+  number, then the others by object and group index.
+
+What Busforge sends for it, and where it departs from ETS: [load-procedures.md](load-procedures.md#ets-captured-system-7-downloads).
+

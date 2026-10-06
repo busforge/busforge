@@ -441,6 +441,19 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, product_ref, app_program_id)
   );
   `,
+  // The com-object flags and priority the project sets on a device over its application's (0.xml
+  // ComObjectInstanceRef; @busforge/project DeviceComObjOverrides). attrs: the attributes as ETS stores
+  // them, JSON. Read-only project data, written at import; seq keeps two entries of one RefId apart.
+  `
+  CREATE TABLE device_comobj_overrides (
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id      TEXT NOT NULL,
+    seq            INTEGER NOT NULL,
+    com_obj_ref_id TEXT NOT NULL,
+    attrs          TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id, seq)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

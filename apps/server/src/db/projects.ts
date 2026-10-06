@@ -119,6 +119,7 @@ export function insertProject(db: Database, id: string, project: Project, source
   const insModules = db.prepare("INSERT INTO device_modules (project_id, device_id, instances) VALUES (?, ?, ?)");
   const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
   const insLinkBase = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
+  const insOverride = db.prepare("INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
     const rangeId = Number(insRange.run(id, parentId, node.name, node.rangeStart, node.rangeEnd).lastInsertRowid);
@@ -143,6 +144,7 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
     for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
+    for (const d of project.deviceComObjOverrides) d.overrides.forEach((o, seq) => insOverride.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)));
     insertSpaces(db, id, project.locations);
   })();
 }

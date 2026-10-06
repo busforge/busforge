@@ -109,6 +109,16 @@ export async function declareAbsSegmentMM(dev: KnxDevice, lsm: number, segType: 
 export async function declareTaskSegmentMM(dev: KnxDevice, lsm: number, address: number, peiType: number, manufacturer: number, appNumber: number, version: number) {
   await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(lsm << 4) | 0x03, 0x02, 0x00, (address >> 8) & 0xff, address & 0xff, peiType, (manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version]), { verify: false });
 }
+// The same two declarations to a property-mapped LSM (MV-0705): AdditionalLoadControls written to the
+// LSM's PID 5, the memory-mapped control without its LSM byte and segment id, 10 bytes. ETS sends
+// exactly these (MDT BE-02001.02: captures/mdt-be02001-ets-fulldownload-defaults.log; Gira
+// Tastsensor 3 Komfort: captures/gira-m0008-ets-fulldownload.log).
+export async function declareAbsSegmentProp(dev: KnxDevice, lsm: number, segType: number, address: number, size: number, access: number, memType: number, segFlags: number) {
+  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, segType, (address >> 8) & 0xff, address & 0xff, (size >> 8) & 0xff, size & 0xff, access, memType, segFlags, 0x00]));
+}
+export async function declareTaskSegmentProp(dev: KnxDevice, lsm: number, address: number, peiType: number, manufacturer: number, appNumber: number, version: number) {
+  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x02, (address >> 8) & 0xff, address & 0xff, peiType, (manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version]));
+}
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian
 export function appId(manufacturer: number, appNumber: number, version: number): Buffer {

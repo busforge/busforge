@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
-import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
+import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, imageStampReads, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
 
@@ -198,8 +198,11 @@ test("the segment fill value is accepted (0 and 255), not blocked: the full down
 test("par policy: unknown verbs and unmodeled steps block, never silently vanish", () => {
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "absolute").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "relative").kind).toBe("blocked");
-  // MCB/load-image stamps: no hardware evidence on absolute devices -> blocked
+  // load-image stamps on an absolute device: a read only where an ETS capture of the application shows it
   expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute").kind).toBe("blocked");
+  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute", "M-0081_A-FE01-11-75D9").kind).toBe("blocked");
+  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute", "M-0008_A-10D7-11-2783-O000A").kind).toBe("executed");
+  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "5" }), "absolute", "M-0008_A-10D7-11-2783-O000A").kind).toBe("blocked");
   // arbitrary property write (side effect unknown) blocks even on relative
   expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "5", InlineData: "01" }), "relative").kind).toBe("blocked");
   // wrong-model steps block
@@ -246,19 +249,13 @@ corpusTest("par policy: CompareProp becomes an executable pre-flight check", () 
   expect(cov.checks).toEqual([{ obj: 0, pid: 78, expect: Buffer.from("0000000002AA00000000", "hex") }]);
 });
 
-corpusTest("par policy over the whole real catalogue: M-0008 blocks (absolute LoadImageProp), everything else is fully dispositioned", () => {
+corpusTest("par policy over the whole real catalogue: every step is dispositioned, M-0008's LoadImageProp as the captured stamp read", () => {
   for (const f of listRealFixtures()) {
     const xml = readRealFixture(f);
     const model = maskInfo(parseAppConfig(xml).mask).memoryModel;
     if (model !== "absolute" && model !== "relative") continue;
     const cov = assessParCoverage(parseLoadProcedures(xml), model);
-    if (f.startsWith("M-0008_")) {
-      // the one honest gap: an absolute device demanding MCB/load-image stamps we cannot
-      // compute yet. It must REFUSE (was: silently partial recipe reported as success).
-      expect(cov.blocked.map((b) => b.verb)).toEqual(["LdCtrlLoadImageProp", "LdCtrlLoadImageProp", "LdCtrlLoadImageProp"]);
-    } else {
-      expect(cov.blocked).toEqual([]);
-    }
+    expect(cov.blocked).toEqual([]);
     // no step may fall through without a disposition: blocked+skipped+checks+executed
     // is total by construction; this pins that the corpus stays fully assessed.
   }
@@ -288,4 +285,12 @@ corpusTest("declared MCB entries that cannot be written faithfully are refused, 
   expect(() => declaredMcbWrites(one({ ObjIdx: "3" }), 10)).toThrow("object 3");
   expect(() => declaredMcbWrites(one({ StartElement: "0" }), 10)).toThrow("element index");
   expect(() => declaredMcbWrites(one({ Count: "2" }), 10)).toThrow("more than one");
+});
+
+corpusTest("the stamp reads of the captured M-0008: obj 1 and 2 once, obj 3 for each of its six stamped segments; none elsewhere", () => {
+  const lp = parseLoadProcedures(readRealFixture("M-0008_A-10D7-11-2783-O000A.xml.gz"));
+  expect(imageStampReads(lp).map((r) => `${r.obj}/${r.pid}#${r.start}`)).toEqual(["1/27#1", "2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `3/27#${i}`)]);
+  expect(imageStampReads({ ...lp, app: "M-0081_A-FE01-11-75D9" })).toEqual([]);
+  const odd = { ...lp, blocks: [{ steps: [step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "13" })] }] };
+  expect(() => imageStampReads(odd)).toThrow("not the PID 27 read");
 });

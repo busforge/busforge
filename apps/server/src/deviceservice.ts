@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, IMAGE_WRITABLE_BASES, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjInstanceOverride, IMAGE_WRITABLE_BASES, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type DeviceConfigBuild, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -321,6 +321,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
   view.refusals = Object.fromEntries(Object.entries(classify(app).operationRefusals()).map(([op, r]) => [op, r.code]));
+  view.fullDownloadLoadsApplication = view.capabilities.fullDownload && classify(app).fullDownloadLoadsApplication();
   const productRef = getDeviceProductRef(db, projectId, deviceId);
   if (productRef) {
     view.compatibility = deviceCompatibility(productRef, app.id, view.capabilities);
@@ -542,6 +543,49 @@ export function resolveDeviceLinks(state: AppState, projectId: string, deviceId:
   // from being stuck as false drift.
   const flashedRefIds = [...numByRef.keys()].map((full) => stripRef(app.id, full));
   return { mask: app.mask, links, flashedRefIds };
+}
+
+// The com-object flags and priority the project sets on the device, by the object number of its
+// configuration, for the writes that author the com-object table. An override on an application
+// com-object the configuration hides is left out, as the object is. One that names no com-object of
+// the application, or two that set one object differently, cannot be placed, and the write is
+// refused rather than made with the application's flags.
+export function resolveComObjOverrides(state: AppState, projectId: string, deviceId: string): Map<number, ComObjInstanceOverride> {
+  const { db } = state;
+  const rows = getDeviceComObjOverrides(db, projectId, deviceId);
+  if (!rows.length) return new Map();
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  return placeComObjOverrides(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId)), rows);
+}
+
+// resolveComObjOverrides over a configuration view already built: the stored rows (com-object ref
+// ids as in device_links) placed on the object numbers of `view`.
+// The objects the table is written from (imageComObjects) are placed too: an object of a block the
+// page does not show is still written.
+export function placeComObjOverrides(app: AppConfig, view: Pick<DeviceConfigBuild, "blocks" | "imageComObjects">, rows: readonly { comObjRefId: string; attrs: Readonly<Record<string, string>> }[]): Map<number, ComObjInstanceOverride> {
+  const out = new Map<number, ComObjInstanceOverride>();
+  const numByRef = new Map<string, number>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
+  for (const o of view.imageComObjects.values()) numByRef.set(o.refId, o.number);
+  for (const r of rows) {
+    const full = fullRef(app.id, r.comObjRefId);
+    const num = numByRef.get(full);
+    if (num === undefined) {
+      // An application object, or an object of a module instance (its ref id names the instance,
+      // MI-n), that the configuration does not show is not written, and neither is its override.
+      if (app.comObjectRefs.has(full) || /(^|_)MI-\d+_/.test(r.comObjRefId)) continue;
+      throw new ApiError("COM_OBJECT_OVERRIDE_UNRESOLVED", `the project sets flags on the communication object ${r.comObjRefId}, which this configuration does not resolve to an object of the application; refusing to write the com-object table without them`, 400);
+    }
+    const o = comObjInstanceOverride(r.attrs);
+    const prev = out.get(num);
+    if (!prev) { out.set(num, o); continue; }
+    const clash = (Object.keys(o.flags) as (keyof typeof o.flags)[]).some((k) => k in prev.flags && prev.flags[k] !== o.flags[k])
+      || (o.priority !== undefined && prev.priority !== undefined && o.priority !== prev.priority);
+    if (clash) throw new ApiError("COM_OBJECT_OVERRIDE_CONFLICT", `the project sets a flag of communication object #${num} twice, differently; refusing to pick one`, 400);
+    out.set(num, { flags: { ...prev.flags, ...o.flags }, priority: o.priority ?? prev.priority });
+  }
+  return out;
 }
 
 // One row of a "replace device" com-object mapping: `from` is a com-object ref of the

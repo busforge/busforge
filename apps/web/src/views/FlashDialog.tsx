@@ -37,8 +37,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   onFlashed?: () => void;
   // The family can be commissioned in full (capabilities().fullDownload), so the dialog offers it.
   canFullDownload?: boolean;
-  // The device's configuration view: its compatibility and whether its Product was acknowledged as untested.
-  view?: Pick<DeviceConfigView, "compatibility" | "untestedAcknowledged">;
+  // The device's configuration view: its compatibility, whether its Product was acknowledged as
+  // untested, and whether its full download loads the application (else ETS restores an unloaded device).
+  view?: Pick<DeviceConfigView, "compatibility" | "untestedAcknowledged" | "fullDownloadLoadsApplication">;
 }) {
   const { t } = useTranslation();
   const [parts, setParts] = useState<Record<string, Part>>({});
@@ -111,9 +112,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // never had an application loaded: a full download is the way (the backend refuses it where the
   // family cannot commission). So is a device left unloaded (a write broke off inside its load
   // bracket, a preview found a load-state machine not LOADED, or a GA flash stopped the application),
-  // where the family can take one.
-  const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, canFullDownload));
-  const needsEts = list.some((x) => x.p.error instanceof ApiError && etsCompletesLoad(x.p.error.code, canFullDownload));
+  // where the full download loads the application; otherwise ETS is named.
+  const fullDownloadLoads = canFullDownload && !!view?.fullDownloadLoadsApplication;
+  const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, fullDownloadLoads));
+  const needsEts = list.some((x) => x.p.error instanceof ApiError && etsCompletesLoad(x.p.error.code, fullDownloadLoads));
   // The operations the writes on offer run: each previewed target (or the structural flash covering
   // them) and, once taken, the full download. An untested one needs the acknowledgement first.
   const writeOps: MatrixOperation[] = dl

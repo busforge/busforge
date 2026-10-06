@@ -168,8 +168,9 @@ export type ParDisposition =
 // flash). So both the full and the par download write the declared entries after the allocation,
 // as ETS writes them (declaredMcbWrites). ETS 6 sends no
 // property write for the declared LdCtrlLoadImageProp to PID 27 (Jung capture, 2026-09-25): the
-// device computes the CRC itself. No evidence exists for absolute devices, so on them both verbs
-// block.
+// device computes the CRC itself. On an absolute device a declared write to PID 27 blocks, and a
+// declared LdCtrlLoadImageProp is a read of it where an ETS capture of the application shows that
+// (ETS_CAPTURED_SYSTEM7_APPS below); elsewhere it blocks.
 const MCB_PID = 27;
 // An MCB entry is 8 bytes: region size (4), control (2), CRC (2). The InlineData of the known
 // applications is 10 bytes with two trailing zero bytes, and ETS sends the first 8.
@@ -267,6 +268,42 @@ export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: strin
   });
 }
 
+// ---- System 7 applications whose downloads ETS 6 is captured running ----
+// For these, what ETS sends is not the declared procedure step by step, and Busforge sends what the
+// captures show instead (load-procedures.md, "ETS-captured System 7 downloads"). The Gira Tastsensor 3
+// Komfort (DynamicTableManagement="true"), 2026-10-06, private corpus
+// captures/gira-m0008-ets-{fulldownload,partial-params,partial-links,partial-revert,fulldownload-restore}.log
+// with ETS's own log of each step beside them:
+//   - the address and association tables are re-declared at their built size: the address table's
+//     segment as long as the table, the association table's directly behind it with the rest of the
+//     two declared segments (LdCtrlAbsSegment 16384+17 and 16401+467 for declared 16384+243 and
+//     16627+241), each unloaded first;
+//   - the application (LSM 3) is not unloaded and its segments are not declared again: it is loaded,
+//     its data segments written, and completed (no LdCtrlTaskSegment, LdCtrlTaskCtrl1 or RAM segment);
+//   - LdCtrlLoadImageProp is a property READ of PID 27 (one element, or Count of them) after the last
+//     LoadCompleted; nothing is written for it;
+//   - the declared LdCtrlTaskSegment LsmIdx 5 after the restart is not sent.
+// Every one of the five downloads did so on a device that held this application. What ETS sends to a
+// device that does not is not shown, so that full download is refused (System7Profile.downloadFull).
+export const ETS_CAPTURED_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A"];
+export const etsCapturedSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_CAPTURED_SYSTEM7_APPS.includes(lp.app);
+
+// The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
+// declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next
+// download, which Busforge does not do (it reads the device instead), so they are only required to
+// arrive.
+export interface StampRead { obj: number; pid: number; start: number }
+export function imageStampReads(lp: LoadProcedures): StampRead[] {
+  if (!etsCapturedSystem7(lp)) return [];
+  return flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlLoadImageProp").flatMap((s) => {
+    const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), count = Number(s.attrs.Count ?? 1);
+    if (!Number.isInteger(obj) || pid !== MCB_PID || !Number.isInteger(count) || count < 1 || count > 15) {
+      throw new ProductError("LOAD_STEP_UNSUPPORTED", `${s.verb} ${JSON.stringify(s.attrs)} is not the PID 27 read the ETS captures show; refusing to guess what it reads`);
+    }
+    return Array.from({ length: count }, (_, i) => ({ obj, pid, start: i + 1 }));
+  });
+}
+
 export function assessParStep(step: LdStep, model: "absolute" | "relative", app?: string): ParDisposition {
   switch (step.verb) {
     case "LdCtrlConnect":
@@ -298,6 +335,10 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", app?
       case "LdCtrlTaskSegment":
       case "LdCtrlTaskCtrl1":
         return { kind: "skipped", reason: "full-download task/segment allocation; a par write rewrites no app code (hw-evidenced, M-0081)" };
+      case "LdCtrlLoadImageProp":
+        // The stamp read after the last LoadCompleted (imageStampReads), where an ETS capture shows it.
+        if (app !== undefined && etsCapturedSystem7({ app }) && Number(step.attrs.PropId) === MCB_PID) return { kind: "executed" };
+        break;
     }
   } else {
     // The System B base bracket drives exactly ONE segment object: LSM/object 4 (the

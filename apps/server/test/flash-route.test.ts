@@ -466,8 +466,8 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
 // An application whose declared load procedure has a step the full download cannot execute
 // (LdCtrlTaskCtrl1 on the M-0081): the full download is refused with the planner's own code, and a
 // device of it that the surgical flash cannot safely start from is pointed at ETS instead of at the
-// download it cannot have. The M-0008 also declares LdCtrlLoadImageProp on the objects the parameter
-// and group-address flash write, so both are refused with LOAD_STEP_UNSUPPORTED.
+// download it cannot have. The M-0008 declares LdCtrlTaskCtrl1 too, but runs its writes as ETS was
+// captured running them, so it is offered all three.
 corpusDescribe("an application whose load procedure the full download cannot run", () => {
   const TABLE_CHANGING_M0081 = "M-0081_A-FE01-11-75D9_P-4_R-4"; // 1 activates com-object 8
   const never = (state: AppState, projectId: string, deviceId: string) =>
@@ -516,26 +516,23 @@ corpusDescribe("an application whose load procedure the full download cannot run
     } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
   });
 
-  test("M-0008: the parameter and group-address flash are refused with LOAD_STEP_UNSUPPORTED, never reached", async () => {
-    const state = freshState();
-    const { projectId, deviceId } = await projectWithApp(state, catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"));
-    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
-    try {
-      for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
-        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
-        expect(res.status).toBe(400);
-        expect(((await res.json()) as any).error.code).toBe("LOAD_STEP_UNSUPPORTED");
-      }
-    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
-  });
-
-  test("the device view carries the refusal codes next to the withheld capabilities", async () => {
+  test("M-0008 runs as ETS was captured: all three writes offered, no refusal, the flashes reached", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"));
     const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
-    expect(view.capabilities).toMatchObject({ flashParams: false, flashLinks: false, fullDownload: false });
-    expect(view.refusals).toEqual({ flashParams: "LOAD_STEP_UNSUPPORTED", flashLinks: "LOAD_STEP_UNSUPPORTED", fullDownload: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
+    expect(view.capabilities).toMatchObject({ flashParams: true, flashLinks: true, fullDownload: true });
+    expect(view.refusals ?? {}).toEqual({});
+    const reached: string[] = [];
+    const dry = { kind: "dryRun" as const, mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" };
+    paramFlashImpl = async () => { reached.push("flash"); return dry; };
+    gaFlashImpl = async () => { reached.push("flash-ga"); return dry; };
+    try {
+      for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(200);
+      }
+      expect(reached).toEqual(["flash", "flash-ga"]);
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
   });
 });
 

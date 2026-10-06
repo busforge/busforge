@@ -114,14 +114,28 @@ started until the capability it depends on is hardware-proven.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
 - **Offer only what the declared load procedure lets the planner run.** On 22 house units the
-  capability flag offers a full download (and on the Gira M-0008 a parameter flash) the planner then
-  refuses, and the M-0008 group-address flash writes its tables without the declared stamps of
-  objects 1 to 3. Derive the flags from the same coverage, decide what a never-programmed device of
+  capability flag offers a full download the planner then refuses. Derive the flags from the same coverage, decide what a never-programmed device of
   these applications gets instead of the download, and refuse the uncovered GA flash
   ([owned-products.md](owned-products.md)).
-- **Execute `LdCtrlTaskCtrl1` and the absolute `LdCtrlLoadImageProp`**, against an ETS capture of
-  a full download (and, for the M-0008, a parameter and group-address download) of one of the four
-  affected applications. All their units are installed in the house.
+- **Execute `LdCtrlTaskCtrl1`**, against an ETS capture of a full download of an Auro M-0081 or the
+  Theben Meteodata 140 S. The Gira M-0008 captures do not show it: ETS does not send the
+  step there ([load-procedures.md](load-procedures.md#ets-captured-system-7-downloads)). All units of
+  these applications are installed in the house.
+- **System 7 segment declarations as ETS sends them.** ETS writes `LdCtrlAbsSegment` and
+  `LdCtrlTaskSegment` to the load-state machine's PID 5 on the property-mapped MV-0705, on the MDT
+  BE-02001.02 too (`captures/mdt-be02001-ets-fulldownload-defaults.log`); Busforge sends them to
+  memory `0x0104` there and does it ETS's way only on the Gira M-0008
+  ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
+  the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
+- **Gira M-0008 bytes ETS never writes.** Its full download writes whole segments, including 80
+  bytes of `AS-444E` and 8 of `AS-41E5` no ETS capture writes, from the `<Data>` templates
+  ([load-procedures.md](load-procedures.md#ets-captured-system-7-downloads)). Only the house run
+  compares them with a unit first; they equalled the unit's. Decide whether to write
+  only the ranges ETS covers or to keep whole segments with that evidence.
+- **The Gira M-0008 parameter and group-address flash on a unit.** Both follow ETS's captures byte
+  for byte where ETS writes; the full download is proven on the house unit 1.1.x, the
+  two flashes have not run on one. A GA flash moves the association table, so its run needs the same
+  plan gate as the full download had.
 - **Configure KNX IP interfaces as alpha targets (decided).** The full download of an
   application declaring tunnelling entries is refused today (`FULL_DOWNLOAD_TUNNELING_ENTRIES`),
   because no Busforge path writes the interface's `AdditionalAddresses`. Capture an ETS download onto
@@ -201,8 +215,11 @@ Two runs still to be made, then what the collector
 - **A link token that does not resolve at import shifts the sending address.** Unresolved `Links`
   entries are dropped before the order is stored, so a second address can take the first (sending)
   slot; the import counts them, the PID 54 sender rule trusts the stored order.
-- **Project-level com-object flag overrides** are not parsed; whether an object transmits comes from
-  the application program, which matters for the PID 54 sender rule.
+- **Project-level com-object flags outside the com-object table.** The import keeps the flags and
+  priority a project sets on a device's object, and every write that authors the com-object table
+  writes them ([load-procedures.md](load-procedures.md#project-level-com-object-flags)). Elsewhere
+  the application's flags still decide: whether an object transmits for the PID 54 sender rule, the
+  sender/receiver roles of the group-address view, and the flags the device page shows.
 - **ETS does not take over a device Busforge activated.** The keyring export
   ([knx-secure.md](knx-secure.md#keyring-export)) carries the tool keys, but ETS 6 imports only the
   certificates from it ([findings.md](findings.md#29-ets-imports-only-the-certificates-from-a-keyring)),

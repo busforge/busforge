@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import type { Project, Device, Topology, TopologyArea, GroupAddress, GroupRangeNode, SpaceNode, DeviceSecurity, GroupKey, SecureSender, GroupAddressSecurity } from "./model.ts";
+import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
 import { KnxprojError } from "./errors.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
@@ -73,12 +73,13 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(doc, d.id, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
   const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
+  const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(doc, d.id) })).filter((o) => o.overrides.length > 0);
   const securities = devices.map((d) => parseDeviceSecurity(doc, d.id));
   const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
   const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
   const { secureSenders, unresolvedSenders } = parseSecureSenders(doc, devices, busInterfaceIndex);
 
-  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceSecurity, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
+  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
 }
 
 // The project's group-address style, as a level count. ETS stores GroupAddressStyle on
@@ -197,6 +198,19 @@ function parseDeviceLinks(doc: XmlNode, deviceId: string, gaIdToRaw: Map<string,
     else byRef.set(text(c.RefId), gaRaws);
   }
   return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved };
+}
+
+// A device's com-object flags and priority set in the project (COM_OBJ_INSTANCE_ATTRS), per
+// ComObjectInstanceRef that carries any, linked or not.
+function parseDeviceComObjOverrides(doc: XmlNode, deviceId: string): ComObjInstanceAttrs[] {
+  const dev = findDeviceInstance(doc, deviceId);
+  const out: ComObjInstanceAttrs[] = [];
+  for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
+    const attrs: Record<string, string> = {};
+    for (const a of COM_OBJ_INSTANCE_ATTRS) { const v = attr(c[a]); if (v !== undefined) attrs[a] = v; }
+    if (Object.keys(attrs).length) out.push({ comObjRefId: text(c.RefId), attrs });
+  }
+  return out;
 }
 
 // Collect a device's stored parameter values (ParameterRef id -> value).

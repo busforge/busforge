@@ -126,6 +126,10 @@ export interface DeviceConfigView {
   // (its declared load procedure): the error code the server answers that write with, for the UI to
   // say instead of only greying it out. Attached by the server.
   refusals?: Partial<Record<keyof DeviceCapabilities, string>>;
+  // Whether the full download offered here also brings back a device that holds no running
+  // application (DeviceProfile.fullDownloadLoadsApplication); false sends such a device to ETS.
+  // Attached by the server.
+  fullDownloadLoadsApplication?: boolean;
   // What was shown on hardware for this device's Product and application program, per operation
   // (compatibility.ts buildMatrix over the evidence bundle the server ships). Attached by the server.
   compatibility?: Record<MatrixOperation, OperationVerdict>;
