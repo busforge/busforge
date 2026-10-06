@@ -1034,7 +1034,7 @@ describe("device configuration", () => {
     } finally {
       connect.mockRestore();
     }
-  });
+  }, 20_000); // parses the 26.9 MB Jung application twice (config view, flash job): about 0.85 s alone, several seconds while the check runs every workspace at once
 
   corpusTest("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {
     // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile, flashLinks

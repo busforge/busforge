@@ -100,12 +100,15 @@ started until the capability it depends on is hardware-proven.
   the bench and one onto the device in service in a house. It answered point-to-point management
   throughout. The old sighting of a running device going silent is therefore not a property of a
   running device; it was the gateway addressing limitation plus the firmware's module-state
-  deadlock ([commissioning.md](commissioning.md)). What stays unproven is the **bracketed
-  group-address flash** on this product, and the surgical parameter flash with it.
-- **Compare OpenKNX surgical and full writes on a matching unit.** Neither surgical path has ever
-  run on an OpenKNX device, and nothing observed says it fails (see [status.md](status.md)). The
-  test: one RaumController on application 0x55 with the same firmware as the house units, a
-  serial console for `erase knx` / `erase openknx`, and the configuration saved as a snapshot.
+  deadlock ([commissioning.md](commissioning.md)). The bracketed group-address flash and the
+  surgical parameter flash have since run on a house unit too, as operator observations (below).
+- **Compare OpenKNX surgical and full writes on a matching unit.** Both surgical paths have run on
+  one house unit (one parameter changed and reverted, the revert `verified` after the
+  restart; one link added and removed, each `verified` after the restart;
+  [status.md](status.md)), but as operator observations without an evidence record, and no ETS
+  reference of a partial download exists for this product. The comparison below would turn them
+  into recorded, compared runs. The test: one RaumController on application 0x55 with the same
+  firmware as the house units, a serial console for `erase knx` / `erase openknx`, and the configuration saved as a snapshot.
   Change one non-structural parameter and one link, each once by surgical flash, once by full
   download and once by ETS partial download; after each, read back, observe the linked object
   on the bus, cut bus power, and check the device is still configured and logged no watchdog
@@ -113,10 +116,6 @@ started until the capability it depends on is hardware-proven.
   Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
-- **Offer only what the declared load procedure lets the planner run.** On 22 house units the
-  capability flag offers a full download the planner then refuses. Derive the flags from the same coverage, decide what a never-programmed device of
-  these applications gets instead of the download, and refuse the uncovered GA flash
-  ([owned-products.md](owned-products.md)).
 - **Execute `LdCtrlTaskCtrl1` beyond the Auro M-0081_A-FE01.** It runs there in the one form its ETS
   capture shows (Address 0, Count 0;,
   [load-procedures.md](load-procedures.md#declared-order-system-7-downloads)), run on the house
@@ -147,8 +146,8 @@ started until the capability it depends on is hardware-proven.
   nothing beyond the tables. Decide whether it should clear such bytes, by writing the rest of the
   declared segment, or keep ETS's behaviour.
 - **The Gira M-0008 parameter and group-address flash on a unit.** Both follow ETS's captures byte
-  for byte where ETS writes; the full download is proven on the house unit 1.1.x, the
-  two flashes have not run on one. A GA flash moves the association table, so its run needs the same
+  for byte where ETS writes; the full download is proven on the house unit 1.1.x (and
+writing only the bytes of ETS's image), the two flashes have not run on one. A GA flash moves the association table, so its run needs the same
   plan gate as the full download had.
 - **Configure KNX IP interfaces as alpha targets (decided).** The full download of an
   application declaring tunnelling entries is refused today (`FULL_DOWNLOAD_TUNNELING_ENTRIES`),
