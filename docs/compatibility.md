@@ -64,9 +64,9 @@ Product `M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES`, application program `M-0085_A
 
 | Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware | Newest record |
 |---|---|---|---|---|---|---|---|
-| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-03 |
-| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-03 |
-| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 81 | 2026-10-03 |
-| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 | 2026-10-03 |
-| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 | 2026-10-03 |
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-06 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 81 | 2026-10-06 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 81 | 2026-10-06 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 | 2026-10-06 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 | 2026-10-06 |
 | Structural flash | refused | none / none | none / none | none / none | none | none | none |

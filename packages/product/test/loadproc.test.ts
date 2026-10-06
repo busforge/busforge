@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
-import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
+import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
 
@@ -75,6 +75,95 @@ corpusTest("MergedProcedure operation selection (par vs full) picks different fr
   expect(stepApplies(both, "full")).toBe(true);
   expect(stepApplies({ verb: "X", attrs: { AppliesTo: "full" } }, "par")).toBe(false);
   expect(stepApplies({ verb: "X", attrs: {} }, "par")).toBe(true);
+});
+
+test('a step declared AppliesTo="all" applies to every download', () => {
+  const all = step("LdCtrlWriteProp", { AppliesTo: "all", ObjIdx: "4", PropId: "67", InlineData: "01" });
+  expect(stepApplies(all, "par")).toBe(true);
+  expect(stepApplies(all, "full")).toBe(true);
+});
+
+test('a step declared AppliesTo="auto", the schema default, applies like one without the attribute', () => {
+  const auto = step("LdCtrlRestart", { AppliesTo: "auto" });
+  expect(stepApplies(auto, "par")).toBe(true);
+  expect(stepApplies(auto, "full")).toBe(true);
+  // "grp" names the group-table-only download, neither of the two step lists built here.
+  expect(stepApplies(step("LdCtrlRestart", { AppliesTo: "grp" }), "par")).toBe(false);
+  expect(stepApplies(step("LdCtrlRestart", { AppliesTo: "par,grp" }), "par")).toBe(true);
+});
+
+corpusTest('the GVS AMMA\'s AppliesTo="all" steps are part of both its downloads', () => {
+  const lp = parseLoadProcedures(readRealFixture("M-0085_A-0072-30-69AA.xml.gz"));
+  for (const op of ["par", "full"] as const) {
+    const steps = flattenSteps(lp, op);
+    expect(steps.some((s) => s.verb === "LdCtrlCompareProp" && s.attrs.ObjIdx === "4" && s.attrs.PropId === "66")).toBe(true);
+    expect(steps.some((s) => s.verb === "LdCtrlWriteProp" && s.attrs.ObjIdx === "4" && s.attrs.PropId === "67")).toBe(true);
+  }
+});
+
+// ---- closing property writes ----
+// A declared property write of unknown effect runs only where an ETS capture shows ETS sending it, for
+// that application, with that value: the GVS AMMA's PID 67 = 01 on object 4.
+const GVS = "M-0085_A-0072-30-69AA";
+const pid67 = (attrs: Record<string, string> = {}): LdStep => ({ verb: "LdCtrlWriteProp", attrs: { AppliesTo: "all", ObjIdx: "4", PropId: "67", Verify: "true", InlineData: "01", ...attrs } });
+const lpOf = (app: string | undefined, ...steps: LdStep[]) => ({ style: "MergedProcedure" as const, ...(app ? { app } : {}), blocks: [{ mergeId: 7, steps }], verbs: [], unknown: [] });
+
+test("the GVS AMMA's captured PID 67 write is executed, and closes every download", () => {
+  expect(assessParStep(pid67(), "relative", GVS).kind).toBe("executed");
+  for (const op of ["full", "par", "grp"] as const) {
+    expect(closingPropWrites(lpOf(GVS, pid67()), op)).toEqual([{ obj: 4, pid: 67, data: Buffer.from([1]) }]);
+  }
+});
+
+test("the same write without the capture's application, value, object or verification stays blocked", () => {
+  for (const [app, s] of [
+    ["M-0085_A-0072-31-69AB", pid67()],          // another GVS application: no carry-over
+    [undefined, pid67()],                         // application unknown
+    [GVS, pid67({ InlineData: "02" })],
+    [GVS, pid67({ ObjIdx: "3" })],
+    [GVS, pid67({ Verify: "false" })],
+    [GVS, pid67({ StartElement: "2" })],
+    [GVS, pid67({ Count: "2" })],
+  ] as [string | undefined, LdStep][]) {
+    expect(assessParStep(s, "relative", app).kind).toBe("blocked");
+    expect(closingPropWrites(lpOf(app, s), "full")).toEqual([]);
+  }
+  // on an absolute device nothing would run it
+  expect(assessParStep(pid67(), "absolute", GVS).kind).toBe("blocked");
+});
+
+test("a group-address flash closes with a write only where the step names grp or all", () => {
+  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "full,par" })), "grp")).toEqual([]);
+  expect(closingPropWrites(lpOf(GVS, { verb: "LdCtrlWriteProp", attrs: { ObjIdx: "4", PropId: "67", Verify: "true", InlineData: "01" } }), "grp")).toEqual([]);
+  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "par,grp" })), "grp")).toHaveLength(1);
+  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "full" })), "par")).toEqual([]);
+});
+
+test("the group-address flash refuses a step named for it that it does not run, the declared check aside", () => {
+  const check = step("LdCtrlCompareProp", { AppliesTo: "all", ObjIdx: "4", PropId: "66", InlineData: "007230" });
+  expect(unrunGrpSteps(lpOf(GVS, check, pid67()))).toEqual([]);
+  expect(unrunGrpSteps(lpOf("M-0085_A-0073-30-4A88", check, pid67())).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
+  expect(unrunGrpSteps(lpOf(GVS, pid67({ InlineData: "02" }))).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
+  expect(unrunGrpSteps(lpOf(GVS, step("LdCtrlLoadImageProp", { AppliesTo: "grp", ObjIdx: "1", PropId: "27" }))).map((b) => b.verb)).toEqual(["LdCtrlLoadImageProp"]);
+  // a step not named for a group-table download is not the group-address flash's
+  expect(unrunGrpSteps(lpOf("M-0085_A-0073-30-4A88", pid67({ AppliesTo: "full,par" })))).toEqual([]);
+});
+
+corpusTest("the GVS AMMA's catalogue procedure names its application and closes each download with PID 67 = 01", () => {
+  const lp = parseLoadProcedures(readRealFixture("M-0085_A-0072-30-69AA.xml.gz"));
+  expect(lp.app).toBe(GVS);
+  for (const op of ["full", "par", "grp"] as const) expect(closingPropWrites(lp, op)).toEqual([{ obj: 4, pid: 67, data: Buffer.from([1]) }]);
+  expect(assessParCoverage(lp, "relative").blocked).toEqual([]);
+  expect(assessParCoverage(lp, "relative").checks).toEqual([{ obj: 4, pid: 66, expect: Buffer.from("007230", "hex"), mask: undefined }]);
+  expect(unrunGrpSteps(lp)).toEqual([]);
+});
+
+corpusTest("no other real catalogue application closes a download with a property write", () => {
+  for (const f of listRealFixtures()) {
+    if (f.startsWith(GVS)) continue;
+    const lp = parseLoadProcedures(readRealFixture(f));
+    for (const op of ["full", "par", "grp"] as const) expect(closingPropWrites(lp, op)).toEqual([]);
+  }
 });
 
 // ---- par-download step policy ----

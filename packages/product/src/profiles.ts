@@ -7,8 +7,8 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags } from "./como
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, type AbsFullSegment } from "./deviceflash.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -621,19 +621,24 @@ export class SystemBProfile extends DeviceProfile {
     const hasParamSegment = this.hasParamSegment();
     const refused = this.operationRefusals();
     return {
-      readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: true,
+      readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
-      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) && !refused.flashParams,
+      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
   }
 
   // Both downloads run the mask's base bracket parameterized by the application's fragments, so a
   // fragment step without a disposition refuses the parameter flash and the full download alike. The
   // procedure is checked before the tunnelling entries, so it is the reason given where both apply.
+  // The group-address flash refuses a step named for it ("grp" or "all") that it does not run.
   override operationRefusals(): OperationRefusals {
     if (!this.cfg) return {};
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
-    return par ? { flashParams: par, ...(this.hasParamSegment() ? { fullDownload: par } : {}) } : {};
+    const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
+    return {
+      ...(par ? { flashParams: par, ...(this.hasParamSegment() ? { fullDownload: par } : {}) } : {}),
+      ...(grp ? { flashLinks: grp } : {}),
+    };
   }
 
   private hasParamSegment(): boolean {
@@ -693,9 +698,9 @@ export class SystemBProfile extends DeviceProfile {
     // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
     const requireReboot = !persistsOnLoadCompleted(cfg);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
-    const plan = planSystemBFullDownload({
+    const plan = withClosingWrites(planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security);
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security), closingPropWrites(proc, "full"));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
@@ -911,7 +916,7 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb),
+        withClosingWrites(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), closingPropWrites(proc, "par")),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
@@ -935,6 +940,7 @@ export class SystemBProfile extends DeviceProfile {
     // that table does not configure wires it to nothing, and the verify (which only re-reads the
     // tables we wrote) would still report success. Refuse for the same reason the param flash does.
     const cfg = this.requireCfg("group address flash");
+    refuse(this.operationRefusals().flashLinks);
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // Author the com-object table (L3) that THIS link set implies, and write it alongside the group
     // tables. It is NOT enough to write the address/association tables and keep the device's L3: ETS
@@ -1003,7 +1009,8 @@ export class SystemBProfile extends DeviceProfile {
         // LOAD/LoadCompleted on an object holding no application is a transition this flash has no
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
-        await runLoadPlan(dev, planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security)); // rebuilt L3 carries the correct comm flags for the new link set
+        // The property write the application closes every download with (closingPropWrites) closes this one too.
+        await runLoadPlan(dev, withClosingWrites(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), closingPropWrites(cfg.loadProcedures, "grp"))); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1076,6 +1083,7 @@ export class SystemBProfile extends DeviceProfile {
       comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
+    const closed = withClosingWrites(plan, closingPropWrites(proc, "par"));
     return structural(runFlashOp(dev, mask, ctx, {
       imageBytes: image.length + comObj.length + addr.length + assoc.length,
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
@@ -1089,7 +1097,7 @@ export class SystemBProfile extends DeviceProfile {
         { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
       ],
-      write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
+      write: () => runLoadPlan(dev, closed, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
       // Every byte of the parameter segment is checked as the parameter flash checks it, the three
       // tables and the security object whole, and the application and the three tables must be
       // LOADED again after the restart.

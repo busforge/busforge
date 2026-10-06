@@ -14,6 +14,9 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 //     segments, are refused (M-0008_A-10D7).
 //   - LdCtrlLoadImageProp PID 27 in a System B fragment: ETS sends nothing for it (Jung capture), so it
 //     refuses nothing.
+//   - LdCtrlWriteProp to a manufacturer property in a System B fragment refuses the parameter flash and
+//     the full download, except the GVS AMMA's object 4 PID 67 = 01 (M-0085_A-0072, AppliesTo="all"),
+//     which ETS is captured sending at the end of its full and partial downloads: it refuses nothing.
 // Two refusals have other reasons and are listed so the table covers every fixture: M-0083_A-0137
 // declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1, nothing).
 const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDownload: boolean }> = {

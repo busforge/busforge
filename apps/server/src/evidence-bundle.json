@@ -6722,6 +6722,424 @@
   },
   {
    "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#0-fullDownload",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "downloaded verified, 3896B, mask MV-07B0"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2281 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#1-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back",
+     "detail": "linked object 2 → 1/2/1, verified on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
+     "detail": "silent 2281 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#2-flashParams",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "3 param(s) swept, each verified + reverted, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#3-readParams",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#4-readLinks",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "spec baseline (2 configure steps), then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": "2026-10-06T08:01:29.674Z",
+   "subject": {
+    "manufacturer": "M-0085",
+    "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
+    "appProgramId": "M-0085_A-0072-30-69AA",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "observed",
+     "value": "81",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "unknown"
+   },
+   "build": {
+    "server": {
+     "version": "v0.4.204-dirty (dev)",
+     "commit": "8459f7a-dirty"
+    },
+    "runner": {
+     "name": "tools/smoke",
+     "revision": "8459f7a-dirty"
+    },
+    "spec": {
+     "name": "gvs-amma",
+     "revision": "029bac094263"
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": "tools/smoke/reports/gvs-amma-api-2026-10-06T08-01-29-674Z.json",
+    "sha256": "007dc4c12e43f72a69ae216a28f128bf0a9e3599ac179cb7f60888010e0b921b"
+   },
+   "id": "gvs-amma-api-2026-10-06T08:01:29.674Z#5-flashLinks",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour inputToOutput: switch drives status",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed inputToOutput",
+     "detail": "3 transitions tracked on 1/2/2→1/2/3"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
    "recordedAt": "2026-09-25T08:21:12.275Z",
    "subject": {
     "manufacturer": "M-0085",

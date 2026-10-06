@@ -2,11 +2,11 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { iaToNum, ownedRuns } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites } from "../packages/product/src/index.ts";
+import { iaToNum, ownedRuns, planSystemBGaFlash, type LoadPlan } from "../packages/knx/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosingWrites, closingPropWrites } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
+import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
 function line(dir: "ETS->BRIDGE" | "BRIDGE->ETS", code: number, src: string, dst: string, tpdu: number[]): string {
@@ -145,6 +145,54 @@ corpusDescribe("GVS AMMA full download against ETS", () => {
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 2816, 0], [3, 1066, 0], [2, 2, 0], [1, 2, 0]]);
     expect(r.unattributed).toEqual([]);
+  });
+});
+
+// How a download ends: what ETS sends the device after its last LoadCompleted, property writes and the
+// restart, in order. The GVS AMMA declares a write of 01 to object 4 PID 67 for every download
+// (AppliesTo="all"); ETS sends it there, the device echoes it, and the restart follows.
+function etsClosing(text: string, ia: number): string[] {
+  const events: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.includes("ETS->BRIDGE") ? line.match(/\| ([0-9a-fA-F]+)\s*$/) : null;
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.dst !== ia || fr.tpdu.length < 2) continue;
+    const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1];
+    if (apci === 0x3d7 && t.length >= 6) events.push(t[3] === 5 && t[6] === 2 ? "loadCompleted" : `prop ${t[2]}/${t[3]}=${t.subarray(6).toString("hex")}`);
+    else if ((apci & 0x3c0) === 0x380) events.push("restart"); // A_Restart, its type in the low bits
+  }
+  return events.slice(events.lastIndexOf("loadCompleted") + 1);
+}
+function planClosing(plan: LoadPlan): string[] {
+  const at = plan.findLastIndex((st) => st.op === "loadCompleted");
+  return plan.slice(at + 1).flatMap((st) => st.op === "writeProp" ? [`prop ${st.obj}/${st.pid}=${st.data.toString("hex")}`] : st.op === "restart" ? ["restart"] : []);
+}
+
+corpusDescribe("GVS AMMA: each download closes as ETS's does", () => {
+  const xml = catalogueXml("M-0085_A-0072-30-69AA.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const ia = iaToNum("1.1.203");
+  const CLOSING = ["prop 4/67=01", "restart"];
+
+  test("the captures: PID 67 = 01 after the last LoadCompleted, echoed, then the restart", () => {
+    for (const f of ["gvs-amma-ets-fulldownload-defaults.log", "gvs-amma-ets-partial-links.log"]) {
+      expect(etsClosing(captureText(f), ia)).toEqual(CLOSING);
+      expect(parseCapture(captureText(f), ia).propResponses.filter((r) => r.obj === 4 && r.pid === 67).map((r) => r.data.toString("hex"))).toEqual(["01"]);
+    }
+  });
+
+  test("Busforge's full download ends like ETS's full download", () => {
+    const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.203", params: new Map(), links: [], proc });
+    expect(planClosing(build.plan)).toEqual(etsClosing(captureText("gvs-amma-ets-fulldownload-defaults.log"), ia));
+  });
+
+  test("Busforge's parameter flash and group-address flash end like ETS's partial download of parameters and links", () => {
+    const ets = etsClosing(captureText("gvs-amma-ets-partial-links.log"), ia);
+    const par = withClosingWrites(planRelativeParFlash(4, Buffer.alloc(2816), [], 0x4000, Buffer.from("0085007230", "hex"), false), closingPropWrites(proc, "par"));
+    const ga = withClosingWrites(planSystemBGaFlash({ addr: Buffer.alloc(4), assoc: Buffer.alloc(4), comObj: Buffer.alloc(4) }, false), closingPropWrites(cfg.loadProcedures, "grp"));
+    expect(planClosing(par)).toEqual(ets);
+    expect(planClosing(ga)).toEqual(ets);
   });
 });
 

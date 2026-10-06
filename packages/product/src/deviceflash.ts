@@ -1,6 +1,6 @@
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -144,6 +144,17 @@ export function planRelativeParFlash(lsm: number, image: Buffer, owned: Readonly
     // PERSIST_ON_LOAD_COMPLETED distinction the full download already makes.
     { op: "restart", requireReboot },
   ];
+}
+
+// Put a download's closing property writes (closingPropWrites) right before its restart, where ETS
+// sends them: after every LoadCompleted, so the device takes them on a finished load.
+export function withClosingWrites(plan: LoadPlan, writes: ClosingPropWrite[]): LoadPlan {
+  if (!writes.length) return plan;
+  const at = plan.findLastIndex((st) => st.op === "restart");
+  if (at < 0 || plan.slice(0, at).every((st) => st.op !== "loadCompleted")) {
+    throw new ProductError("LOAD_STEP_UNSUPPORTED", "the load procedure declares a property write that closes the download, and this plan has no completed load and restart to place it in");
+  }
+  return [...plan.slice(0, at), ...writes.map((w): LoadStep => ({ op: "writeProp", obj: w.obj, pid: w.pid, data: w.data })), ...plan.slice(at)];
 }
 
 // A segment of a System B structural flash: the image, which of its bytes to send while the segment

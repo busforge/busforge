@@ -24,7 +24,7 @@ A device is flashable only when both are handled.
 | Style | Structure | Busforge |
 | --- | --- | --- |
 | **ProductProcedure** | one self-contained `<LoadProcedure>`, every `LdCtrl` step inline | **executed directly** from the XML (absolute-segment devices) |
-| **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`) | the base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
+| **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`; `all`, and `auto`, the schema default when the attribute is absent, apply to both) | the base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
 | **DefaultProcedure** | nothing in the XML, hardcoded by mask version (legacy BCU1/2) | **explicit gap**: refused, not crashed |
 
 ## What the engine does
@@ -95,11 +95,11 @@ reports success.
 
 | Disposition | Steps (par) | Why |
 | --- | --- | --- |
-| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation) | performed by the planner/executor or the proven base bracket |
+| **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation), and a `WriteProp` an ETS capture shows for that application (the GVS AMMA's object 4 PID 67 = `01`, below) | performed by the planner/executor or the proven base bracket |
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`. This is a check ETS runs that was previously skipped silently |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
 | **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** (ETS 6 sends nothing for it) | deliberately not executed, each with hardware or capture evidence |
-| **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices, `WriteProp` to any other PID, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
+| **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on absolute devices, `WriteProp` to any other PID without such a capture, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
 
 PID 27 is the memory-control-block table: per region of a segment, its size, a control byte and
 a CRC the device computes. A System B application may declare the regions of its parameter
@@ -132,6 +132,49 @@ stays unmodeled.
 The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by a
 coverage test, so a new device introducing an unknown verb fails the build instead of
 flashing blind.
+
+### Closing property writes, run because ETS was captured sending them
+
+A `WriteProp` to a manufacturer property says nothing about what the firmware does with it, so it
+blocks by default. One is executed, and only for its application: the GVS AMMA-04/06.S
+(`M-0085_A-0072-30-69AA`) declares, in its last fragment and `AppliesTo="all"`,
+
+```xml
+<LdCtrlWriteProp AppliesTo="all" ObjIdx="4" PropId="67" Verify="true" InlineData="01">
+  <OnError Cause="ResourceNotFound" MessageRef="M-0085_A-0072-30-69AA_M-1" />
+</LdCtrlWriteProp>
+```
+
+and ETS 6 sends exactly that write after the last LoadCompleted, the device echoes `01`, and the
+restart follows: in its full download (`captures/gvs-amma-ets-fulldownload-defaults.log` of the
+private corpus) and in its partial download of parameters and links (`gvs-amma-ets-partial-links.log`).
+Busforge's full download, parameter flash and group-address flash of that application (and its
+structural flash, which is not offered for it) end the same way (`closingPropWrites`, `withClosingWrites`): after every LoadCompleted,
+right before the restart, and an echo other than `01` stops the flash (`PROPERTY_WRITE_REFUSED`), so
+it is never reported as programmed. `tools/etsdiff.test.ts` holds the order against both captures.
+For the group-address flash this is inferred, not captured: the partial download above also
+reloads object 4, and no capture of a links-only download exists; the write is run there because the
+step names every download (`all`) and ETS ends its partial download with it. On the bench device
+(GVS AMMA 1.1.203, in Data Secure mode, while both captures are plain), smoke run of 2026-10-06: ten
+writes inside the secure session, six full downloads, two parameter flashes and two group-address
+flashes, each echoed `01`, each followed by the restart; the device then passed its behaviour,
+persistence and restore checks ([status.md](status.md), trace and before/after probe in
+[evidence/runs/2026-10-06/](evidence/runs/2026-10-06/)). A read of PID 67 answers with no element,
+right before and right after the run, although its description says readable at level 3; ETS never reads it either, so the
+echo is the check.
+
+The evidence is keyed by application, object, property, value and `Verify="true"`, not by verb: a
+manufacturer property means whatever that firmware makes of it, so another application's step, or
+this one with another value, still blocks: an application that declares the same step without a
+capture of its own has its parameter flash, full download, group-address flash and structural flash
+refused (`LOAD_STEP_UNSUPPORTED`). What PID 67 does in the device is not known.
+The group-address flash takes a step named `grp` or `all` as its own (what ETS's `auto` means for a
+group-table download is not shown) and refuses one it does not run (`unrunGrpSteps`), a declared
+`CompareProp` aside. The same application's `CompareProp` on PID 66 (`007230`,
+also `AppliesTo="all"`) runs as the read-only pre-flight of the full download and the parameter flash.
+ETS reads it before its full download, not in its partial download, so the parameter flash reads one
+property more than ETS does there. On the bench device it answered `007230` before each of them. The group-address flash runs none, as before. ETS also reads each property's description (`A_PropertyDescription_Read`)
+before the check and the write; Busforge does not, and a missing property surfaces as the refused echo.
 
 ## Coverage across the catalogue
 
@@ -362,7 +405,8 @@ group tables in one bracket.
   than approximated.
 
 A full download is virgin-aware: the declared app-id `CompareProp` is sourced from the
-download's own `full` steps (a check declared `AppliesTo="full"` would otherwise be missed).
+download's own `full` steps (a check declared `AppliesTo="full"` would otherwise be missed; one
+declared `AppliesTo="all"`, the GVS AMMA's PID 66, belongs to both downloads).
 A match means the device already holds this application, an all-zero read means a virgin
 device, and a **different** non-zero application is refused, so a full download never lands
 the wrong application's image on a device.

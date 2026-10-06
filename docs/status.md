@@ -87,7 +87,7 @@ value.
 |---|---|---|---|---|---|---|---|
 | ABB US/U 4.2 universal interface | MV-0701 | absolute, memory-mapped LSM | hardware | hardware | hardware (bytes only) | hardware | not applicable: write-only outputs |
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
-| GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
+| GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object (again 2026-10-06 with the declared PID 67 write, api channel) |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory; survives a restart since the memory-control-block fix (see below) | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter on the house unit, `verified` after the restart (see below) | hardware, one link added and removed on the house unit, each `verified` after the restart, the added link answered a group read (see below) | hardware, from factory **and onto a device running its application** (three downloads, each `verified`), application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
@@ -241,7 +241,7 @@ spec states why no behaviour is observable.
 
 | Spec | Product | Mask | `api` | `ui` | Persistence (restart) | Done bar |
 |---|---|---|---|---|---|---|
-| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator, in KNX Data Secure mode since 2026-09-30 | MV-07B0 | hardware | hardware | hardware, both channels | **met** (2026-10-03, secured, imported from the ETS project; its behaviour plain, on Output 2) |
+| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator, in KNX Data Secure mode since 2026-09-30 | MV-07B0 | hardware | hardware | hardware, both channels | **met** (2026-10-03, secured, imported from the ETS project; its behaviour plain, on Output 2); api channel passed again 2026-10-06 with the declared PID 67 write, ui channel not rerun |
 | `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | hardware, both channels | **met** |
 | `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | hardware, both channels | **met**, to the byte only |
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | hardware | hardware | hardware, both channels | **met** (before the device went secure, 2026-09-27) |
@@ -268,6 +268,12 @@ right tool key straight after a wrong one goes unanswered once and is answered o
 ([findings.md](findings.md) §30); its spec declares that (`secondSyncAfterWrongKey`), and the check
 records the silent first Sync and the answered second one as two results. The two GVS runs before
 that failed this check only (their reports were not kept). Reports and records in `docs/evidence/runs/2026-10-03/`.
+
+On the working tree on `8459f7a` with the closing PID 67 write (2026-10-06, the records name it
+`8459f7a-dirty`), the GVS AMMA passed the api channel again, secured: every capability, behaviour,
+persistence, the robustness checks and the restore, with each of its ten writes ending in object 4
+PID 67 = `01`, echoed (trace next to the report in `docs/evidence/runs/2026-10-06/`). The ui channel
+was not rerun.
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
@@ -332,6 +338,19 @@ report a device family as working on the strength of a passing test suite.
   (both channels), the secured full download, parameter and GA flash, read-back,
   persistence, the robustness refusals and the restore pass; its behaviour is checked in plain only,
   a secured behaviour is shown on the Jung alone.
+- **The GVS AMMA's closing PID 67 write.** Its application declares a write of `01` to object 4
+  PID 67 for every download (`AppliesTo="all"`), which ETS sends after the last LoadCompleted;
+  Busforge omitted it in every GVS run up to. The full download, parameter flash and
+  group-address flash now end with it in ETS's place and refuse on a wrong echo
+  ([load-procedures.md](load-procedures.md#closing-property-writes-run-because-ets-was-captured-sending-them));
+  the order equals both ETS captures (`tools/etsdiff.test.ts`). On the bench device (smoke
+  `gvs-amma` api, secured) all ten writes, in six full downloads, two parameter flashes and two
+  group-address flashes, came back `01`, and the run passed behaviour, persistence and restore
+  (evidence/runs/, with a trace of each write). Not shown:
+  what the property does in the device (a read of it answers with no element, right before and right after the run, probe kept with the trace), the
+  ui channel with the write, and the group-address flash's write against a links-only ETS capture
+  (none exists; it is inferred from the declaration and ETS's partial download). Other applications
+  that declare the same write without a capture of their own are refused every write.
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.

@@ -31,6 +31,7 @@ export interface LdStep { verb: string; attrs: Record<string, string>; }
 export interface LoadProcedureBlock { mergeId?: number; steps: LdStep[]; }
 export interface LoadProcedures {
   style: LoadProcedureStyle;
+  app?: string;      // the ApplicationProgram Id the procedure belongs to
   blocks: LoadProcedureBlock[];
   verbs: string[];   // distinct verbs across all blocks, sorted
   unknown: string[]; // verbs not in KNOWN_LD_VERBS (the coverage gap signal), sorted
@@ -69,6 +70,7 @@ export function parseLoadProcedures(xml: string): LoadProcedures {
 export function loadProceduresOf(root: ONode[]): LoadProcedures {
   const app = deepFirst(root, "ApplicationProgram");
   const styleAttr = app ? attrsOf(app).LoadProcedureStyle : undefined;
+  const appId = app ? attrsOf(app).Id : undefined;
   const style: LoadProcedureStyle =
     styleAttr === "ProductProcedure" || styleAttr === "MergedProcedure" || styleAttr === "DefaultProcedure" ? styleAttr : "Unknown";
 
@@ -88,26 +90,29 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
     }
     blocks.push({ mergeId: mergeId !== undefined ? Number(mergeId) : undefined, steps });
   }
-  return { style, blocks, verbs: [...verbs].sort(), unknown: [...unknown].sort() };
+  return { style, ...(appId !== undefined ? { app: appId } : {}), blocks, verbs: [...verbs].sort(), unknown: [...unknown].sort() };
 }
 
 // ---- operation selection ----
 // Which download a step belongs to. ETS distinguishes a full download (everything) from
-// a parameter-only ("par") download; a step with no AppliesTo always applies.
+// a parameter-only ("par") download. The schema (LdCtrlProcType_t) also names "grp" (a group-table-only
+// download, which no step list here is built for), "all" (every download) and "auto", the default when
+// the attribute is absent; a step declared "all" or "auto", or with no AppliesTo, applies to both.
 export type LoadOp = "full" | "par";
 
 export function stepApplies(step: LdStep, op: LoadOp): boolean {
-  const a = step.attrs.AppliesTo;
-  return a === undefined || a.split(",").map((s) => s.trim()).includes(op);
+  const ops = (step.attrs.AppliesTo ?? "auto").split(",").map((s) => s.trim());
+  return ops.includes("all") || ops.includes("auto") || ops.includes(op);
 }
 
 // Flatten the procedure to an ordered step list for one operation: blocks in MergeId
 // order (ProductProcedure has a single block), then per-step AppliesTo filtering.
 export function flattenSteps(lp: LoadProcedures, op: LoadOp): LdStep[] {
-  return [...lp.blocks]
-    .sort((a, b) => (a.mergeId ?? 0) - (b.mergeId ?? 0))
-    .flatMap((b) => b.steps)
-    .filter((s) => stepApplies(s, op));
+  return orderedSteps(lp).filter((s) => stepApplies(s, op));
+}
+
+function orderedSteps(lp: LoadProcedures): LdStep[] {
+  return [...lp.blocks].sort((a, b) => (a.mergeId ?? 0) - (b.mergeId ?? 0)).flatMap((b) => b.steps);
 }
 
 // The byte the device is asked to pre-fill the parameter segment (LSM 4) with, from the full
@@ -208,7 +213,61 @@ export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number, op: L
   return writes;
 }
 
-export function assessParStep(step: LdStep, model: "absolute" | "relative"): ParDisposition {
+// Declared property writes whose effect is not known, run only because an ETS capture shows ETS 6
+// sending exactly this write to a device of exactly this application, after every LoadCompleted and
+// right before the restart, and the device echoing it. The verb class stays blocked: a manufacturer
+// property means whatever that firmware makes of it, so one application's capture says nothing about
+// another's, nor about a different value or object.
+interface CapturedClosingWrite { app: string; obj: number; pid: number; data: string; ops: readonly ClosingOp[] }
+const ETS_CAPTURED_CLOSING_WRITES: readonly CapturedClosingWrite[] = [
+  // GVS AMMA-04/06.S, declared AppliesTo="all" Verify="true". Private corpus:
+  // captures/gvs-amma-ets-fulldownload-defaults.log (full download) and
+  // captures/gvs-amma-ets-partial-links.log (partial download of parameters and links, which also
+  // reloads object 4). No capture of a links-only download exists; "grp" rests on the declared "all"
+  // and on that partial download ending with the write.
+  { app: "M-0085_A-0072-30-69AA", obj: 4, pid: 67, data: "01", ops: ["full", "par", "grp"] },
+];
+
+// The downloads a closing write is run in. "grp" is the group-address flash; a step reaches it only by
+// naming "grp" or "all", since what ETS's "auto" means for a group-table download is not shown.
+export type ClosingOp = LoadOp | "grp";
+
+function capturedClosingWrite(step: LdStep, app: string | undefined): CapturedClosingWrite | undefined {
+  if (step.verb !== "LdCtrlWriteProp" || app === undefined) return undefined;
+  const a = step.attrs;
+  return ETS_CAPTURED_CLOSING_WRITES.find((w) => w.app === app && a.ObjIdx === String(w.obj) && a.PropId === String(w.pid)
+    && a.InlineData?.toLowerCase() === w.data && a.Verify === "true" && (a.StartElement ?? "1") === "1" && (a.Count ?? "1") === "1");
+}
+
+// A property write a download ends with: written after every LoadCompleted, right before the restart,
+// and the device's echo must equal the data (the step's Verify="true").
+export interface ClosingPropWrite { obj: number; pid: number; data: Buffer }
+
+// The captured closing writes a procedure declares for one download, in declaration order.
+export function closingPropWrites(lp: LoadProcedures, op: ClosingOp): ClosingPropWrite[] {
+  const steps = op === "grp" ? grpSteps(lp) : flattenSteps(lp, op);
+  return steps.flatMap((s) => {
+    const w = capturedClosingWrite(s, lp.app);
+    return w && w.ops.includes(op) ? [{ obj: w.obj, pid: w.pid, data: Buffer.from(w.data, "hex") }] : [];
+  });
+}
+
+const grpSteps = (lp: LoadProcedures): LdStep[] =>
+  orderedSteps(lp).filter((s) => (s.attrs.AppliesTo ?? "").split(",").map((x) => x.trim()).some((x) => x === "grp" || x === "all"));
+
+// The steps a procedure names for a group-table download ("grp" or "all") that the System B
+// group-address flash does not run. A CompareProp is not among them: the group-address flash runs no
+// declared check, an open question kept in docs/owned-products.md. Every other such step, a property
+// write without a capture above included, refuses the flash rather than be skipped.
+export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: string }[] {
+  return grpSteps(lp).flatMap((s) => {
+    if (s.verb === "LdCtrlCompareProp") return [];
+    if (capturedClosingWrite(s, lp.app)?.ops.includes("grp")) return [];
+    return [{ verb: s.verb, detail: `${s.verb} declared AppliesTo="${s.attrs.AppliesTo}"${s.attrs.PropId !== undefined ? ` to PID ${s.attrs.PropId}` : ""} (not modeled for a group-address flash)` }];
+  });
+}
+
+export function assessParStep(step: LdStep, model: "absolute" | "relative", app?: string): ParDisposition {
   switch (step.verb) {
     case "LdCtrlConnect":
     case "LdCtrlDisconnect":
@@ -278,6 +337,8 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative"): Par
           const w = mcbWrite(step);
           return typeof w === "string" ? { kind: "blocked", detail: `${step.verb} to PID 27: ${w}` } : { kind: "executed" };
         }
+        // Run at the end of the bracket (closingPropWrites), as the ETS capture shows it.
+        if (capturedClosingWrite(step, app)?.ops.includes("par")) return { kind: "executed" };
         return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
       case "LdCtrlLoadImageProp":
         if (Number(step.attrs.PropId) === MCB_PID) {
@@ -321,7 +382,7 @@ export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relat
       const o = stepObject(step);
       if (o === undefined || !objects.has(o)) continue;
     }
-    const d = assessParStep(step, model);
+    const d = assessParStep(step, model, lp.app);
     if (d.kind === "blocked") blocked.push({ verb: step.verb, detail: d.detail });
     else if (d.kind === "skipped") skipped.push({ verb: step.verb, reason: d.reason });
     else if (step.verb === "LdCtrlCompareProp") checks.push(comparePropCheck(step));
