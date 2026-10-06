@@ -149,6 +149,27 @@ describe("property-mapped LSM controls (MV-0705)", () => {
     expect(await runLoadPlan(asDev(d), [{ op: "absSegment", lsm: 1, segType: 0, address: 0x4000, size: 17, access: 0xf2, memType: 3, segFlags: 0x80, viaProperty: true }], { memMappedLsms: true }).catch((e: unknown) => String(e))).toContain("memory-mapped");
     expect(d.writes).toEqual([]);
   });
+  // The bytes ETS sends the Auro presence detector for LdCtrlTaskCtrl1 LsmIdx 3 Address 0 Count 0
+  // (captures/auro-m0081-ets-fulldownload.log): 3/5 = 03 04 00000000 00000000, answered LOADING.
+  test("taskCtrl1 is the PID 5 write of 03 04 and eight zero bytes, and the machine must stay LOADING", async () => {
+    const d = new PropDev();
+    await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3 }, { op: "loadCompleted", lsm: 3 }]);
+    expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000", "3/5=02000000000000000000"]);
+    expect(d.mem).toEqual([]);
+  });
+  test("a taskCtrl1 the device answers with ERROR stops the bracket before LoadCompleted", async () => {
+    const d = new PropDev();
+    const write = d.propWrite.bind(d);
+    d.propWrite = async (obj: number, pid: number, data: Buffer) => { const r = await write(obj, pid, data); if (data[0] === 3 && data[1] === 4) d.state.set(obj, STATE.ERROR); return r; };
+    expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3 }, { op: "loadCompleted", lsm: 3 }]).catch((e: unknown) => e))
+      .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
+    expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000"]);
+  });
+  test("a taskCtrl1 on memory-mapped LSMs is refused before anything is sent", async () => {
+    const d = new MMDev();
+    expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3 }], { memMappedLsms: true }).catch((e: unknown) => String(e))).toContain("memory-mapped");
+    expect(d.writes).toEqual([]);
+  });
   test("a stamp read the device answers with no element fails the plan, after its restart", async () => {
     const d = new PropDev();
     d.stamp = Buffer.alloc(0);

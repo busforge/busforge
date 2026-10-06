@@ -368,10 +368,15 @@ async function main(): Promise<number> {
     console.log(`\n[${r.id}] LSM ${r.lsm} ${at}  base: ${r.baseSource}`);
     if (r.address === null) { console.log(`  NOT COMPARED: ${r.busforgeBytes} Busforge bytes, address unknown`); continue; }
     console.log(`  Busforge ${r.busforgeBytes}B | ETS wrote ${r.etsWrote}B${r.etsFill ? ` + ${r.etsFill}B left at its allocation fill` : ""}${r.etsAllocSize !== null ? ` (ETS allocated ${r.etsAllocSize}B)` : ""} | compared ${r.compared}B | divergent ${r.divergences.length}`);
-    const segId = cfg.absoluteSegments.find((s) => s.address === r.address)?.id ?? (r.address !== null && build.segments.find((b) => b.id === r.id)?.address === null ? cfg.segments.find((s) => s.lsm === r.lsm)?.id : undefined);
+    // A run may start inside its segment (a declared-order application writes a masked segment in runs),
+    // so the segment is the one that contains it, and offsets into it are counted from its start.
+    const runAt = r.address;
+    const absSeg = cfg.absoluteSegments.find((s) => s.address <= runAt && runAt < s.address + s.size);
+    const segId = absSeg?.id ?? (build.segments.find((b) => b.id === r.id)?.address === null ? cfg.segments.find((s) => s.lsm === r.lsm)?.id : undefined);
+    const intoSeg = absSeg ? runAt - absSeg.address : 0;
     for (const v of r.divergences.slice(0, 40)) {
-      const who = segId ? declaredAt(cfg, segId, v.offset) : [];
-      console.log(`  DIVERGE @${hex(v.address)} (+${v.offset})  busforge=${hexByte(v.busforge)}  ets=${hexByte(v.ets)}${v.etsSource === "fill" ? " (ETS allocation fill)" : ""}${who.length ? `  declared here: ${who.join("; ")}` : ""}`);
+      const who = segId ? declaredAt(cfg, segId, intoSeg + v.offset) : [];
+      console.log(`  DIVERGE @${hex(v.address)} (+${intoSeg + v.offset})  busforge=${hexByte(v.busforge)}  ets=${hexByte(v.ets)}${v.etsSource === "fill" ? " (ETS allocation fill)" : ""}${who.length ? `  declared here: ${who.join("; ")}` : ""}`);
     }
     if (r.divergences.length > 40) console.log(`  ... ${r.divergences.length - 40} more`);
     if (r.busforgeOnly.length) console.log(`  Busforge writes ${r.busforgeOnly.length}B ETS does not (not proven by this capture): offsets ${ranges(r.busforgeOnly)}`);

@@ -464,18 +464,19 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
 });
 
 // An application whose declared load procedure has a step the full download cannot execute
-// (LdCtrlTaskCtrl1 on the M-0081): the full download is refused with the planner's own code, and a
-// device of it that the surgical flash cannot safely start from is pointed at ETS instead of at the
-// download it cannot have. The M-0008 declares LdCtrlTaskCtrl1 too, but runs its writes as ETS was
-// captured running them, so it is offered all three.
+// (LdCtrlTaskCtrl1 on the M-0081_A-FF31-31-D6FF): the full download is refused with the planner's own
+// code, and a device of it that the surgical flash cannot safely start from is pointed at ETS instead
+// of at the download it cannot have. The M-0008 and the M-0081_A-FE01-11-75D9 declare LdCtrlTaskCtrl1
+// too, but run their writes as ETS was captured running them, so they are offered all three.
 corpusDescribe("an application whose load procedure the full download cannot run", () => {
-  const TABLE_CHANGING_M0081 = "M-0081_A-FE01-11-75D9_P-4_R-4"; // 1 activates com-object 8
+  const ff31Project = (state: AppState) => projectWithApp(state, catalogueXml("M-0081_A-FF31-31-D6FF.xml.gz"));
+  const TABLE_CHANGING_FF31 = "M-0081_A-FF31-31-D6FF_P-242_R-242"; // 1 changes the active com-objects
   const never = (state: AppState, projectId: string, deviceId: string) =>
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
 
   test("the download route refuses with the planner's code and never reaches the download", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
+    const { projectId, deviceId } = await ff31Project(state);
     downloadImpl = async () => { throw new Error("the full download must not be reached"); };
     try {
       for (const route of ["download", "download?dry=1"]) {
@@ -488,7 +489,7 @@ corpusDescribe("an application whose load procedure the full download cannot run
 
   test("a never-programmed device is refused on the parameter and the group-address flash, naming ETS", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
+    const { projectId, deviceId } = await ff31Project(state);
     never(state, projectId, deviceId);
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
     gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
@@ -503,8 +504,8 @@ corpusDescribe("an application whose load procedure the full download cannot run
 
   test("a change that rewrites the com-object table names ETS, not the download", async () => {
     const state = freshState();
-    const { projectId, deviceId } = await m0081Project(state);
-    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_M0081, "1");
+    const { projectId, deviceId } = await ff31Project(state);
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_FF31, "1");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
     gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
     try {
@@ -533,6 +534,21 @@ corpusDescribe("an application whose load procedure the full download cannot run
       }
       expect(reached).toEqual(["flash", "flash-ga"]);
     } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+
+  test("M-0081_A-FE01-11-75D9 runs its declared steps as ETS was captured: all three writes offered, the download reached", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await m0081Project(state);
+    const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
+    expect(view.capabilities).toMatchObject({ flashParams: true, flashLinks: true, fullDownload: true });
+    expect(view.refusals ?? {}).toEqual({});
+    const reached: string[] = [];
+    downloadImpl = async (o) => { reached.push("download"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" }; };
+    try {
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download?dry=1`))!;
+      expect(res.status).toBe(200);
+      expect(reached).toEqual(["download"]);
+    } finally { downloadImpl = realDownload; }
   });
 });
 

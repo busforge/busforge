@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, parseLoadProcedures, buildGroupTablesMv0705, System7Profile, ETS_CAPTURED_SYSTEM7_APPS, fullDownloadImageDigest, type AppConfig, type ComObjectLink } from "../src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildGroupTablesMv0705, System7Profile, ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS, absoluteFullStepRefusal, fullDownloadImageDigest, planDeclaredOrderSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -40,6 +40,7 @@ class GiraDevice {
     if (pid !== 5) throw new Error(`unexpected property write ${obj}/${pid}`);
     if (data[0] === 3 && data[1] === 0) { this.tableRef.set(obj, data.readUInt16BE(2)); this.ops.push(`absSegment:${obj}@${data.readUInt16BE(2)}+${data.readUInt16BE(4)}`); }
     else if (data[0] === 3 && data[1] === 2) this.ops.push(`taskSegment:${obj}@${data.readUInt16BE(2)}`);
+    else if (data[0] === 3 && data[1] === 4) this.ops.push(`taskCtrl1:${obj}=${data.subarray(2).toString("hex")}`);
     else {
       const ev = ({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[data[0]];
       this.state.set(obj, data[0] === 1 ? STATE.LOADING : data[0] === 2 ? STATE.LOADED : STATE.UNLOADED);
@@ -100,6 +101,14 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(dev.ops).toEqual([]);
   });
 
+  test("a unit whose address table is not loaded is refused, untouched, though it holds the application", async () => {
+    const dev = new GiraDevice(cfg);
+    dev.state.set(1, STATE.UNLOADED);
+    expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects }).catch((e: unknown) => e))
+      .toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
+    expect(dev.ops).toEqual([]);
+  });
+
   // A broken-off application bracket leaves LSM 3 LOADING with this program id: no capture shows what
   // ETS sends to such a unit, so it is refused too, and ETS restores it.
   test("a unit whose application is LOADING, with this program id, is refused as well", async () => {
@@ -144,23 +153,40 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   }, 20_000);
 });
 
-// Everything outside ETS_CAPTURED_SYSTEM7_APPS keeps the System 7 download it had before the captured
-// applications: segment and task declarations to the memory control 0x0104 (no `viaProperty`), and the
-// associations by object then group index. The MDT BE-02001.02 full download is hardware-proven so.
+// Everything outside ETS_CAPTURED_SYSTEM7_APPS and ETS_DECLARED_ORDER_SYSTEM7_APPS keeps the System 7
+// download it had before the captured applications: segment and task declarations to the memory control
+// 0x0104 (no `viaProperty`), no LdCtrlTaskCtrl1, every written segment whole from its start (no <Mask>
+// read), and the associations by object then group index. The MDT BE-02001.02 full download is
+// hardware-proven so.
 corpusDescribe("System 7 applications ETS is not captured on keep their download", () => {
   const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
-  test("no declaration in their full-download plans is a property write", () => {
+  const captured = (id: string) => ETS_CAPTURED_SYSTEM7_APPS.includes(id) || ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(id);
+  test("no declaration in their full-download plans is a property write, none is a TaskCtrl1, every segment is written whole", () => {
     let planned = 0;
     for (const f of listCatalogue()) {
       const xml = catalogueXml(f);
       const cfg = parseAppConfig(xml);
-      if (!(classify(cfg) instanceof System7Profile) || ETS_CAPTURED_SYSTEM7_APPS.includes(cfg.id)) continue;
+      if (!(classify(cfg) instanceof System7Profile) || captured(cfg.id)) continue;
       let plan;
       try { plan = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml) }).plan; } catch { continue; }
       planned++;
       expect(plan.filter((s) => (s.op === "absSegment" || s.op === "taskSegment") && "viaProperty" in s)).toEqual([]);
+      expect(plan.filter((s) => s.op === "taskCtrl1")).toEqual([]);
+      const starts = new Set(cfg.absoluteSegments.map((s) => s.address));
+      expect(plan.flatMap((s) => (s.op === "writeMem" && !starts.has(s.address) ? [s.address] : []))).toEqual([]);
     }
     expect(planned).toBeGreaterThanOrEqual(2); // the MDT BE-02001.02 and the ABB US/U 4.2 at least
+  });
+  test("an LdCtrlTaskCtrl1 is refused on every application outside the declared-order registry, in any form", () => {
+    let seen = 0;
+    for (const f of listCatalogue()) {
+      const xml = catalogueXml(f);
+      const proc = parseLoadProcedures(xml);
+      if (captured(proc.app ?? "") || !proc.verbs.includes("LdCtrlTaskCtrl1")) continue;
+      seen++;
+      expect(absoluteFullStepRefusal(proc)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
+    }
+    expect(seen).toBeGreaterThanOrEqual(4); // M-0048_A-107E, M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079
   });
   test("their associations are ordered by object, then group index", () => {
     const { assoc } = buildGroupTablesMv0705(multi, 0x11fa);
@@ -177,5 +203,160 @@ corpusDescribe("the way back for a captured application's unit without its appli
     expect(gira.fullDownloadLoadsApplication()).toBe(false);
     const mdt = classify(parseAppConfig(catalogueXml("M-0083_A-00B6-32-9642.xml.gz")));
     expect(mdt.fullDownloadLoadsApplication()).toBe(true);
+  });
+});
+
+// The Auro presence detector (M-0081_A-FE01-11-75D9), whose full download ETS runs in its declared order
+// (loadproc.ts ETS_DECLARED_ORDER_SYSTEM7_APPS), run against the same emulation.
+corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against an emulated device", () => {
+  const xml = catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const IA = "1.2.18";
+  const base = { deviceId: "d", ia: IA, appXml: xml, params: new Map<string, string>(), dryRun: false, persistBackups: () => "backup" };
+  // Object 0 is the one the defaults activate.
+  const links: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807] }];
+  const auro = () => {
+    const dev = new GiraDevice(cfg);
+    dev.programId = Buffer.from("0081fe0111", "hex");
+    dev.tableRef = new Map([[1, 0x4000], [2, 0x402f], [3, 0x405c]]);
+    return dev;
+  };
+
+  test("full download: the declared steps in their declared order, the own address left to the device, verified after the restart", async () => {
+    const dev = auro();
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
+      "unload:1", "unload:2", "unload:3",
+      "load:1", "absSegment:1@16384+47", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:2", "absSegment:2@16431+45", "write", "taskSegment:2@16431", "loadCompleted:2",
+      "load:3", "absSegment:3@1792+250", "absSegment:3@16476+91", "write", "absSegment:3@16896+256", "write",
+      "taskSegment:3@16567", "taskCtrl1:3=0000000000000000", "loadCompleted:3", "restart",
+    ]);
+    expect((await dev.memRead(0x4000, 7)).toString("hex")).toBe("031212050a1807");
+    expect((await dev.memRead(0x402f, 5)).toString("hex")).toBe("0201000200");
+  }, 20_000);
+
+  test("a unit whose address table is not loaded is refused, untouched, though it holds the application", async () => {
+    const dev = auro();
+    dev.state.set(1, STATE.UNLOADED);
+    expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links }).catch((e: unknown) => e))
+      .toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
+    expect(dev.ops).toEqual([]);
+  });
+
+  test("the dry run reports the digest of the image the offline plan builds", async () => {
+    const dev = auro();
+    const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links, dryRun: true });
+    const offline = classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links, proc });
+    expect(r).toMatchObject({ kind: "dryRun", imageDigest: fullDownloadImageDigest(offline.segments) });
+    expect(dev.ops).toEqual([]);
+  });
+
+  test("group-address flash: the tables unloaded and declared again, the own address left alone, the com-object table whole, verified", async () => {
+    const dev = auro();
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    dev.ops = [];
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
+      "unload:1", "unload:2",
+      "load:1", "absSegment:1@16384+47", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:2", "absSegment:2@16431+45", "write", "taskSegment:2@16431", "loadCompleted:2",
+      "load:3", "write", "loadCompleted:3", "restart",
+    ]);
+    expect((await dev.memRead(0x4000, 9)).toString("hex")).toBe("041212050a18077ffa");
+    expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
+  }, 20_000);
+
+  // The own individual address in the address table is the device's: it is neither written nor counted.
+  test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
+    const dev = auro();
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
+    dev.ops = [];
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "unchanged" });
+    expect(dev.ops).toEqual([]);
+  }, 20_000);
+
+  test("group-address flash: the change counted is the bytes of the planned runs that differ from the device", async () => {
+    const dev = auro();
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map(), dryRun: true });
+    // What changes: the address table's count and 7f fa after the two linked addresses, the association table's
+    // count and (03,00); everything else the plan writes equals the unit, and the own address 11 05
+    // (the project's is 12 12) is not counted.
+    const want: [number, number][] = [[0x4000, 0x04], [0x4007, 0x7f], [0x4008, 0xfa], [0x402f, 0x03], [0x4034, 0x03], [0x4035, 0x00]];
+    const differing = want.filter(([a, b]) => (dev.mem.get(a) ?? 0) !== b).length;
+    expect(differing).toBeGreaterThanOrEqual(2);
+    expect(r).toMatchObject({ kind: "dryRun", diffBytes: differing });
+  }, 20_000);
+
+  test("group-address flash: a table reference the device does not hold at the declared address after the restart is not verified", async () => {
+    const dev = auro();
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    dev.restart = async () => { dev.ops.push("restart"); dev.tableRef.set(2, 0x4030); };
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "flashed", verified: false });
+    expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
+  }, 20_000);
+
+  test("parameter flash: one bracket on the application, the changed byte, the restart", async () => {
+    const dev = auro();
+    const led = "M-0081_A-FE01-11-75D9_P-10_R-10";
+    expect(cfg.params.has("M-0081_A-FE01-11-75D9_P-10")).toBe(true);
+    const r = await classify(cfg).flashParameters(asDev(dev), cfg.mask, { ...base, params: new Map([[led, "0"]]), baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
+    expect(dev.mem.get(0x4207)).toBe(0);
+  }, 20_000);
+
+  // Only LdCtrlTaskCtrl1 LsmIdx 3 Address 0 Count 0 is captured; any other form of it is refused, by the
+  // offer and by the planner.
+  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "1", Count: "0" }, { LsmIdx: "3", Address: "0", Count: "2" }, { LsmIdx: "2", Address: "0", Count: "0" }, { LsmIdx: "3" }];
+  for (const attrs of forms) {
+    test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
+      const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
+      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("only LsmIdx 3 with Address 0 and Count 0") });
+      expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links, proc: changed })).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
+    });
+  }
+  test("the captured form is not refused", () => {
+    expect(absoluteFullStepRefusal(proc)).toBeNull();
+  });
+
+  // Of a segment with a <Mask>, the declared-order downloads write the bytes the mask marks and the bytes a
+  // parameter covers. A mask that does not say that byte by byte, or a parameter whose width is not
+  // known, is refused rather than guessed at.
+  describe("a masked segment whose written bytes cannot be told is refused", () => {
+    const ADDR = "M-0081_A-FE01-11-75D9_AS-4000";
+    const tables = { addr: Buffer.from("031212050a1807", "hex"), assoc: Buffer.from("0201000200", "hex") };
+    const withMask = (mask: (m: Buffer) => Buffer): AppConfig => ({ ...cfg, absoluteSegments: cfg.absoluteSegments.map((s) => (s.id === ADDR ? { ...s, mask: mask(s.mask!) } : s)) });
+    const plan = (app: AppConfig) => () => planDeclaredOrderSystem7GaFlash(app, proc, tables, null);
+    test("the unmodified address table segment plans", () => {
+      expect(cfg.absoluteSegments.find((s) => s.id === ADDR)?.mask?.length).toBe(47);
+      expect(plan(cfg)).not.toThrow();
+    });
+    test("a mask shorter than its segment", () => {
+      expect(plan(withMask((m) => m.subarray(0, m.length - 1)))).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("<Mask> of 46 bytes for 47") }));
+    });
+    test("a mask byte that marks single bits", () => {
+      expect(plan(withMask((m) => { const b = Buffer.from(m); b[5] = 0x0f; return b; }))).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("marks single bits") }));
+    });
+    test("a parameter in the segment whose type has no known width", () => {
+      const some = [...cfg.params.values()].find((p) => p.offset !== undefined)!;
+      const odd = { ...some, id: "M-0081_A-FE01-11-75D9_P-99999", codeSegment: ADDR, offset: 20, typeId: "M-0081_A-FE01-11-75D9_PT-NoSuchType" };
+      const app: AppConfig = { ...cfg, params: new Map([...cfg.params, [odd.id, odd]]) };
+      expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("no known width") }));
+    });
   });
 });

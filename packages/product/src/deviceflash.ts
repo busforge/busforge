@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
-import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
+import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -428,7 +428,15 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures): StepRefusal 
     return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `the application declares no full-download steps (load procedure style ${procedure.style}); refusing to commission it from a recipe Busforge would have to invent` };
   }
   if (etsCapturedSystem7(procedure)) return capturedStepRefusal(steps);
+  const declaredOrder = etsDeclaredOrderSystem7(procedure);
   for (const s of steps) {
+    if (s.verb === "LdCtrlTaskCtrl1" && declaredOrder) {
+      const a = s.attrs;
+      if (a.LsmIdx !== "3" || a.Address !== "0" || a.Count !== "0") {
+        return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlTaskCtrl1 LsmIdx ${a.LsmIdx} Address ${a.Address} Count ${a.Count}; the ETS capture of this application shows only LsmIdx 3 with Address 0 and Count 0, refusing to guess what another form sends` };
+      }
+      continue;
+    }
     const needs = ABS_FULL_STEP_ATTRS[s.verb];
     if (!needs) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe` };
     const missing = needs.find((a) => s.attrs[a] === undefined);
@@ -528,6 +536,60 @@ export function planCapturedSystem7GaFlash(app: AppConfig, procedure: LoadProced
   const t = planCapturedTableBrackets(app, procedure, tables);
   const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, { op: "writeMem", address: comObj.address, bytes: comObj.bytes }, { op: "loadCompleted", lsm: APP_LSM }] : [];
   return { ...t, plan: [...t.steps, ...app3, ...capturedClose(procedure, requireReboot)] };
+}
+
+// A declared-order application's group-address flash, as ETS's partial download after a link change
+// writes it (auro-m0081-ets-partial-links.log, and the tables of auro-m0081-ets-partial-revert.log):
+// the address and association tables unloaded, then each in its declared bracket (load, the declared
+// segment as a PID 5 write, the table's bytes as the full download writes them, the declared task
+// segment, completion); the com-object table written whole in the application's load bracket, without
+// unloading or declaring it; the restart. Each table is written to its built length only, so a table
+// that shrinks leaves its old bytes behind it, as ETS's does. `segments`: what is written, for the
+// read-back. `tableRefs`: the address each table's load-state machine is declared at, which the device
+// reports as its table reference (PID 7) once the declaration took.
+export function planDeclaredOrderSystem7GaFlash(
+  app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer },
+  comObj: { address: number; bytes: Buffer } | null, requireReboot = true,
+): { plan: LoadPlan; segments: { address: number; image: Buffer }[]; tableRefs: { lsm: number; address: number; runs: { address: number; image: Buffer }[] }[] } {
+  if (!etsDeclaredOrderSystem7(procedure)) throw new ProductError("LOAD_STEP_UNSUPPORTED", "the declared-order group-address flash is captured for the applications of ETS_DECLARED_ORDER_SYSTEM7_APPS only");
+  const steps = flattenSteps(procedure, "full");
+  const manufacturer = appManufacturerNumber(app);
+  const segments: { address: number; image: Buffer }[] = [];
+  const tableRefs: { lsm: number; address: number; runs: { address: number; image: Buffer }[] }[] = [];
+  const bracket = (lsm: number, table: Buffer, segId: string | undefined, which: string): LoadStep[] => {
+    const ds = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map(absDecl);
+    const ts = steps.filter((s) => s.verb === "LdCtrlTaskSegment" && lsmIdx(s) === lsm).map(stepAddress);
+    const d = ds[0];
+    if (ds.length !== 1 || !d || ts.length !== 1 || ts[0] === undefined) {
+      throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `the load procedure declares ${ds.length} segment(s) and ${ts.length} task segment(s) for load-state machine ${lsm}, where the ETS capture shows one of each for the ${which} table; refusing to place it`);
+    }
+    const seg = app.absoluteSegments.find((s) => s.id === segId);
+    if (!seg || seg.address !== d.address) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the ${which} table's segment is not the one load-state machine ${lsm} declares at ${d.address}; refusing to write it blind`);
+    if (table.length > d.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the ${which} table needs ${table.length} B but its segment reserves only ${d.size} B; remove links or assign fewer group addresses`);
+    const runs = declaredOrderRuns(app, seg, { image: table, verify: new Array<boolean>(table.length).fill(true) });
+    const written = runs.map((r) => ({ address: r.address, image: r.image }));
+    segments.push(...written);
+    tableRefs.push({ lsm, address: d.address, runs: written });
+    return [
+      { op: "load", lsm },
+      { op: "absSegment", lsm, segType: d.segType, address: d.address, size: d.size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
+      ...runs.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })),
+      { op: "taskSegment", lsm, address: ts[0], peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
+      { op: "loadCompleted", lsm },
+    ];
+  };
+  const [D, A] = TABLE_LSMS;
+  const plan: LoadPlan = [
+    { op: "unload", lsm: D }, { op: "unload", lsm: A },
+    ...bracket(D, tables.addr, app.groupTables.addressSegment, "address"),
+    ...bracket(A, tables.assoc, app.groupTables.associationSegment, "association"),
+  ];
+  if (comObj) {
+    plan.push({ op: "load", lsm: APP_LSM }, { op: "writeMem", address: comObj.address, bytes: comObj.bytes }, { op: "loadCompleted", lsm: APP_LSM });
+    segments.push({ address: comObj.address, image: comObj.bytes });
+  }
+  plan.push({ op: "restart", requireReboot });
+  return { plan, segments, tableRefs };
 }
 
 export function planAbsoluteFullDownload(
@@ -643,14 +705,28 @@ export function planAbsoluteFullDownload(
     if (v === undefined) throw new ProductError("FULL_DOWNLOAD_STEP_MALFORMED", `${verb} is missing its ${what}; refusing to build a partial download`);
     return v;
   };
+  // An application ETS is captured downloading in its declared order (etsDeclaredOrderSystem7): its
+  // declarations are PID 5 writes, and of each segment only the bytes ETS writes are written.
+  const declaredOrder = etsDeclaredOrderSystem7(procedure);
+  const via = declaredOrder ? { viaProperty: true as const } : {};
   for (const s of flattenSteps(procedure, "full")) {
     switch (s.verb) {
       case "LdCtrlUnload": plan.push({ op: "unload", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlLoad": plan.push({ op: "load", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlAbsSegment": {
         const l = need(lsmIdx(s), s.verb, "LsmIdx"), a = need(stepAddress(s), s.verb, "Address"), sz = need(stepSize(s), s.verb, "Size");
-        plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s) });
+        plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s), ...via });
         const built = imageFor(a, sz);
+        if (built && declaredOrder) {
+          const seg = segByAddr.get(a);
+          if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${a} the application does not define; refusing to write an image we cannot build`);
+          for (const run of declaredOrderRuns(app, seg, built, opts.moduleInstances)) {
+            plan.push({ op: "writeMem", address: run.address, bytes: run.image });
+            segments.push({ id: seg.id, lsm: l, source: built.source, ...run });
+            imageBytes += run.image.length;
+          }
+          break;
+        }
         // A null image means the segment is declared but the device fills it itself: no memory write,
         // nothing to read back (so it is not added to `segments`).
         if (built) {
@@ -662,7 +738,14 @@ export function planAbsoluteFullDownload(
         break;
       }
       case "LdCtrlTaskSegment":
-        plan.push({ op: "taskSegment", lsm: need(lsmIdx(s), s.verb, "LsmIdx"), address: need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion });
+        plan.push({ op: "taskSegment", lsm: need(lsmIdx(s), s.verb, "LsmIdx"), address: need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...via });
+        break;
+      // Only the all-zero form, and only where absoluteFullStepRefusal has let it through.
+      case "LdCtrlTaskCtrl1":
+        if (!declaredOrder || s.attrs.LsmIdx !== "3" || s.attrs.Address !== "0" || s.attrs.Count !== "0") {
+          throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}, which no ETS capture of this application shows; refusing to run a partial recipe`);
+        }
+        plan.push({ op: "taskCtrl1", lsm: need(lsmIdx(s), s.verb, "LsmIdx") });
         break;
       case "LdCtrlLoadCompleted": plan.push({ op: "loadCompleted", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlRestart": plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true }); break;
@@ -673,6 +756,32 @@ export function planAbsoluteFullDownload(
     }
   }
   return { plan, segments, imageBytes };
+}
+
+// The runs of a segment a declared-order application's full download writes, as ETS writes them
+// (loadproc.ts ETS_DECLARED_ORDER_SYSTEM7_APPS): a segment without a <Mask> whole, as built; one with a
+// <Mask>, within its built length, the bytes the mask marks and every byte a parameter's memory covers
+// (Auro presence detector: the address table's own individual address, outside its mask, is left to the
+// device; the parameter at offset 49 of AS-4200, outside its mask, is written). Each run is read back
+// where a parameter's verify mask asks for it, and wholly where no parameter covers the byte.
+function declaredOrderRuns(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFullSegment, "image" | "verify">, moduleInstances?: ModuleInstance[]): Pick<AbsFullSegment, "address" | "image" | "verify">[] {
+  const { image } = built;
+  if (!seg.mask) return [{ address: seg.address, image, verify: built.verify }];
+  const mask = seg.mask;
+  if (mask.length !== seg.size || mask.some((b) => b !== 0 && b !== 0xff)) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${seg.size}, or one that marks single bits; the ETS capture shows whole-byte masks over the whole segment only, refusing to guess which bytes it writes`);
+  }
+  const params = parameterMemoryBytes(app, seg.id, seg.size, { moduleInstances });
+  if (!params) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter in segment ${seg.id} has a type of no known width, so the bytes the download writes there cannot be told; refusing to guess`);
+  const runs: Pick<AbsFullSegment, "address" | "image" | "verify">[] = [];
+  for (let i = 0; i < image.length;) {
+    if (mask[i] === 0 && !params[i]) { i++; continue; }
+    const start = i;
+    while (i < image.length && (mask[i] !== 0 || params[i])) i++;
+    const verify = Array.from({ length: i - start }, (_, k) => (params[start + k] ? built.verify[start + k] : true));
+    runs.push({ address: seg.address + start, image: Buffer.from(image.subarray(start, i)), verify });
+  }
+  return runs;
 }
 
 // A digest of a full download's image: every segment's address (0xFFFFFFFF where the device assigns

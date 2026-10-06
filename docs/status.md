@@ -44,8 +44,8 @@ All hardware verification to date is on **twisted pair**.
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical, owned bytes only) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. |
-| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer hardware-proven to need it also holds the application object in its own load bracket; System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see known unproven). On the Gira M-0008 it re-declares the tables and reads the declared stamps, as ETS does (notes below). |
-| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. Not on every System 7 application: a procedure declaring `LdCtrlTaskCtrl1` is refused and not offered, except the Gira M-0008, which runs as ETS was captured running it, onto a unit already holding its application only, so not as first-time commissioning (device notes below). |
+| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer hardware-proven to need it also holds the application object in its own load bracket; System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see known unproven). On the Gira M-0008 it re-declares the tables and reads the declared stamps, as ETS does; on the Auro M-0081_A-FE01 it unloads and re-declares them, as ETS does (notes below; on the house unit 1.1.x). |
+| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. Not on every System 7 application: a procedure declaring `LdCtrlTaskCtrl1` is refused and not offered, except the Gira M-0008 and the Auro M-0081_A-FE01, which run as ETS was captured running them, onto a unit already holding their application only, so not as first-time commissioning (device notes below; each run on one house unit, where every planned byte already equalled the unit: the sequence was accepted and the unit stayed loaded and answering, but neither run shows changed bytes transferred by a full download). |
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. |
 | Structural change (a parameter that changes the set of com-objects) | yes (Jung 400021SE, MDT BE-02001.02) | hardware | Written as a structural flash: parameters, the com-object table authored for the new configuration and links, and the group tables, in one load bracket on System B (one per load-state machine on System 7), as ETS's partial download writes such a change ([load-procedures.md](load-procedures.md#structural-flash), [findings.md](findings.md) §28: every byte ETS wrote matches Busforge's image, 42 on the Jung, 222 on the MDT). Claimed only for the application programs proven on the bench (`STRUCTURAL_FLASH`: these two); every other device still gets the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` without a full-download path); on the System 7 applications whose full download is refused (`LdCtrlTaskCtrl1`, notes below) such a change is refused with `COM_OBJECT_TABLE_STALE_USE_ETS` ([owned-products.md](owned-products.md)). Jung 400021SE (Data Secure, 2026-10-01, smoke spec `jung-400021se-secure`, api channel, run from the bench host next to the bridge): K2 switched to "Dimmen und Farbtemperatur" and back, each a structural flash verified after the restart, read back without drift; the same run passed every other capability, both behaviours and persistence. MDT BE-02001.02 (2026-10-01, smoke spec `mdt-be02001`, api channel, from the bench host): input B switched to the two-object short/long function and back (2→3→2 objects), each a structural flash verified after the restart, read back without drift; the same run passed every other capability, its behaviour and persistence. Both runs were on the build before the last review fixes, which narrowed the claim to these two programs and the restored bytes to verifiable parameters; the profile tests pass for both after them. On the committed build (`e17ccc3`) both specs then passed in the UI channel as well (2026-10-01, from the bench host): the structural change written through the flash dialog, which previewed it on the configuration and the group addresses and wrote it once, each direction verified, no drift; the full download through the dialog's full-download action; click-through, behaviours and persistence passed in the same runs. |
@@ -93,7 +93,7 @@ value.
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
-| Auro presence detector (M-0081) | MV-0705 | absolute | hardware | hardware | hardware, re-point and revert | refused (`LdCtrlTaskCtrl1`, see below) | hardware: an independent bus read confirmed the device on the newly linked group address |
+| Auro presence detector (M-0081) | MV-0705 | absolute | hardware | hardware, on the house unit 1.1.x through the logging proxy, bracket and changed byte equal to ETS's partial download of `M-0081_A-FE01`, the unit's segment stamp equal to the one after ETS's download (see below) | hardware, add and remove on 1.1.x with the declared-order plan (tables unloaded and re-declared, as ETS's partial download), wire and stamps equal to ETS's (see below) | hardware, `M-0081_A-FE01` onto the house unit 1.1.x holding the application, declared order with `LdCtrlTaskCtrl1`; 151 bytes, all equal to the unit as ETS had left it, read after the restart equal to the reference: the sequence was accepted and the unit stayed loaded and answering, but no byte changed, so the transfer of changed bytes is shown by the two flashes, not by the full download (see below) | hardware: the unit answered a group read after the full download, after the parameter flash to LED = 0 and after the GA flash adding an address (on that address too); after the GA revert the removed address no longer answered and 5/3/9 did; no group read after the parameter flash back to LED = 1 |
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | plans as ETS was captured; on hardware only before the stamp reads (see below) | plans as ETS was captured, not proven | hardware, onto the house unit holding the application; 824 of 912 bytes equal to what ETS had written, the other 88 (no ETS capture writes them) equal to the unit's (see below) | hardware: the unit answers a group read on object 64 after the download |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
@@ -210,12 +210,50 @@ Notes attached to that table:
   ([roadmap.md](roadmap.md)). The parameter and the group-address flash are compared with ETS's
   captures only and have not run on a unit with the stamp reads (the parameter flash was
   hardware-proven before a coverage gate refused it; that run sent no stamp reads). The full download
-  is refused onto a unit that does not hold the application (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`):
-  no capture shows that case. Not a smoke run, so the compatibility matrix does not count it.
-- **Full download on the System 7 applications declaring `LdCtrlTaskCtrl1`** (owned: Auro M-0081,
-  Theben TheLuxa P300, Theben Meteodata 140 S; in the catalogue also Steinel M-008E; not the Gira
-  M-0008, above) is refused before any write: their procedures declare `LdCtrlTaskCtrl1`,
-  which the full download does not execute ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
+  is refused onto a unit that does not hold the application with load-state machines 1, 2 and 3
+  loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): no capture shows that case. Not a smoke run, so the compatibility matrix does not count it.
+- **Auro M-0081_A-FE01**: ETS 6 was captured running its full download, a parameter download, a
+  group-address download (a second address on object 10) and the revert of both on the house unit
+  1.1.x: the declared steps in their declared order, its `LdCtrlTaskCtrl1` (Address 0,
+  Count 0) a PID 5 write of zeros
+  ([load-procedures.md](load-procedures.md#declared-order-system-7-downloads)). Busforge's full
+  download plans the same steps and writes exactly ETS's bytes; its parameter flash runs ETS's
+  bracket and writes the changed byte with ETS's value (ETS writes every parameter byte); its
+  group-address flash runs ETS's sequence: both tables unloaded, declared again as PID 5 writes,
+  written without the own address, the com-object table whole. All three are pinned against the
+  captures in `tools/etsdiff.test.ts` (the parameter values decoded from ETS's image, the house
+  project is not in the corpus).
+  **Hardware (house unit 1.1.x, record):** after ETS's captured downloads, Busforge
+  ran a full download, a parameter flash ("led feedback" 1 to 0 and back) and a group-address flash
+  (15/7/250 added to object 10 and removed again), each `verified`. Before the full download every
+  one of its 151 planned bytes equalled the unit as ETS had left it, and the plan's image digest
+  equals the server's dry run; so the full download shows its sequence (unload, the PID 5
+  declarations, `LdCtrlTaskCtrl1`, `LoadCompleted`, the restart) accepted, with the unit loaded and
+  answering afterwards, but no changed byte: the transfer of changed bytes is shown by the two
+  flashes, not by the full download; the parameter and group-address flash went
+  through the logging proxy, and their wire equals ETS's partial downloads (verify mode, and the
+  unchanged bytes ETS writes too, aside); after the parameter change the unit's own PID 27 stamp of
+  the parameter segment equals the one it showed after ETS's download of the same value, and after
+  the added address the tables and the stamps of objects 1 and 2 equal those after ETS's
+  group-address download. Behaviour: a group read on 5/3/9 (object 10) was answered after the full
+  download, after the parameter flash to LED = 0 and after the added address, where one on 15/7/250
+  was answered too; after the address was removed again, 15/7/250 no longer answered and 5/3/9 did.
+  No group read followed the parameter flash back to LED = 1. The final
+  read equals the reference, stamps included. Persistence is the restart each write ends with; no
+  bus power cycle, and no wire capture of the full download. The earlier group-address plan's run on
+  1.1.x (no unload or declaration) is superseded. A table that shrinks leaves its old bytes behind
+  it, in ETS's downloads and in Busforge's; on this unit `7F FA` and `03 0A`, left by ETS's revert,
+  stay behind the tables, and the stamps cover them; whether to clear them is open
+  ([load-procedures.md](load-procedures.md#tables-shrink-their-old-bytes-stay),
+  [roadmap.md](roadmap.md)). The full download is refused onto a unit that does not hold the
+  application with load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`):
+  no capture shows that case. Not a
+  smoke run, so the compatibility matrix does not count it.
+- **Full download on the System 7 applications declaring `LdCtrlTaskCtrl1`** (owned: Theben TheLuxa
+  P300, Theben Meteodata 140 S; in the catalogue also Steinel M-008E and the second Auro application
+  `M-0081_A-FF31`; not the Gira M-0008 nor the Auro M-0081_A-FE01, above) is refused before any write:
+  their procedures declare `LdCtrlTaskCtrl1`, which the full download executes only in the one form
+  the Auro capture shows ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
   It is not offered either: the device page names the reason, the compatibility matrix shows it
   `refused`. A unit never verified since it was placed or replaced is refused on the surgical flashes
   too, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): no application check precedes them on these
@@ -335,8 +373,8 @@ report a device family as working on the strength of a passing test suite.
   and changes only each object's linked bit; ETS rewrites that bit on a group-address download on
   both LSM styles (MDT and ABB partial-download captures). On a device holding a correct table
   that equals ETS's bytes; on one whose table another tool left wrong, the other bytes stay wrong.
-  The M-0081 (house device 1.1.x) now gets that bit rewritten too, which no capture of that
-  product covers. A freshly linked read-capable object was proven to work on hardware, and so was
+  The M-0081 gets that bit rewritten too; its ETS group-address capture linked an object
+  that was linked already, so no capture of that product shows the bit changing. A freshly linked read-capable object was proven to work on hardware, and so was
   a **transmit-only object** linked by a GA flash alone (MDT BE-02001, see
   [findings.md](findings.md) §7); on the memory-mapped ABB the latter is not shown. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.

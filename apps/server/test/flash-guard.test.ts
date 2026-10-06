@@ -76,3 +76,39 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
     expect((err as Error).message).toBe("BACKUP-READ-REACHED");
   });
 });
+
+// The Auro presence detector's full download runs as ETS ran it (loadproc.ts
+// ETS_DECLARED_ORDER_SYSTEM7_APPS), and only on a unit like the one ETS was captured on: the free key
+// granted level 0, object 3 holding this application, and load-state machines 1, 2 and 3 loaded.
+// Anything else refuses before a single write; the stub fails on any bus call the refusal does not expect.
+corpusDescribe("the M-0081_A-FE01-11-75D9 full download's pre-flight", () => {
+  const xml = fixture("M-0081_A-FE01-11-75D9.xml.gz");
+  const ctx = { ...ctxFor(xml), ia: "1.2.18", links: [] };
+  const PROGRAM_ID = Buffer.from("0081fe0111", "hex");
+  // `state`: the load state of object 3; `others`: those of objects 1 and 2.
+  const unit = (level: number, programId: Buffer, state: number, others: [number, number] = [1, 1]) => dev({
+    authorizeFreeKey: async () => level,
+    propRead: async (obj: number, pid: number) => {
+      if (obj === 3 && pid === 13) return programId;
+      if (obj === 3 && pid === 5) return Buffer.from([state]);
+      if ((obj === 1 || obj === 2) && pid === 5) return Buffer.from([others[obj - 1]]);
+      throw new Error(`unexpected property read ${obj}/${pid}`);
+    },
+  });
+  const run = (d: KnxDevice) => classify(parseAppConfig(xml)).downloadFull(d, "MV-0705", ctx).then(() => null, (e) => e);
+
+  test("a unit that grants the free key another level than 0 is refused with FULL_DOWNLOAD_ACCESS_LEVEL", async () => {
+    expect(await run(unit(3, PROGRAM_ID, 1))).toMatchObject({ code: "FULL_DOWNLOAD_ACCESS_LEVEL" });
+  });
+  test("a unit whose application is not loaded is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED", async () => {
+    expect(await run(unit(0, PROGRAM_ID, 0))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+    expect(await run(unit(0, PROGRAM_ID, 2))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+  });
+  test("a unit whose address or association table is not loaded is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED, naming the machine", async () => {
+    expect(await run(unit(0, PROGRAM_ID, 1, [0, 1]))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
+    expect(await run(unit(0, PROGRAM_ID, 1, [1, 2]))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 2 ") });
+  });
+  test("a unit that holds another application is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED", async () => {
+    expect(await run(unit(0, Buffer.from("0081ff3131", "hex"), 1))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+  });
+});

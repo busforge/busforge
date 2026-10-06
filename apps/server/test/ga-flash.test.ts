@@ -9,8 +9,11 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // com-object table the device was last programmed with (an association onto an object the device's
 // kept-from-device table does not configure is a link to nothing). Params and baseline are both
 // empty in these tests, so that gate is a no-op and they exercise the write path as before.
+// The second Auro application, M-0081_A-FF31: its group-address flash is the generic MV-0705 plan
+// (planMv0705GaFlash). M-0081_A-FE01 runs the declared-order plan ETS was captured running instead
+// (packages/product/test/captured-system7.test.ts, tools/etsdiff.test.ts).
 corpusDescribe("the GA flash against the real M-0081 application", () => {
-  const realCfg = parseAppConfig(catalogueXml("M-0081_A-FE01-11-75D9.xml.gz"));
+  const realCfg = parseAppConfig(catalogueXml("M-0081_A-FF31-31-D6FF.xml.gz"));
   // Same application, with the device's declared table capacity overridden (the capacity cases).
   const withCapacity = (addressMaxEntries: number | undefined, associationMaxEntries: number | undefined): AppConfig =>
     ({ ...realCfg, groupTables: { ...realCfg.groupTables, addressMaxEntries, associationMaxEntries } }) as AppConfig;

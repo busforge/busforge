@@ -7,10 +7,13 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // What each real application program may be offered, written down from the steps its manufacturer
 // declares in <LoadProcedures>, not computed by the code under test:
 //   - LdCtrlTaskCtrl1 in the full-download steps: no Busforge full download executes it, so the full
-//     download is refused (M-0048_A-107E, M-0048_A-140C, M-0081_A-FE01, M-0081_A-FF31, M-008E_A-7079).
+//     download is refused (M-0048_A-107E, M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079).
 //   - M-0008_A-10D7 declares it too, and LdCtrlLoadImageProp on objects 1, 2 and 3; ETS 6 is captured
 //     running all three of its downloads (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS), which send neither the
 //     TaskCtrl1 nor a write for the LoadImageProp, so all three are offered.
+//   - M-0081_A-FE01 declares it as LsmIdx 3 Address 0 Count 0; ETS 6 is captured running its full
+//     download in the declared order, the TaskCtrl1 a PID 5 write of zeros (loadproc.ts
+//     ETS_DECLARED_ORDER_SYSTEM7_APPS), so its full download is offered.
 //   - LdCtrlLoadImageProp PID 27 in a System B fragment: ETS sends nothing for it (Jung capture), so it
 //     refuses nothing.
 //   - LdCtrlWriteProp to a manufacturer property in a System B fragment refuses the parameter flash and
@@ -26,7 +29,7 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0048_A-140C-14-EB70.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
   "M-0048_A-493B-21-B471.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-9071-20-F258-O00EF.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
-  "M-0081_A-FE01-11-75D9.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
+  "M-0081_A-FE01-11-75D9.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0081_A-FF31-31-D6FF.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
   "M-0083_A-00B4-32-3919.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0083_A-00B6-32-9642.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
@@ -73,7 +76,7 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
   }
 
   test("a refused write names the code its planner refuses with", () => {
-    for (const file of ["M-0081_A-FE01-11-75D9.xml.gz", "M-008E_A-7079-10-9C41.xml.gz"]) {
+    for (const file of ["M-0081_A-FF31-31-D6FF.xml.gz", "M-008E_A-7079-10-9C41.xml.gz"]) {
       const xml = catalogueXml(file);
       const cfg = parseAppConfig(xml);
       const refusals = classify(cfg).operationRefusals();
@@ -82,10 +85,11 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
         .toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     }
     expect(classify(parseAppConfig(catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"))).operationRefusals()).toEqual({});
+    expect(classify(parseAppConfig(catalogueXml("M-0081_A-FE01-11-75D9.xml.gz"))).operationRefusals()).toEqual({});
   });
 
   test("the procedure is the reason given where tunnelling entries would refuse the full download too", () => {
-    const xml = catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
+    const xml = catalogueXml("M-0081_A-FF31-31-D6FF.xml.gz");
     const cfg = { ...parseAppConfig(xml), maxTunnelingUserEntries: 2 };
     expect(classify(cfg).operationRefusals().fullDownload?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
     expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml) }))
@@ -159,25 +163,28 @@ corpusDescribe("the System 7 group-address flash holds the declared steps addres
   }
 });
 
-corpusDescribe("the captured M-0008 full download keeps the loaded application, as ETS's does", () => {
-  const xml = catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz");
-  const cfg = parseAppConfig(xml);
-  const download = (dev: MockDevice) => classify(cfg).downloadFull(asDev(dev), cfg.mask, {
-    deviceId: "d", ia: "1.1.250", appXml: xml, params: new Map(), links: [], dryRun: true, persistBackups: () => "backup",
-  });
+// Both captured full downloads ran on a unit holding the application, loaded, and are refused anywhere else.
+for (const [file, programId, otherVersion] of [["M-0008_A-10D7-11-2783-O000A.xml.gz", "000810d711", "000810d710"], ["M-0081_A-FE01-11-75D9.xml.gz", "0081fe0111", "0081fe0110"]] as const) {
+  corpusDescribe(`the captured ${file} full download runs only on a unit holding the application, loaded, as ETS's did`, () => {
+    const xml = catalogueXml(file);
+    const cfg = parseAppConfig(xml);
+    const download = (dev: MockDevice) => classify(cfg).downloadFull(asDev(dev), cfg.mask, {
+      deviceId: "d", ia: "1.1.250", appXml: xml, params: new Map(), links: [], dryRun: true, persistBackups: () => "backup",
+    });
 
-  test("a device that does not hold this application is refused before anything is written", async () => {
-    const dev = new MockDevice(cfg, false);
-    expect(await download(dev).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
-    dev.programId = Buffer.from("000810d710", "hex"); // another version of the application
-    expect(await download(dev).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
-    expect(dev.writes).toBe(0);
-  });
+    test("a device that does not hold this application is refused before anything is written", async () => {
+      const dev = new MockDevice(cfg, false);
+      expect(await download(dev).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+      dev.programId = Buffer.from(otherVersion, "hex"); // another version of the application
+      expect(await download(dev).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+      expect(dev.writes).toBe(0);
+    });
 
-  test("a device that holds it, loaded, gets the download", async () => {
-    const dev = new MockDevice(cfg, false);
-    dev.programId = Buffer.from("000810d711", "hex");
-    expect((await download(dev)).kind).toBe("dryRun");
-    expect(dev.writes).toBe(0);
+    test("a device that holds it, loaded, gets the download", async () => {
+      const dev = new MockDevice(cfg, false);
+      dev.programId = Buffer.from(programId, "hex");
+      expect((await download(dev)).kind).toBe("dryRun");
+      expect(dev.writes).toBe(0);
+    });
   });
-});
+}

@@ -56,8 +56,10 @@ export interface CfgSegment { id: string; lsm: number; size: number; data: Buffe
 // (no allocator), with the default image in <Data>. Kept separate from the
 // LSM-keyed CfgSegment so the proven RelativeSegment image path is untouched; the
 // MV-0705 image build (deviceimage.ts) consumes these. `address` is the literal
-// device address to read/write the segment at.
-export interface CfgAbsSegment { id: string; address: number; size: number; data: Buffer; }
+// device address to read/write the segment at. `mask` is the segment's <Mask>, parallel to <Data>:
+// a byte the application marks as part of its download image (0xFF) or not (0x00), absent where the
+// segment declares none. Only the declared-order System 7 download reads it (deviceflash.ts).
+export interface CfgAbsSegment { id: string; address: number; size: number; data: Buffer; mask?: Buffer; }
 
 // Reserved capacity of the device's group-address and association tables, declared in the app
 // program as <AddressTable MaxEntries> / <AssociationTable MaxEntries> (siblings of <ComObjectRefs>
@@ -473,7 +475,8 @@ function parseAbsoluteSegments(staticKids: ONode[]): CfgAbsSegment[] {
   const out: CfgAbsSegment[] = [];
   for (const s of code ? childrenByTag(kidsOf(code), "AbsoluteSegment") : []) {
     const a = attrsOf(s);
-    out.push({ id: a.Id, address: Number(a.Address), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
+    const mask = attrOrText(s, "Mask");
+    out.push({ id: a.Id, address: Number(a.Address), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64"), ...(mask !== undefined ? { mask: Buffer.from(mask, "base64") } : {}) });
   }
   return out;
 }

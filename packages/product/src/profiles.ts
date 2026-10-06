@@ -7,8 +7,8 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, planCapturedSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsDeclaredOrderSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -1173,9 +1173,11 @@ export class System7Profile extends DeviceProfile {
     //
     // Each write is offered only where its planner can run the procedure the application declares
     // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
-    // M-0081, M-0048, M-008E applications), a parameter or group-address flash with a step addressed
+    // M-0081_A-FF31, M-0048, M-008E applications), a parameter or group-address flash with a step addressed
     // to what it writes that has no disposition. M-0008 declares both and is offered all three: ETS
-    // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7).
+    // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7). The
+    // Auro presence detector M-0081_A-FE01-11-75D9 is offered its full download for the same reason,
+    // its LdCtrlTaskCtrl1 in the one form the capture shows (etsDeclaredOrderSystem7).
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
@@ -1201,10 +1203,10 @@ export class System7Profile extends DeviceProfile {
     return out;
   }
 
-  // A captured application's full download keeps the application the device holds (downloadFull
+  // A captured application's full download runs only on a unit that holds the application (downloadFull
   // refuses FULL_DOWNLOAD_APPLICATION_NOT_LOADED), so a unit left without it goes back to ETS.
   override fullDownloadLoadsApplication(): boolean {
-    return super.fullDownloadLoadsApplication() && !(this.cfg && etsCapturedSystem7(this.cfg.loadProcedures));
+    return super.fullDownloadLoadsApplication() && !(this.cfg && capturedOnLoadedUnit(this.cfg.loadProcedures));
   }
 
   private canAuthor(): boolean {
@@ -1320,9 +1322,9 @@ export class System7Profile extends DeviceProfile {
     // com-object table but the linked bit, so an association onto an object that table does not
     // configure is a link to nothing.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    // buildGroupTablesMv0705 / planMv0705GaFlash, hardware-verified on TP (M-0081):
-    // identity flash byte-matched (write path + LSM bracket + restart), a real re-point applied
-    // and byte-matched, and the revert restored the device exactly.
+    // M-0081_A-FE01 runs planDeclaredOrderSystem7GaFlash below (hardware: house unit,
+    // docs/evidence/runs/auro-m0081-house-downloads.md); the other System 7 applications
+    // outside the captured registries run planMv0705GaFlash.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsCapturedSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
@@ -1365,15 +1367,32 @@ export class System7Profile extends DeviceProfile {
     // A captured application's tables move with the address table's length, so they are re-declared
     // as ETS's partial download does (planCapturedSystem7GaFlash); planned here, so a table that does
     // not fit is refused before anything is written.
+    // A declared-order application's tables are unloaded and declared again as ETS's partial download
+    // does it, and only the bytes the full download writes are written (planDeclaredOrderSystem7GaFlash):
+    // the address table's own individual address is left to the device, so it is not read back either.
+    const declaredOrder = etsDeclaredOrderSystem7(cfg.loadProcedures) ? planDeclaredOrderSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
     const plan = etsCapturedSystem7(cfg.loadProcedures)
       ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3).plan
-      : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
+      : declaredOrder ? declaredOrder.plan : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
+    // On the declared-order path the change is counted over exactly the runs the plan writes, read where
+    // it writes them (the address table's own individual address is neither written nor counted); a
+    // table whose reference the device does not hold at the declared address counts whole, since the
+    // device does not read it from there.
+    let diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0); // 0 iff every table matches
+    if (declaredOrder) {
+      diffBytes = 0;
+      for (const t of declaredOrder.tableRefs) {
+        const placed = (await dev.tableAddr(t.lsm)) === t.address;
+        for (const r of t.runs) diffBytes += placed ? byteDiff(r.image, await dev.memRead(r.address, r.image.length)) : r.image.length;
+      }
+      if (l3 && curL3) diffBytes += byteDiff(l3.bytes, curL3);
+    }
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
       imageBytes: addr.length + assoc.length + (l3?.bytes.length ?? 0),
       ...(gaTablesLoaded ? {} : { loadIncomplete: "refuse" as const }),
-      diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0), // 0 iff every table matches
+      diffBytes,
       backup: prefix,
       backups: [
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
@@ -1386,6 +1405,19 @@ export class System7Profile extends DeviceProfile {
       },
       verify: async () => {
         ctx.onProgress?.("verify");
+        if (declaredOrder) {
+          // The bytes alone do not show the device reads its tables from them: each table's reference
+          // (PID 7) must be the address its load-state machine was declared at.
+          for (const t of declaredOrder.tableRefs) {
+            const { ok } = await verifySettled(() => dev.tableAddr(t.lsm), (at) => at === t.address);
+            if (!ok) return false;
+          }
+          for (const w of declaredOrder.segments) {
+            const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
+            if (!ok) return false;
+          }
+          return true;
+        }
         const { ok } = await verifySettled(
           async () => ({ ...(await readGroupTablesMv0705(dev)), l3: l3 ? await dev.memRead(l3.address, l3.bytes.length) : null }),
           (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && (!l3 || !!back.l3?.equals(l3.bytes)),
@@ -1537,23 +1569,32 @@ export class System7Profile extends DeviceProfile {
           `object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but this application is ${c.expect.toString("hex")}; refusing to commission a different application onto this device`);
       }
     }
-    // A captured application's full download leaves the application's load-state machine as it is and
-    // rewrites its data (etsCapturedSystem7): every ETS capture of it ran on a device that held this
-    // application, loaded, and read its program id first. Loading it into a device that does not is
-    // not captured, so such a device is refused before anything is written.
-    if (etsCapturedSystem7(proc)) {
-      // ETS authorizes with the free key first and is granted level 0 (gira-m0008-ets-fulldownload.log);
-      // a device that grants less was not captured taking this download.
+    // Every ETS capture of a captured application's full download ran on a device that held this
+    // application with load-state machines 1, 2 and 3 all loaded, and read its program id first
+    // (etsCapturedSystem7 leaves the application's load-state machine as it is and rewrites its data;
+    // etsDeclaredOrderSystem7 unloads and reloads it). What ETS sends to any other device is not
+    // captured, so such a device is refused before anything is written.
+    if (capturedOnLoadedUnit(proc)) {
+      // ETS authorizes with the free key first and is granted level 0 (gira-m0008-ets-fulldownload.log,
+      // auro-m0081-ets-fulldownload.log); a device that grants less was not captured taking this download.
       const level = await dev.authorizeFreeKey();
       if (level !== 0) {
         throw new ProductError("FULL_DOWNLOAD_ACCESS_LEVEL", `the device grants access level ${level} to the free key where the ETS capture of this application's download shows level 0; refusing to start a download it may refuse halfway`);
       }
       const want = programIdStamp(cfg);
       const id = await dev.propRead(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
-      const state = await lsmState(dev, OBJ.COMOBJ_TABLE);
-      if (!id.equals(want) || state !== STATE.LOADED) {
+      if (!id.equals(want)) {
         throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
-          `the device holds program id ${id.toString("hex") || "(none)"} in load state ${state} where this application is ${want.toString("hex")}, loaded; Busforge's full download of this application keeps the loaded application, as ETS's does, and loading it into a device that does not hold it is not captured`);
+          `the device holds program id ${id.toString("hex") || "(none)"} where this application is ${want.toString("hex")}; every ETS capture of this application's full download ran on a device holding it, loaded, and what ETS sends to one that does not is not captured`);
+      }
+      // Every capture ran on a unit whose address table, association table and application were all
+      // LOADED; a unit with any of them in another state was not captured taking this download.
+      for (const obj of [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]) {
+        const state = await lsmState(dev, obj, isMemoryMappedLsm(mask));
+        if (state !== STATE.LOADED) {
+          throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
+            `load-state machine ${obj} of the device is in load state ${state}, not loaded; every ETS capture of this application's full download ran on a device whose load-state machines 1, 2 and 3 were all loaded, and what ETS sends to one that is not is not captured`);
+        }
       }
     }
 
@@ -1598,6 +1639,10 @@ export class System7Profile extends DeviceProfile {
     });
   }
 }
+
+// The applications whose full download ETS is captured running only on a unit that holds them, with
+// load-state machines 1, 2 and 3 loaded.
+const capturedOnLoadedUnit = (lp: LoadProcedures): boolean => etsCapturedSystem7(lp) || etsDeclaredOrderSystem7(lp);
 
 // Every recognised-but-not-implemented memory model: System 1 (BCU1), System 2 (BCU2),
 // System 300, couplers, interfaces, IR decoders, media couplers, RF-only, unknown masks.

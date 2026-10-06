@@ -117,14 +117,20 @@ started until the capability it depends on is hardware-proven.
   capability flag offers a full download the planner then refuses. Derive the flags from the same coverage, decide what a never-programmed device of
   these applications gets instead of the download, and refuse the uncovered GA flash
   ([owned-products.md](owned-products.md)).
-- **Execute `LdCtrlTaskCtrl1`**, against an ETS capture of a full download of an Auro M-0081 or the
-  Theben Meteodata 140 S. The Gira M-0008 captures do not show it: ETS does not send the
-  step there ([load-procedures.md](load-procedures.md#ets-captured-system-7-downloads)). All units of
-  these applications are installed in the house.
+- **Execute `LdCtrlTaskCtrl1` beyond the Auro M-0081_A-FE01.** It runs there in the one form its ETS
+  capture shows (Address 0, Count 0;,
+  [load-procedures.md](load-procedures.md#declared-order-system-7-downloads)), run on the house
+  unit 1.1.x with the parameter and group-address flash
+  (record): the full download's sequence,
+  `TaskCtrl1` included, was accepted and the unit stayed loaded and answering, but every byte it
+  planned already equalled the unit, so the transfer of changed bytes is shown by the two flashes,
+  not by the full download. The Theben Meteodata 140 S and TheLuxa P300
+  need their own ETS full-download capture each. The Gira M-0008 captures do not show the step: ETS
+  does not send it there. All units of these applications are installed in the house.
 - **System 7 segment declarations as ETS sends them.** ETS writes `LdCtrlAbsSegment` and
   `LdCtrlTaskSegment` to the load-state machine's PID 5 on the property-mapped MV-0705, on the MDT
   BE-02001.02 too (`captures/mdt-be02001-ets-fulldownload-defaults.log`); Busforge sends them to
-  memory `0x0104` there and does it ETS's way only on the Gira M-0008
+  memory `0x0104` there and does it ETS's way only on the Gira M-0008 and the Auro M-0081_A-FE01
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
   the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
 - **Gira M-0008 bytes ETS never writes.** Its full download writes whole segments, including 80
@@ -132,6 +138,14 @@ started until the capability it depends on is hardware-proven.
   ([load-procedures.md](load-procedures.md#ets-captured-system-7-downloads)). Only the house run
   compares them with a unit first; they equalled the unit's. Decide whether to write
   only the ranges ETS covers or to keep whole segments with that evidence.
+- **Bytes a shrunk group table leaves behind (owner decision).** ETS writes a System 7 group table
+  only as long as it is built, so when a table shrinks its old tail stays in the declared segment
+  behind the count-delimited table, and the PID 27 stamp, which covers the whole segment, keeps it
+  (Auro M-0081 1.1.x and, still to be confirmed from its captures, Gira M-0008 1.1.x; neither an
+  ETS full download nor Busforge's clears them,
+  [load-procedures.md](load-procedures.md#tables-shrink-their-old-bytes-stay)). Busforge writes
+  nothing beyond the tables. Decide whether it should clear such bytes, by writing the rest of the
+  declared segment, or keep ETS's behaviour.
 - **The Gira M-0008 parameter and group-address flash on a unit.** Both follow ETS's captures byte
   for byte where ETS writes; the full download is proven on the house unit 1.1.x, the
   two flashes have not run on one. A GA flash moves the association table, so its run needs the same

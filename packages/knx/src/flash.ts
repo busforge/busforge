@@ -120,6 +120,14 @@ export async function declareTaskSegmentProp(dev: KnxDevice, lsm: number, addres
   await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x02, (address >> 8) & 0xff, address & 0xff, peiType, (manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version]));
 }
 
+// LdCtrlTaskCtrl1 with Address 0 and Count 0 to a property-mapped LSM: AdditionalLoadControls 04 and
+// eight zero bytes on the LSM's PID 5, as ETS sends it to the Auro presence detector
+// (captures/auro-m0081-ets-fulldownload.log, answered LOADING). What a non-zero address or count puts
+// in the remaining bytes is not shown, so this writes the all-zero form only.
+export async function taskCtrl1ZeroProp(dev: KnxDevice, lsm: number) {
+  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0]));
+}
+
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian
 export function appId(manufacturer: number, appNumber: number, version: number): Buffer {
   return Buffer.from([(manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version & 0xff]);

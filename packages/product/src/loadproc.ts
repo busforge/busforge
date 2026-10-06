@@ -288,6 +288,24 @@ export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: strin
 export const ETS_CAPTURED_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A"];
 export const etsCapturedSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_CAPTURED_SYSTEM7_APPS.includes(lp.app);
 
+// ---- System 7 applications ETS 6 is captured downloading in their declared order ----
+// For these, ETS runs the full download's declared steps one by one, in the order the procedure
+// declares them (load-procedures.md, "Declared-order System 7 downloads"). The Auro presence detector
+// (M-0081_A-FE01-11-75D9, house unit), private corpus
+// captures/auro-m0081-ets-fulldownload.log and captures/auro-m0081-ets-partial-params.log, with ETS's
+// own log of each step beside them (auro-m0081-ets6log-*.txt):
+//   - every LdCtrlAbsSegment and LdCtrlTaskSegment is the load-state machine's PID 5 write, and a
+//     segment's memory writes follow its declaration;
+//   - LdCtrlTaskCtrl1 LsmIdx 3 Address 0 Count 0 is the PID 5 write 03 04 and eight zero bytes, which
+//     the device answers LOADING; no other form of it is shown;
+//   - of a segment that declares a <Mask>, ETS writes the bytes the mask marks and the bytes a
+//     parameter's memory covers, of a table only those inside its built length; a segment without a
+//     <Mask> it writes whole, one without <Data> not at all.
+// The full download ran on a device that held this application, loaded; what ETS sends to one that
+// does not is not shown, so that full download is refused (System7Profile.downloadFull).
+export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9"];
+export const etsDeclaredOrderSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(lp.app);
+
 // The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
 // declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next
 // download, which Busforge does not do (it reads the device instead), so they are only required to
