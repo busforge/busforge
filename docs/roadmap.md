@@ -133,11 +133,11 @@ started until the capability it depends on is hardware-proven.
   memory `0x0104` there and does it ETS's way only on the Gira M-0008 and the Auro M-0081_A-FE01
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
   the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
-- **Gira M-0008 bytes ETS never writes.** Its full download writes whole segments, including 80
-  bytes of `AS-444E` and 8 of `AS-41E5` no ETS capture writes, from the `<Data>` templates
-  ([load-procedures.md](load-procedures.md#ets-captured-system-7-downloads)). Only the house run
-  compares them with a unit first; they equalled the unit's. Decide whether to write
-  only the ranges ETS covers or to keep whole segments with that evidence.
+- **Gira M-0008 group-address flash: the bytes ETS's image leaves out.** Resolved for the full
+  download by release-readiness ticket 38 ([load-procedures.md](load-procedures.md#which-bytes-ets-writes)).
+  The group-address flash still writes the address table's own address and the com-object table's
+  8 bytes behind its 91 entries, which ETS's group-address download leaves out; align it when the
+  flash is run on the unit.
 - **Bytes a shrunk group table leaves behind (owner decision).** ETS writes a System 7 group table
   only as long as it is built, so when a table shrinks its old tail stays in the declared segment
   behind the count-delimited table, and the PID 27 stamp, which covers the whole segment, keeps it

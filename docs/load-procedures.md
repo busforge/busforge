@@ -262,21 +262,18 @@ full download run exactly these sequences (`planAbsoluteParFlash`, `planCaptured
 `planAbsoluteFullDownload`), pinned against the captures in `tools/etsdiff.test.ts`. Where Busforge
 departs from ETS, deliberately:
 
-- **It writes whole segments.** ETS reads the stamps before a download and leaves out every byte it
-  believes the device already holds ("Differential Download: removed 785 identical bytes"): its
-  full download writes 37 bytes: the address table without the device's own address, the
-  association table and the 3-byte segment `AS-454E`, which has `SegFlags="0"` and so no stamp that
-  could tell ETS it is unchanged. Busforge keeps no stamps; it writes every table and data segment
-  of the application and reads each back after the restart. That includes bytes no capture shows
-  ETS writing at all, not even in the revert that rewrote the whole parameter image: 80 of the 256
-  bytes of `AS-444E` and the last 8 of the com-object table segment `AS-41E5`, which Busforge
-  writes from the segments' `<Data>` templates. Whether the firmware keeps state of its own there is
-  not known; the read-back proves only that the device holds Busforge's bytes. Before the house
-  unit's download the bytes planned were compared with a read of the unit and all equalled it
- ; the product path itself has no such comparison, and whether to write these bytes is
-  open ([roadmap.md](roadmap.md)). The parameter flash compares against
-  a read of the device instead and writes the bytes that differ, so it leaves out `AS-454E` where
-  ETS writes it with the bytes the device already holds.
+- **It writes ETS's whole image, not ETS's differential cut of it.** ETS reads the stamps before a
+  download and leaves out every byte it believes the device already holds ("Differential Download:
+  removed 785 identical bytes"): its full download writes 37 bytes: the address table without the
+  device's own address, the association table and the 3-byte segment `AS-454E`, which has
+  `SegFlags="0"` and so no stamp that could tell ETS it is unchanged. Busforge keeps no stamps; it
+  writes the 822 bytes of ETS's image, those 37 and the 785 together, and reads each back after the
+  restart. Which bytes the image holds is [below](#which-bytes-ets-writes): the tables to their built
+  length, the own address left out, the com-object table to its 91 entries, and of the data segments
+  only the bytes a parameter covers, because ETS leaves the application loaded. So the 80 bytes of
+  `AS-444E` no parameter covers and the last 8 bytes of `AS-41E5` are written neither by ETS nor by
+  Busforge. The parameter flash compares against a read of the device instead and writes the bytes
+  that differ, so it leaves out `AS-454E` where ETS writes it with the bytes the device already holds.
 - **It declares the table segments as PID 5 writes**, as ETS does; this is the one System 7
   download that does (above).
 - **It authorizes as ETS does.** The full download sends `A_Authorize` with the free key first and
@@ -285,12 +282,12 @@ departs from ETS, deliberately:
 - **It does not switch on verify mode.** ETS reads object 0 PID 14 and writes `04` before its first
   memory write and takes the device's echo of each write; Busforge reads every write back, the
   proof the MV-0705 parameter flash is hardware-proven on.
-- **No wire capture of Busforge's run.** The full download ran on the house unit 1.1.x on
-  verified, every byte equal to the unit's content before and after (824 of them as
-  ETS writes them, the other 88 no ETS capture writes)
-  (record); it did not go through the
-  logging proxy, so the sequence on the wire is pinned by the tests, not by a capture of the run.
-  The parameter and group-address flash have not run on a unit.
+- **The full download ran on the house unit 1.1.x**, first with whole segments
+  (record), then with
+  ETS's 822 bytes through the logging proxy (record).
+  The parameter and group-address flash have not run on a unit. The group-address flash still writes
+  the address table's own address and the com-object table whole, 375 bytes, where ETS's image of its
+  group-address download leaves out those two bytes and the last 8.
 - **The full download needs the application in the device.** Every capture ran on a device holding
   this application, which ETS reads first (object 3 PID 13), with load-state machines 1, 2 and 3
   loaded. What ETS sends to any other device is not shown, so Busforge refuses that full download
@@ -342,23 +339,17 @@ Before the procedure ETS reads the device descriptor and object 0 PIDs 56, 11, 1
 authorizes with the free key (granted level 0). It reads no PID 13 or PID 27 and writes every byte
 of its image: the download is not differential.
 
-**Which bytes are written.** ETS does not write whole segments here. It writes, of a segment that
-declares a `<Mask>` (base64, parallel to `<Data>`, 0xFF for a byte of the image, 0x00 for none), the
-bytes the mask marks and every byte a parameter's memory covers; of a table, only those inside its
-built length; a segment without a `<Mask>` whole; one without `<Data>` not at all. On this
-application that is the address table without the device's own address (bytes 1-2 are outside
-`AS-4000`'s mask), the association table and the com-object table whole (`AS-402F`, `AS-405C`
-declare no mask), and of the 256-byte parameter segment `AS-4200` offsets 0-49: the mask covers
-0-48, the parameter `P-50` at offset 49 lies outside it and is written, and offsets 3 and 36 belong
-to no parameter but are in the mask and are written from `<Data>`. Busforge writes exactly these
-runs, `0x4000`, `0x4003-0x4006`, `0x402F-0x4033`, `0x405C-0x40B6`, `0x4200-0x4231`, one memory write
-per run, and the plan's segments (read-back, image digest) are those runs. Bytes no parameter covers
-are read back whole; parameter bytes as their verify mask says.
-
-The rule is read off this one application. Elsewhere it does not hold in general (the Gira M-0008
-images contradict it), so Busforge reads `<Mask>` for the applications of this registry only, and
-refuses a mask that is not whole bytes over the whole segment, or a parameter there of no known
-width.
+**Which bytes are written.** ETS loads every segment afresh here (LSM 3 unloaded, each
+`LdCtrlAbsSegment` executed), so its image holds of each what the rule [below](#which-bytes-ets-writes)
+gives a freshly loaded segment: the address table without the device's own address (bytes 1-2 are
+outside `AS-4000`'s mask), the association table and the com-object table whole (`AS-402F`,
+`AS-405C` declare no mask; the com-object table's 22 entries fill its 91 bytes), and of the 256-byte
+parameter segment `AS-4200` offsets 0-49: the mask covers 0-48, the parameter `P-50` at offset 49
+lies outside it and is written, and offsets 3 and 36 belong to no parameter but are in the mask and
+are written from `<Data>`. Busforge writes exactly these runs, `0x4000`, `0x4003-0x4006`,
+`0x402F-0x4033`, `0x405C-0x40B6`, `0x4200-0x4231`, one memory write per run, and the plan's segments
+(read-back, image digest) are those runs. Bytes no parameter covers are read back whole; parameter
+bytes as their verify mask says.
 
 **The parameter download.** ETS's partial download after "led feedback" was switched off (`AS-4200`
 offset 7, `01` to `00`) is `Load` 3, verify mode, the writes, `LoadCompleted` 3, `A_Restart`: no
@@ -439,6 +430,67 @@ own PID 27 stamp of the parameter segment equals the one it showed after ETS's p
 with the same value. Each was verified, and the last read equals the reference. A group read on
 5/3/9 was answered after the full download, after the parameter flash to LED = 0 and after the added
 address (15/7/250 too); after its removal 15/7/250 no longer answered and 5/3/9 did. A second pass of all five writes on the committed build 35ae113, with the pre-flight and verify checks of that build, gave the same results and had a group read after LED = 1 too (record, "Second pass on 35ae113"). Persistence is the restart each one ends with; no bus power cycle.
+
+## Which bytes ETS writes
+
+Of a segment ETS does not always write every byte, and not always the same bytes: it depends on how
+it loads the segment. One rule fits the images ETS's own log dumps for the two applications Busforge
+runs as ETS was captured (Gira M-0008: full download twice, parameter, group-address and revert
+download; Auro M-0081_A-FE01: full, parameter, group-address and revert download); what the tests
+compare byte for byte and what by count is listed below. Each log has an
+"Execute image" dump, `--` where the image holds nothing.
+
+| Segment | How ETS loads it | What its image holds |
+| --- | --- | --- |
+| address, association or com-object table | in a full, group-address or revert download (a parameter download's image holds no table byte, though its log executes the com-object table's segment) | the table as long as it is built, and of that the bytes the segment's `<Mask>` marks (all, without a mask) |
+| data segment | afresh: its load-state machine unloaded, `LdCtrlAbsSegment` executed | the bytes the `<Mask>` marks and every byte a parameter's memory covers; the whole segment without a mask |
+| data segment | into an application it leaves loaded: the log turns the `LdCtrlAbsSegment` into `LdCtrlWriteMem` ("Transformed from") | every byte a parameter's memory covers, and no other, whatever the `<Mask>` marks |
+
+"A parameter's memory" means every parameter of the segment, active in the configuration or not,
+union members included: ETS writes the bytes of inactive parameters too. A table's built length on
+MV-0705 is its count byte's entries: for the com-object table 3 + 4 × count.
+
+```
+                 Gira AS-444E (Mask: all 256)          Auro AS-4200 (Mask: 0-48)
+                 176 param. bytes   80 no parameter    48 param. bytes   3, 36: no parameter
+full download    written            --                 written           written  (Auro: loaded afresh)
+parameter dl     written            --                 written           --       (both: app. stays loaded)
+(Gira: every download leaves the application loaded)
+```
+
+How the captures show it:
+
+- **Gira, `AS-444E`.** Its `<Mask>` marks all 256 bytes, yet ETS's image of the revert shows `--` in
+  every row from `0x44B0` to `0x454F`, 80 bytes. They are exactly the bytes no parameter's `<Memory>`
+  covers; the other 176, inactive parameters included, are written. ETS never unloads this
+  application's load-state machine 3, and its log turns all seven LSM 3 segments into
+  `LdCtrlWriteMem`, in the full download as in every partial one.
+- **Gira, the full download's image.** It logs "Differential Download: removed 785 identical bytes"
+  and dumps the 37 it writes: 822 bytes, the same as the revert's image, which no stamp shortened. The
+  parameter download logs "removed 414" and dumps 7: 421, the parameter bytes of the six data
+  segments. The 80 bytes are in no image.
+- **Gira, `AS-41E5`.** The com-object table counts 91 objects (the application declares 0 to 90),
+  3 + 4 × 91 = 367 bytes of its 375-byte segment; every image ends at `0x4353`.
+- **Auro, `AS-4200`.** Its full download unloads load-state machine 3 and executes its
+  `LdCtrlAbsSegment`: the image holds offsets 3 and 36, which no parameter covers and the mask marks.
+  Its parameter download writes the segment as `LdCtrlWriteMem` and shows `--` at exactly those two
+  offsets. The explanation first read off the Auro ("the mask plus the parameter bytes") is the rule's
+  freshly loaded case.
+
+Busforge plans the full download of both applications by this rule (`etsWrittenRuns`,
+`packages/product/src/deviceflash.ts`), and `tools/etsdiff.test.ts` fails if it writes a byte the
+image ETS logged does not hold: for the Gira its 822 bytes equal the revert's image, byte for byte,
+contain the 37 bytes of both full downloads' images and number those 37 plus the 785 removed, and its
+parameter bytes number the parameter download's 7 plus 414 removed (a count: the removed bytes'
+addresses are not logged); for the Auro its 151 equal the full download's image, and the parameter
+download's image is pinned byte for byte. Other
+applications keep their own plans.
+
+Two limits. The rule rests on two applications; in every capture "loaded afresh" and "the
+application stays in the device" coincide with the `LdCtrlAbsSegment` being executed or transformed,
+so which of them ETS keys it on is not shown. And a data segment without a `<Mask>` written into a
+loaded application occurs in no capture, so Busforge refuses that case
+(`FULL_DOWNLOAD_SEGMENT_UNKNOWN`), as it refuses a parameter's memory in a table segment.
 
 ## Tables shrink, their old bytes stay
 

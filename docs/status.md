@@ -95,7 +95,7 @@ value.
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
 | Auro presence detector (M-0081) | MV-0705 | absolute | hardware | hardware, on the house unit 1.1.x through the logging proxy, bracket and changed byte equal to ETS's partial download of `M-0081_A-FE01`, the unit's segment stamp equal to the one after ETS's download (see below) | hardware, add and remove on 1.1.x with the declared-order plan (tables unloaded and re-declared, as ETS's partial download), wire and stamps equal to ETS's (see below) | hardware, `M-0081_A-FE01` onto the house unit 1.1.x holding the application, declared order with `LdCtrlTaskCtrl1`; 151 bytes, all equal to the unit as ETS had left it, read after the restart equal to the reference: the sequence was accepted and the unit stayed loaded and answering, but no byte changed, so the transfer of changed bytes is shown by the two flashes, not by the full download (see below) | hardware: the unit answered a group read after the full download, after the parameter flash to LED = 0 and after the GA flash adding an address (on that address too); after the GA revert the removed address no longer answered and 5/3/9 did (all five writes repeated on 35ae113 with a group read after LED = 1 too) |
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
-| Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | plans as ETS was captured; on hardware only before the stamp reads (see below) | plans as ETS was captured, not proven | hardware, onto the house unit holding the application; 824 of 912 bytes equal to what ETS had written, the other 88 (no ETS capture writes them) equal to the unit's (see below) | hardware: the unit answers a group read on object 64 after the download |
+| Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | plans as ETS was captured; on hardware only before the stamp reads (see below) | plans as ETS was captured, not proven | hardware, onto the house unit holding the application; exactly the 822 bytes of ETS's image, shown on the wire (see below) | hardware: the unit answers a group read on object 64 after the download |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
 | MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | not proven | not proven; planned with its security object where a tool key is on file | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`: its tunnelling entries are not written, see below) | not proven |
 | MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, not implemented | hardware, secure identify and a collector package (descriptor only, memory not read) | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`DEVICE_FAMILY_UNSUPPORTED`) | refused (`FULL_DOWNLOAD_UNSUPPORTED`) | not proven |
@@ -200,14 +200,18 @@ Notes attached to that table:
   object 64's config byte included, whose read flag the house project sets on the unit and Busforge
   imports ([owned-products.md](owned-products.md#the-named-leads)).
   **Full download, hardware (house unit 1.1.x, record):**
-  before the write every one of the 912 planned bytes equalled a read of the unit, which ETS had
-  programmed (reference for the 824 ETS writes; the other 88 equal the unit's content); the download
+  Busforge writes the bytes of ETS's image and no others: the tables to their built length without
+  the own address, the com-object table's 91 entries, and of the application's data segments the
+  bytes a parameter covers, since ETS leaves the application loaded
+  ([load-procedures.md](load-procedures.md#which-bytes-ets-writes)); `tools/etsdiff.test.ts` fails on
+  any byte outside that image. Before the write every one of the 822 planned bytes equalled a read of
+  the unit, which ETS had programmed (reference). The download went through the logging proxy: on the
+  wire it wrote exactly those 822 bytes, value for value the image ETS's log dumps for its revert. It
   ended `flashed`, `verified` (transfer); the read after its restart equals the reference, 191 of 191
-  records; object 64, whose read flag the project sets, answered a group read afterwards (behaviour:
-  the unit still acts; its config byte was written unchanged). No bus power cycle, and no wire capture of Busforge's download
-  (it did not go through the logging proxy). Bytes no ETS capture writes (80 of `AS-444E`, 8 of
-  `AS-41E5`) were written equal to what the unit held; whether to write them is open
-  ([roadmap.md](roadmap.md)). The parameter and the group-address flash are compared with ETS's
+  records (persistence after the download's own restart, no bus power cycle); 1.1.x answered a group
+  read on object 64's address afterwards (behaviour: the unit still acts; no byte changed). The first
+  run (record), wrote whole
+  segments, 90 bytes more (the 80 and 8 above and the own address); the planner no longer builds that image. The parameter and the group-address flash are compared with ETS's
   captures only and have not run on a unit with the stamp reads (the parameter flash was
   hardware-proven before a coverage gate refused it; that run sent no stamp reads). The full download
   is refused onto a unit that does not hold the application with load-state machines 1, 2 and 3

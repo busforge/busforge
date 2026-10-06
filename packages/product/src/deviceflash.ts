@@ -481,8 +481,10 @@ const absDecl = (s: ReturnType<typeof flattenSteps>[number]): AbsDecl | null => 
 // the two declared segments taken as one region, the address table's segment exactly as long as the
 // table and the association table's directly behind it with the rest of the region. Each load-state
 // machine is unloaded first, and its task segment declared at the table's new address.
-export interface CapturedTables { steps: LoadStep[]; addrAt: number; assocAt: number }
-export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }): CapturedTables {
+// `etsRuns`: write of each table only the bytes ETS's full download writes (etsTableRuns); without it
+// the tables are written whole, the address table's own individual address included.
+export interface CapturedTables { steps: LoadStep[]; addrAt: number; assocAt: number; writes: { lsm: number; address: number; image: Buffer }[] }
+export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, opts: { etsRuns?: boolean } = {}): CapturedTables {
   const steps = flattenSteps(procedure, "full");
   const decl = (lsm: number): AbsDecl => {
     const ds = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map(absDecl);
@@ -505,15 +507,20 @@ export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedu
   }
   const addrAt = d1.address, assocAt = d1.address + tables.addr.length;
   const manufacturer = appManufacturerNumber(app);
-  const bracket = (d: AbsDecl, at: number, size: number, bytes: Buffer): LoadStep[] => [
-    { op: "load", lsm: d.lsm },
-    { op: "absSegment", lsm: d.lsm, segType: d.segType, address: at, size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
-    { op: "writeMem", address: at, bytes },
-    { op: "taskSegment", lsm: d.lsm, address: at, peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
-    { op: "loadCompleted", lsm: d.lsm },
-  ];
+  const writes: CapturedTables["writes"] = [];
+  const bracket = (d: AbsDecl, at: number, size: number, bytes: Buffer): LoadStep[] => {
+    const runs = opts.etsRuns ? etsTableRuns(app, at, bytes, d.lsm === OBJ.ADDR_TABLE) : [{ address: at, image: bytes }];
+    writes.push(...runs.map((r) => ({ lsm: d.lsm, ...r })));
+    return [
+      { op: "load", lsm: d.lsm },
+      { op: "absSegment", lsm: d.lsm, segType: d.segType, address: at, size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
+      ...runs.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })),
+      { op: "taskSegment", lsm: d.lsm, address: at, peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
+      { op: "loadCompleted", lsm: d.lsm },
+    ];
+  };
   return {
-    addrAt, assocAt,
+    addrAt, assocAt, writes,
     steps: [
       { op: "unload", lsm: d1.lsm }, { op: "unload", lsm: d2.lsm },
       ...bracket(d1, addrAt, tables.addr.length, tables.addr),
@@ -566,7 +573,7 @@ export function planDeclaredOrderSystem7GaFlash(
     const seg = app.absoluteSegments.find((s) => s.id === segId);
     if (!seg || seg.address !== d.address) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the ${which} table's segment is not the one load-state machine ${lsm} declares at ${d.address}; refusing to write it blind`);
     if (table.length > d.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the ${which} table needs ${table.length} B but its segment reserves only ${d.size} B; remove links or assign fewer group addresses`);
-    const runs = declaredOrderRuns(app, seg, { image: table, verify: new Array<boolean>(table.length).fill(true) });
+    const runs = etsWrittenRuns(app, seg, { image: table, verify: new Array<boolean>(table.length).fill(true) }, "table");
     const written = runs.map((r) => ({ address: r.address, image: r.image }));
     segments.push(...written);
     tableRefs.push({ lsm, address: d.address, runs: written });
@@ -675,15 +682,17 @@ export function planAbsoluteFullDownload(
 
   // A captured application: the tables in ETS's region, then the application's data segments in their
   // declared order inside one load bracket, without unloading or declaring them (a segment without
-  // <Data> is the device's own and is not written, as ETS writes none). Busforge writes every segment
-  // whole where ETS leaves out the bytes it believes the device already holds (its differential
-  // download, from the stamps it read in the previous download): Busforge keeps no such record, and
-  // every byte it writes is read back after the restart.
+  // <Data> is the device's own and is not written, as ETS writes none). Of each, the bytes ETS's image
+  // holds (etsWrittenRuns): the application stays loaded, so of its data segments only the bytes a
+  // parameter covers. ETS then leaves out the bytes it believes the device already holds (its
+  // differential download, from the stamps it read in the previous download); Busforge keeps no such
+  // record and writes the whole image, every byte of it read back after the restart.
   if (etsCapturedSystem7(procedure)) {
-    const t = planCapturedTableBrackets(app, procedure, { addr, assoc });
-    const tableSeg = (id: string | undefined, address: number, image: Buffer, source: "addrTable" | "assocTable", lsm: number): AbsFullSegment =>
-      ({ id: id ?? `@${address}`, address, lsm, source, image, verify: new Array<boolean>(image.length).fill(true) });
-    segments.push(tableSeg(app.groupTables.addressSegment, t.addrAt, addr, "addrTable", OBJ.ADDR_TABLE), tableSeg(app.groupTables.associationSegment, t.assocAt, assoc, "assocTable", OBJ.ASSOC_TABLE));
+    const t = planCapturedTableBrackets(app, procedure, { addr, assoc }, { etsRuns: true });
+    for (const w of t.writes) {
+      const id = (w.lsm === OBJ.ADDR_TABLE ? app.groupTables.addressSegment : app.groupTables.associationSegment) ?? `@${w.address}`;
+      segments.push({ id, address: w.address, lsm: w.lsm, source: w.lsm === OBJ.ADDR_TABLE ? "addrTable" : "assocTable", image: w.image, verify: new Array<boolean>(w.image.length).fill(true) });
+    }
     const appWrites: LoadStep[] = [];
     for (const s of flattenSteps(procedure, "full")) {
       if (s.verb !== "LdCtrlAbsSegment" || lsmIdx(s) !== APP_LSM) continue;
@@ -694,8 +703,14 @@ export function planAbsoluteFullDownload(
       if (seg.data.length === 0) continue;
       const built = imageFor(d.address, d.size);
       if (!built) continue;
-      appWrites.push({ op: "writeMem", address: d.address, bytes: built.image });
-      segments.push({ id: segByAddr.get(d.address)!.id, address: d.address, lsm: APP_LSM, source: built.source, image: built.image, verify: built.verify });
+      if (built.source === "static") throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} is neither the com-object table nor a parameter segment; the ETS captures of this application write no other, refusing to guess its bytes`);
+      const runs = built.source === "comObjTable"
+        ? etsWrittenRuns(app, seg, { ...built, image: builtComObjectTable(built.image) }, "table")
+        : etsWrittenRuns(app, seg, built, "writtenIntoApplication", opts.moduleInstances);
+      for (const run of runs) {
+        appWrites.push({ op: "writeMem", address: run.address, bytes: run.image });
+        segments.push({ id: seg.id, lsm: APP_LSM, source: built.source, ...run });
+      }
     }
     plan.push(...t.steps, { op: "load", lsm: APP_LSM }, ...appWrites, { op: "loadCompleted", lsm: APP_LSM }, ...capturedClose(procedure, opts.requireReboot ?? true));
     return { plan, segments, imageBytes: segments.reduce((n, s) => n + s.image.length, 0) };
@@ -720,7 +735,9 @@ export function planAbsoluteFullDownload(
         if (built && declaredOrder) {
           const seg = segByAddr.get(a);
           if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${a} the application does not define; refusing to write an image we cannot build`);
-          for (const run of declaredOrderRuns(app, seg, built, opts.moduleInstances)) {
+          const table = built.source === "addrTable" || built.source === "assocTable" || built.source === "comObjTable";
+          const etsBuilt = built.source === "comObjTable" ? { ...built, image: builtComObjectTable(built.image) } : built;
+          for (const run of etsWrittenRuns(app, seg, etsBuilt, table ? "table" : "loaded", opts.moduleInstances)) {
             plan.push({ op: "writeMem", address: run.address, bytes: run.image });
             segments.push({ id: seg.id, lsm: l, source: built.source, ...run });
             imageBytes += run.image.length;
@@ -758,30 +775,96 @@ export function planAbsoluteFullDownload(
   return { plan, segments, imageBytes };
 }
 
-// The runs of a segment a declared-order application's full download writes, as ETS writes them
-// (loadproc.ts ETS_DECLARED_ORDER_SYSTEM7_APPS): a segment without a <Mask> whole, as built; one with a
-// <Mask>, within its built length, the bytes the mask marks and every byte a parameter's memory covers
-// (Auro presence detector: the address table's own individual address, outside its mask, is left to the
-// device; the parameter at offset 49 of AS-4200, outside its mask, is written). Each run is read back
-// where a parameter's verify mask asks for it, and wholly where no parameter covers the byte.
-function declaredOrderRuns(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFullSegment, "image" | "verify">, moduleInstances?: ModuleInstance[]): Pick<AbsFullSegment, "address" | "image" | "verify">[] {
+// The bytes of a segment ETS puts in its image, for the applications whose downloads are captured
+// (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS). One rule fits every
+// capture of both (docs/load-procedures.md, "Which bytes ETS writes"):
+//  - "table": an address, association or com-object table, only as long as it is built, and of that
+//    the bytes the segment's <Mask> marks (the address table's own individual address is outside it);
+//  - "loaded": a data segment ETS loads afresh (its load-state machine unloaded, LdCtrlAbsSegment
+//    executed), the bytes the <Mask> marks and every byte a parameter's memory covers, the whole
+//    segment where it declares no <Mask>;
+//  - "writtenIntoApplication": a data segment of an application ETS leaves loaded (its log turns the
+//    LdCtrlAbsSegment into LdCtrlWriteMem), every byte a parameter's memory covers and no other,
+//    whatever the <Mask> marks.
+// Each run is read back where a parameter's verify mask asks for it, and wholly where no parameter
+// covers the byte.
+type EtsSegmentKind = "table" | "loaded" | "writtenIntoApplication";
+type Run = Pick<AbsFullSegment, "address" | "image" | "verify">;
+function etsWrittenRuns(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFullSegment, "image" | "verify">, kind: EtsSegmentKind, moduleInstances?: ModuleInstance[]): Run[] {
   const { image } = built;
-  if (!seg.mask) return [{ address: seg.address, image, verify: built.verify }];
-  const mask = seg.mask;
-  if (mask.length !== seg.size || mask.some((b) => b !== 0 && b !== 0xff)) {
-    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${seg.size}, or one that marks single bits; the ETS capture shows whole-byte masks over the whole segment only, refusing to guess which bytes it writes`);
-  }
+  if (image.length > seg.size) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the image for segment ${seg.id} is ${image.length} B, longer than the segment's ${seg.size}; refusing to write past it`);
+  const runs = etsWrittenRunsOf(app, seg, built, kind, moduleInstances);
+  if (runs.length === 0) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `of segment ${seg.id} no byte would be written; the ETS captures show none such, refusing to leave a segment with <Data> out silently`);
+  return runs;
+}
+function etsWrittenRunsOf(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFullSegment, "image" | "verify">, kind: EtsSegmentKind, moduleInstances?: ModuleInstance[]): Run[] {
+  const { image } = built;
+  const mask = segmentMask(seg);
+  if (!mask && kind === "loaded") return [{ address: seg.address, image, verify: built.verify }];
   const params = parameterMemoryBytes(app, seg.id, seg.size, { moduleInstances });
   if (!params) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter in segment ${seg.id} has a type of no known width, so the bytes the download writes there cannot be told; refusing to guess`);
-  const runs: Pick<AbsFullSegment, "address" | "image" | "verify">[] = [];
+  if (kind === "table") {
+    if (params.some(Boolean)) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter's memory lies in the table segment ${seg.id}; no ETS capture shows which bytes it writes there, refusing to guess`);
+    refuseUnmarkedTableBytes(seg.id, mask, 0, image.length, seg.address === app.absoluteSegments.find((x) => x.id === app.groupTables.addressSegment)?.address);
+    return runsWhere(image, (i) => !mask || mask[i] !== 0, seg.address, built.verify, null);
+  }
+  if (!mask) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares no <Mask>, and no ETS capture shows which bytes of such a segment it writes into an application it leaves loaded; refusing to guess`);
+  return runsWhere(image, kind === "loaded" ? (i) => mask[i] !== 0 || params[i] : (i) => params[i], seg.address, built.verify, params);
+}
+
+// An MV-0705 com-object table as ETS builds it: the 3-byte header and one 4-byte entry per object its
+// first byte counts. A template longer than that (the Gira M-0008's, 8 bytes) keeps the rest, which ETS
+// leaves out of its image.
+function builtComObjectTable(image: Buffer): Buffer {
+  const length = 3 + 4 * image[0];
+  if (length > image.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table counts ${image[0]} objects, ${length} B, but is only ${image.length} B; refusing to write a truncated table`);
+  return image.subarray(0, length);
+}
+
+// A table's bytes the <Mask> leaves out: the captures show only the address table's own individual
+// address (bytes 1-2); any other would drop a table byte silently.
+function refuseUnmarkedTableBytes(segId: string, mask: Buffer | undefined, from: number, length: number, addressTable: boolean): void {
+  if (!mask) return;
+  for (let i = from; i < from + length; i++) {
+    if (mask[i] === 0 && !(addressTable && (i === 1 || i === 2))) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the <Mask> of ${segId} leaves out byte ${i} of the table written there; the ETS captures leave out only the address table's own individual address, refusing to drop a table byte`);
+  }
+}
+
+// A segment's <Mask>, refused unless it is whole bytes over the whole segment, the only form a capture shows.
+function segmentMask(seg: CfgAbsSegment): Buffer | undefined {
+  const mask = seg.mask;
+  if (mask && (mask.length !== seg.size || mask.some((b) => b !== 0 && b !== 0xff))) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${seg.size}, or one that marks single bits; the ETS captures show whole-byte masks over the whole segment only, refusing to guess which bytes it writes`);
+  }
+  return mask;
+}
+
+function runsWhere(image: Buffer, written: (i: number) => boolean, address: number, verify: ReadonlyArray<number | boolean>, params: boolean[] | null): Run[] {
+  const runs: Run[] = [];
   for (let i = 0; i < image.length;) {
-    if (mask[i] === 0 && !params[i]) { i++; continue; }
+    if (!written(i)) { i++; continue; }
     const start = i;
-    while (i < image.length && (mask[i] !== 0 || params[i])) i++;
-    const verify = Array.from({ length: i - start }, (_, k) => (params[start + k] ? built.verify[start + k] : true));
-    runs.push({ address: seg.address + start, image: Buffer.from(image.subarray(start, i)), verify });
+    while (i < image.length && written(i)) i++;
+    runs.push({ address: address + start, image: Buffer.from(image.subarray(start, i)), verify: Array.from({ length: i - start }, (_, k) => (!params || params[start + k] ? verify[start + k] : true)) });
   }
   return runs;
+}
+
+// A table ETS writes at `address`, which need not be the start of a segment (a captured application's
+// association table sits behind the address table, inside the address table's declared segment): the
+// runs of it the <Mask> of the segment holding each byte marks.
+function etsTableRuns(app: AppConfig, address: number, table: Buffer, addressTable: boolean): { address: number; image: Buffer }[] {
+  const marked = Array.from(table, (_, i) => {
+    const a = address + i;
+    const seg = app.absoluteSegments.find((s) => a >= s.address && a < s.address + s.size);
+    if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the table written at ${address} reaches ${a}, which lies in no segment the application defines; refusing to write it blind`);
+    const mask = segmentMask(seg);
+    return !mask || mask[a - seg.address] !== 0;
+  });
+  marked.forEach((m, i) => {
+    if (!m && !(addressTable && (i === 1 || i === 2))) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the <Mask> leaves out byte ${i} of the table written at ${address}; the ETS captures leave out only the address table's own individual address, refusing to drop a table byte`);
+  });
+  return runsWhere(table, (i) => marked[i], address, new Array<boolean>(table.length).fill(true), null).map(({ address: at, image }) => ({ address: at, image }));
 }
 
 // A digest of a full download's image: every segment's address (0xFFFFFFFF where the device assigns

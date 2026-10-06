@@ -352,6 +352,9 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     test("a mask byte that marks single bits", () => {
       expect(plan(withMask((m) => { const b = Buffer.from(m); b[5] = 0x0f; return b; }))).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("marks single bits") }));
     });
+    test("a mask that leaves out a table byte other than the own individual address", () => {
+      expect(plan(withMask((m) => { const b = Buffer.from(m); b[4] = 0; return b; }))).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("leaves out byte 4") }));
+    });
     test("a parameter in the segment whose type has no known width", () => {
       const some = [...cfg.params.values()].find((p) => p.offset !== undefined)!;
       const odd = { ...some, id: "M-0081_A-FE01-11-75D9_P-99999", codeSegment: ADDR, offset: 20, typeId: "M-0081_A-FE01-11-75D9_PT-NoSuchType" };
