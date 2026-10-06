@@ -438,8 +438,7 @@ logging proxy: on the wire they are the brackets above, and after the parameter 
 own PID 27 stamp of the parameter segment equals the one it showed after ETS's parameter download
 with the same value. Each was verified, and the last read equals the reference. A group read on
 5/3/9 was answered after the full download, after the parameter flash to LED = 0 and after the added
-address (15/7/250 too); after its removal 15/7/250 no longer answered and 5/3/9 did. No group read
-followed the parameter flash back to LED = 1. Persistence is the restart each one ends with; no bus power cycle.
+address (15/7/250 too); after its removal 15/7/250 no longer answered and 5/3/9 did. A second pass of all five writes on the committed build 35ae113, with the pre-flight and verify checks of that build, gave the same results and had a group read after LED = 1 too (record, "Second pass on 35ae113"). Persistence is the restart each one ends with; no bus power cycle.
 
 ## Tables shrink, their old bytes stay
 
