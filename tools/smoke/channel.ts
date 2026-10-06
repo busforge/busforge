@@ -1,7 +1,7 @@
 // The channel-aware write primitives shared by the capability drivers and the behaviour verifiers.
 // Each does the SAME thing over `api` (production endpoints) or `ui` (the real web app in Chromium);
 // the caller picks once and every step follows. A refusal is a real outcome and is thrown, never
-// retried away — that is the regression the smoke framework exists to catch. See /CONTEXT.md.
+// retried away — that is the regression the smoke framework exists to catch. See /GLOSSARY.md.
 import { ApiError, type Client, type FlashResult } from "./client.ts";
 import type { UiDriver } from "./ui.ts";
 import type { Channel } from "./spec.ts";

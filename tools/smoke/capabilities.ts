@@ -7,7 +7,7 @@
 //
 // What a device claims is read from the product (config.capabilities), never declared here; the
 // runner calls only the drivers for the claimed capabilities and treats a claimed-but-unexercised
-// capability as a hard failure. See docs/testing.md and /CONTEXT.md.
+// capability as a hard failure. See docs/testing.md and /GLOSSARY.md.
 import { gaToNum } from "../../packages/knx/src/index.ts";
 import { findComObject, findParam, allComObjects } from "./client.ts";
 import type { Channel, DeviceSpec, FuzzPolicy } from "./spec.ts";

@@ -3,7 +3,7 @@
 // OBSERVES the bus with the witness tunnel and requires the device to actually act — transmit its
 // heartbeat, answer a read, or drive an output from an input. A byte-matched read-back cannot prove
 // this (a wrongly-but-consistently encoded value reads back green); only the bus can. See
-// /CONTEXT.md "Behaviour".
+// /GLOSSARY.md "Behaviour".
 //
 // The configuration goes through the active channel (api / ui); the witness is always the independent
 // tunnel. The witness may connect ONLY between server bus operations (the bench bridge has one tunnel

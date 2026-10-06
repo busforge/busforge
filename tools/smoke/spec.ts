@@ -4,11 +4,11 @@
 // The spec supplies only what the product cannot know: the bench identity, how to provision it, the
 // baseline configuration that brings it to a linkable state, the bus-observable behaviours to prove,
 // and the fuzz policy the Layer-1 generator draws from. See docs/testing.md and
-// /CONTEXT.md (Capability / Behaviour / Channel).
+// /GLOSSARY.md (Capability / Behaviour / Channel).
 
 // The path a capability is driven through over the same hardware. `api` hits the production
 // endpoints directly (fast regression); `ui` drives the real web app in Chromium (the user path).
-// Assertions always read the API in both. See /CONTEXT.md "Channel".
+// Assertions always read the API in both. See /GLOSSARY.md "Channel".
 export type Channel = "api" | "ui";
 
 // One ordered baseline configuration step. Order matters: an earlier param may reveal the com-object
@@ -24,7 +24,7 @@ export type Enable = { paramRefId: string; value: string }[];
 // A behaviour: a function the device performs ON THE BUS, verified by observation after the framework
 // configures it, links its object(s) to a RANDOM group address (from the fuzz policy), and flashes.
 // This is the real correctness proof; a byte-matched read-back is not (a wrongly-but-consistently
-// encoded value reads back green). See /CONTEXT.md "Behaviour".
+// encoded value reads back green). See /GLOSSARY.md "Behaviour".
 // A behaviour normally allocates a RANDOM group address, links the object, and flashes it (the
 // System B / System 7 surgical path). Where surgically re-flashing the device is unsafe (an OpenKNX
 // device that is programmed only by a full download — a surgical re-flash is the death-loop risk),

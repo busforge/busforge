@@ -262,7 +262,7 @@ once against the bytes, once against the bus.
 
 ### The model
 
-Three terms, defined in [/CONTEXT.md](../CONTEXT.md) and used consistently in the code:
+Three terms, defined in [/GLOSSARY.md](../GLOSSARY.md) and used consistently in the code:
 
 - **Capability**: a single programming path busforge can drive. Its name matches a
   `DeviceCapabilities` key (`fullDownload`, `flashLinks`, `flashParams`, `structuralFlash`,

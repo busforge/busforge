@@ -248,7 +248,7 @@ by an automated spec (`tools/smoke/specs/`, see [testing.md](testing.md)) and **
 that spec has actually been run: `api` (the production endpoints directly) or `ui` (the real web
 app in a browser).
 
-**The done bar** ([/CONTEXT.md](../CONTEXT.md)): a device counts as fully supported only when
+**The done bar** ([/GLOSSARY.md](../GLOSSARY.md)): a device counts as fully supported only when
 every capability its product claims, plus provisioning and the UI click-through, passes on real
 hardware in **both** channels, together with every behaviour its spec declares. One green channel
 is not done, and neither is a device that byte-verifies without ever acting on the bus, unless its

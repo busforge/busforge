@@ -51,4 +51,4 @@ document says so.
 | [deployment.md](deployment.md) | Self-hosting: container, volume, environment, reverse proxy. |
 | [adr/](adr/) | Architecture decision records. |
 
-Terminology specific to this project is defined in [`../CONTEXT.md`](../CONTEXT.md).
+Terminology specific to this project is defined in [`../GLOSSARY.md`](../GLOSSARY.md).

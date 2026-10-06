@@ -226,10 +226,10 @@ means the right one.
 | **hardware (bytes only)** | status.md | transfer `pass`; behaviour `not-applicable` |
 | **offline byte-match** | status.md | reference `pass` from an `ets-capture`, no device |
 | **tests only** | status.md | no evidence record |
-| **Transfer verification** | CONTEXT.md | the transfer axis |
-| **Capability** check | CONTEXT.md, ADR 0001 | a transfer record for one operation and channel |
-| **Behaviour** | CONTEXT.md, ADR 0001 | the behaviour axis |
-| **Done** | CONTEXT.md, ADR 0001 | every claimed operation transfer `pass` in both channels, every declared behaviour `pass` |
+| **Transfer verification** | GLOSSARY.md | the transfer axis |
+| **Capability** check | GLOSSARY.md, ADR 0001 | a transfer record for one operation and channel |
+| **Behaviour** | GLOSSARY.md, ADR 0001 | the behaviour axis |
+| **Done** | GLOSSARY.md, ADR 0001 | every claimed operation transfer `pass` in both channels, every declared behaviour `pass` |
 | **supported** (unqualified) | older documents | retired: a claim names its axes instead |
 
 ## The examples

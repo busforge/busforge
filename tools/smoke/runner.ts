@@ -3,7 +3,7 @@
 // (config.capabilities), and the runner exercises exactly those capabilities in the requested
 // channel, then proves the device's declared behaviours on the bus. A capability the product claims
 // but the run never exercises is a HARD failure, never a skip. Everything device-specific lives in a
-// DeviceSpec (specs/). See docs/testing.md and /CONTEXT.md.
+// DeviceSpec (specs/). See docs/testing.md and /GLOSSARY.md.
 //
 // One channel per invocation (--channel=api|ui, default api); the bench done-bar wants BOTH green, so
 // a device is run once per channel and each report recorded. Assertions always read the API; in the
