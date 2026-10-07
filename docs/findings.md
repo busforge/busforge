@@ -516,8 +516,9 @@ committed at the restart, all four load-state machines LOADED, and a separate re
 restart shows the new value; the flash's own read-back is cut off when the rebooted device goes
 silent about 9 KB into the 21.6 KB segment, which is why the verify reconnects. The revert to the
 original value completes as `flashed`, `verified: true`, and the presence object answers a group
-read afterwards (operator observation, no evidence record). A device left with LSM 4 Loading is recovered by a LoadCompleted on LSM 4 and an
-`A_Restart` once the right bytes are committed.
+read afterwards (operator observation, no evidence record). In the one case shown, a device left
+with LSM 4 Loading came back after a LoadCompleted on LSM 4 and an `A_Restart`, once the right bytes
+had been committed; that is not established as a general recovery.
 
 ## 17. A module parameter resolves through its module definition
 

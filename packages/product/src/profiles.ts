@@ -1323,8 +1323,8 @@ export class System7Profile extends DeviceProfile {
     // com-object table but the linked bit, so an association onto an object that table does not
     // configure is a link to nothing.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    // M-0081_A-FE01 runs planDeclaredOrderSystem7GaFlash below (hardware: house unit,
-    // docs/evidence/runs/auro-m0081-house-downloads.md), the applications whose tables ETS
+    // M-0081_A-FE01 runs planDeclaredOrderSystem7GaFlash below (shown on hardware, docs/status.md
+    // "Auro M-0081_A-FE01"), the applications whose tables ETS
     // re-declares (M-0008, the TheLuxa P300) planCapturedSystem7GaFlash; the other System 7 applications
     // outside the captured registries run planMv0705GaFlash.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsRegionTablesSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });

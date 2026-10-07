@@ -105,9 +105,9 @@ What the collector ([raw-acquisition.md](raw-acquisition.md#implementation)) doe
 
 Data Secure is in the alpha scope: device access and programming with known credentials,
 activating a factory device from its certificate so that setting up a secure device needs no
-existing ETS project, secured group communication with keys Busforge generates, and decoding secured
-telegrams in the monitor. How far each is shown is in [status.md](status.md). KNX IP Secure transport
-is a separate capability and not an alpha prerequisite. Diagnostic access uses valid credentials
+existing ETS project, and, as far as their feasibility is shown, secured group communication with
+keys Busforge generates and decoding secured telegrams in the monitor. How far each is shown is in
+[status.md](status.md). KNX IP Secure transport is a separate capability and not an alpha prerequisite. Diagnostic access uses valid credentials
 where they are required; raw acquisition is not a way around access control. What is still open:
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's

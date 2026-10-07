@@ -389,12 +389,11 @@ There is no read-on-init bit. `0x80` is set in the manufacturer's template of ma
 Busforge clears it on every configured object, except on the Theben TheLuxa P300
 (`M-0048_A-107E-12-5B58`) and the Theben Meteodata 140 S (`M-0048_A-140C-14-EB70`, MV-0701, the same
 table layout): there ETS writes it as the object's update flag (TheLuxa object 116,
-`UpdateFlag="Enabled"`, written `0xCB` over the template's `0xDF`, private corpus
-`captures/theluxa-p300-ets6log-fulldownload.txt`, "Execute image" row `05D0`; on the Meteodata twelve
-configured objects, `captures/meteodata-140s-ets6log-fulldownload.txt`, rows `0420-0650`), and
+`UpdateFlag="Enabled"`, written `0xCB` over the template's `0xDF` in ETS's captured full download;
+on the Meteodata, on twelve configured objects in its captured full download), and
 Busforge with it (`ETS_UPDATE_BIT_MV0705_APPS`, `packages/product/src/comobjbuild.ts`). Two
 applications of one manufacturer are not taken as the meaning of `0x80` on MV-0705: on every other
-application a configured object's update flag leaves the bit cleared, as before. A capture of another
+application a configured object's update flag leaves the bit cleared. A capture of another
 manufacturer's configured object with the update flag decides ([roadmap.md](roadmap.md)). `dataPtr` points into the `0x07xx` RAM value
 segment. L3 lives at the application's `<ComObjectTable CodeSegment>` fixed absolute address
 and is **not** behind the object-3 table pointer (`tableAddr(3)` returns 0 on MV-0705,
