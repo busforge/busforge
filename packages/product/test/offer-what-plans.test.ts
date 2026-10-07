@@ -7,7 +7,7 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // What each real application program may be offered, written down from the steps its manufacturer
 // declares in <LoadProcedures>, not computed by the code under test:
 //   - LdCtrlTaskCtrl1 in the full-download steps: no Busforge full download executes it, so the full
-//     download is refused (M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079).
+//     download is refused (M-0081_A-FF31, M-008E_A-7079).
 //   - M-0008_A-10D7 declares it too, and LdCtrlLoadImageProp on objects 1, 2 and 3; ETS 6 is captured
 //     running all three of its downloads (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS), which send neither the
 //     TaskCtrl1 nor a write for the LoadImageProp, so all three are offered.
@@ -17,6 +17,9 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 //   - M-0048_A-107E declares it as LsmIdx 3 Address 17875 Count 1; ETS 6 is captured running its full
 //     download in the declared order, the TaskCtrl1 a PID 5 write of 03 04 45 D3 01 and zeros
 //     (loadproc.ts ETS_DECLARED_ORDER_TASK_CTRL1), so its full download is offered.
+//   - M-0048_A-140C (MV-0701) declares it as LsmIdx 3 Address 18155 Count 1; ETS 6 is captured running its
+//     full download in the declared order, the TaskCtrl1 the 0x0104 control 33 04 00 46 EB 01 and zeros,
+//     so its full download is offered.
 //   - LdCtrlLoadImageProp PID 27 in a System B fragment: ETS sends nothing for it (Jung capture), so it
 //     refuses nothing.
 //   - LdCtrlWriteProp to a manufacturer property in a System B fragment refuses the parameter flash and
@@ -29,7 +32,7 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0004_A-7072-21-99A7-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0008_A-10D7-11-2783-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-107E-12-5B58.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
-  "M-0048_A-140C-14-EB70.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
+  "M-0048_A-140C-14-EB70.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-493B-21-B471.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-9071-20-F258-O00EF.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0081_A-FE01-11-75D9.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },

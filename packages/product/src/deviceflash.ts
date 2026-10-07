@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, etsRegionTablesSystem7, ETS_DECLARED_ORDER_TASK_CTRL1, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, etsRegionTablesSystem7, etsTableSegmentDataSystem7, ETS_DECLARED_ORDER_TASK_CTRL1, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705, etsUpdateBitMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
+import { isMemoryMappedLsm } from "./masks.ts";
 import { OBJ, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
@@ -535,9 +536,9 @@ export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedu
     writes.push(...runs.map((r) => ({ lsm: d.lsm, ...r })));
     return [
       { op: "load", lsm: d.lsm },
-      { op: "absSegment", lsm: d.lsm, segType: d.segType, address: at, size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
+      { op: "absSegment", lsm: d.lsm, segType: d.segType, address: at, size, access: d.access, memType: d.memType, segFlags: d.segFlags, ...declarationTransport(app) },
       ...runs.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })),
-      { op: "taskSegment", lsm: d.lsm, address: at, peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
+      { op: "taskSegment", lsm: d.lsm, address: at, peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...declarationTransport(app) },
       { op: "loadCompleted", lsm: d.lsm },
     ];
   };
@@ -552,6 +553,9 @@ export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedu
 }
 
 const appManufacturerNumber = (app: AppConfig): number => Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
+// How a captured application's segment declarations travel: the LSM's PID 5 on a property-mapped mask,
+// the 0x0104 control (no flag) on a memory-mapped one (the Meteodata 140 S's MV-0701, its ETS captures).
+const declarationTransport = (app: AppConfig): { viaProperty?: true } => (isMemoryMappedLsm(app.mask) ? {} : { viaProperty: true });
 
 // The stamp reads (LdCtrlLoadImageProp) and the restart that close every captured download.
 function capturedClose(procedure: LoadProcedures, requireReboot: boolean): LoadStep[] {
@@ -607,9 +611,9 @@ export function planDeclaredOrderSystem7GaFlash(
     tableRefs.push({ lsm, address: d.address, runs: written });
     return [
       { op: "load", lsm },
-      { op: "absSegment", lsm, segType: d.segType, address: d.address, size: d.size, access: d.access, memType: d.memType, segFlags: d.segFlags, viaProperty: true },
+      { op: "absSegment", lsm, segType: d.segType, address: d.address, size: d.size, access: d.access, memType: d.memType, segFlags: d.segFlags, ...declarationTransport(app) },
       ...runs.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })),
-      { op: "taskSegment", lsm, address: ts[0], peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, viaProperty: true },
+      { op: "taskSegment", lsm, address: ts[0], peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...declarationTransport(app) },
       { op: "loadCompleted", lsm },
     ];
   };
@@ -753,7 +757,7 @@ export function planAbsoluteFullDownload(
   // re-declares the group tables as one region (etsRegionTablesSystem7), their two segments are declared
   // and written where tableRegion puts them, the task segments at the tables' new addresses.
   const declaredOrder = etsDeclaredOrderSystem7(procedure);
-  const via = declaredOrder ? { viaProperty: true as const } : {};
+  const via = declaredOrder && propertyMapped ? { viaProperty: true as const } : {};
   const region = declaredOrder && etsRegionTablesSystem7(procedure) ? tableRegion(app, procedure, { addr, assoc }) : null;
   const regionTable = (lsm: number) => (!region ? null : lsm === OBJ.ADDR_TABLE ? { at: region.addrAt, size: addr.length, table: addr, source: "addrTable" as const } : lsm === OBJ.ASSOC_TABLE ? { at: region.assocAt, size: region.assocSize, table: assoc, source: "assocTable" as const } : null);
   for (const s of flattenSteps(procedure, "full")) {
@@ -769,6 +773,13 @@ export function planAbsoluteFullDownload(
             plan.push({ op: "writeMem", address: run.address, bytes: run.image });
             segments.push({ id: (l === OBJ.ADDR_TABLE ? app.groupTables.addressSegment : app.groupTables.associationSegment) ?? `@${run.address}`, lsm: l, source: moved.source, address: run.address, image: run.image, verify: new Array<boolean>(run.image.length).fill(true) });
             imageBytes += run.image.length;
+          }
+          if (l === OBJ.ASSOC_TABLE && etsTableSegmentDataSystem7(procedure)) {
+            for (const run of tableSegmentDataBehind(app, region!, moved.at + moved.table.length)) {
+              plan.push({ op: "writeMem", address: run.address, bytes: run.image });
+              segments.push({ ...run, lsm: l, source: "static", verify: new Array<boolean>(run.image.length).fill(true) });
+              imageBytes += run.image.length;
+            }
           }
           break;
         }
@@ -821,6 +832,25 @@ export function planAbsoluteFullDownload(
     }
   }
   return { plan, segments, imageBytes, ...(region ? { tableRefs: [{ lsm: OBJ.ADDR_TABLE, address: region.addrAt }, { lsm: OBJ.ASSOC_TABLE, address: region.assocAt }] } : {}) };
+}
+
+// The <Data> bytes of the declared table segments behind the tables (from `from` on) that ETS's full
+// download writes on an application of ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS: not FF, and marked by the
+// segment's <Mask> where it declares one.
+function tableSegmentDataBehind(app: AppConfig, region: TableRegion, from: number): { id: string; address: number; image: Buffer }[] {
+  const out: { id: string; address: number; image: Buffer }[] = [];
+  for (const d of [region.d1, region.d2]) {
+    const seg = app.absoluteSegments.find((s) => s.address === d.address);
+    if (!seg) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the table segment declared at ${d.address} is not one the application defines; refusing to write its data blind`);
+    const mask = segmentMask(seg);
+    const written = (i: number) => seg.address + i >= from && i < seg.data.length && seg.data[i] !== 0xff && (!mask || mask[i] !== 0);
+    const end = region.d2.address + region.d2.size;
+    if (seg.data.some((_, i) => written(i) && (i >= d.size || seg.address + i >= end))) {
+      throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `<Data> of ${seg.id} reaches past the size its load procedure declares or past the table region; refusing to write into another segment`);
+    }
+    out.push(...runsWhere(seg.data, written, seg.address, new Array<boolean>(seg.data.length).fill(true), null).map((r) => ({ id: seg.id, address: r.address, image: r.image })));
+  }
+  return out;
 }
 
 // The bytes of a segment ETS puts in its image, for the applications whose downloads are captured
@@ -893,13 +923,18 @@ function refuseUnmarkedTableBytes(segId: string, mask: Buffer | undefined, from:
   }
 }
 
-// A segment's <Mask>, refused unless it is whole bytes over the whole segment, the only form a capture shows.
+// A segment's <Mask>, refused unless it is whole bytes over the whole segment, or over exactly its <Data>
+// where that is shorter and the mask marks nothing: the forms the captures show. The Meteodata 140 S's RAM
+// segment AS-1C00 declares 432 bytes with 342 of <Data> and a <Mask> of 342 zero bytes; ETS writes none
+// of it (meteodata-140s-ets6log-fulldownload.txt, Memory[$1C00-$1DAF] without a row). Behind such a
+// <Data> there is no byte to write, so the bytes behind the <Mask> count as unmarked.
 function segmentMask(seg: CfgAbsSegment): Buffer | undefined {
   const mask = seg.mask;
-  if (mask && (mask.length !== seg.size || mask.some((b) => b !== 0 && b !== 0xff))) {
-    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${seg.size}, or one that marks single bits; the ETS captures show whole-byte masks over the whole segment only, refusing to guess which bytes it writes`);
+  const shortUnmarked = !!mask && mask.length > 0 && mask.length === seg.data.length && mask.length < seg.size && mask.every((b) => b === 0);
+  if (mask && !shortUnmarked && (mask.length !== seg.size || mask.some((b) => b !== 0 && b !== 0xff))) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${seg.size} (${seg.data.length} of <Data>), or one that marks single bits; the ETS captures show whole-byte masks over the whole segment, or a mask marking nothing over a shorter <Data>, only; refusing to guess which bytes it writes`);
   }
-  return mask;
+  return mask && mask.length < seg.size ? Buffer.concat([mask, Buffer.alloc(seg.size - mask.length)]) : mask;
 }
 
 function runsWhere(image: Buffer, written: (i: number) => boolean, address: number, verify: ReadonlyArray<number | boolean>, params: boolean[] | null): Run[] {

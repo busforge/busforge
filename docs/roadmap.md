@@ -116,41 +116,36 @@ started until the capability it depends on is hardware-proven.
   Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
-- **Execute `LdCtrlTaskCtrl1` on the Theben Meteodata 140 S.** It runs on the Auro M-0081_A-FE01 and the
-  Theben TheLuxa P300, each in the form its own ETS capture shows. The TheLuxa (Address 17875, Count 1;
-  record) shows the same
-  limit as the Auro: of its full download's bytes only a download marker differed from the unit. The
-  Auro (Address 0, Count 0;,
-  [load-procedures.md](load-procedures.md#declared-order-system-7-downloads)), run on the house
-  unit 1.1.x with the parameter and group-address flash
-  (record): the full download's sequence,
-  `TaskCtrl1` included, was accepted and the unit stayed loaded and answering, but every byte it
-  planned already equalled the unit, so the transfer of changed bytes is shown by the two flashes,
-  not by the full download. The Theben Meteodata 140 S needs its own ETS full-download capture. The Gira M-0008 captures do not show the step: ETS
-  does not send it there. All units of these applications are installed in the house.
+- **`LdCtrlTaskCtrl1` beyond the captured applications.** It runs on the Auro M-0081_A-FE01 (Address 0,
+  Count 0), the Theben TheLuxa P300 (17875/1) and the Meteodata 140 S (18155/1, over `0x0104`), each in
+  the form its own ETS capture shows, each run on its house unit
+  ([load-procedures.md](load-procedures.md#declared-order-system-7-downloads)). On all three the full
+  download changed no configuration byte of the unit (its sequence accepted, changed bytes shown by the
+  two flashes). The catalogue's other applications declaring it (Steinel M-008E, Auro `M-0081_A-FF31`)
+  stay refused until a capture of each. The Gira M-0008 captures do not show the step: ETS does not send
+  it there.
 - **What config bit `0x80` of the MV-0705 com-object table means.** On the Theben TheLuxa P300
   ETS writes it as the update flag of a configured object (object 116, `UpdateFlag="Enabled"`,
- ), and Busforge writes it so for that application only (`ETS_UPDATE_BIT_MV0705_APPS`,
+ ), as on the Meteodata 140 S (MV-0701, the same table layout; objects 8-10, 12, 13, 15, 18, 19, 64,
+  72, 80 and 150 in its full download), and Busforge writes it so for those two applications only (`ETS_UPDATE_BIT_MV0705_APPS`,
   [device-memory-model.md](device-memory-model.md#the-com-object-table-l3)). Every other MV-0705
   application keeps the bit cleared on its configured objects, as before, though some declare objects
-  with the update flag (the second Auro application `M-0081_A-FF31`: 18 in its defaults). The one
-  object is also the only 14-byte object, so size is not ruled out as the reason. A second ETS capture
-  of a configured object with the update flag on another MV-0705 application decides whether it
-  becomes the rule.
+  with the update flag (the second Auro application `M-0081_A-FF31`: 18 in its defaults). The
+  Meteodata's objects of several sizes rule out size as the reason, but both applications are Theben's.
+  An ETS capture of a configured object with the update flag on another manufacturer's application
+  decides whether it becomes the rule.
 - **System 7 segment declarations as ETS sends them.** ETS writes `LdCtrlAbsSegment` and
   `LdCtrlTaskSegment` to the load-state machine's PID 5 on the property-mapped MV-0705, on the MDT
   BE-02001.02 too (`captures/mdt-be02001-ets-fulldownload-defaults.log`); Busforge sends them to
   memory `0x0104` there and does it ETS's way only on the Gira M-0008, the Auro M-0081_A-FE01 and the TheLuxa P300
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
   the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
-- **Bytes a shrunk group table leaves behind (owner decision).** ETS writes a System 7 group table
-  only as long as it is built, so when a table shrinks its old tail stays in the declared segment
-  behind the count-delimited table, and the PID 27 stamp, which covers the whole segment, keeps it
-  (Auro M-0081 1.1.x and Gira M-0008 1.1.x, both shown from ETS's captures; neither an
-  ETS full download nor Busforge's clears them,
-  [load-procedures.md](load-procedures.md#tables-shrink-their-old-bytes-stay)). Busforge writes
-  nothing beyond the tables. Decide whether it should clear such bytes, by writing the rest of the
-  declared segment, or keep ETS's behaviour.
+- **Table-segment `<Data>` behind the tables (one capture).** ETS's full download of the Meteodata 140 S
+  writes `AS-4000` offsets 511-512 (`00 00`), non-FF `<Data>` behind the tables; the Gira's `AS-40F3`
+  offset 0 and the TheLuxa's `AS-41FF` offset 0 are non-FF `<Data>` behind their tables too, and ETS
+  writes neither. Busforge writes them for the Meteodata only (`ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS`).
+  A capture of another application with such bytes (past the address table's capacity, or not) decides
+  the rule; what ETS does when the Meteodata's tables grow into `0x41FF-0x4200` is not shown either ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)).
 - **Configure KNX IP interfaces as alpha targets (decided).** The full download of an
   application declaring tunnelling entries is refused today (`FULL_DOWNLOAD_TUNNELING_ENTRIES`),
   because no Busforge path writes the interface's `AdditionalAddresses`. Capture an ETS download onto

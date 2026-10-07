@@ -47,6 +47,12 @@ describe("memory-mapped LSM controls (MV-0700/0701)", () => {
     // (1<<4)|3, seg 2, id 0, addr 0x4000, pei 1, manuf 0x0002, app 0xa001, ver 0x13
     expect(d.writes).toEqual([{ addr: 0x0104, hex: "1302004000010002a00113", verify: false }]);
   });
+  test("a TaskCtrl1 to a memory-mapped LSM is the 0x0104 control ETS sends the Meteodata 140 S, checked LOADING", async () => {
+    const d = new MMDev();
+    await runLoadPlan(asDev(d), [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 18155, count: 1 }], { memMappedLsms: true });
+    // captures/meteodata-140s-ets-fulldownload.log: MEM_WRITE 0x0104 33 04 00 46 EB 01 00 00 00 00 00
+    expect(d.writes.at(-1)).toEqual({ addr: 0x0104, hex: "33040046eb010000000000", verify: false });
+  });
   test("lsmEvent/lsmState memMapped use 0x0104 and 46825+lsm, never PID 5", async () => {
     const d = new MMDev();
     await lsmEvent(asDev(d), 2, 1, true); // Load LSM2
@@ -177,10 +183,11 @@ describe("property-mapped LSM controls (MV-0705)", () => {
       .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
     expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000"]);
   });
-  test("a taskCtrl1 on memory-mapped LSMs is refused before anything is sent", async () => {
+  test("a taskCtrl1 a memory-mapped LSM does not answer LOADING stops the plan there", async () => {
     const d = new MMDev();
-    expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3, address: 0, count: 0 }], { memMappedLsms: true }).catch((e: unknown) => String(e))).toContain("memory-mapped");
-    expect(d.writes).toEqual([]);
+    expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3, address: 18155, count: 1 }, { op: "loadCompleted", lsm: 3 }], { memMappedLsms: true }).catch((e: unknown) => e))
+      .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
+    expect(d.writes.map((w) => w.hex)).toEqual(["33040046eb010000000000"]);
   });
   test("a stamp read the device answers with no element fails the plan, after its restart", async () => {
     const d = new PropDev();

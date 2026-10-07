@@ -154,8 +154,11 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
 // (UpdateFlag="Enabled") ETS writes as 0xCB over the template's 0xDF (private corpus
 // captures/theluxa-p300-ets6log-fulldownload.txt, "Execute image" row 05D0). That is one object of one
 // application, and the only 14-byte object among them, so it is not taken as a rule for MV-0705: every
-// other application's configured objects get 0x80 cleared (docs/roadmap.md, the open question).
-export const ETS_UPDATE_BIT_MV0705_APPS: readonly string[] = ["M-0048_A-107E-12-5B58"];
+// other application's configured objects get 0x80 cleared (docs/roadmap.md, the open question). The
+// Theben Meteodata 140 S (M-0048_A-140C-14-EB70, MV-0701, the same table layout) shows the same on its
+// configured objects with UpdateFlag="Enabled" (captures/meteodata-140s-ets6log-fulldownload.txt,
+// "Execute image" rows 0420-0650, e.g. object 9 0x97, object 13 0xCF).
+export const ETS_UPDATE_BIT_MV0705_APPS: readonly string[] = ["M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
 export const etsUpdateBitMv0705 = (appId: string): boolean => ETS_UPDATE_BIT_MV0705_APPS.includes(appId);
 
 // Author the com-object table (L3) for a property-mapped System 7 device (mask MV-0705).

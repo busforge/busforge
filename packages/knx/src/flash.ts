@@ -129,10 +129,20 @@ export async function declareTaskSegmentProp(dev: KnxDevice, lsm: number, addres
 // only the forms those captures show (product loadproc.ts ETS_DECLARED_ORDER_TASK_CTRL1), and a count
 // beyond one byte is refused here.
 export async function taskCtrl1Prop(dev: KnxDevice, lsm: number, address: number, count: number) {
+  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, ...taskCtrl1Fields(lsm, address, count)]));
+}
+// The same to a memory-mapped LSM: the 11-byte control at 0x0104, the LSM byte and a zero segment-id
+// byte in front of the property form's fields, as for AbsSegment and TaskSegment. ETS sends it so to the
+// Theben Meteodata 140 S (MV-0701, Address 18155 Count 1: 33 04 00 46 EB 01 00 00 00 00 00,
+// captures/meteodata-140s-ets-fulldownload.log), answered LOADING.
+export async function taskCtrl1MM(dev: KnxDevice, lsm: number, address: number, count: number) {
+  await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(lsm << 4) | 0x03, 0x04, 0x00, ...taskCtrl1Fields(lsm, address, count)]), { verify: false });
+}
+function taskCtrl1Fields(lsm: number, address: number, count: number): number[] {
   if (!Number.isInteger(address) || address < 0 || address > 0xffff || !Number.isInteger(count) || count < 0 || count > 0xff) {
     throw new Error(`LSM ${lsm}: TaskCtrl1 address ${address} / count ${count} does not fit the 2-byte address and 1-byte count the ETS captures show`);
   }
-  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, (address >> 8) & 0xff, address & 0xff, count, 0, 0, 0, 0, 0]));
+  return [(address >> 8) & 0xff, address & 0xff, count, 0, 0, 0, 0, 0];
 }
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian

@@ -1173,12 +1173,12 @@ export class System7Profile extends DeviceProfile {
     //
     // Each write is offered only where its planner can run the procedure the application declares
     // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
-    // M-0081_A-FF31, the Meteodata M-0048_A-140C and M-008E applications), a parameter or group-address flash with a step addressed
+    // M-0081_A-FF31 and M-008E applications), a parameter or group-address flash with a step addressed
     // to what it writes that has no disposition. M-0008 declares both and is offered all three: ETS
     // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7). The
-    // Auro presence detector M-0081_A-FE01-11-75D9 and the Theben TheLuxa P300 M-0048_A-107E-12-5B58 are
-    // offered their full download for the same reason, each LdCtrlTaskCtrl1 in the form its capture
-    // shows (etsDeclaredOrderSystem7).
+    // Auro presence detector M-0081_A-FE01-11-75D9, the Theben TheLuxa P300 M-0048_A-107E-12-5B58 and the
+    // Theben Meteodata 140 S M-0048_A-140C-14-EB70 are offered their full download for the same reason,
+    // each LdCtrlTaskCtrl1 in the form its capture shows (etsDeclaredOrderSystem7).
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.

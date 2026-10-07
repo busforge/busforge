@@ -218,11 +218,12 @@ of the catalogue lands there: `LdCtrlTaskCtrl1` (declared by six applications of
 fixtures, four of them owned, none of the MDT or ABB ones). The Gira M-0008 declares it too, but ETS
 does not send it there, and that application's full download runs as captured
 ([below](#ets-captured-system-7-downloads)). The Auro presence detector `M-0081_A-FE01` declares it as
-`LsmIdx="3" Address="0" Count="0"` and the Theben TheLuxa P300 `M-0048_A-107E-12-5B58` as
-`LsmIdx="3" Address="17875" Count="1"`; each capture shows ETS sending it, and each runs it in the
+`LsmIdx="3" Address="0" Count="0"`, the Theben TheLuxa P300 `M-0048_A-107E-12-5B58` as
+`LsmIdx="3" Address="17875" Count="1"` and the Theben Meteodata 140 S `M-0048_A-140C-14-EB70` as
+`LsmIdx="3" Address="18155" Count="1"`; each capture shows ETS sending it, and each runs it in the
 form its own capture shows, any other declaration refused (`ETS_DECLARED_ORDER_TASK_CTRL1`,
-[below](#declared-order-system-7-downloads)). So the full download is refused for the Theben
-Meteodata 140 S, the Steinel presence detector (M-008E) and the second Auro application
+[below](#declared-order-system-7-downloads)). So the full download is refused for the Steinel
+presence detector (M-008E) and the second Auro application
 (`M-0081_A-FF31`), and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
 flag says `fullDownload` exactly where the planner runs the declared steps, and the parameter and
 group-address flash are offered exactly where their coverage blocks nothing (`operationRefusals`,
@@ -332,8 +333,9 @@ import stores it, and fails on exactly that byte without it.
 
 For some System 7 applications ETS runs the declared full-download steps one by one, in the order the
 procedure declares them, including a step Busforge refuses elsewhere. Busforge then runs them the
-same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). Two so far: the
-Theben TheLuxa P300 ([below](#the-theluxa-p300)) and, first, the Auro presence detector, `M-0081_A-FE01-11-75D9`, captured on the house unit 1.1.x, in this
+same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). Three so far: the
+Theben TheLuxa P300 ([below](#the-theluxa-p300)), the Theben Meteodata 140 S on a memory-mapped mask
+([below](#the-meteodata-140-s-memory-mapped)) and, first, the Auro presence detector, `M-0081_A-FE01-11-75D9`, captured on the house unit 1.1.x, in this
 order: a full download, a partial download after one parameter change, one after adding 15/7/250 as a
 second address on object 10 (which had 5/3/9), and one that reverted both, parameters and links in one
 (private corpus `captures/auro-m0081-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`,
@@ -498,13 +500,63 @@ All three ran on the house unit, each through the logging proxy, each `verified`
 read after the restart, a group read answered, and the wire compared with ETS's capture
 (record).
 
+### The Meteodata 140 S, memory-mapped
+
+The Theben Meteodata 140 S, `M-0048_A-140C-14-EB70` (MV-0701, BIM M112, `DynamicTableManagement="true"`,
+`PreEts4Style`), captured on its only house unit in the same order: a full download, a
+partial download after one parameter change ("Temperature calibration in 0.1 °C", `P-2234`, `AS-4800`
+offset 4, 0 to 1), one after linking the unlinked object 23 to a test address, and one that reverted
+both (private corpus `captures/meteodata-140s-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`,
+ETS's own log of each beside it). It is the TheLuxa's procedure on a memory-mapped mask: every load
+control is the 11-byte memory write to `0x0104` (the LSM and event in the first byte, the property
+form's fields behind a segment-id byte), the state is read from `0xB6EA + LSM - 1`, and properties are
+only read.
+
+| Declared (`full`, in this order) | What ETS sends, and Busforge with it |
+| --- | --- |
+| `Unload` 1, 2, 3 | `0x0104` `14 00 …`, `24 00 …`, `34 00 …` |
+| `Load` 1, `AbsSegment` 1 (16384+513), `TaskSegment` 1, `LoadCompleted` 1 | the segment as long as the address table (20 entries: `13 00 00 40 00 00 29 F2 03 80 00`, 16384+41), its bytes, the task segment at 16384 |
+| `Load` 2, `AbsSegment` 2 (16897+511), `TaskSegment` 2, `LoadCompleted` 2 | the rest of both segments directly behind it (16425+983), the association table, `AS-4000`'s two `<Data>` bytes `0x41FF-0x4200` (`00 00`), the task segment at 16425 |
+| `Load` 3, `AbsSegment` 3 at 7168+432 (RAM: 342 bytes of `<Data>` and of an all-zero `<Mask>`) | declared, nothing written |
+| `AbsSegment` 3 at 17408+958 (the com-object table's segment), 18432+1024 and 19456+1024 (`Access="255"`) | declared; the com-object table's segment whole (186 entries, 747 bytes, and the application data behind them), of the two parameter segments the bytes the `<Mask>` marks and every parameter-covered byte |
+| `TaskSegment` 3 (18356) | `0x0104` `33 02 00 47 B4 …` |
+| `TaskCtrl1` 3, `Address="18155" Count="1"` | `0x0104` `33 04 00 46 EB 01 00 00 00 00 00`, answered LOADING; 18155 is `0x46EB`, behind the com-object table in its segment |
+| `LoadCompleted` 3, `Restart` | `0x0104` `32 00 …`; `A_Restart` |
+
+The image is 1893 bytes, not differential by stamps. ETS reads every block of it before writing and
+writes only the bytes that differ ("Giving up optimistice write after 36 of 36 mismatched bytes", group-address download, where
+nothing matches): on the unit that already held the configuration its full download wrote two bytes,
+`0x4000` (the address table's count, which the unit resets when LSM 1 is declared) and the download
+marker `0x4800`. Busforge plans exactly ETS's image with ETS's values (`tools/etsdiff.test.ts`, "Theben
+Meteodata 140 S") and writes all of it, reading it back after the restart: the same departure as on the
+Gira. ETS writes `0x41FF-0x4200`, non-FF `<Data>` of `AS-4000` behind the tables (past what the
+address table can hold); the Gira and the TheLuxa have non-FF `<Data>` behind their tables too, and
+ETS writes none of it. So Busforge writes these two bytes for this application only
+(`ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS`, [roadmap.md](roadmap.md)); its group-address downloads leave them out. The com-object
+table carries a configured object's update flag in `0x80`, as on the TheLuxa. `AS-4800` offset 0 is
+the download marker `P-2228`, handled as on the TheLuxa.
+
+The parameter download is `Load` 3, the parameter-covered bytes of `AS-4800` and `AS-4C00` (ETS reads
+them and writes `0x4800 = AA` and `0x4804 = 01`), `LoadCompleted` 3, `A_Restart`. The group-address
+download unloads 1 and 2, re-declares the tables as one region (16384+43 and 16427+981 for 21
+entries), writes them, then `Load` 3, the com-object table to its 747 bytes, `LoadCompleted` 3 and the
+restart: no `Unload` 3, no `TaskCtrl1`, nothing of `0x41FF-0x4200`. The revert runs the same brackets
+with the old tables. Busforge's group-address flash plans exactly these images
+(`planCapturedSystem7GaFlash`) and its parameter flash the two bytes ETS wrote (`planAbsoluteParFlash`;
+ETS's logged image of the parameter download holds 607 bytes, its wire these two), over `0x0104`.
+
+All three ran on the house unit, each through the logging proxy, each `verified`, with a
+read after the restart, group reads answered, the load controls on the wire equal to ETS's and every
+byte ETS wrote written with the same value; the final read equals the reference
+(record).
+
 ## Which bytes ETS writes
 
 Of a segment ETS does not always write every byte, and not always the same bytes: it depends on how
-it loads the segment. One rule fits the images ETS's own log dumps for the three applications Busforge
+it loads the segment. One rule fits the images ETS's own log dumps for the four applications Busforge
 runs as ETS was captured (Gira M-0008: full download twice, parameter, group-address and revert
-download; Auro M-0081_A-FE01 and TheLuxa P300 M-0048_A-107E: full, parameter, group-address and revert
-download); what the tests
+download; Auro M-0081_A-FE01, TheLuxa P300 M-0048_A-107E and Meteodata 140 S M-0048_A-140C: full,
+parameter, group-address and revert download; the Meteodata with one addition); what the tests
 compare byte for byte and what by count is listed below. Each log has an
 "Execute image" dump, `--` where the image holds nothing.
 
@@ -546,13 +598,18 @@ How the captures show it:
   behind it, the `TaskCtrl1` block at `0x45D3` among them; the group-address download writes the
   table to its 471 bytes only. The RAM segment `AS-0700` declares a `<Mask>` of zeros and no parameter:
   declared, nothing written.
+- **Meteodata 140 S.** The same rule on a memory-mapped mask: the tables to their built length
+  without the own address, the com-object table's segment `AS-4400` (no mask) whole, of `AS-4800` and
+  `AS-4C00` the masked and the parameter-covered bytes, nothing of the RAM segment `AS-1C00` (its
+  `<Mask>` covers only its 342 bytes of `<Data>` and marks none). One addition the rule does not
+  give: `AS-4000`'s non-FF `<Data>` bytes 511-512, written in the full download only (above).
 - **Auro, `AS-4200`.** Its full download unloads load-state machine 3 and executes its
   `LdCtrlAbsSegment`: the image holds offsets 3 and 36, which no parameter covers and the mask marks.
   Its parameter download writes the segment as `LdCtrlWriteMem` and shows `--` at exactly those two
   offsets. The explanation first read off the Auro ("the mask plus the parameter bytes") is the rule's
   freshly loaded case.
 
-Busforge plans the full download of all three applications by this rule (`etsWrittenRuns`, and
+Busforge plans the full download of all four applications by this rule (`etsWrittenRuns`, and
 `etsTableRuns` for tables re-declared as one region, `packages/product/src/deviceflash.ts`); a parameter's memory in the com-object table's segment and a
 mask gap inside the table stay refused where that segment is written afresh. The Gira's and the
 TheLuxa's group-address flash follow it too
@@ -563,10 +620,11 @@ contain the 37 bytes of both full downloads' images and number those 37 plus the
 parameter bytes number the parameter download's 7 plus 414 removed (a count: the removed bytes'
 addresses are not logged); for the Auro its 151 equal the full download's image, and the parameter
 download's image is pinned byte for byte; for the TheLuxa its 1090 equal the full download's image
-and its group-address flash the 489 bytes of that image, byte for byte. Other
+and its group-address flash the 489 bytes of that image, byte for byte; for the Meteodata its 1893
+equal the full download's image and its group-address flash the 829 bytes of that image. Other
 applications keep their own plans.
 
-Two limits. The rule rests on three applications; in every capture "loaded afresh" and "the
+Two limits. The rule rests on four applications; in every capture "loaded afresh" and "the
 application stays in the device" coincide with the `LdCtrlAbsSegment` being executed or transformed,
 so which of them ETS keys it on is not shown. And a data segment without a `<Mask>` written into a
 loaded application occurs in no capture, so Busforge refuses that case
@@ -637,8 +695,8 @@ held `7B 00 FF`, and object 2's stamp changed (`...D3ED` to `...A412`). Busforge
 adding and removing the same link left the same bytes and the same stamp
 (record).
 
-Whether Busforge should clear such residues, by writing the rest of a declared segment beyond the
-table, is an open decision ([roadmap.md](roadmap.md)). Today it writes nothing beyond the tables.
+When a table shrinks, Busforge writes nothing beyond it, as ETS: the residues and the changed stamps
+are expected after a link is removed (owner decision, 2026-10-07).
 
 ## Project-level com-object flags
 

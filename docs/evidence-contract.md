@@ -150,7 +150,7 @@ mechanism cases below.
 
 | Exception | Where it is recorded |
 |---|---|
-| A load procedure step the engine cannot execute (`LdCtrlTaskCtrl1` outside the form captured on each declared-order application, the Auro M-0081_A-FE01 and the TheLuxa P300, the absolute `LdCtrlLoadImageProp` outside the ETS-captured applications: refused) | [load-procedures.md](load-procedures.md), [status.md](status.md) |
+| A load procedure step the engine cannot execute (`LdCtrlTaskCtrl1` outside the form captured on each declared-order application, the Auro M-0081_A-FE01, the TheLuxa P300 and the Meteodata 140 S, the absolute `LdCtrlLoadImageProp` outside the ETS-captured applications: refused) | [load-procedures.md](load-procedures.md), [status.md](status.md) |
 | An absolute segment without a `<Data>` default (M-008E) | [device-memory-model.md](device-memory-model.md) |
 | MV-0705 com-object tables with named residuals (six devices, five application families) | [device-memory-model.md](device-memory-model.md) "Known residuals" |
 | Persistence on `LoadCompleted` instead of `A_Restart`, and the application hold during a GA flash: manufacturer-keyed firmware behaviour, only ever learned on hardware | `profiles.ts`, [load-procedures.md](load-procedures.md) |

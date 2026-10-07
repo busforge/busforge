@@ -398,7 +398,15 @@ function captureSteps(file: string, ia: number): string[] {
       const d = t.subarray(6);
       out.push(d[0] === 3 ? (d[1] === 0 ? `absSegment:${t[2]}@${d.readUInt16BE(2)}+${d.readUInt16BE(4)}` : d[1] === 4 ? `taskCtrl1:${t[2]}=${d.subarray(2).toString("hex")}` : `taskSegment:${t[2]}@${d.readUInt16BE(2)}=${d.subarray(4).toString("hex")}`)
         : `${({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[d[0]]}:${t[2]}`);
-    } else if (!out.length) continue;
+    }
+    // A memory-mapped load-state machine (MV-0701) takes the same controls as an 11-byte memory write to
+    // 0x0104: the LSM and the event in the first byte, the property form's fields behind a segment-id byte.
+    else if ((apci & 0x3f0) === 0x280 && t.readUInt16BE(2) === 0x0104) {
+      const d = t.subarray(4), lsm = d[0] >> 4, ev = d[0] & 0x0f;
+      out.push(ev === 3 ? (d[1] === 0 ? `absSegment:${lsm}@${d.readUInt16BE(3)}+${d.readUInt16BE(5)}` : d[1] === 4 ? `taskCtrl1:${lsm}=${d.subarray(3).toString("hex")}` : `taskSegment:${lsm}@${d.readUInt16BE(3)}=${d.subarray(5).toString("hex")}`)
+        : `${({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[ev]}:${lsm}`);
+    }
+    else if (!out.length) continue;
     else if (apci === 0x3d7) out.push(`prop ${t[2]}/${t[3]}=${t.subarray(6).toString("hex")}`);
     else if (apci === 0x3d5) {
       // A read sent again right after itself is ETS repeating a request that got no answer in time
@@ -1125,3 +1133,198 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     }
   });
 });
+
+// ETS 6 downloads of the Theben Meteodata 140 S (M-0048_A-140C-14-EB70, MV-0701, memory-mapped load-state
+// machines, LdCtrlTaskCtrl1 Address 18155 Count 1, DynamicTableManagement), house unit,
+// in this order: a full download; a partial download after one parameter change ("Temperature calibration
+// in 0.1 °C", P-2234 at AS-4800 offset 4, 0 -> 1); one after linking object 23 ("C1 Brightness threshold",
+// unlinked before) to 15/7/250; and one that reverted both. Every load control is the 11-byte memory write
+// to 0x0104. ETS reads each block of its image first and writes only the bytes that differ, so the wire
+// holds few writes; ETS's own log holds the image it compared against, and that is what Busforge's plan
+// is checked against. The configuration is read from that image: the links from its tables, the parameter
+// values decoded by Busforge from the parameter segment.
+corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () => {
+  const xml = catalogueXml("M-0048_A-140C-14-EB70.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const IA = "1.2.24", ia = iaToNum(IA);
+  const FULL = "meteodata-140s-ets-fulldownload.log", PARTIAL = "meteodata-140s-ets-partial-params.log";
+  const LINKS = "meteodata-140s-ets-partial-links.log", REVERT = "meteodata-140s-ets-partial-revert.log";
+  const fullLog = etsLog("meteodata-140s-ets6log-fulldownload.txt");
+  const paramSeg = cfg.absoluteSegments.find((s) => s.address === 0x4800)!;
+  const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
+  const segOf = (seg: typeof paramSeg, img: Map<number, number>) => Buffer.from(seg.data.map((b, i) => img.get(seg.address + i) ?? b));
+  const heldComObj = segOf(comObjSeg, fullLog.image);
+  const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+  // The memory ETS wrote, without the load controls it wrote to 0x0104.
+  const wire = (f: string) => new Map([...memoryImage(parseCapture(captureText(f), ia).writes)].filter(([a]) => a >= 0x1c00));
+
+  const baseline = (() => {
+    const at = (a: number) => fullLog.image.get(a)!;
+    const addr = Buffer.from(Array.from({ length: 1 + 2 * at(0x4000) }, (_, i) => (i === 1 ? ia >> 8 : i === 2 ? ia & 0xff : at(0x4000 + i))));
+    const assocAt = 0x4000 + addr.length;
+    const assoc = Buffer.from(Array.from({ length: 1 + 2 * at(assocAt) }, (_, i) => at(assocAt + i)));
+    // Parameters live in AS-4800 and AS-4C00. Three that decide what is placed have no memory, so no
+    // image shows them; they are seeded with the values the project holds, read from its export
+    // (the house project export taken before the run, private corpus collections/meteodata-140s-hc04/,
+    // device): the "Channel function" of C2 (P-7060, 3: wind) and of C3 (P-7152, 4: rain), and
+    // "Telegram type C19.1" (P-8146, 2). A wrong value would move the active parameters and show as a byte mismatch below.
+    const model = toAppModel(cfg, { includeUnions: true });
+    const seeded: [string, string][] = [["M-0048_A-140C-14-EB70_P-7060_R-7060", "3"], ["M-0048_A-140C-14-EB70_P-7152_R-7152", "4"], ["M-0048_A-140C-14-EB70_P-8146_R-8146", "2"]];
+    const decoded = new Map([...seeded, ...[0x4800, 0x4c00].flatMap((at) => { const seg = cfg.absoluteSegments.find((s) => s.address === at)!; return [...decodeAbsoluteImage(model, seg.id, segOf(seg, fullLog.image))]; })]);
+    let params = new Map<string, string>(seeded);
+    for (let i = 0; ; i++) {
+      const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
+      const next = new Map([...decoded].filter(([r]) => active.has(r)));
+      if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) break;
+      if (i > 16) throw new Error("the configuration read from the full download never settled");
+      params = next;
+    }
+    return { links: decodeGroupTablesMv0705(addr, assoc), params };
+  })();
+  const full = () => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: baseline.params, links: baseline.links, proc });
+  const task = (l: number, a: number) => `taskSegment:${l}@${a}=000048140c14`;
+
+  test("full download: the declared steps in their declared order, over 0x0104, the tables as one region, TaskCtrl1 as ETS sends it", () => {
+    const build = full();
+    const ets = captureSteps(FULL, ia).filter((s) => s !== "write");
+    expect(planSteps(build.plan).filter((s) => s !== "write")).toEqual(ets);
+    expect(planSteps(build.plan)).toEqual([
+      "unload:1", "unload:2", "unload:3",
+      "load:1", "absSegment:1@16384+41", "write", task(1, 16384), "loadCompleted:1",
+      "load:2", "absSegment:2@16425+983", "write", task(2, 16425), "loadCompleted:2",
+      "load:3", "absSegment:3@7168+432", "absSegment:3@17408+958", "write", "absSegment:3@18432+1024", "write", "absSegment:3@19456+1024", "write",
+      task(3, 18356), "taskCtrl1:3=46eb010000000000", "loadCompleted:3", "restart",
+    ]);
+    expect(build.plan.filter((s) => (s.op === "absSegment" || s.op === "taskSegment") && s.viaProperty === true)).toEqual([]);
+  });
+
+  test("full download: Busforge's image is ETS's, byte for byte", () => {
+    const ours = bytesOf(full().plan);
+    const diff = [...new Set([...ours.keys(), ...fullLog.image.keys()])].filter((a) => ours.get(a) !== fullLog.image.get(a)).sort((a, b) => a - b);
+    expect(diff.map((a) => `${a.toString(16)}:${fullLog.image.get(a)?.toString(16)}/${ours.get(a)?.toString(16)}`)).toEqual([]);
+    expect(sorted(ours)).toEqual(sorted(fullLog.image));
+  });
+
+  test("ETS's log: the declared full steps in their declared order, the table segments re-declared", () => {
+    const declared = flattenSteps(proc, "full");
+    expect(fullLog.steps.map((s) => s.verb)).toEqual(declared.map((s) => s.verb));
+    const diffs = declared.flatMap((d, i) => Object.entries(d.attrs).filter(([k, v]) => fullLog.steps[i].attrs[k] !== v).map(([k]) => `${d.verb}${d.attrs.LsmIdx}.${k}=${fullLog.steps[i].attrs[k]}`));
+    expect(diffs).toEqual(["LdCtrlAbsSegment1.Size=41", "LdCtrlAbsSegment2.Address=16425", "LdCtrlAbsSegment2.Size=983", "LdCtrlTaskSegment2.Address=16425"]);
+  });
+
+  test("full download: what ETS's image holds besides the tables, the com-object table's segment and the masked parameter bytes", () => {
+    // ETS reads its whole image and writes what differs (the wire holds 0x4000 and the 0x4800 marker);
+    // Busforge writes the whole image and reads it back. Not differential by stamps: no bytes removed.
+    expect(fullLog.removed).toBe(0);
+    expect(span(new Map([...fullLog.image].filter(([a]) => a < 0x4400)))).toEqual(["4000-4000", "4003-404f", "41ff-4200"]);
+    expect(span(new Map([...fullLog.image].filter(([a]) => a >= 0x4400 && a < 0x4800)))).toEqual(["4400-47bd"]);
+    expect(span(new Map([...fullLog.image].filter(([a]) => a >= 0x4c00)))).toEqual(["4c00-4c1f"]);
+    expect([...fullLog.image.keys()].filter((a) => a < 0x4000)).toEqual([]); // nothing of the RAM segment AS-1C00
+    expect([...wire(FULL)]).toEqual([[0x4000, 0x14], [0x4800, 0xaa]]);
+  });
+
+  // AS-4800 offset 0 is P-2228 "Downloaderkennung" (Access="None", $AA): ETS writes AA in every download,
+  // the unit clears it to 00.
+  const onUnit = segOf(paramSeg, fullLog.image);
+  onUnit[0] = 0x00;
+  const otherParams = cfg.absoluteSegments.find((s) => s.address === 0x4c00)!;
+  const held4c = segOf(otherParams, fullLog.image);
+  const TEMP = "M-0048_A-140C-14-EB70_P-2234";
+  const tempRef = () => [...baseline.params.keys()].find((k) => k.startsWith(`${TEMP}_`))!;
+
+  test("parameter flash: ETS's bracket over 0x0104, the changed byte and the download marker, as ETS writes them", () => {
+    expect(baseline.params.get(tempRef())).toBe("0");
+    const after = new Map(baseline.params).set(tempRef(), "1");
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, onUnit], [otherParams.id, held4c]]));
+    expect([changedBytes, unplaceable]).toEqual([2, []]);
+    expect(planSteps(plan)).toEqual(captureSteps(PARTIAL, ia));
+    expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
+    expect([...bytesOf(plan)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
+    expect([...wire(PARTIAL)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
+  });
+
+  const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planCapturedSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia, { order: "ets-captured" }),
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
+  const withTestLink = [...baseline.links, { comObjNum: 23, gaRaws: [parseGa("15/7/250")] }];
+  const TABLES = (addrSize: number) => [
+    "unload:1", "unload:2",
+    "load:1", `absSegment:1@16384+${addrSize}`, "write", task(1, 16384), "loadCompleted:1",
+    "load:2", `absSegment:2@${16384 + addrSize}+${1024 - addrSize}`, "write", task(2, 16384 + addrSize), "loadCompleted:2",
+    "load:3", "write", "loadCompleted:3", "restart",
+  ];
+
+  test("group-address flash: the tables re-declared over 0x0104 where ETS puts them, exactly ETS's image, the com-object table to its 186 entries", () => {
+    const { plan, assocAt, comObjWrites } = gaFlash(withTestLink, heldComObj);
+    expect(assocAt).toBe(0x402b);
+    expect(planSteps(plan)).toEqual(TABLES(43));
+    expect(planSteps(plan).filter((s) => s !== "write")).toEqual(captureSteps(LINKS, ia).filter((s) => s !== "write"));
+    const log = etsLog("meteodata-140s-ets6log-partial-links.txt");
+    const ours = bytesOf(plan);
+    expect(log.removed).toBe(0);
+    expect(sorted(ours)).toEqual(sorted(log.image));
+    expect(span(ours)).toEqual(["4000-4000", "4003-4053", "4400-46ea"]);
+    expect(span(comObjWrites.flatMap((w) => Array.from(w.image, (_, i) => w.address + i)))).toEqual(["4400-46ea"]);
+    // Object 23's config byte gains the linked bit, nothing else in the table changes.
+    const cfgByte = comObjSeg.address + 3 + 23 * 4 + 2;
+    expect([heldComObj[cfgByte - comObjSeg.address], ours.get(cfgByte)]).toEqual([0x4b, 0x4f]);
+    const written = wire(LINKS);
+    expect([...written].filter(([a, b]) => ours.get(a) !== b)).toEqual([]);
+  });
+
+  test("group-address flash of the revert: the tables and the com-object table ETS's revert holds, byte for byte", () => {
+    const linksLog = etsLog("meteodata-140s-ets6log-partial-links.txt");
+    const { plan, assocAt } = gaFlash(baseline.links, segOf(comObjSeg, new Map([...fullLog.image, ...linksLog.image])));
+    expect(assocAt).toBe(0x4029);
+    expect(planSteps(plan)).toEqual(TABLES(41));
+    const ours = bytesOf(plan);
+    const revertLog = etsLog("meteodata-140s-ets6log-partial-revert.txt");
+    const tablesOf = (m: Map<number, number>) => new Map([...m].filter(([a]) => a < 0x4800));
+    expect(sorted(ours)).toEqual(sorted(tablesOf(revertLog.image)));
+    expect(span(ours)).toEqual(["4000-4000", "4003-404f", "4400-46ea"]);
+    // The revert's parameter bytes: the parameter flash writes the one byte back with the marker.
+    const before = Buffer.from(onUnit);
+    before[4] = 1;
+    const par = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, before], [otherParams.id, held4c]]));
+    expect([...bytesOf(par.plan)]).toEqual([[0x4800, 0xaa], [0x4804, 0x00]]);
+    const written = wire(REVERT);
+    expect([written.get(0x4800), written.get(0x4804)]).toEqual([0xaa, 0x00]);
+  });
+
+  test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
+    const revert = wire(REVERT);
+    const behind = [0x4050, 0x4051, 0x4052, 0x4053];
+    expect(behind.filter((a) => revert.has(a))).toEqual([]);
+    expect(behind.filter((a) => bytesOf(gaFlash(baseline.links, heldComObj).plan).has(a))).toEqual([]);
+  });
+
+  test("a <Mask> shorter than its segment that marks a byte, and table <Data> reaching past the declared region, are refused", () => {
+    const fresh = () => parseAppConfig(xml);
+    const plan = (c: ReturnType<typeof parseAppConfig>) => classify(c).planFullDownload(c.mask, { ia: IA, params: baseline.params, links: baseline.links, proc });
+    const marked = fresh();
+    const ram = marked.absoluteSegments.find((s) => s.address === 0x1c00)!;
+    ram.mask = Buffer.from(ram.mask!); ram.mask[0] = 0xff;
+    expect(() => plan(marked)).toThrow(/FULL_DOWNLOAD_SEGMENT_UNKNOWN|<Mask>/);
+    const longer = fresh();
+    const as4000 = longer.absoluteSegments.find((s) => s.address === 0x4000)!;
+    as4000.data = Buffer.concat([as4000.data, Buffer.from([0x00])]);
+    as4000.size += 1;
+    as4000.mask = Buffer.concat([as4000.mask!, Buffer.from([0xff])]);
+    expect(() => plan(longer)).toThrow(/reaches past the size its load procedure declares/);
+  });
+
+  test("ETS's logs of its group-address downloads: the table brackets re-declared, LSM 3 without unload or TaskCtrl1", () => {
+    for (const [log, addrSize] of [["meteodata-140s-ets6log-partial-links.txt", 43], ["meteodata-140s-ets6log-partial-revert.txt", 41]] as const) {
+      const l = etsLog(log);
+      const steps = l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}${s.verb === "LdCtrlAbsSegment" ? `@${s.attrs.Address}+${s.attrs.Size}` : ""}`);
+      expect(steps.slice(0, 12)).toEqual([
+        "LdCtrlConnect", "LdCtrlUnload1", "LdCtrlUnload2",
+        "LdCtrlLoad1", `LdCtrlAbsSegment1@16384+${addrSize}`, "LdCtrlTaskSegment1", "LdCtrlLoadCompleted1",
+        "LdCtrlLoad2", `LdCtrlAbsSegment2@${16384 + addrSize}+${1024 - addrSize}`, "LdCtrlTaskSegment2", "LdCtrlLoadCompleted2",
+        "LdCtrlLoad3",
+      ]);
+      expect(steps.filter((s) => s.startsWith("LdCtrlTaskCtrl1") || s.startsWith("LdCtrlUnload3"))).toEqual([]);
+    }
+  });
+});
+

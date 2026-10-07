@@ -294,29 +294,33 @@ export const etsCapturedSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => 
 // (M-0081_A-FE01-11-75D9, house unit), private corpus
 // captures/auro-m0081-ets-fulldownload.log and captures/auro-m0081-ets-partial-params.log, and the
 // Theben TheLuxa P300 (M-0048_A-107E-12-5B58, house unit),
-// captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, with ETS's
+// captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, and the
+// Theben Meteodata 140 S (M-0048_A-140C-14-EB70, MV-0701, house unit),
+// captures/meteodata-140s-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, with ETS's
 // own log of each step beside them (*-ets6log-*.txt):
-//   - every LdCtrlAbsSegment and LdCtrlTaskSegment is the load-state machine's PID 5 write, and a
-//     segment's memory writes follow its declaration;
+//   - every LdCtrlAbsSegment and LdCtrlTaskSegment is the load-state machine's PID 5 write (the 0x0104
+//     memory write on the memory-mapped MV-0701), and a segment's memory writes follow its declaration;
 //   - LdCtrlTaskCtrl1 is the PID 5 write 03 04, the declared Address (2 bytes) and Count (1 byte), and
-//     zero bytes to 10, which the device answers LOADING; only the form each capture shows is run
-//     (ETS_DECLARED_ORDER_TASK_CTRL1);
+//     zero bytes to 10 (on MV-0701 the same fields in the 0x0104 control), which the device answers
+//     LOADING; only the form each capture shows is run (ETS_DECLARED_ORDER_TASK_CTRL1);
 //   - of a segment that declares a <Mask>, ETS writes the bytes the mask marks and the bytes a
 //     parameter's memory covers, of a table only those inside its built length; a segment without a
 //     <Mask> it writes whole, one without <Data>, or whose <Mask> marks nothing, not at all.
-// The TheLuxa's tables are re-declared as the Gira's are (ETS_REGION_TABLES_SYSTEM7_APPS).
+// The TheLuxa's and the Meteodata's tables are re-declared as the Gira's are (ETS_REGION_TABLES_SYSTEM7_APPS).
 // Each full download ran on a device that held the application, loaded; what ETS sends to one that
 // does not is not shown, so that full download is refused (System7Profile.downloadFull).
-export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9", "M-0048_A-107E-12-5B58"];
+export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
 export const etsDeclaredOrderSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(lp.app);
 
 // The LdCtrlTaskCtrl1 each declared-order application's capture shows ETS sending, as declared:
 // auro-m0081-ets-fulldownload.log (PID 5 03 04 00 00 00 ...) and theluxa-p300-ets-fulldownload.log
 // (PID 5 03 04 45 D3 01 00 ..., the TheLuxa's task-control block at 0x45D3 in its com-object table's
-// segment). Any other declaration refuses the full download.
+// segment) and meteodata-140s-ets-fulldownload.log (0x0104 33 04 00 46 EB 01 00 ..., the Meteodata's at
+// 0x46EB behind its com-object table). Any other declaration refuses the full download.
 export const ETS_DECLARED_ORDER_TASK_CTRL1: Readonly<Record<string, { LsmIdx: string; Address: string; Count: string }>> = {
   "M-0081_A-FE01-11-75D9": { LsmIdx: "3", Address: "0", Count: "0" },
   "M-0048_A-107E-12-5B58": { LsmIdx: "3", Address: "17875", Count: "1" },
+  "M-0048_A-140C-14-EB70": { LsmIdx: "3", Address: "18155", Count: "1" },
 };
 
 // ---- System 7 applications whose group tables ETS re-declares as one region ----
@@ -325,11 +329,23 @@ export const ETS_DECLARED_ORDER_TASK_CTRL1: Readonly<Record<string, { LsmIdx: st
 // long as the table and the association table's directly behind it with the rest, in the full and in
 // every group-address download, and writes the associations in its own order (grouptables.ts,
 // "ets-captured"). Gira M-0008 (gira-m0008-ets-*.log: 16384+17 and 16401+467 for declared 16384+243
-// and 16627+241) and Theben TheLuxa P300 (theluxa-p300-ets-*.log: 16384+9 and 16393+1011 for declared
-// 16384+511 and 16895+509). Both applications declare DynamicTableManagement="true"; the Auro, which
+// and 16627+241), Theben TheLuxa P300 (theluxa-p300-ets-*.log: 16384+9 and 16393+1011 for declared
+// 16384+511 and 16895+509) and Theben Meteodata 140 S (meteodata-140s-ets-*.log: 16384+41 and 16425+983
+// for declared 16384+513 and 16897+511). All three declare DynamicTableManagement="true"; the Auro, which
 // ETS declares as the procedure does, declares it "false".
-export const ETS_REGION_TABLES_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58"];
+export const ETS_REGION_TABLES_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
 export const etsRegionTablesSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_REGION_TABLES_SYSTEM7_APPS.includes(lp.app);
+
+// Applications of ETS_REGION_TABLES_SYSTEM7_APPS whose table segments carry <Data> bytes behind the tables
+// that ETS's full download writes, in the association table's bracket. Only the Theben Meteodata 140 S
+// shows it: AS-4000 offsets 511-512 = 00 00, not FF and marked by the <Mask> (meteodata-140s-ets6log-
+// fulldownload.txt, "Execute image" rows 01F0/0200; the capture reads them after the association table);
+// its group-address downloads leave them out. That is not a rule: the Gira's AS-40F3 offset 0 (78, marked)
+// and the TheLuxa's AS-41FF offset 0 (00, no <Mask>) are non-FF <Data> behind their tables too, and ETS
+// writes neither. The Meteodata's bytes lie past what its address table can hold (3 + 2 x 254 = 511 bytes),
+// theirs at the association segment's first byte; which of these ETS keys on is not shown (docs/roadmap.md).
+export const ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS: readonly string[] = ["M-0048_A-140C-14-EB70"];
+export const etsTableSegmentDataSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS.includes(lp.app);
 
 // The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
 // declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next

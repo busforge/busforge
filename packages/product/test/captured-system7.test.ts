@@ -234,15 +234,15 @@ corpusDescribe("System 7 applications ETS is not captured on keep their download
     expect(planned).toBeGreaterThanOrEqual(2); // the MDT BE-02001.02 and the ABB US/U 4.2 at least
   });
   test("an LdCtrlTaskCtrl1 is refused on every application outside the declared-order registry, in any form", () => {
-    let seen = 0;
+    const seen: string[] = [];
     for (const f of listCatalogue()) {
       const xml = catalogueXml(f);
       const proc = parseLoadProcedures(xml);
       if (captured(proc.app ?? "") || !proc.verbs.includes("LdCtrlTaskCtrl1")) continue;
-      seen++;
+      seen.push(proc.app ?? f);
       expect(absoluteFullStepRefusal(proc)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
     }
-    expect(seen).toBeGreaterThanOrEqual(3); // M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079
+    expect(seen.sort()).toEqual(["M-0081_A-FF31-31-D6FF", "M-008E_A-7079-10-9C41"]);
   });
   test("their associations are ordered by object, then group index", () => {
     const { assoc } = buildGroupTablesMv0705(multi, 0x11fa);
