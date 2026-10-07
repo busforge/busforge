@@ -56,11 +56,11 @@ Two transports drive the same events:
   surgical parameter flash on such a device needs the same transport as its full download,
   or it talks to a dead property interface.
 
-An opt-out lets the engine reproduce a legacy bracket exactly rather than silently tightening
-a hardware-verified path: `load`/`loadCompleted` take `assert:false` (skip the inline state
+An opt-out lets the engine reproduce a bracket exactly rather than silently tightening a
+hardware-verified path: `load`/`loadCompleted` take `assert:false` (skip the inline state
 read). The System B group-table download and the System B full download both use it, each
-followed by a final batch of `assertLoaded` steps, because that is byte for byte what their
-proven executors did. Every other bracket keeps the asserting default.
+followed by a final batch of `assertLoaded` steps, because that is byte for byte the bracket
+verified on hardware. Every other bracket keeps the asserting default.
 
 ## The planners
 
@@ -82,7 +82,7 @@ declare (or declares but never loads) is returned as `unplaceable` and never sil
 dropped; the server then refuses the flash (`FLASH_SEGMENT_UNPLACEABLE`).
 
 > A flash diffs against the **device**, not the stored project values. A target-vs-database
-> diff once silently swallowed a revert: the database held the default while the device held
+> diff silently swallows a revert whenever the database holds the default while the device holds
 > the changed byte.
 
 The connection lifecycle stays with the caller. A second `T_Connect` inside a plan would
@@ -101,7 +101,7 @@ reports success.
 | Disposition | Steps (par) | Why |
 | --- | --- | --- |
 | **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation), and a `WriteProp` an ETS capture shows for that application (the GVS AMMA's object 4 PID 67 = `01`, below) | performed by the planner/executor or the proven base bracket |
-| **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`. This is a check ETS runs that was previously skipped silently |
+| **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`, as ETS checks it |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
 | **executed (read)** | absolute: `LoadImageProp` **to PID 27** on an application ETS is captured downloading (the Gira M-0008, [below](#ets-captured-system-7-downloads)): a property read of the stamps after the last `LoadCompleted` | ETS reads them there and writes nothing |
 | **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** (ETS 6 sends nothing for it) | deliberately not executed, each with hardware or capture evidence |
@@ -153,22 +153,17 @@ blocks by default. One is executed, and only for its application: the GVS AMMA-0
 ```
 
 and ETS 6 sends exactly that write after the last LoadCompleted, the device echoes `01`, and the
-restart follows: in its full download (`captures/gvs-amma-ets-fulldownload-defaults.log` of the
-private corpus) and in its partial download of parameters and links (`gvs-amma-ets-partial-links.log`).
-Busforge's full download, parameter flash and group-address flash of that application (and its
+restart follows: in its captured full download and in its captured partial download of parameters
+and links. Busforge's full download, parameter flash and group-address flash of that application (and its
 structural flash, which is not offered for it) end the same way (`closingPropWrites`, `withClosingWrites`): after every LoadCompleted,
 right before the restart, and an echo other than `01` stops the flash (`PROPERTY_WRITE_REFUSED`), so
 it is never reported as programmed. `tools/etsdiff.test.ts` holds the order against both captures.
 For the group-address flash this is inferred, not captured: the partial download above also
 reloads object 4, and no capture of a links-only download exists; the write is run there because the
-step names every download (`all`) and ETS ends its partial download with it. On the bench device
-(GVS AMMA 1.1.203, in Data Secure mode, while both captures are plain), smoke run of 2026-10-06: ten
-writes inside the secure session, six full downloads, two parameter flashes and two group-address
-flashes, each echoed `01`, each followed by the restart; the device then passed its behaviour,
-persistence and restore checks ([status.md](status.md), trace and before/after probe in
-evidence/runs/2026-10-06/). A read of PID 67 answers with no element,
-right before and right after the run, although its description says readable at level 3; ETS never reads it either, so the
-echo is the check.
+step names every download (`all`) and ETS ends its partial download with it. Both captures are of a
+plain device; how far the write is shown on the device, in Data Secure mode, is in
+[status.md](status.md). A read of PID 67 answers with no element, although its description says
+readable at level 3; ETS never reads it either, so the echo is the check.
 
 The evidence is keyed by application, object, property, value and `Verify="true"`, not by verb: a
 manufacturer property means whatever that firmware makes of it, so another application's step, or
@@ -180,18 +175,20 @@ group-table download is not shown) and refuses one it does not run (`unrunGrpSte
 `CompareProp` aside. The same application's `CompareProp` on PID 66 (`007230`,
 also `AppliesTo="all"`) runs as the read-only pre-flight of the full download and the parameter flash.
 ETS reads it before its full download, not in its partial download, so the parameter flash reads one
-property more than ETS does there. On the bench device it answered `007230` before each of them. The group-address flash runs none, as before. ETS also reads each property's description (`A_PropertyDescription_Read`)
+property more than ETS does there. The device answers `007230`. The group-address flash runs no
+`CompareProp`. ETS also reads each property's description (`A_PropertyDescription_Read`)
 before the check and the write; Busforge does not, and a missing property surfaces as the refused echo.
 
 ## Coverage across the catalogue
 
 Surveyed from the real catalogue (`parseLoadProcedures` plus the coverage test in
 `packages/product/test/loadproc.test.ts`). The step policy above dispositions every
-ProductProcedure and MergedProcedure in the corpus except two classes, both refused:
+ProductProcedure and MergedProcedure of the catalogue fixtures except two classes, both refused:
 
-- **Absolute applications declaring `LdCtrlLoadImageProp` without an ETS capture.** None in the
-  corpus since the Gira M-0008 was captured (2026-10-06, [below](#ets-captured-system-7-downloads));
-  a new one is refused with `LOAD_STEP_UNSUPPORTED` in the parameter and the group-address flash.
+- **Absolute applications declaring `LdCtrlLoadImageProp` without an ETS capture.** The fixtures
+  hold none besides the Gira M-0008, whose downloads are captured
+  ([below](#ets-captured-system-7-downloads)); a new one is refused with `LOAD_STEP_UNSUPPORTED` in
+  the parameter and the group-address flash.
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above.
 
@@ -204,7 +201,7 @@ The same par policy holds for the declared steps addressed to those objects (`Ls
 `Unload` 1, 2 and each table's `AbsSegment` and `TaskSegment` as ETS does
 ([below](#declared-order-system-7-downloads)), and on the Gira M-0008 and the TheLuxa P300, whose
 group-address flash re-declares both tables as one region ([below](#ets-captured-system-7-downloads)). A declared `CompareProp` is a read of the device, not a step on these
-tables, and the group-address flash runs none, as before (the ABB US/U 4.2 declares its
+tables, and the group-address flash runs none (the ABB US/U 4.2 declares its
 application-id check on object 3; its parameter flash runs it, its group-address flash does not).
 Whether the group-address flash should run the application's checks first is an open question
 ([roadmap.md](roadmap.md#device-coverage)).
@@ -214,8 +211,8 @@ executes `Unload`, `Load`, `AbsSegment` (with the segment write), `TaskSegment`,
 and `Restart`, and leaves `Connect`, `Disconnect` and `CompareProp` to the caller; any other step
 refuses the download (`FULL_DOWNLOAD_STEP_UNSUPPORTED`; a step missing an attribute it needs,
 `FULL_DOWNLOAD_STEP_MALFORMED`; no full-download steps at all, `LOAD_PROCEDURE_UNSUPPORTED`). One verb
-of the catalogue lands there: `LdCtrlTaskCtrl1` (declared by six applications of the real catalogue
-fixtures, four of them owned, none of the MDT or ABB ones). The Gira M-0008 declares it too, but ETS
+of the catalogue lands there: `LdCtrlTaskCtrl1` (declared by six applications of the catalogue
+fixtures, none of the MDT or ABB ones). The Gira M-0008 declares it too, but ETS
 does not send it there, and that application's full download runs as captured
 ([below](#ets-captured-system-7-downloads)). The Auro presence detector `M-0081_A-FE01` declares it as
 `LsmIdx="3" Address="0" Count="0"`, the Theben TheLuxa P300 `M-0048_A-107E-12-5B58` as
@@ -258,22 +255,21 @@ Being dispositioned is not a hardware claim: which application programs have act
 flashed, and how far, is in [status.md](status.md).
 
 `AbsSegment` and `TaskSegment` go to the memory control `0x0104` on every System 7 device, the
-property-mapped MV-0705 included (the MDT BE-02001.02 full download is hardware-proven so). ETS
-writes them to the load-state machine's PID 5 on that mask instead, 10 bytes each
+property-mapped MV-0705 included (the MDT BE-02001.02 accepts them so in its full download, on
+hardware). ETS writes them to the load-state machine's PID 5 on that mask instead, 10 bytes each
 (`03 00 addr size access memtype flags 00` and `03 02 addr pei manufacturer application version`;
 MDT BE-02001.02, Gira M-0008, Auro M-0081 and TheLuxa P300 captures). Busforge does that only for the applications
-below; the switch for the others waits for a bench run ([roadmap.md](roadmap.md)).
+below; switching the others needs a hardware run of their full download ([roadmap.md](roadmap.md)).
 
 ## ETS-captured System 7 downloads
 
 For some System 7 applications ETS does not send the declared procedure step by step. Busforge
 then sends what an ETS capture of that application shows (`ETS_CAPTURED_SYSTEM7_APPS`,
-`packages/product/src/loadproc.ts`), and nothing for an application without one. One so far: the
-Gira Tastsensor 3 Komfort, `M-0008_A-10D7-11-2783-O000A` (`DynamicTableManagement="true"`),
-captured on the house bus: a full download, a parameter download, a group-address
-download and the partial download that reverted both (private corpus
-`captures/gira-m0008-ets-*.log`, with the excerpt of ETS's own log beside each, which names every
-`LdCtrl*` step it executes).
+`packages/product/src/loadproc.ts`), and nothing for an application without one. One: the
+Gira Tastsensor 3 Komfort, `M-0008_A-10D7-11-2783-O000A` (`DynamicTableManagement="true"`), whose
+ETS full download, parameter download, group-address download and the partial download that
+reverted both are captured, each with the excerpt of ETS's own log, which names every `LdCtrl*` step
+it executes ([findings.md](findings.md#32-ets-does-not-run-the-gira-m-0008s-declared-procedure)).
 
 | Declared | What ETS sends, and Busforge with it |
 | --- | --- |
@@ -310,25 +306,16 @@ departs from ETS, deliberately:
   `AS-444E` no parameter covers and the last 8 bytes of `AS-41E5` are written neither by ETS nor by
   Busforge. The parameter flash compares against a read of the device instead and writes the bytes
   that differ, so it leaves out `AS-454E` where ETS writes it with the bytes the device already holds.
-- **It declares the table segments as PID 5 writes**, as ETS does; this is the one System 7
-  download that does (above).
+- **It declares the table segments as PID 5 writes**, as ETS does (above).
 - **It authorizes as ETS does.** The full download sends `A_Authorize` with the free key first and
   goes on only if the device grants level 0, as it granted ETS (`FULL_DOWNLOAD_ACCESS_LEVEL`
   otherwise, before anything is written).
 - **It does not switch on verify mode.** ETS reads object 0 PID 14 and writes `04` before its first
   memory write and takes the device's echo of each write; Busforge reads every write back, the
-  proof the MV-0705 parameter flash is hardware-proven on.
-- **The full download ran on the house unit 1.1.x**, first with whole segments
-  (record), then with
-  ETS's 822 bytes through the logging proxy (record).
-  The group-address flash writes the bytes of ETS's image of its group-address download, 405 bytes
-  for the captured link: the tables without the own address, the com-object table to its 91 entries.
-  The parameter flash (3 s → 4 s → 3 s) and the group-address flash (object 4 to 15/7/250 and back)
-  ran on 1.1.x through the logging proxy: the group-address flash's wire equals ETS's
-  group-address download and the table part of its revert byte for byte, the unit's stamps after each
-  write equal those it reported after ETS's corresponding download (its parameter and group-address
-  downloads, its revert for the two writes back), and the last read equals
-  the reference (record).
+  check the MV-0705 parameter flash relies on everywhere.
+- **The group-address flash writes ETS's image, not more.** It writes the bytes of ETS's image of its
+  group-address download, 405 bytes for the captured link: the tables without the own address, the
+  com-object table to its 91 entries.
 - **The full download needs the application in the device.** Every capture ran on a device holding
   this application, which ETS reads first (object 3 PID 13), with load-state machines 1, 2 and 3
   loaded. What ETS sends to any other device is not shown, so Busforge refuses that full download
@@ -345,25 +332,27 @@ and no capture of another System 7 product with a multi-address object exists.
 
 What the byte comparisons prove: the tables, the com-object table and the wire sequence are checked
 against ETS directly. The parameter bytes are compared for a configuration Busforge decoded from
-ETS's own image of the revert (the house project is password-protected and not in the corpus), so
+ETS's own image of the revert (the project behind the captures is not available to the tests), so
 for them the test proves Busforge's decode and encode agree on ETS's bytes, not that it would build
 them from the project. Object 64's config byte is the exception that proves the import: ETS writes
-`0x4f` where the application's flags give `0x47`, because the house project sets the object's read
-flag on this unit ([below](#project-level-com-object-flags)); the test gives that override as the
+`0x4f` where the application's flags give `0x47`, because the project sets the object's read
+flag on that device ([below](#project-level-com-object-flags)); the test gives that override as the
 import stores it, and fails on exactly that byte without it.
+
+How far the parameter flash, the group-address flash and the full download of this application are
+shown on the device is in [status.md](status.md).
 
 ## Declared-order System 7 downloads
 
 For some System 7 applications ETS runs the declared full-download steps one by one, in the order the
 procedure declares them, including a step Busforge refuses elsewhere. Busforge then runs them the
-same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). Three so far: the
+same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). Three: the
 Theben TheLuxa P300 ([below](#the-theluxa-p300)), the Theben Meteodata 140 S on a memory-mapped mask
-([below](#the-meteodata-140-s-memory-mapped)) and, first, the Auro presence detector, `M-0081_A-FE01-11-75D9`, captured on the house unit 1.1.x, in this
-order: a full download, a partial download after one parameter change, one after adding 15/7/250 as a
-second address on object 10 (which had 5/3/9), and one that reverted both, parameters and links in one
-(private corpus `captures/auro-m0081-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`,
-with ETS's own log of each, `auro-m0081-ets6log-*.txt`, which names every `LdCtrl*` step it executes
-and dumps the image it writes, `--` where it writes nothing).
+([below](#the-meteodata-140-s-memory-mapped)) and the Auro presence detector, `M-0081_A-FE01-11-75D9`,
+whose ETS downloads are captured in this order: a full download, a partial download after one
+parameter change, one after adding a second group address to object 10, and one that reverted both,
+parameters and links in one, each with ETS's own log, which names every `LdCtrl*` step it executes
+and dumps the image it writes, `--` where it writes nothing.
 
 | Declared (`full`, in this order) | What ETS sends, and Busforge with it |
 | --- | --- |
@@ -418,11 +407,7 @@ download) in the same LSM 3 bracket, after the com-object table.
 
 Busforge's group-address flash for this application (`planDeclaredOrderSystem7GaFlash`) runs that
 sequence, the declarations as PID 5 writes, writes exactly ETS's bytes, and reads back what it wrote
-(the address table's own address is neither written nor read back). Before this application was
-captured it ran the generic MV-0705 plan (`planMv0705GaFlash`): `Load`, the whole table including the
-own address at the address the load-state machine reports, `LoadCompleted`, for each table and the
-com-object table, with no unload, no segment or task declaration at all; its hardware run on the
-house unit 1.1.x is superseded by the run of the declared-order plan on 1.1.x (below). Busforge has no single
+(the address table's own address is neither written nor read back). Busforge has no single
 operation that writes parameters and links together the way the revert does; it runs the
 group-address flash and the parameter flash, each with its own bracket and restart, and their bytes
 together are ETS's revert bytes (the parameter flash writing only the one that differs).
@@ -456,31 +441,20 @@ What the comparisons prove (`tools/etsdiff.test.ts`, "Auro presence detector"): 
 the full, the parameter and the group-address download, verify mode aside, and every byte ETS writes,
 checked against ETS directly; the
 tables and the com-object table built from links read off ETS's tables; the parameter bytes for a
-configuration Busforge decoded from the 50 parameter bytes ETS wrote (the house project is not in the
-corpus), so for them the test proves Busforge's decode and encode agree on ETS's bytes.
+configuration Busforge decoded from the 50 parameter bytes ETS wrote (the project behind the
+captures is not available to the tests), so for them the test proves Busforge's decode and encode
+agree on ETS's bytes.
 
-All three ran on the house unit 1.1.x, after ETS's four captured downloads
-(record). The full download (no wire
-capture of it) planned 151 bytes in the five runs above, all equal to the unit as ETS had left it,
-and the read after its restart equals that reference. So it shows the sequence (unload, the PID 5
-declarations, `TaskCtrl1`, `LoadCompleted`, the restart) accepted, with the unit loaded and answering
-afterwards; since no byte differed, the transfer of changed bytes is shown by the two flashes, not by
-the full download. The parameter flash ("led feedback" 1 to 0 and
-back) and the group-address flash (15/7/250 added to object 10 and removed again) went through the
-logging proxy: on the wire they are the brackets above, and after the parameter change the unit's
-own PID 27 stamp of the parameter segment equals the one it showed after ETS's parameter download
-with the same value. Each was verified, and the last read equals the reference. A group read on
-5/3/9 was answered after the full download, after the parameter flash to LED = 0 and after the added
-address (15/7/250 too); after its removal 15/7/250 no longer answered and 5/3/9 did. A second pass of all five writes on the committed build 35ae113, with the pre-flight and verify checks of that build, gave the same results and had a group read after LED = 1 too (record, "Second pass on 35ae113"). Persistence is the restart each one ends with; no bus power cycle.
+How far the three are shown on the device is in [status.md](status.md); the full download there
+has no wire capture of its own, and wrote bytes the device already held.
 
 ### The TheLuxa P300
 
 The Theben TheLuxa P300, `M-0048_A-107E-12-5B58` (`DynamicTableManagement="true"`, `PreEts4Style`),
-captured on its only house unit in the same order: a full download, a partial download
-after one parameter change ("Temperature calibration in 0.1 °C", `AS-4800` offset 19, 0 to 1), one
-after linking the unlinked object 16 to a test address, and one that reverted both (private corpus
-`captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`, ETS's own
-log of each beside it). ETS runs the declared full steps in their declared order, as on the Auro, but
+its ETS downloads captured in the same order: a full download, a partial download after one
+parameter change ("Temperature calibration in 0.1 °C", `AS-4800` offset 19, 0 to 1), one after
+linking the unlinked object 16 to a group address, and one that reverted both, each with ETS's own
+log. ETS runs the declared full steps in their declared order, as on the Auro, but
 declares the two table segments as one region, as on the Gira ([above](#ets-captured-system-7-downloads)).
 
 | Declared (`full`, in this order) | What ETS sends, and Busforge with it |
@@ -513,24 +487,21 @@ same LSM 3 bracket. Busforge runs the parameter flash (`planAbsoluteParFlash`, t
 download marker) and the group-address flash of the region applications (`planCapturedSystem7GaFlash`),
 each pinned byte for byte against these captures.
 
-Where Busforge departs from ETS, deliberately: as on the Auro (below), no verify mode, the load state
+Where Busforge departs from ETS, deliberately: as on the Auro ([above](#declared-order-system-7-downloads)), no verify mode, the load state
 read after each of its own load-state writes, the device read first, and the full download only onto a
 unit holding this application with load-state machines 1, 2 and 3 loaded and level 0 granted to the
 free key. The full download reads back the whole com-object table segment, `0x45D3-0x45EF` behind the
-table included, which ETS writes and which the unit held unchanged after the restart in every run.
+table included, which ETS writes and which the device holds unchanged after the restart.
 
-All three ran on the house unit, each through the logging proxy, each `verified`, with a
-read after the restart, a group read answered, and the wire compared with ETS's capture
-(record).
+How far the three are shown on the device is in [status.md](status.md).
 
 ### The Meteodata 140 S, memory-mapped
 
 The Theben Meteodata 140 S, `M-0048_A-140C-14-EB70` (MV-0701, BIM M112, `DynamicTableManagement="true"`,
-`PreEts4Style`), captured on its only house unit in the same order: a full download, a
-partial download after one parameter change ("Temperature calibration in 0.1 °C", `P-2234`, `AS-4800`
-offset 4, 0 to 1), one after linking the unlinked object 23 to a test address, and one that reverted
-both (private corpus `captures/meteodata-140s-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`,
-ETS's own log of each beside it). It is the TheLuxa's procedure on a memory-mapped mask: every load
+`PreEts4Style`), its ETS downloads captured in the same order: a full download, a partial download
+after one parameter change ("Temperature calibration in 0.1 °C", `P-2234`, `AS-4800` offset 4, 0 to
+1), one after linking the unlinked object 23 to a group address, and one that reverted both, each with
+ETS's own log. It is the TheLuxa's procedure on a memory-mapped mask: every load
 control is the 11-byte memory write to `0x0104` (the LSM and event in the first byte, the property
 form's fields behind a segment-id byte), the state is read from `0xB6EA + LSM - 1`, and properties are
 only read.
@@ -548,7 +519,7 @@ only read.
 
 The image is 1893 bytes, not differential by stamps. ETS reads every block of it before writing and
 writes only the bytes that differ ("Giving up optimistice write after 36 of 36 mismatched bytes", group-address download, where
-nothing matches): on the unit that already held the configuration its full download wrote two bytes,
+nothing matches): on a device that already holds the configuration its full download writes two bytes,
 `0x4000` (the address table's count, which the unit resets when LSM 1 is declared) and the download
 marker `0x4800`. Busforge plans exactly ETS's image with ETS's values (`tools/etsdiff.test.ts`, "Theben
 Meteodata 140 S") and writes all of it, reading it back after the restart: the same departure as on the
@@ -568,10 +539,7 @@ with the old tables. Busforge's group-address flash plans exactly these images
 (`planCapturedSystem7GaFlash`) and its parameter flash the two bytes ETS wrote (`planAbsoluteParFlash`;
 ETS's logged image of the parameter download holds 607 bytes, its wire these two), over `0x0104`.
 
-All three ran on the house unit, each through the logging proxy, each `verified`, with a
-read after the restart, group reads answered, the load controls on the wire equal to ETS's and every
-byte ETS wrote written with the same value; the final read equals the reference
-(record).
+How far the three are shown on the device is in [status.md](status.md).
 
 ## Which bytes ETS writes
 
@@ -629,8 +597,7 @@ How the captures show it:
 - **Auro, `AS-4200`.** Its full download unloads load-state machine 3 and executes its
   `LdCtrlAbsSegment`: the image holds offsets 3 and 36, which no parameter covers and the mask marks.
   Its parameter download writes the segment as `LdCtrlWriteMem` and shows `--` at exactly those two
-  offsets. The explanation first read off the Auro ("the mask plus the parameter bytes") is the rule's
-  freshly loaded case.
+  offsets: "the mask plus the parameter bytes" is the rule's freshly loaded case.
 
 Busforge plans the full download of all four applications by this rule (`etsWrittenRuns`, and
 `etsTableRuns` for tables re-declared as one region, `packages/product/src/deviceflash.ts`); a parameter's memory in the com-object table's segment and a
@@ -660,66 +627,44 @@ begins with its count byte; the device reads the table only as far as that count
 table only as long as it is built, never the rest of its segment. So when a table shrinks, the bytes
 of its old tail stay in the segment behind it, and nothing on the bus ever removes them.
 
-The Auro presence detector `M-0081_A-FE01` shows it end to end (house unit 1.1.x,
-private corpus `captures/auro-m0081-*`). Its address table lives in `AS-4000` (47 bytes), its
-association table in `AS-402F` (45 bytes):
+The captures of the Auro presence detector `M-0081_A-FE01` show it end to end. Its address table
+lives in `AS-4000` (47 bytes), its association table in `AS-402F` (45 bytes):
 
-| Step | What ETS writes (capture, ETS's log) |
+| Step | What ETS writes |
 | --- | --- |
-| Group-address download, 15/7/250 added to object 10 | `partial-links`: `A_Memory_Write` 6 bytes at `0x4003`, `05 09 18 06 7F FA` (with the count `04` at `0x4000`), and 7 bytes at `0x402F`, `03 02 09 01 0A 03 0A` |
-| The revert | `partial-revert`: 4 bytes at `0x4003`, `05 09 18 06`, and 5 bytes at `0x402F`, `02 02 09 01 0A`; the revert's "Execute image" in ETS's log shows `--` from `0x4007` and from `0x4034` |
-| A full download | `fulldownload`: the same 4 bytes at `0x4003` and 5 at `0x402F`, nothing behind them |
+| Group-address download, a second address added to object 10 | the address table's count `04` at `0x4000` and 6 bytes of entries from `0x4003`; the association table, 7 bytes from `0x402F` (count `03`) |
+| The revert | 4 bytes of entries from `0x4003` and 5 bytes of associations from `0x402F` (count `02`); the revert's "Execute image" in ETS's log shows `--` from `0x4007` and from `0x4034` |
+| A full download | the same 4 bytes at `0x4003` and 5 at `0x402F`, nothing behind them |
 
-After the revert the unit holds `7F FA` at `0x4007-0x4008` and `03 0A` at `0x4034-0x4035`, behind
-tables whose count bytes say 3 and 2. The tables are identical to those before the link was added,
-but the segment stamps are not: the PID 27 stamp of objects 1 and 2 begins with the declared segment
-length (`0000002F`, `0000002D`) and ends in a checksum that covers the whole declared segment,
-residues included. Object 1's went from `...CBD3` to `...AE78`, object 2's from `...5362` to
-`...188A`. A read of the whole declared segments before ETS's captures and one after its revert
-differ in exactly these 4 bytes and the two stamps. A full download clears neither, ETS's or
-Busforge's: both write the tables to their length.
+After the revert the device holds the added address's two bytes at `0x4007-0x4008` and the
+dropped association's two bytes at `0x4034-0x4035`, behind tables whose count bytes say 3 and 2. The
+tables are identical to those before the link was added, but the segment stamps are not: the PID 27
+stamp of objects 1 and 2 begins with the declared segment length (`0000002F`, `0000002D`) and ends in
+a checksum that covers the whole declared segment, residues included, so both stamps change. A read
+of the whole declared segments before ETS's group-address download and one after its revert differ
+in exactly these 4 bytes and the two stamps. A full download clears neither, ETS's or Busforge's: both
+write the tables to their length.
+
+The Gira M-0008's captures show the same mechanism, with a twist: its association table sits
+directly behind the address table, so it moves when the address table grows
+([above](#ets-captured-system-7-downloads)). Its group-address download with one more link declares
+LSM 1 two bytes longer and LSM 2 two bytes later and shorter, and writes a ten-entry association table
+there; the revert declares the segments as before and writes the nine-entry table two bytes earlier,
+so it ends four bytes before the old one did, and ETS's log of the revert dumps `--` from there on.
+The last four bytes of the ten-entry table stay behind it, and object 2's stamp, whose leading word is
+the declared segment length of each download, differs from the one before the group-address download
+in its checksum alone. The TheLuxa P300's captures show it once more: after the revert the last three
+bytes of the four-entry association table its group-address download wrote stay behind the restored
+three-entry one, and object 2's stamp changes.
 
 Busforge follows ETS here. Its group-address flash and full download write each table to its built
 length and nothing beyond it, and read back exactly the runs they wrote, at the declared addresses;
 the group-address flash also checks after the restart that the table references (PID 7) of objects
 1 and 2 are the declared addresses. So a verified flash claims nothing about the bytes behind a
-table. Busforge's own removal of 15/7/250 on the same unit wrote the
-tables exactly as ETS's revert did and left the same residues
-(record). A comparison of whole declared
-segments, or of the PID 27 stamps, against a reference taken before a table grew shows them as
-differences that the tables do not have.
-
-The Gira M-0008 (house unit 1.1.x, private corpus `captures/gira-m0008-*`) shows the same mechanism,
-with a twist: its association table sits directly behind the address table, so it moves when the
-address table grows ([above](#ets-captured-system-7-downloads)).
-
-| Step | What ETS writes (capture line) | Object 2's stamp after it |
-| --- | --- | --- |
-| Group-address download, 15/7/250 linked to object 4 | `partial-links` l. 140: LSM 1 declared `0x4000+0x13`; l. 194: LSM 2 declared `0x4013+0x1D1`; l. 200 and 206: the association table at `0x4013`, count `0A`, its last 9 bytes `40 06 00 07 00 06 02 07 02` ending at `0x4027` | `000001D1 00F22033` (l. 433) |
-| The revert | `partial-revert` l. 125: `0x4000+0x11`; l. 179: `0x4011+0x1D3`; l. 185 and 191: the association table at `0x4011`, count `09`, ending at `0x4023`; ETS's log of it dumps `--` from `0x4024` (`gira-m0008-ets6log-partial-revert.txt`, row `0020`) | `000001D3 00F2AB26` (l. 789) |
-| A full download (the restore) | the same table at `0x4011` to `0x4023` (`fulldownload-restore` l. 185, 191) | `000001D3 00F2AB26` (l. 236) |
-
-So `06 02 07 02` at `$4024-$4027` are the last four bytes of the ten-entry association table the
-group-address download wrote, and the revert's nine-entry table ends four bytes before them. The
-stamp's leading word is the declared segment length of each download (`0x1D1` = 465 while the address
-table had 9 entries, `0x1D3` = 467 after the revert, as before ETS's partial downloads, where its full
-download read `000001D3 00F2D021`, `fulldownload` l. 237). Its checksum covers the whole declared segment, so
-with the same tables and four other bytes behind them it changed from `...D021` to `...AB26`. The read
-of 1.1.x taken before the captures holds `00 00 00 00` at `$4024-$4027`, the read after the revert
-`06 02 07 02`, and the reads after both Busforge full downloads still `06 02 07 02` with `...AB26`:
-Busforge, like ETS, writes the table to its length. Busforge's group-address flash adding and
-removing the same link wrote the same two tables and left the same four bytes and stamp
-(record).
-
-The TheLuxa P300 shows it once more (private corpus `captures/theluxa-p300-*`): its group-address
-download wrote a nine-entry association table at `0x400B-0x4013`, the revert the old one at
-`0x4009-0x400F`, so after it `0x4011-0x4013` hold `06 03 06`, the old table's tail, where the read before
-held `7B 00 FF`, and object 2's stamp changed (`...D3ED` to `...A412`). Busforge's group-address flash
-adding and removing the same link left the same bytes and the same stamp
-(record).
-
-When a table shrinks, Busforge writes nothing beyond it, as ETS: the residues and the changed stamps
-are expected after a link is removed (owner decision, 2026-10-07).
+table. Busforge's group-address flash adding and removing the same link writes the tables exactly as
+ETS's downloads do and leaves the same residues and the same stamps ([status.md](status.md)). A comparison of
+whole declared segments, or of the PID 27 stamps, against a reference taken before a table grew shows
+them as differences that the tables do not have: after a link is removed they are expected.
 
 ## Project-level com-object flags
 
@@ -753,19 +698,19 @@ object's communication flag differently from the application is refused there as
 flags stay as the device holds them. A product replacement drops the old application's overrides with its other
 configuration.
 
-On hardware an override has been written only by a System 7 full download, onto a unit that already
-held that value. The System B paths (full
+On hardware an override has been written only by a System 7 full download, onto a device that
+already held that value. The System B paths (full
 download, group-address flash) and the structural flash with an override are tested offline only.
 
 ## Structural flash
 
 A parameter change that alters the com-object table (a channel function with other objects, an
-object enabled or disabled) used to need a full download, which rewrites the whole parameter image.
-The structural flash writes it the way ETS writes it in a partial download
+object enabled or disabled) would otherwise need a full download, which rewrites the whole parameter
+image. The structural flash writes it the way ETS writes it in a partial download
 ([findings.md](findings.md) §28), and both flash routes run it when `comObjectTableChanges` is not
 empty and the family claims `structuralFlash`. It is claimed only for the application programs in
 `STRUCTURAL_FLASH` (profiles.ts: the Jung 400021SE's and the MDT BE-02001.02's), each matched against
-an ETS capture and run on its bench device:
+an ETS capture and run on the device ([status.md](status.md)):
 the bracket rests on behaviour that differs between stacks (keeping a segment's bytes across a
 reallocation at the same address, the order of the writes on thelsing/OpenKNX, the flash commit a
 persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other family keeps the full
@@ -883,8 +828,8 @@ Two consequences, both in the code:
    It is applied only to a device whose application is actually LOADED **and** whose
    manufacturer is on the hardware-proven allowlist (`HOLD_APPLICATION_ON_GA_FLASH`, Jung
    today): the extra LoadCompleted is not free on a persist-at-LoadCompleted device, where it
-   triggers another flash persist. On any other device the plan stays byte for byte the old
-   table-only bracket, and the `GA_FLASH_BROKE_APPLICATION` guard below is what keeps that
+   triggers another flash persist. On any other device the plan is the plain table-only
+   bracket, and the `GA_FLASH_BROKE_APPLICATION` guard below is what keeps that
    from failing silently.
 2. **The flash records the application object's load state before the write and re-checks it
    after.** A device whose application was LOADED and no longer is fails with

@@ -124,9 +124,9 @@ whose sequence is not strictly greater than the last it accepted from that sende
 it to the last sequence it saw the device send, answers in a tool-access session included
 ([findings.md](findings.md) §22), and so does Busforge (see [Senders](#senders-of-a-secured-group-address)).
 That rests on a device answering tool access from the counter it sends group telegrams from, which is
-shown for the Jung 400021SE only (PID 59 of its security object, its sending counter, read `0x011028`;
-the last answer of its next session carried `0x011030`); a device with a separate tool-answer counter
-would get the wrong value, in ETS as in Busforge. Our own tool-access counter is never taken from storage; it is
+shown for the Jung 400021SE only (its sending counter, PID 59 of its security object, and the
+sequences of its next session's answers continue from the same counter); a device with a separate
+tool-answer counter would get the wrong value, in ETS as in Busforge. Our own tool-access counter is never taken from storage; it is
 obtained live:
 
 1. At session start, send an S-A_Sync_Req: the payload is a random 48-bit challenge, the target's
@@ -267,7 +267,7 @@ device's security mode (PID 51 of the security interface object, through
 
 The mode is reported as the device states it, never guessed:
 
-| `securityMode.state` | Device answer | Seen on (bench, 2026-09-30) |
+| `securityMode.state` | Device answer | Seen on |
 |---|---|---|
 | `on` | return code 0, mode 1 | Jung 400021SE, secured session |
 | `off` | return code 0, mode 0 | GVS AMMA with Secure, plain, never activated |
@@ -281,29 +281,32 @@ not empty.
 sequence and MAC). Every per-request data size therefore shrinks by 13 inside a session
 (`transferChunks` in `packages/knx/src/device.ts`), and a request the framing leaves no room in is
 refused (`SECURE_APDU_TOO_SHORT`), as is any secured memory request to a device that declares no
-maximum APDU length. Shown for reads: a 48-byte extended read, the most the bench's USB path carries
-in plain, got no answer from the secured Jung, 35 bytes did (sizes in between not tried). A secured
-write is held to the 40 octets ETS sends on that path: 22-byte memory writes and 18-byte property
-elements, which is what Busforge's own secured download of the Jung wrote and the device answered.
+maximum APDU length. Shown for reads: a 48-byte extended read, the most the USB interface it was tried
+through carries in plain, gets no answer from the secured Jung 400021SE, 35 bytes do (sizes in between not
+tried). A secured write is held to the 40 octets ETS sends on that path: 22-byte memory writes and
+18-byte property elements, which is what Busforge's own secured download of the Jung writes and the
+device answers ([findings.md](findings.md#18-a-device-in-secure-mode-ignores-a-plain-a_restart)).
 The extended property services carry 4 octets more than the extended memory ones, so their element
 data per request is 4 less (`propRead`, `propWrite`).
 
 **Every numbered service goes through the session**, the restart and the master reset included. A
 device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores it (the
-Jung, 2026-09-28), which the restart check reports as `RESTART_IGNORED`.
+Jung 400021SE), which the restart check reports as `RESTART_IGNORED`.
 
 **Individual-address assignment goes out plain.** It is a broadcast and cannot go through a session.
 It is not refused for a secure device: a master reset clears the address with the key, and the
 assignment is proven by talking to the device on its new address. On a device still in secure mode
-the plain programming-mode reset afterwards is ignored (the Jung, 2026-09-29), which the assignment
+the plain programming-mode reset afterwards is ignored (the Jung 400021SE), which the assignment
 reports; switching it off through the secured session works. The Jung also ignores a master reset
 (A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer, nothing
-reset. Its only way back to the factory key is the physical reset.
+reset. Its only way back to the factory key is the physical reset
+([findings.md](findings.md#19-what-a-factory-fresh-secure-device-demands-of-the-activation)).
 
-## The gap
+## Programming a secure device
 
-Both directions of the secure channel are proven on real hardware: a secure descriptor and property
-read, a reversible secure property write, and a **secured full download** of the Jung (below).
+Both directions of the secure channel work on real hardware: a secure descriptor and property read,
+a reversible secure property write, and a **secured full download** of the Jung 400021SE (how far
+each is shown: [status.md](status.md)).
 
 ### The security object
 
@@ -324,16 +327,9 @@ flag for all its links. The dry-run diff and the verify both read the object bac
 returns its group keys only inside the session). Other memory models refuse a secure device's GA
 flash and full download (`SECURE_TABLES_UNSUPPORTED`).
 
-**Shown on the Jung, 2026-09-28:** a dry-run GA flash found the object ETS had loaded equal to the one
-Busforge builds from the project; Busforge's secured full download then wrote it (all 158
-security-object frames, requests and answers, byte-identical to ETS's decrypted capture), restarted
-the device through the session and verified tables, parameter CRC and security object after the
-restart. The first attempt failed honestly with `RESTART_IGNORED`: the restart went out plain, which
-a device in secure mode ignores. A GA flash that linked a second object to the secured address set
-its flag on the device and verified; its revert restored ETS's load. **Not shown:** the secured group
-address working on the bus. It has since been shown both ways: the Jung's own telegram on 0/0/1
-decrypted by the monitor (see [Secured group telegrams in the monitor](#secured-group-telegrams-in-the-monitor)),
-and a secured read Busforge sent answered by the Jung (see [Senders](#senders-of-a-secured-group-address)).
+On the Jung 400021SE the object Busforge builds from the project equals the one ETS loads, and the
+security-object frames of Busforge's secured full download, requests and answers, are byte-identical
+to ETS's decrypted capture ([The ETS reference capture](#the-ets-reference-capture)).
 
 ### Senders of a secured group address
 
@@ -368,8 +364,7 @@ Refused rather than guessed:
   replaced after every server session with that device (read, flash, identify, activation) by the
   last sequence the device was seen to send in it, as ETS does, so an activated device has one after
   its activation. Only the project the session ran under is updated; the smoke runner's own sessions
-  record nothing. The master reset of 2026-09-30 did not rewind the Jung 400021SE's counter
-  (`0x010C40` in the ETS session before it, `0x011028` after it and one activation and download). "Transmitting" means the communication and transmit
+  record nothing. A master reset does not rewind the Jung 400021SE's sending counter. "Transmitting" means the communication and transmit
   flags on an object whose first (sending) address this is, in the device's active configuration. An
   object that only answers reads there (read flag, no transmit flag) sends secured responses too; a
   device with no other transmitting object there is refused. A linked object
@@ -400,51 +395,38 @@ refused (`SECURE_VALUE_TOO_LONG`): extended frames are not implemented on this p
 sending from the same address keeps its own counter; if that counter is ahead of Busforge's, the
 receivers drop Busforge's telegrams without a word.
 
-**Shown on the Jung, 2026-09-29:** ETS 6.4.1 with 1.1.100 assigned to 0/0/1 loaded PID 54 with the
-single entry `1164 000000000000` ([findings §22](findings.md#22-how-ets-loads-a-secured-sender-into-a-receivers-pid-54-and-what-it-buys));
-Busforge imported that project and its GA flash dry run found the Jung `unchanged`. With the sender
-removed in Busforge, a GA flash emptied PID 54 (verified), the Jung then ignored a secured read from
-1.1.100, and Busforge refused to send one. Added back and flashed (verified, dry run `unchanged` against
-ETS's load again), a secured GroupValueRead sent from the monitor's send panel drew the Jung's secured
-GroupValueResponse, both decrypted in the monitor.
+ETS loads PID 54 with one entry per assigned interface sender, its individual address and a last
+sequence of 0 (another secured device on the address at a sequence ETS saw it send, see above)
+([findings §22](findings.md#22-how-ets-loads-a-secured-sender-into-a-receivers-pid-54-and-what-it-buys)),
+and Busforge's GA flash builds the same table: its dry run finds a device ETS loaded `unchanged`.
+A device ignores a secured read from a sender its table does not list, and Busforge refuses to send
+one; a listed sender's secured GroupValueRead draws the device's secured GroupValueResponse, both
+decrypted in the monitor (on the Jung 400021SE, [status.md](status.md)).
 
-**Refusals, shown on the same device:** a wrong tool key gets no answer to the Sync
+**Refusals of a secure session:** a wrong tool key gets no answer to the Sync
 (`SECURE_SYNC_NO_RESPONSE`); a plain session gets the descriptor `0xFFFF`, which the mask gate
 reports as a missing key or an unexpected secure device (`SECURE_KEY_MISSING`), not as a mismatch;
 a real answer with one bit flipped is dropped and reported as `SECURE_ANSWER_REJECTED` (the device
 acknowledged and answered, and was not believed); a real answer replayed in place of the next is
 dropped too and reported as `DEVICE_NOT_ANSWERING`, because a replay is MAC-valid and a stale
 retransmission is ordinary transport, so it is no evidence against the key. Neither is ever used.
-Both answers were altered in the test script between the tunnel and the session, not on the bus.
+The robustness check alters both answers between the tunnel and the session, not on the bus.
 
-Driving a secure parameter flash needs a secure device a parameter flash can actually target, and
-two common classes of secure device cannot serve:
+A secure parameter flash needs a secure device that has a parameter image and is not itself the
+interface carrying the flash. Two common classes of secure device are not such targets:
 
 - **A secure IP interface may have no parameter image.** The MDT IP Interface Secure (MV-0012) is a
   `DefaultProcedure` device with **zero parameter segments**, configured through properties rather than a parameter image, so a parameter
   flash has nothing to write. Supporting it means building a property-based configuration path, a
   separate unimplemented capability, not "adding DefaultProcedure". The MDT IP Interface/Router
-  (MV-07B0) does have a System B parameter segment, but it is the house's gateway (next point), and
-  its tunnelling entries are not modeled ([device-support.md](device-support.md#known-gaps)).
+  (MV-07B0) does have a System B parameter segment, but its tunnelling entries are not modeled
+  ([device-support.md](device-support.md#known-gaps)).
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
   restarts it, which drops the connection carrying the flash.
 
-**The bench has a suitable device, and it now runs secure.** The Jung 400021SE (`M-0004_A-7072-21`)
-declares `IsSecureEnabled="true"`, has a parameter image and is not the interface. On 2026-09-28 ETS
-6.4.1 secure-commissioned it from its certificate, with one secured group address (0/0/1 on channel
-1's switching output), through the logging proxy (see [The ETS reference capture](#the-ets-reference-capture)).
-It left the plain bench runs with that: the plain smoke spec no longer applies, and the way back to
-plain is Jung's documented master reset (start in safe state with the programming button held, then
-hold it longer than 5 s; restores the FDSK, wipes configuration and address), done on the bench before
-each activation run (see [Activation from the device certificate](#activation-from-the-device-certificate)).
-
-With the ETS project imported, Busforge reads the secured Jung back in full: parameters and links
-equal to the ETS project, no gap (2026-09-28). `secure-identify` reports its security mode as on,
-read from the security object itself.
-
-So the secured full download, parameter flash and GA flash are supported on System B, each shown
-first by hand on this device; the smoke spec `jung-400021se-secure` has repeated them in both
-channels with evidence records since 2026-09-29 (see [status.md](status.md)).
+The secured full download, parameter flash and GA flash are supported on System B; the products
+they are shown on, among them the Jung 400021SE (`M-0004_A-7072-21`, `IsSecureEnabled="true"`), are
+in [status.md](status.md).
 
 ### Group address security mode
 
@@ -477,16 +459,13 @@ where a secure device is one the project holds a tool key for:
   one if devices are linked and all are secure.
 
 A new or deleted key changes the security object of every secure device on the address; each of them
-shows it ([below](#security-object-baseline)). Deleting an address keeps its key, as before, so an address created again at the same raw value is
+shows it ([below](#security-object-baseline)). Deleting an address keeps its key, as described in [The key store](#the-key-store), so an address created again at the same raw value is
 secured with it.
 
-**Shown on the GVS AMMA 1.1.203, 2026-10-02** (bench, API on an isolated server, project imported from
-the ETS export): a new 0/0/2 linked to output 1's switching object got a generated key; the GA flash
-(23 bytes) verified; with 1.1.100 added as a sender of 0/0/2, a secured GroupValueWrite `01` on 0/0/2
-switched the output on and its status object sent a secured `01` on 0/0/1, then `00` the same way.
-Restored by linking the object back to 0/0/1 and a second verified GA flash (7 bytes). The key
-element for index 2 stays in the device's PID 53, as ETS leaves it. The plain-link confirmation and
-the mode dialog were driven in the browser, with no bus write.
+An address secured with a key Busforge generates works on the device: shown on the GVS AMMA
+(transfer and behaviour, no ETS reference); the plain-link confirmation and the mode dialog are
+checked in the browser only ([status.md](status.md)).
+When the address is unlinked again, its key element stays in the device's PID 53, as ETS leaves it.
 
 ### Security object baseline
 
@@ -517,8 +496,8 @@ and full download load. Sequence numbers are left out because they move with eve
   model that does not load the security object: Busforge refuses its group tables, so nothing it could
   write would settle a flag.
 
-Not shown on hardware: the flag is computed from the project, and was driven in route tests (a sender
-assigned, a key replaced, a peer linking its transmitting object and changing its address).
+The flag is computed from the project. A key replaced, and a peer linking its transmitting object or
+changing its address, are driven in route tests only; how far the rest is shown on hardware is in [status.md](status.md).
 
 ### Activation from the device certificate
 
@@ -527,8 +506,8 @@ setup key (FDSK)**, printed on it as a 36-character certificate (and QR code): R
 6-byte serial, the 16-byte FDSK and a CRC-4 nibble (`decodeCertificate` in
 `packages/knx/src/certificate.ts`). A certificate that does not decode or whose checksum fails is
 refused (`CERTIFICATE_INVALID`); one whose serial differs from the tool key's on file is refused
-(`CERTIFICATE_SERIAL_MISMATCH`). The decoder was checked once against the Jung's real label: the
-serial matched the device and the FDSK decrypted ETS's activation of it.
+(`CERTIFICATE_SERIAL_MISMATCH`). The decoder is checked against a real label, the Jung 400021SE's:
+the serial matches the device and the FDSK decrypts ETS's activation of it.
 
 `PUT .../certificate` stores the FDSK sealed (`device_certificates`, exported like the tool keys; it
 is kept after activation, since a master reset returns the device to it). `POST .../secure-activate`
@@ -549,16 +528,12 @@ then does what ETS does (`activateSecureDevice` in `packages/knx/src/activation.
 5. A new session under the new key must open and report security mode on (`ACTIVATION_UNCONFIRMED`
    otherwise, the key stays on file for the next run).
 
-**Shown on the Jung, 2026-09-29**, after a physical master reset (bus voltage on with the
-programming button held until the LED blinks slowly, release, then hold it again for 5 s until it
-blinks fast; it came back as 15.15.255 in programming mode): address 1.1.204 assigned, activation
-from the certificate (the key imported from ETS written back, so the ETS project stays valid), its
-security-mode read, switch-on and tool-key write byte-identical to ETS's, a secured full download
-verified after its restart, and a read-back with no drift and no gap. Two things only the device
-showed, both fixed: a Sync that went unanswered has to be closed with a T_Disconnect before the next
-key is tried, and the switch-on takes ETS's three octets (reserved, service 0, mode 1); two octets
-are refused with `0xF2`. The Sync sequence now starts at a clock, as ETS's does
-([findings.md](findings.md) §19).
+The security-mode read, the switch-on and the tool-key write are byte-identical to ETS's activation
+of the same device (the Jung 400021SE after a master reset; how far activation is shown:
+[status.md](status.md)). Two things only a factory-fresh device shows: a Sync that went unanswered
+has to be closed with a T_Disconnect before the next key is tried, and the switch-on takes ETS's
+three octets (reserved, service 0, mode 1); two octets are refused with `0xF2`. The Sync sequence
+starts at a clock, as ETS's does ([findings.md](findings.md) §19).
 
 An interruption at any point leaves the device opening under exactly one of the two keys Busforge
 holds. A device that refuses the key write answers under its old key, which the rekeyed session
@@ -569,12 +544,12 @@ locks the device out until a master reset.
 
 ## The ETS reference capture
 
-ETS secure-commissioning the Jung was recorded through the logging proxy on 2026-09-28. All 523
-secured frames decrypt with Busforge's own CCM and Sync (`tools/secure-capture-decode.ts`, keys
-from the environment only), none is left undecrypted: the independent check that the envelope
-matches ETS on an application device. The capture is kept on the development machine, not in the
-repository: with the device certificate it decrypts completely, and the certificate is stored
-nowhere. What ETS does, in order:
+A capture of ETS 6.4.1 secure-commissioning the Jung 400021SE from its certificate, with one secured
+group address, taken through a logging proxy, decrypts completely with Busforge's own CCM and Sync
+(`tools/secure-capture-decode.ts`, keys from the environment only): every secured frame, none left
+undecrypted. That is the independent check that the envelope matches ETS on an application device.
+The capture is not in the repository: with the device certificate it decrypts completely. What ETS
+does, in order:
 
 1. Sync with the **FDSK**, the serial field of the Sync request all zero.
 2. Read PID 51 (security mode) of object type 17: off. Switch it on (`A_FunctionPropertyExtCommand`).
@@ -587,8 +562,9 @@ nowhere. What ETS does, in order:
    everything in 22-byte frames after that.
 7. The security object's bracket, after all memory and before any other object completes: PID 5
    event 1 (loading), PID 54 cleared (element 0, its count, set to 0), PID 53 (the group key table,
-   one 18-byte entry: index 1, the position of 0/0/1 in the address table, and its key), PID 61 (one flag byte per group object: 74 writes,
-   73 of 18 elements and one of 13, only object 253 set to `0x03`), PID 5 event 2 (loaded).
+   one 18-byte entry: the secured address's position in the address table, and its key), PID 61 (one
+   flag byte per group object, in writes of 18 elements, the last one shorter, only the object on the secured address set
+   to `0x03`), PID 5 event 2 (loaded).
 8. The application id, the other objects' load completed, and the restart.
 
 Every secured request ETS sends there is at most 40 octets long: a 22-byte memory write and an
@@ -623,8 +599,7 @@ imported project holds for that address, and records how it was received:
 
 Only a decrypted telegram carries a service and a value; every other state is stored with an empty
 value, so nothing downstream (the web monitor, an export) can decode ciphertext as if it were one.
-Telegrams recorded before the monitor knew these states have no state and the service `Unknown`
-with the ciphertext as payload; the web monitor shows any `Unknown` telegram as raw octets, never as
+A telegram stored without a state has the service `Unknown` with the ciphertext as payload; the web monitor shows any `Unknown` telegram as raw octets, never as
 a DPT value.
 The state is stored with the telegram and travels in the `.busforge` export.
 
@@ -634,14 +609,8 @@ reconnect is shown as decrypted. One sequence per sender covers all its group ad
 receiving device.
 
 The cipher is covered by xknx's group-address known-answer vectors (`packages/knx/test/secure.test.ts`).
-**Shown on the Jung, 2026-09-29:** closing its K1 contact (parameterized to toggle on press, nothing
-on release) sent a secured GroupValueWrite on 0/0/1, encrypted on the wire (the logging proxy's
-capture shows only SCF, sequence, ciphertext and MAC). With the ETS project connected the monitor
-showed it as decrypted, "On", with the lock in the web monitor. With a project that holds no key for
-0/0/1 connected instead, the next two closings were recorded as "no key", without a value. Opened
-with the project's key, the three captured frames read On, Off, On at sequences 5604, 5605, 5606,
-the toggle the parameters describe. Not compared with an independent decoder (the ETS group
-monitor). The Jung answers no GroupValueRead from Busforge, plain or secured (see
-[findings §20](findings.md#20-a-secure-device-answers-no-secured-group-read-from-a-sender-it-does-not-list)),
-so its own contact is the only stimulus.
+On the bus, a device's own secured telegrams (the Jung 400021SE's contact input, toggling on press)
+show as decrypted with the project's key and as "no key" under a project without it
+([status.md](status.md)). The decryption is not compared with an independent decoder (the ETS group
+monitor).
 
