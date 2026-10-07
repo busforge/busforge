@@ -152,6 +152,30 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         expect(roundTripped).toBeGreaterThan(0); // never vacuous: every real device has placeable params
       });
 
+      test("every linkable object of the default configuration has a place in the view", () => {
+        // The view is what links are resolved against: an object it leaves out loses its links
+        // silently (the Theben channel-level and hidden-block objects did). Two counts against it:
+        // the image pass, which reaches every active object, and the catalogue itself, read here
+        // without the config layer: every ComObjectRefRef of the application's <Dynamic> with no
+        // <when> above it is active in every configuration.
+        const app = parseAppConfig(xml);
+        const view = buildDeviceConfig(app, new Map());
+        const shown = new Set<number>();
+        const shownRefs = new Set<string>();
+        for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") { shown.add(it.comObject.number); shownRefs.add(it.comObject.refId); }
+        expect([...shown].sort((a, b) => a - b)).toEqual([...view.imageComObjects.keys()].sort((a, b) => a - b));
+
+        const dyn = xml.slice(xml.lastIndexOf("<Dynamic>"), xml.lastIndexOf("</Dynamic>"));
+        const unconditional: string[] = [];
+        let whenDepth = 0;
+        for (const m of dyn.matchAll(/<(\/?)(when|ComObjectRefRef)\b[^>]*?(\/?)>/g)) {
+          if (m[2] === "when") { if (m[1]) whenDepth--; else if (!m[3]) whenDepth++; continue; }
+          if (whenDepth === 0) unconditional.push(/RefId="([^"]+)"/.exec(m[0])![1]);
+        }
+        if (!app.hasModules) for (const r of unconditional) expect(shownRefs.has(r)).toBe(true);
+        if (name.startsWith("M-0048_A-140C")) expect(unconditional.length).toBeGreaterThanOrEqual(7); // the Meteodata's channel-level objects 0-4, 6, 15
+      });
+
       test("the image projection drops module-def and union entries", () => {
         const app = parseAppConfig(xml);
         const model = parseApplication(xml);

@@ -78,14 +78,15 @@ test("the full-download route refuses an override it cannot place before anythin
   expect([r!.status, body.error?.code]).toEqual([400, "COM_OBJECT_OVERRIDE_UNRESOLVED"]);
 });
 
-// An object the configuration writes into the table but whose block the device page does not show
-// (Access="None"): its override is placed, not taken for a hidden object's.
-test("an override on an object the table holds but the page does not show is placed", () => {
+// An object in a block the device page hides (Access="None", the MIX 2 "Gemeinsame Objekte"): the table
+// holds it and ETS links it, so the page lists it and its override is placed.
+test("an override on an object of a hidden block is placed", () => {
   const cfg = parseAppConfig(catalogueXml("M-0048_A-493B-21-B471.xml.gz"));
   const view = buildDeviceConfig(cfg, new Map());
-  const shown = new Set(view.blocks.flatMap((b) => b.items).flatMap((it) => (it.kind === "comObject" ? [it.comObject.refId] : [])));
-  const unshown = [...view.imageComObjects.values()].find((o) => !shown.has(o.refId));
-  expect(unshown).toBeDefined();
-  const placed = placeComObjOverrides(cfg, view, [{ comObjRefId: stripRef(cfg.id, unshown!.refId), attrs: { ReadFlag: unshown!.flags.read ? "Disabled" : "Enabled" } }]);
-  expect(placed).toEqual(new Map([[unshown!.number, { flags: { read: !unshown!.flags.read } }]]));
+  const ref = `${cfg.id}_O-243_R-15`;
+  const shown = view.blocks.flatMap((b) => b.items).flatMap((it) => (it.kind === "comObject" && it.comObject.refId === ref ? [it.comObject] : []));
+  expect(shown.map((o) => o.number)).toEqual([243]);
+  const o = view.imageComObjects.get(243)!;
+  const placed = placeComObjOverrides(cfg, view, [{ comObjRefId: stripRef(cfg.id, ref), attrs: { ReadFlag: o.flags.read ? "Disabled" : "Enabled" } }]);
+  expect(placed).toEqual(new Map([[243, { flags: { read: !o.flags.read } }]]));
 });

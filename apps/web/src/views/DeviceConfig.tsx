@@ -757,9 +757,9 @@ export function DeviceConfig() {
                   };
                   return (
                     <li key={g.head.id} className="lg:contents">
-                      {navBtn(`sec-${g.head.id}`, g.head.name, false, groupChanged(g))}
+                      {navBtn(`sec-${g.head.id}`, g.head.name || t("device.unnamedSection"), false, groupChanged(g))}
                       {g.children.filter((c) => c.level === 1).map((c) =>
-                        navBtn(`sec-${c.id}`, c.name, true, c.items.some(isItemChanged)))}
+                        navBtn(`sec-${c.id}`, c.name || t("device.unnamedSection"), true, c.items.some(isItemChanged)))}
                     </li>
                   );
                 })}
@@ -772,7 +772,7 @@ export function DeviceConfig() {
               // Section heading sits ABOVE the card so each channel/group start is clear.
               <section key={g.head.id} className="space-y-2">
                 <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-20 items-center gap-2 px-1 text-lg font-semibold text-foreground">
-                  <span className="min-w-0 truncate">{g.head.name}</span>
+                  <span className="min-w-0 truncate">{g.head.name || t("device.unnamedSection")}</span>
                   {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                 </h2>
                 <Card>
@@ -793,7 +793,7 @@ export function DeviceConfig() {
                             so each sub-block reads as its own section without a heavy left bar. */}
                         <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
                           deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
-                          <span className="min-w-0 shrink truncate">{child.name}</span>
+                          <span className="min-w-0 shrink truncate">{child.name || t("device.unnamedSection")}</span>
                           {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                           <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
                         </h4>

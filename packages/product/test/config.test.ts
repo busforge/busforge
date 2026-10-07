@@ -581,6 +581,49 @@ describe("ParameterRefs of one parameter share its value", () => {
     expect(visible(v)).toEqual(["R-A", "R-L"]);
   });
 
+  test("a value stored only on a ref that is not shown is not what the shown ref writes, nor what a test reads", () => {
+    // ETS writes the shown ref's value, else its default: the Theben Meteodata held a value on an
+    // unshown ref of a union member (UP-6673 R-6690 = 5); ETS's full download wrote the shown R-6677's
+    // default 1, and ETS-programmed Auros hold the shown ref's default where the project stores a
+    // value on an unshown one (docs/findings.md §9).
+    const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-B", "0"]]));
+    expect(v.imageValues.get("M-TEST_A-40_P-S_R-A")).toBe("5");
+    expect(visible(v)).toEqual(["R-A", "R-L"]);
+  });
+
+  test("switching which ref is shown shows the new ref's default, not the value stored on the old one", () => {
+    // ETS did so on the Jung 400021SE: setting the minutes to 1 placed the seconds' other ref, whose
+    // default 0 ETS then wrote, and its export stored no value for the seconds (findings.md §9).
+    const sw = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+      <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-43" ApplicationNumber="43" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Switch" DefaultLanguage="en-US">
+      <Static><ParameterTypes><ParameterType Id="M-TEST_A-43_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="200" /></ParameterType></ParameterTypes>
+      <Parameters>
+        <Parameter Id="M-TEST_A-43_P-M" Name="Minutes" ParameterType="M-TEST_A-43_PT-N" Text="Minutes" Value="0"><Memory CodeSegment="M-TEST_A-43_RS-4" Offset="0" BitOffset="0" /></Parameter>
+        <Parameter Id="M-TEST_A-43_P-S" Name="Seconds" ParameterType="M-TEST_A-43_PT-N" Text="Seconds" Value="5"><Memory CodeSegment="M-TEST_A-43_RS-4" Offset="1" BitOffset="0" /></Parameter>
+      </Parameters><ParameterRefs>
+        <ParameterRef Id="M-TEST_A-43_P-M_R-M" RefId="M-TEST_A-43_P-M" />
+        <ParameterRef Id="M-TEST_A-43_P-S_R-A" RefId="M-TEST_A-43_P-S" />
+        <ParameterRef Id="M-TEST_A-43_P-S_R-B" RefId="M-TEST_A-43_P-S" Value="0" />
+      </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-43_PB-1" Name="m" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-43_P-M_R-M" />
+        <choose ParamRefId="M-TEST_A-43_P-M_R-M">
+          <when test="0"><ParameterRefRef RefId="M-TEST_A-43_P-S_R-A" /></when>
+          <when test="&gt;0"><ParameterRefRef RefId="M-TEST_A-43_P-S_R-B" /></when>
+        </choose>
+      </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    const app = parseAppConfig(sw);
+    const edited = new Map([["M-TEST_A-43_P-S_R-A", "30"]]);
+    expect(buildDeviceConfig(app, edited).imageValues.get("M-TEST_A-43_P-S_R-A")).toBe("30");
+    const switched = buildDeviceConfig(app, new Map([...edited, ["M-TEST_A-43_P-M_R-M", "1"]]));
+    expect([switched.imageValues.get("M-TEST_A-43_P-S_R-B"), switched.imageValues.has("M-TEST_A-43_P-S_R-A")]).toEqual(["0", false]);
+  });
+
+  test("a tested ref whose shown siblings carry different defaults reads its own default, not a value stored on it", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml('<ParameterRefRef RefId="M-TEST_A-40_P-S_R-B" />').replace('<ParameterRef Id="M-TEST_A-40_P-S_R-B" RefId="M-TEST_A-40_P-S" Value="0" />', '<ParameterRef Id="M-TEST_A-40_P-S_R-B" RefId="M-TEST_A-40_P-S" Value="0" /><ParameterRef Id="M-TEST_A-40_P-S_R-C" RefId="M-TEST_A-40_P-S" Value="0" />').replace('ParamRefId="M-TEST_A-40_P-S_R-B"', 'ParamRefId="M-TEST_A-40_P-S_R-C"')), new Map([["M-TEST_A-40_P-S_R-C", "9"]]));
+    // R-A (5) and R-B (0) are shown; the choose on R-C reads R-C's own default 0, not the 9 stored on it.
+    expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
+  });
+
   test("with both refs shown and different defaults, each keeps its own (which one ETS uses is unknown)", () => {
     const v = buildDeviceConfig(parseAppConfig(xml('<ParameterRefRef RefId="M-TEST_A-40_P-S_R-B" />')), new Map());
     expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
@@ -603,4 +646,48 @@ test("a placement that never settles is refused, not picked", () => {
       <choose ParamRefId="M-TEST_A-41_P-1_R-B"><when test="0"><ParameterRefRef RefId="M-TEST_A-41_P-1_R-A" /></when></choose>
     </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
   expect(() => buildDeviceConfig(parseAppConfig(xml), new Map())).toThrow(/does not settle/);
+});
+
+// Links are resolved against the view, so every active object needs a place in it. Theben places
+// measured-value objects directly under a text-less <Channel> (Meteodata 140 S, TheLuxa P300) and
+// shared objects in an Access="None" block (MIX 2 "Gemeinsame Objekte"); ETS links both.
+describe("objects outside a shown ParameterBlock", () => {
+  const co = (n: number) => `<ComObject Id="M-TEST_A-42_O-${n}" Name="O${n}" Number="${n}" Text="Object ${n}" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />`;
+  const xml = (dynamic: string) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-42" ApplicationNumber="42" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Loose" DefaultLanguage="en-US">
+    <Static><ParameterTypes><ParameterType Id="M-TEST_A-42_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType></ParameterTypes>
+    <Parameters><Parameter Id="M-TEST_A-42_P-1" Name="P" ParameterType="M-TEST_A-42_PT-N" Text="P" Value="1"><Memory CodeSegment="M-TEST_A-42_RS-4" Offset="0" BitOffset="0" /></Parameter></Parameters>
+    <ParameterRefs><ParameterRef Id="M-TEST_A-42_P-1_R-1" RefId="M-TEST_A-42_P-1" /></ParameterRefs>
+    <ComObjectTable>${co(0)}${co(1)}${co(2)}${co(3)}</ComObjectTable>
+    <ComObjectRefs>${[0, 1, 2, 3].map((n) => `<ComObjectRef Id="M-TEST_A-42_O-${n}_R-${n}" RefId="M-TEST_A-42_O-${n}" />`).join("")}</ComObjectRefs>
+    </Static><Dynamic>${dynamic}</Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const numbers = (v: ReturnType<typeof buildDeviceConfig>) =>
+    v.blocks.flatMap((b) => b.items.flatMap((i) => (i.kind === "comObject" ? [i.comObject.number] : []))).sort((a, b) => a - b);
+
+  test("objects directly under a channel, behind a choose, and in a hidden block are all listed", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml(`<Channel Id="M-TEST_A-42_CH-0" Name="Generic" Text="" Number="0">
+      <ComObjectRefRef RefId="M-TEST_A-42_O-0_R-0" />
+      <choose ParamRefId="M-TEST_A-42_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-TEST_A-42_O-1_R-1" /></when></choose>
+      <ParameterBlock Id="M-TEST_A-42_PB-1" Name="main" Text="Main"><ParameterRefRef RefId="M-TEST_A-42_P-1_R-1" /><ComObjectRefRef RefId="M-TEST_A-42_O-2_R-2" /></ParameterBlock>
+      <ParameterBlock Id="M-TEST_A-42_PB-H" Name="shared" Text="Shared" Access="None"><ComObjectRefRef RefId="M-TEST_A-42_O-3_R-3" /></ParameterBlock>
+    </Channel>`)), new Map());
+    expect(numbers(v)).toEqual([0, 1, 2, 3]);
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([0, 1, 2, 3]);
+    const own = v.blocks.find((b) => b.id === "M-TEST_A-42_CH-0")!;
+    expect(own.name).toBe("Generic");
+    expect(own.items.map((i) => (i.kind === "comObject" ? i.comObject.number : -1))).toEqual([0, 1, 3]);
+  });
+
+  test("an object of a hidden block inside a shown block is listed in the shown block", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-42_PB-1" Name="main" Text="Main"><ParameterRefRef RefId="M-TEST_A-42_P-1_R-1" />
+        <ParameterBlock Id="M-TEST_A-42_PB-H" Name="shared" Text="Shared" Access="None"><ComObjectRefRef RefId="M-TEST_A-42_O-3_R-3" /></ParameterBlock>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`)), new Map());
+    expect(v.blocks.map((b) => [b.name, b.items.map((i) => (i.kind === "comObject" ? i.comObject.number : i.kind))])).toEqual([["Main", ["param", 3]]]);
+  });
+
+  test("an object outside every channel and block is refused, not dropped", () => {
+    expect(() => buildDeviceConfig(parseAppConfig(xml(`<ComObjectRefRef RefId="M-TEST_A-42_O-0_R-0" />`)), new Map())).toThrow(/outside every channel/);
+  });
 });

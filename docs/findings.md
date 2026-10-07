@@ -363,13 +363,28 @@ minutes at 0 it evaluated the choose on `R-1` as 5, the shared value, and wrote 
 for 5 seconds (0 ms). Busforge evaluated `R-1` with its own default 0, activated the other member
 too, and wrote 100 ms over it.
 
-So a parameter has one value: one stored on a placed ref, else one stored on any of its refs, else
-the default of the placed ref. A placed ref with nothing stored keeps its own default, because
+So a parameter has one value, and it is the placed ref's: one stored on a placed ref, else the
+default of the placed ref. A value the project stores on a ref that no active branch places is a
+leftover of an earlier configuration and is neither written nor read by a test. The Theben Meteodata
+140 S (`M-0048_A-140C-14-EB70`) shows it: its project stores 5 on `UP-6673_R-6690` while the placed
+`R-6677` has nothing stored, and ETS's full download (capture) wrote `R-6677`'s default
+1, as for the two sibling unions (`0x496F-0x4971`, `0x499F-0x49A1`, `0x49CF`, `0x49D1`: 1 2 3).
+Two house Auros (`M-0081_A-FE01-11-75D9`) programmed by ETS show the same: the project stores a
+value on an unplaced ref of `P-7` and `P-16`, and the devices hold the placed ref's default.
+The same holds when a configuration switches which ref is shown: the newly placed ref's default
+applies, not the value stored on the ref shown before, as ETS did on the Jung (above). A value the
+user set through the old ref stays stored and returns when that ref is placed again.
+Only a parameter none of whose refs is placed reads a value stored on its refs (for a choose).
+A placed ref with nothing stored keeps its own default, because
 applications select an internal parameter's value by which ref an active branch places; when
 several refs with different defaults are placed, each keeps its own, since which one ETS would use
 is unknown. Which refs are placed is determined once, by walking the tree until the placement no
-longer changes, and every pass (the view and the image) reads the same placement. Among the
-bundled applications only the Jung changes.
+longer changes, and every pass (the view and the image) reads the same placement. When this rule
+took its present form, the images of every device's stored configuration in the house project and
+of every catalogue fixture at its defaults were compared before and after: only the Meteodata (8
+bytes) and the two Auros (1 byte each) changed, each to the byte the device holds. Configurations
+edited after a ref switch change too, by design; no capture shows ETS after such an edit beyond the
+Jung's.
 
 ## 10. `ParameterByteOrder="LittleEndian"` reverses multi-byte parameters
 
@@ -964,3 +979,26 @@ group-address and a reverting partial download, each with ETS's own log of the s
 
 What Busforge sends for it, and where it departs from ETS: [load-procedures.md](load-procedures.md#ets-captured-system-7-downloads).
 
+
+## 33. Objects outside a shown ParameterBlock are linked too
+
+Links are resolved against the configuration view: an object the view does not list keeps its link in
+the project, but Busforge's group tables leave it out. Two placements were not listed, and both are
+linked by ETS:
+
+- A `ComObjectRefRef` directly under a `<Channel>` (or a `ChannelIndependentBlock`), outside every
+  `ParameterBlock`. The Theben Meteodata 140 S (`M-0048_A-140C-14-EB70`) places its measured-value
+  objects 0-4, 6 and 15 there; ETS lists them and its address table holds their 7 links (count `0x14`
+  = own address + 19 in the full-download capture), where Busforge built 13. The TheLuxa
+  P300 (`M-0048_A-107E-12-5B58`, 8 objects) and MIX 2 `M-0048_A-9071` (18) do the same.
+- A `ComObjectRefRef` inside a `ParameterBlock Access="None"`. The MIX 2 `M-0048_A-493B-21-B471`
+  keeps its central objects 241-252 in such a block ("Gemeinsame Objekte"); the house devices hold
+  associations for objects 243 and 248, which the project links.
+
+The view now lists them: an object directly under a container goes into the container's own section
+(a text-less container gets one, named by its `Name`), an object of a hidden block into the section
+that encloses the block. Every active object the image pass reaches must appear in the view, or the
+configuration is refused (`CONFIG_VIEW_INCOMPLETE`), and so is anything placed outside every
+channel and block. A test over every catalogue fixture checks the view against the image pass
+and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over every
+device of the house project only views changed, no image; every project link resolves.

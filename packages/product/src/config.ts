@@ -269,10 +269,12 @@ export function buildDeviceConfig(
   // placed, and a ref that a choose merely tests reads the same value (Jung 400021SE: P-505 has
   // R-107 with the parameter's default 5 and R-1 with Value 0; with R-107 placed, ETS evaluated a
   // choose on R-1 as 5, and its own project export stores no value for the parameter at all;
-  // docs/findings.md §9). So one value per parameter: a value stored on a placed ref, else one
-  // stored on any of its refs, else the default of the placed ref. A ref placed itself keeps its own
-  // default when no value is stored, and so does every ref of a parameter whose placed refs carry
-  // different defaults: which one ETS would use is not known.
+  // docs/findings.md §9). So the value is the placed ref's: one stored on a placed ref, else the
+  // default of the placed ref. A value stored on a ref no active branch places is ETS's leftover from
+  // an earlier configuration and is not written (Theben Meteodata full-download capture, ETS-programmed
+  // Auros). A ref placed itself keeps its own default when no value is stored, and so does every ref
+  // of a parameter whose placed refs carry different defaults: which one ETS would use is not known.
+  // Only a parameter with no placed ref at all reads a value stored on its refs.
   //
   // `placement` (per instance-scoped parameter id, the def ref ids placed in active branches) is
   // fixed before the walks below, and all of them read the same one. It is found by walking the tree
@@ -303,13 +305,15 @@ export function buildDeviceConfig(
     const placedSiblings = placed.filter((r) => r !== defRefId);
     if (isPlaced) {
       if (e.has(instId)) return e.get(instId);
-      return storedOn(siblings, scope, e) ?? ref.value ?? paramDefault;
+      return storedOn(placedSiblings, scope, e) ?? ref.value ?? paramDefault;
     }
-    const stored = storedOn(placedSiblings, scope, e) ?? (e.has(instId) ? e.get(instId) : undefined) ?? storedOn(siblings, scope, e);
-    if (stored !== undefined) return stored;
-    const defaults = new Set(placedSiblings.map((r) => app.refs.get(r)?.value ?? paramDefault));
-    if (defaults.size === 1) return [...defaults][0];
-    return ref.value ?? paramDefault;
+    if (placedSiblings.length) {
+      const stored = storedOn(placedSiblings, scope, e);
+      if (stored !== undefined) return stored;
+      const defaults = new Set(placedSiblings.map((r) => app.refs.get(r)?.value ?? paramDefault));
+      return defaults.size === 1 ? [...defaults][0] : ref.value ?? paramDefault;
+    }
+    return (e.has(instId) ? e.get(instId) : undefined) ?? storedOn(siblings, scope, e) ?? ref.value ?? paramDefault;
   };
   // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
   // or the parameter default), so a later choose on that ref sees it as set. Document-order
@@ -504,7 +508,8 @@ export function buildDeviceConfig(
         // DIRECTLY inside a visible ParameterBlock is not descended here, so a Merker it places
         // would read stale for a choose collected at this same visible level. No device authored
         // that way is known (Jung/HMG place the hidden block at container/top level, where walk
-        // orders it correctly); it can only ever under-show vs the image, never mis-place.
+        // orders it correctly). Should one leave the view's objects different from the image's,
+        // the configuration is refused (CONFIG_VIEW_INCOMPLETE below), not shown short.
         case "block": break;
       }
     }
@@ -551,26 +556,34 @@ export function buildDeviceConfig(
   // channel's module hangs off a choose on it), so skipping the block wholesale left the Merker unset
   // and every channel hidden. Run the env-mutating side effects of an invisible subtree (Merker
   // assignments and Assigns) in document order, descending into blocks regardless of access, emitting
-  // nothing. Same choose selection and value resolution as the display walk, so a later choose reads
-  // exactly the env it should (the image pass does the equivalent via imgEnv).
-  const applyEnv = (nodes: DynNode[], scope: Scope) => {
+  // no parameter. Same choose selection and value resolution as the display walk, so a later choose
+  // reads exactly the env it should (the image pass does the equivalent via imgEnv).
+  // The block's communication objects stay active (ETS links them and its tables hold them: the MIX 2
+  // "Gemeinsame Objekte" block), so they go to `objects`, the section that encloses the block.
+  const applyEnv = (nodes: DynNode[], scope: Scope, objects: CfgItem[]) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "paramRef": assignIfMerker(n.refId, scope, env); break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
-        case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope); break;
-        case "container": case "block": applyEnv(n.children, scope); break;
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) applyEnv(def.dynamic, makeScope(n.refId, def, inst)); break; }
-        case "comObjRef": case "separator": case "button": case "unsupported": break;
+        case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope, objects); break;
+        case "container": case "block": applyEnv(n.children, scope, objects); break;
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) applyEnv(def.dynamic, makeScope(n.refId, def, inst), objects); break; }
+        case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) objects.push(it); break; }
+        case "separator": case "button": case "unsupported": break;
       }
     }
   };
 
-  const walk = (nodes: DynNode[], scope: Scope, into: Node[]) => {
+  // `loose` receives the leaves placed outside every ParameterBlock: a ComObjectRefRef or
+  // ParameterRefRef directly under a <Channel> or ChannelIndependentBlock (Theben places its
+  // measured-value objects there; ETS lists them and its tables link them). Inside a block it is
+  // null, because collect() has already gathered that block's leaves, nested containers included.
+  // `section` is the items of the nearest enclosing section, where a hidden block's objects go.
+  const walk = (nodes: DynNode[], scope: Scope, into: Node[], loose: CfgItem[] | null, section: CfgItem[]) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
-          if (n.access === "None") { applyEnv(n.children, scope); break; } // hidden, but its Merker/Assign side effects still gate later chooses
+          if (n.access === "None") { applyEnv(n.children, scope, section); break; } // hidden, but its Merker/Assign side effects still gate later chooses
           const items: CfgItem[] = [];
           collect(n.children, items, scope);
           if (items.length) {
@@ -578,7 +591,7 @@ export function buildDeviceConfig(
             if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
             const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0, ...gridOf(n, scope) }, order: headOrder(n), seq: seq++, children: [] };
             into.push(node);
-            walk(n.children, scope, node.children);
+            walk(n.children, scope, node.children, null, items);
           } else if (n.children.length === 0 && (n.paramRefId || n.text)) {
             // A reached but childless block is a pure category header (e.g. the
             // "Scene" section): ETS shows it as a navigable node, so emit it as an
@@ -587,7 +600,7 @@ export function buildDeviceConfig(
             const name = cap(blockTitle(n, scope));
             if (name) into.push({ block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: headOrder(n), seq: seq++, children: [] });
           } else {
-            walk(n.children, scope, into); // transparent wrapper: children keep this level
+            walk(n.children, scope, into, null, section); // transparent wrapper: children keep this level; its leaves are none (collect found no items)
           }
           break;
         }
@@ -596,23 +609,31 @@ export function buildDeviceConfig(
           // "GRUNDMODUL {{0}}" -> "Basic module HMG 6 T"); {{0}} is the channel's
           // TextParameterRefId value, else its Number. A text-less container
           // (ChannelIndependentBlock, Repeat, generic Channel) stays transparent.
+          // Its own leaves (outside every ParameterBlock) become the section's items; a text-less
+          // container gets a section of its own, named by its Name, only when it has such leaves.
           const heading = n.text.trim();
+          const own: CfgItem[] | null = loose === null ? null : [];
           if (heading) {
             const name = cap(subst(n.text, scope).replace(/\{\{0\}\}/g, (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? ""));
-            const node: Node = { block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: n.number ? Number(n.number) : 0, seq: seq++, children: [] };
+            const items = own ?? [];
+            const node: Node = { block: { id: scope.rewrite(n.id), name, items, level: 0 }, order: n.number ? Number(n.number) : 0, seq: seq++, children: [] };
             into.push(node);
-            walk(n.children, scope, node.children);
+            walk(n.children, scope, node.children, own, items);
           } else {
-            walk(n.children, scope, into);
+            const at = into.length, mySeq = seq++;
+            walk(n.children, scope, into, own, own ?? section);
+            // A ChannelIndependentBlock carries no Id or Name; its section is keyed by its place.
+            if (own?.length) into.splice(at, 0, { block: { id: scope.rewrite(n.id || `${app.id}_CIB-${mySeq}`), name: cap(subst(n.name, scope)), items: own, level: 0 }, order: n.number ? Number(n.number) : 0, seq: mySeq, children: [] });
           }
           break;
         }
-        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) walk(w.children, scope, into); break; }
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into); break; }
-        // Leaves: this pass builds the BLOCK TREE, and these are the block CONTENTS, gathered by
-        // collect() from inside each block above. Listed rather than defaulted, so that a node kind
-        // added later shows up as a compile error here instead of vanishing from the UI.
+        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) walk(w.children, scope, into, loose, section); break; }
+        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into, loose, section); break; }
+        // Leaves: inside a block collect() has gathered them; outside every block they belong to the
+        // enclosing container. Listed rather than defaulted, so that a node kind added later shows up
+        // as a compile error here instead of vanishing from the UI.
         case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
+          if (loose) collect([n], loose, scope);
           break;
       }
     }
@@ -658,7 +679,13 @@ export function buildDeviceConfig(
   }
 
   const roots: Node[] = [];
-  walk(app.dynamic, TOP, roots);
+  const outsideEveryContainer: CfgItem[] = [];
+  walk(app.dynamic, TOP, roots, outsideEveryContainer, outsideEveryContainer);
+  // The schema places leaves only inside a Channel, a ChannelIndependentBlock or a ParameterBlock.
+  // One outside all of them has no section ETS would show it in: refuse rather than drop it.
+  if (outsideEveryContainer.length) {
+    throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the application places ${outsideEveryContainer.map((it) => it.kind).join(", ")} outside every channel and parameter block, where the view has no section for it`);
+  }
 
   // Image values: the value ETS writes for EVERY parameter reached in the active
   // dynamic tree, including Access="None" internal params (hidden from the UI walk
@@ -762,6 +789,17 @@ export function buildDeviceConfig(
     }
   };
   emit(roots, 0);
+
+  // Links are resolved against the view, by reference: an active object the view does not list would
+  // lose its links without a word, and one it lists that the image pass does not reach would take links
+  // no table holds. Either mismatch refuses the configuration.
+  const listedNums = new Set<number>(), listedRefs = new Set<string>();
+  for (const b of blocks) for (const it of b.items) if (it.kind === "comObject") { listedNums.add(it.comObject.number); listedRefs.add(it.comObject.refId); }
+  const unlisted = [...imageComObjects.values()].filter((o) => !listedRefs.has(o.refId)).map((o) => o.number);
+  const inactive = [...listedNums].filter((n) => !imageComObjects.has(n));
+  if (unlisted.length || inactive.length) {
+    throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
+  }
 
   return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects, maxComObjectNumber };
 }
