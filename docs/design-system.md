@@ -1,6 +1,6 @@
 # Busforge Design System
 
-The single source of truth for Busforge's brand and visual language: logo, color, typography, iconography, and the rules that keep new surfaces consistent. The last section is the **style handoff** for anything that renders diagrams or other assets in the Busforge skin.
+The single source of truth for Busforge's brand and visual language: logo, color, typography, iconography, and the rules that keep new surfaces consistent. The last section is the **diagram palette** for anything that renders diagrams or other assets in the Busforge skin.
 
 Busforge is an open, cross-platform replacement for ETS, the tool that commissions KNX building-automation systems. The visual language is a **dark, precision-instrument** aesthetic: deep slate surfaces, a single forged-amber accent, monospace for all bus data.
 
@@ -109,9 +109,9 @@ Two families, loaded from Google Fonts in `index.html`.
 
 ---
 
-## Diagram handoff
+## Diagram palette
 
-The palette to hand to a diagramming tool so its output matches the product. Mapped to the semantic
+The palette to give a diagramming tool so its output matches the product. Mapped to the semantic
 roles such tools usually expose, **dark** variant (Busforge is dark-first). The docs' SVG diagrams
 use it.
 

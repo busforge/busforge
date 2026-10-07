@@ -87,7 +87,7 @@ BUSFORGE_MASTER_KEY=<32 random bytes> \
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BUSFORGE_IMAGE` | `ghcr.io/busforge/busforge:latest` | Image to run: by default the published image ([Continuous integration](#continuous-integration)); `busforge:latest` for one built locally as above. Until the first public release that image does not exist, and the default fails to pull |
+| `BUSFORGE_IMAGE` | `ghcr.io/busforge/busforge:latest` | Image to run: by default the published image ([Continuous integration](#continuous-integration)); `busforge:latest` for one built locally as above. The package is not public yet, so the default pulls only with a login that can read it |
 | `BUSFORGE_DATA` | named volume `busforge-data` | Host path for the data directory, if you want it on a specific (backed-up) filesystem |
 | `BUSFORGE_MASTER_KEY` | unset | Passed through only when set, so an empty value can never look like a configured key |
 
@@ -155,12 +155,11 @@ Docker's default grace period is 10 seconds, far shorter than a download, after 
 `docker kill`, still ends the process mid-write. The next start then reports that write as
 `interrupted` with the device state unknown, and replays nothing.
 
-**Why 30 minutes.** The `tasks` table of the development instance held 686 finished writes on
-2026-09-30 (downloads, parameter and group-address flashes on the bench and on the installation bus,
-TP through a KNXnet/IP interface or the bench bridge). The longest took 229 s (a parameter flash of a
-Steinel True Presence), the longest full download 211 s (the ABB US/U 4.2); a group-address flash at
-most 145 s. That is a margin of about eight. What is not measured is a large MV-0705 image: the only
-MV-0705 device timed, the MDT BE-02001, downloads in 19 s. A device written with `A_Memory_Write`
+**Why 30 minutes.** The longest writes measured on TP, through a KNXnet/IP interface or the Busforge
+bridge, take a few minutes: about 230 s for a parameter flash (Steinel True Presence), about 210 s
+for a full download (ABB US/U 4.2), at most about 145 s for a group-address flash. That is a margin
+of about eight. What is not measured is a large MV-0705 image: the only MV-0705 device timed, the
+MDT BE-02001, downloads in 19 s. A device written with `A_Memory_Write`
 takes 12 bytes per frame, each a confirmed round trip with a per-frame retry budget of a few seconds,
 so a slow line and retries can stretch a download well past the measured ones; 30 minutes leaves
 room for that. The grace period only costs time when
@@ -281,28 +280,10 @@ or `docker run` the new tag with the same `-v`. The old container is stopped fir
 period above. On start the server applies its forward-only schema migrations (versioned on SQLite's
 `user_version`), so there is no separate migration step to run. There is no downgrade: an older image
 does not notice that a newer one has migrated the database and runs on it unchecked. To go back,
-restore the backup taken before the upgrade. On 2026-10-04 this path was exercised locally with the shipped compose file
-and a named volume: a container from the image of `181c1fb` imported a project and created a blank
-one, the image built from this layout replaced it and listed both projects unchanged, and a backup
-restored after `docker compose down -v` gave the same project list. Further runs restored onto a data
-directory that was not empty, once on the named volume and once on a bind mount (`BUSFORGE_DATA`):
-backup taken under the `181c1fb` image, upgrade, three more projects created by the new image,
-container killed so that `busforge.db-wal` and `-shm` stayed behind. A restore from the archive cut
-to half its size and one from a readable archive without `busforge.db` both failed, left the
-directory byte-identical and did not start the container; the restore from the intact archive
-started it, and the project list was that of the backup. The same sequence with a plain
-`tar -xzf` restore, without emptying the directory, kept the three newer projects: the leftover log
-had been replayed onto the restored database. The backup and restore commands as written above
-were run verbatim from a directory other than the compose directory, on a bind mount: the backup
-listed `./busforge.db` with an empty `-wal`; a readable archive without `busforge.db` was refused
-with `archive lacks ./busforge.db`, left the directory unchanged and the container stopped; the
-intact archive restored onto a running container, which the restore stopped first, and gave the
-backup's project list. A `docker stop` of a container whose writes were all still in the log left
-`busforge.db` holding all of them, which the image before the checkpoint did not: there the
-`busforge.db` copied alone had no tables at all. The backup with the image taken by its ID ran
-verbatim as well, and a `docker compose create busforge` with a changed `BUSFORGE_IMAGE` replaced
-the running container with a stopped one, as described above. Not every historical data layout was
-exercised.
+restore the backup taken before the upgrade. Upgrade, backup and restore as written here
+(including the refusals and a restore onto a directory with a leftover `busforge.db-wal`) have been
+run by hand with the shipped compose file, on a named volume and on a bind mount; not every older
+data layout has.
 
 ### Bus access from a container
 
@@ -357,9 +338,7 @@ release job tags the commit `v<version>`, tags the image with the version and cr
 release with the changelog. It skips when nothing changed since the last tag.
 
 Deploying a running instance is not part of the public pipeline. A site that runs its own forge,
-registry or deployment keeps that pipeline and its compose overlay to itself. The author's
-(`.forgejo/workflows/ci.yml`, Forgejo and a NAS) is still in this tree and leaves it before the
-repository is published.
+registry or deployment keeps that pipeline and its compose overlay to itself.
 
 The hardware smoke framework is never part of CI. It needs a real bus and a real device; see
 [testing.md](testing.md).

@@ -65,20 +65,20 @@ the connect: a device session installs its own on a connected transport.
 
 **Over TCP there is no tunnelling acknowledgement** (KNXnet/IP Tunnelling v2). The client writes each
 TUNNELLING_REQUEST once and neither waits for a TUNNELLING_ACK nor sends one for a request it
-receives; a real KNX IP interface (MDT SCN-IP000.03) sends none, and waiting for one failed every
+receives; a real KNX IP interface (MDT SCN-IP000.03) sends none, so waiting for one would fail every
 operation with `TUNNEL_ACK_TIMEOUT`. Busforge's own bridge still acknowledges a TCP client's
-requests, which the client ignores. Over UDP the acknowledge-and-retransmit loop runs as before.
+requests, which the client ignores. Over UDP the acknowledge-and-retransmit loop runs as usual.
 
 What takes the acknowledgement's place over TCP is the interface's `L_Data.con`. Each send waits for
 it, matched by destination and TPDU (never by sequence: a gateway numbers the confirmations with its
 own counter, and it fills in a source of `0.0.0` and sets bits in the control field). A negative
 confirmation is `BUS_SEND_FAILED`, as on USB. No confirmation within 3 s is `TUNNEL_CON_TIMEOUT`: the
 link to the interface stalled or the interface is stuck, and whether the device answered is unknown.
-Without it a stalled stream looked exactly like a device that stopped answering
+Without it a stalled stream would look exactly like a device that stopped answering
 ([findings.md](findings.md) §25). A stalled or closed link is not retried. Transport-layer control
-frames (T_Connect, T_Disconnect, T_ACK) are sent without waiting. Confirmations matched on the bench
-bridge and the house's MDT KNX IP interface; the timeout and a negative confirmation are
-tested against a scripted gateway only.
+frames (T_Connect, T_Disconnect, T_ACK) are sent without waiting. Confirmations are shown matching
+on hardware through the Busforge bridge and an MDT KNX IP interface; the timeout and a negative
+confirmation are tested against a scripted gateway only.
 
 ### Liveness: the client keeps its own status honest
 
@@ -89,8 +89,8 @@ channel. The telegram log would simply, silently, stop while the status stayed g
 
 - On **UDP and TCP** alike, the client sends a CONNECTIONSTATE_REQUEST every 60 s and waits up to
   10 s for the response, retrying three times. Three unanswered requests mean the tunnel is dead.
-  Over TCP the request carries the zero IPV4_TCP HPAI, byte-equal to what ETS 6 sends (bench capture
-  2026-09-29); Calimero runs the same heartbeat on TCP. The socket alone is not a liveness signal: a
+  Over TCP the request carries the zero IPV4_TCP HPAI, byte-equal to what ETS 6 sends (seen
+  in an ETS capture); Calimero runs the same heartbeat on TCP. The socket alone is not a liveness signal: a
   peer that vanished without a FIN leaves it looking open.
 - **On TCP**, a closed or desynchronised stream is also reported directly.
 - Either way, an inbound DISCONNECT_REQUEST is **answered** with a DISCONNECT_RESPONSE (so the
@@ -130,7 +130,7 @@ manufacturer code), and a body that is either a cEMI frame or a Bus Access Serve
 
 Sends are **serialised** through a chain. The queue is not politeness: a second send while a
 confirmation is outstanding clobbers it. `sendCemi` waits for the interface's `L_Data.con` and
-distinguishes two failures that used to look identical: no confirmation at all
+distinguishes two failures that would otherwise look identical: no confirmation at all
 (`USB_SEND_NOT_CONFIRMED`) and a confirmation with the error bit set, meaning the frame never left
 the interface (`BUS_SEND_FAILED`). Conflating them sends every diagnosis to the wrong place: at the
 device, when the real fault is the cable.
@@ -279,11 +279,11 @@ anyone listens for it; a send or property read waiting on the interface fails at
 Without a USB serial the reopen works only while no identical stick is attached; the bridge says so
 at start.
 
-Shown on the bench on 2026-10-04 by taking the stick off the USB bus and back (`authorized` 0, then
-1, in sysfs) under a live TCP tunnel: the tunnel was disconnected, a connect during the gap got
-`TUNNEL_INTERFACE_UNAVAILABLE`, the stick came back as `hidraw0` instead of `hidraw1` and was open
-again 2 s later, and a read of 1.1.56 through a new tunnel answered. That run lost the stick through
-the read side; the write-side path is covered by an offline test only.
+Shown on hardware by taking the stick off the USB bus and back under a live TCP tunnel: the tunnel
+was disconnected, a connect during the gap got `TUNNEL_INTERFACE_UNAVAILABLE`, the stick came back
+under another HID path and was open again 2 s later, and a device read through a new tunnel
+answered. That loss came through the read side; the write-side path is covered by an offline test
+only.
 
 On UDP, sequence numbers run in **both** directions: a client's retransmission (same sequence number,
 because its acknowledgement was lost) is acknowledged again but **not put on the bus twice**, because
@@ -299,17 +299,16 @@ carries no frame for 120 s (a search or description, then gone) is closed the sa
 naming a TCP channel counts only on that channel's own connection: another connection cannot keep
 it alive or close it by guessing its id. A TCP channel also ends when its socket does, but that alone is not
 enough: a client whose FIN never arrives (a network change, a sleeping laptop, a firewall that drops
-instead of resetting) leaves a socket that stays open on the bridge, and before the reaper covered
-TCP such a channel held its tunnel address until the bridge was restarted.
+instead of resetting) leaves a socket that stays open on the bridge, and without the reaper such a
+channel would hold its tunnel address until the bridge restarts.
 
-Shown on the bench on 2026-10-04 with a client that vanished without a FIN or a reset: a TCP tunnel
-from the Mac, then both directions of that one peer port dropped on the bench host (`iptables`) and the
-client killed. The bridge kept the stream `ESTAB` with nothing queued (Send-Q 0: the quiet bench line
-gave it nothing more to send, so a queue that does not drain was not staged). A connect 22 s after
-the channel's last frame got `0x24` and the log named the holder ("held by channel 1 … last heard
-22 s ago"); 124 s after its last frame the channel was dropped, the stream went to `FIN-WAIT-1` with
-17 bytes queued (the `DISCONNECT_REQUEST` and the FIN) and no owning process, and the next connect got
-the address.
+Shown on hardware with a TCP client that vanished without a FIN or a reset (both directions of its
+port dropped by a firewall, the client killed). The bridge kept the stream `ESTAB` with nothing
+queued (a quiet line gave it nothing more to send, so a queue that does not drain was not staged).
+A connect 22 s after the channel's last frame got `0x24` and the log named the holder ("held by
+channel 1 … last heard 22 s ago"); 124 s after its last frame the channel was dropped, the stream
+went to `FIN-WAIT-1` with the `DISCONNECT_REQUEST` and the FIN queued and no owning process, and
+the next connect got the address.
 
 A stream whose send queue stops draining deliberately gets no faster way out: it holds its address
 until the reaper drops it after the 120 s KNXnet/IP defines (in practice 120 to 130 s after the last

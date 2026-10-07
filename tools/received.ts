@@ -1,5 +1,5 @@
 // Diagnostic packages received from users, kept in the private corpus for internal regression tests
-// (docs/testing.md, "Received diagnostic packages"). A package comes in as the plain JSON file the
+// (the procedure is internal: received-packages.md in the corpus). A package comes in as the plain JSON file the
 // app saves (`busforge-diagnostic/1`, packages/product/src/diagnostic.ts); it is checked here, stored
 // byte for byte with a record of where it came from, loaded by the tests, and deleted on request.
 //
@@ -466,7 +466,7 @@ function walk(dir: string, rel = ""): { files: string[]; links: string[] } {
 // from it and goes first, by hand. A file the operator names in `independent` is known not to be
 // made from it (an own capture of the same product, say): its bytes do not block, its naming the
 // package still does. A link in the corpus is refused, not followed. A backup of the corpus is not
-// reached (docs/testing.md, "Deleting a package").
+// reached (received-packages.md in the corpus, "Deleting a package").
 export function removeReceived(corpus: string, id: string, tracked: { path: string; text: string }[], independent: string[] = []): string {
   if (!/^[0-9a-f]{16}$/.test(id)) throw new IntakeRefused(`${id} is not a package id (16 hex digits)`);
   const root = receivedRoot(corpus);

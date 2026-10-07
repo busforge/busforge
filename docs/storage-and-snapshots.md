@@ -112,7 +112,7 @@ declared load procedure has a step the full download cannot execute, the surgica
 the same, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): nothing would check which application the device
 runs before the flash writes into it. A family that cannot be downloaded in full for another reason
 is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export; restore points do not carry it, being device
-state. Devices from before the column existed read as programmed.
+state. A device with no value recorded reads as programmed.
 
 Each device also carries a local `programming_token`, regenerated on insertion and address/product/
 application updates. It is not part of the portable device identity. Queued programming refuses a
@@ -168,9 +168,8 @@ Two details follow from the payload being a plain JSON document:
 
 - Globally autoincrementing ids (group ranges, group addresses, spaces) are **remapped** on restore
   rather than reinserted verbatim.
-- A restore point captured before the structural trees were part of the payload restores the
-  configuration but not the group-address structure, and the UI says so instead of implying a full
-  rollback.
+- A restore point whose payload lacks the structural trees restores the configuration but not the
+  group-address structure, and the UI says so instead of implying a full rollback.
 
 ## One definition of "the project"
 

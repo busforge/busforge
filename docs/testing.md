@@ -13,10 +13,10 @@ describes the machinery, not the claims.
 | Level | Where | Proves | Does not prove |
 |---|---|---|---|
 | Unit / codec tests | `packages/knx/test`, `packages/product/test`, `packages/project/test` | Frame and APDU encoding, DPT and parameter codecs, `.knxproj` decryption and parsing, load-plan construction, mask classification | That any of it matches what a device expects |
-| Fixture snapshots (golden) | `packages/product/test/real-catalogue.test.ts` (needs the [private corpus](#the-private-corpus)) | **Stability**: the parse and the image projection over 13 real manufacturer application programs are byte-for-byte unchanged since the last reviewed regeneration | Correctness. A wrong output stays wrong until a device says otherwise |
+| Fixture snapshots (golden) | `packages/product/test/real-catalogue.test.ts` (needs the [private corpus](#the-private-corpus)) | **Stability**: the parse and the image projection over 16 real manufacturer application programs are byte-for-byte unchanged since the last reviewed regeneration | Correctness. A wrong output stays wrong until a device says otherwise |
 | Coverage lock | same file, "every UI-exposed param is image-placeable" | Every parameter the config view exposes has a place in the image. The two projections cannot drift apart | That the placement is the one ETS would pick |
 | Round-trip lock | same file, "the parameter image codec round-trips" | `build → decode` is its own inverse on every real fixture, so a codec cannot silently lose or shift a value | That the encoding matches the device's reading of it |
-| Doc lock | `apps/server/test/device-support-doc.test.ts` | [device-support.md](device-support.md) stays in sync with the mask registry: a new or changed mask fails the suite until the table is updated | Anything about hardware |
+| Doc lock | `apps/server/test/device-support-doc.test.ts` (needs the [private corpus](#the-private-corpus)) | [device-support.md](device-support.md) stays in sync with the mask registry: a new or changed mask fails the suite until the table is updated | Anything about hardware |
 | Server route tests | `apps/server/test` | Endpoint contracts, the task queue, and above all the **refusals**: flash guards, stale com-object tables, unsupported profiles, secure devices | That a permitted write lands correctly on a device |
 | Hardware smoke | `tools/smoke` | That busforge places the intended bytes on a real device **and** that the device acts on them | Only what it was run against |
 
@@ -26,61 +26,15 @@ Everything except the last row runs offline and is bundled in the gate:
 bun run check      # typecheck + lint + tests + build, across every workspace
 ```
 
-The MV-0705 group-address route guard test injects a coded failure at tunnel connection
-and asserts that exact error on the submitted task. It opens no network connection: a closed local TCP port
-is not a deterministic failure because automatic transport selection falls back to UDP.
-
 The hardware smoke framework is deliberately **not** part of `bun run check`. It needs a KNX
 interface, a powered bus and a device, and sometimes a finger on a programming button.
 
 ## The private corpus
 
-Some tests need files the repository does not carry, because they are third-party data or were
-recorded on a real installation. They live in a directory outside the repository, the **private
-corpus**:
-
-```
-<corpus>/
-├── catalogue/                 manufacturer ApplicationProgram XML, <id>.xml.gz
-├── captures/                  logging-proxy captures of ETS and Busforge, on the test bench and the house bus, *.log
-├── collections/               raw-acquisition packages of real installations, *.json (no test reads them)
-├── received/                  diagnostic packages users sent, one directory per package (see below)
-└── dca-theben-dali-e64/
-    ├── backup-store.dat       a DALI gateway backup from a real installation
-    └── backup-store.expected.json   the values the parse test expects to read from it
-```
-
-| Directory | Read by | Why it is not in the repository |
-|---|---|---|
-| `catalogue/` | the real-catalogue golden, the flash, download, read-back and load-procedure tests, `tools/evidence-bundle.ts` | Manufacturers' catalogue data, with no licence to redistribute it |
-| `captures/` | `tools/etsdiff.test.ts`, `tools/raw-acquisition-vectors.test.ts` | They carry the devices' serial numbers, and the house captures a real installation's addresses |
-| `dca-theben-dali-e64/` | `plugins/dca-theben-dali-e64/test/parse.test.ts` | Project name, room names and DALI addresses of a real house |
-| `collections/` | nothing; the record behind a hardware claim in [raw-acquisition.md](raw-acquisition.md). Not in `CORPUS_FILES`: a corpus without it is complete | A real device's identity and memory |
-| `received/` | `tools/received.test.ts`, which loads every package in it. Not in `CORPUS_FILES`: a corpus without it has no received packages | A user's device, its address and memory, kept with their consent |
-
-What stays in the repository are the parts that only point into it: the golden hashes
-(`packages/product/test/fixtures/real/golden.json`) and the reference vectors into the captures
-(`tools/fixtures/raw-acquisition-vectors.json`). The exact list of files a corpus must hold is
-`CORPUS_FILES` in `tools/corpus.ts`.
-
-### Taking a capture
-
-A capture is the log of `tools/knxproxy.ts`, a KNXnet/IP-over-TCP proxy that passes every frame
-between a tool and a KNXnet/IP server on and logs it in the format `tools/etsdiff.ts` reads:
-
-```bash
-PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=$PWD/<name>.log \
-  PROXY_ADVERTISE=<this host's ip>:3672 bun run tools/knxproxy.ts
-```
-
-ETS gets this host and port as a KNXnet/IP TCP interface. `PROXY_ADVERTISE` matters for ETS 6: it
-follows the control endpoint in the server's search answer and connects there directly, so without
-the rewrite the log ends after the search. Check that the log holds ETS's `CONNECT_REQ` before
-starting a download.
-
-### Running with and without it
-
-The corpus is found through one environment variable and nothing else:
+Some tests need files the repository does not carry: manufacturer catalogue data, which may not be
+redistributed, and captures and backups read from real devices. They live in a directory outside
+the repository, the **private corpus**, named by one environment variable and nothing else. Without
+it those tests are skipped visibly, and every other test runs; that is how public CI runs.
 
 ```bash
 export BUSFORGE_CORPUS=/absolute/path/to/busforge-corpus
@@ -103,21 +57,24 @@ The status line is the last thing `bun run check` prints (`bun run corpus:status
 Without the corpus:
 
 ```
-private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 25 test files were skipped, not run:
+private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 28 test files were skipped, not run:
   apps/server/test/device-support-doc.test.ts
   ...
-  tools/received.test.ts
 ```
 
 With it:
 
 ```
-private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 25 test files that have them were enabled
+private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 28 test files that have them were enabled
 ```
 
-The local gate is the run **with** the corpus. Public CI runs without it, and that should be the
-only place where corpus tests are skipped: nothing stops a local run without the variable from
-going green, which is why its last line says so.
+A run without the variable also ends green, which is why its last line says what it left out.
+Without the corpus, a green run is the gate for a contribution, as it is in public CI; the
+maintainers also run the check with the corpus before a change lands. What stays in the repository
+are the parts that only point into the corpus: the golden hashes
+(`packages/product/test/fixtures/real/golden.json`) and reference vectors such as
+`tools/fixtures/raw-acquisition-vectors.json`. The exact list of files a corpus must hold is
+`CORPUS_FILES` in `tools/corpus.ts`.
 
 ### Writing a test that needs it
 
@@ -129,130 +86,42 @@ at all and stands as one skipped test; a read at module top level would throw, s
 test or a `corpusDescribe` body. A test that does not touch the corpus stays an ordinary `test`,
 even in a file that has corpus tests, so it keeps running in public CI.
 
+A new file the tests read from the corpus is added to `CORPUS_FILES` in `tools/corpus.ts`, so a
+corpus without it is reported incomplete. A contributor without the corpus attaches the file (a
+catalogue, a capture) privately to the issue or pull request, and a maintainer adds it.
+
 The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
 `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
 
-### Received diagnostic packages
+## Taking a capture
 
-A user can save a diagnostic package of a device from the app
-([raw-acquisition.md](raw-acquisition.md#diagnostic-package)) and send it in privately. The
-transfer itself is not built yet: no service, no invitation, no endpoint
-([roadmap.md](roadmap.md#raw-acquisition)). What exists is the local half: taking a file that arrived
-into the corpus, keeping a record of where it came from, using it in the tests, and deleting it.
-All of it is `tools/intake.ts` over `tools/received.ts`, and it works only on the corpus
-`BUSFORGE_CORPUS` names; a corpus inside the repository is refused.
-
-```
-<corpus>/received/<id>/
-├── package.json       the file as it arrived, byte for byte
-├── provenance.json    busforge-received/1: sender, issue, consent, who configured the device
-└── derived/           anything made from the package (optional); deleted with it
-```
-
-`<id>` is the first 16 hex digits of the file's SHA-256. Nothing from the file or from the sender
-reaches a path, and directories and files are created readable by the owner only.
-
-#### Taking a package in
+A capture is the log of `tools/knxproxy.ts`, a KNXnet/IP-over-TCP proxy that passes every frame
+between a tool and a KNXnet/IP server on and logs it in the format `tools/etsdiff.ts` reads. It
+speaks TCP on both sides, so the server must accept KNXnet/IP over TCP (Tunnelling v2): the
+Busforge bridge, or an interface that offers TCP.
 
 ```bash
-bun run tools/intake.ts add ~/Downloads/busforge-diagnostic-1.1.203-2026-10-05-17-12.json \
-  --from="reporter of busforge/busforge#42, by the private transfer" \
-  --issue="busforge/busforge#42" \
-  --consent="kept for internal regression tests, deleted on request" --consented-at=2026-10-05 \
-  --configured-by=ets --prior-busforge-writes=none
+PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=$PWD/<name>.log \
+  PROXY_ADVERTISE=<this host's ip>:3672 bun run tools/knxproxy.ts
 ```
 
-Every flag but `--received-at` (default: today, UTC; not in the future) is required; without the consent there is no
-intake. The file is checked before anything is written, and refused (exit 1, the reason on stderr,
-nothing stored) when it is:
+ETS gets this host and port as a KNXnet/IP TCP interface. `PROXY_ADVERTISE` matters for ETS 6: it
+follows the control endpoint in the server's search answer and connects there directly, so without
+the rewrite the log ends after the search. Check that the log holds ETS's `CONNECT_REQ` before
+starting a download.
 
-| Refused | Why |
-|---|---|
-| empty, or larger than 8 MiB | The collector cannot produce more: its memory guard is 1 MiB, 2 MiB as hex |
-| not a regular file: a directory, a link, a FIFO | The file is opened without following a link and checked on the open descriptor, so the file read is the file checked |
-| an archive (gzip, zip, tar, 7z, rar, xz, bzip2, zstd) or a program (ELF, Mach-O, Windows, WebAssembly, a `#!` script) | Only the plain JSON file Busforge saves is taken. Nothing is unpacked, so no archive entry can name a path outside the corpus, and nothing is run |
-| not UTF-8, not a JSON object, not valid JSON | Broken data |
-| a format other than `busforge-diagnostic/1`, an uncleaned `busforge-raw-collect/1` package | The intake takes what the app's cleaning made, nothing else |
-| an unknown or missing field, a wrong type, bytes that are not lower-case hex, an unknown record space, outcome or stop reason, a bad individual address or mask, an end before the start | The schema of `DiagnosticPackage` (`packages/product/src/diagnostic.ts`), checked field by field, as every build so far has written it (see [raw-acquisition.md](raw-acquisition.md#what-the-file-holds) on the format's shape) |
-| a serial number record that still holds bytes | The package was not cleaned by Busforge |
-| a location in a record's target (`object`, `pid`, `start`, `count`, `address`, `length`, `propertyIndex`, `type`) that is not an integer | Written as a string, the serial number's PID 11 would not be recognised |
-| a control character in a name, an identifier or a flag | `list` prints them. Free text the collector or the link wrote (a reason, an error) may be empty or span lines and is taken as it is; every refusal message quotes the file with control characters, line separators and bidirectional overrides escaped as `\uXXXX` |
-| a file received before | Same SHA-256, same id |
-| consent dated after `--received-at`, or `--configured-by=busforge` with `--prior-busforge-writes=none` | The provenance contradicts itself |
+The setup constraints of a USB interface behind the bridge
+([development.md](development.md#capturing-reference-traffic)) apply here as well. A capture
+carries the devices' serial numbers and the project's addresses, so it belongs in the corpus, not
+in the repository.
 
-The file is copied, not moved: the copy the transfer left (a mail attachment, a download) is the
-operator's to delete.
-
-#### Who wrote the device: evidence strength
-
-`--configured-by` and `--prior-busforge-writes` record the sender's statement of who put the
-configuration into the device, in the vocabulary of the
-[evidence contract](evidence-contract.md#only-independent-sources-can-confirm-the-bytes), and
-`provenance.json` stores the `reference` that follows from it:
-
-| Sender says | `reference` | In the tests |
-|---|---|---|
-| configured by ETS, Busforge never wrote it | `independently-commissioned-device` | `asReference()` hands the package out as an independent reference for the bytes a configuration should give |
-| configured by Busforge | `self-written` | refused as a reference: Busforge's own bytes prove transfer at most |
-| anything else (ETS with Busforge writes since, or unknown) | `none` | refused as a reference |
-
-A test that compares Busforge's bytes with a received package takes it through `asReference()`, so a
-self-written dump can never stand where an independent reference is needed. The stored `reference`
-must follow from the stored origin; a hand edit that upgrades it is refused on load.
-
-#### In the tests
-
-`loadReceived()` returns every package sorted by id, each checked again on every load: its file must
-still have the SHA-256 its provenance records and pass today's check, and its directory may hold
-nothing but `package.json`, `provenance.json` and `derived/`, and no link anywhere (deleting a link
-would leave what it points at). `received/` itself must be a real directory outside the repository,
-not a link. `tools/received.test.ts` runs this
-over the real corpus (a corpus test) and prints how many packages it found: with no `received/`
-directory that is 0, and the test passes with nothing to check. Every other test in the file runs
-on synthetic packages made by `toDiagnosticPackage` in temporary directories, with or without the
-corpus.
-
-The same corpus test checks that no tracked file of the repository holds a received package's
-bytes: every aligned 16-byte chunk of a record's bytes with at least 8 different byte values is
-searched for in the hex digits of every tracked file (spaces, line breaks, capitals and `0x`
-prefixes do not hide a copy) and in its raw bytes (a `.bin` copy). A copy of 32 bytes or more is
-found; fill patterns are not looked for, and neither is a base64 copy. A test or a fixture may name a package by its id, never repeat its content. The corpus itself
-lies outside the repository and the Docker build context is an allowlist of source directories
-(`.dockerignore`), so neither a received package nor `tools/` reaches an image.
-
-#### Deleting a package
-
-```bash
-bun run tools/intake.ts list               # id, date received, IA, mask, reference, issue
-bun run tools/intake.ts remove <id>
-```
-
-`remove` deletes `received/<id>/` with everything in it, `derived/` included. It refuses, naming
-each file, while a copy is left elsewhere: any other file of the corpus (a gzipped one unpacked) or
-any tracked file of the repository that names the package's id or SHA-256 or holds a run of its
-bytes, found as the leak check above finds it. Whatever was made from the package there goes first,
-by hand. Other received packages are searched for the id and hash only: a second package of the same
-device holds the same bytes without being made from this one. Any other file that holds the same
-bytes from an independent source (an own capture of the same product with the same defaults) is
-named with `--independent=<path>`, once per file; its bytes then do not block, its naming the
-package still does. A link anywhere in the corpus is refused, since the search does not follow it. A damaged package (its provenance
-unreadable, its file changed, a link inside) is refused with the damage named, to be looked at and
-deleted by hand. It does not reach:
-
-- **Backups of the corpus.** The author's corpus is in a Time Machine backup; a
-  deleted package stays in the snapshots taken while it was there until Time Machine thins them.
-  A deletion request that has to cover backups needs those snapshots deleted by hand, or the corpus
-  excluded from the backup before the package is taken in.
-- **The copy the transfer left**, any copy outside the corpus and the repository, and copies
-  shorter than 32 bytes, of fill patterns or in base64, which the search does not look for.
-
-### Why the golden snapshot is not a correctness proof
+## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental
 change, which is exactly what you want when refactoring a parser, and it says nothing at all about
 whether the bytes are right. The honest counterpart is a read-back from a real device
-(`tools/verify-images.ts` against a dumped corpus, see [development.md](development.md)) and the
+(`tools/verify-images.ts` against dumped device memory, see [development.md](development.md)) and the
 smoke framework below. See [verification.md](verification.md) for the full model.
 
 ## The hardware smoke framework
@@ -297,9 +166,14 @@ set. Two consequences, both deliberate:
 - **No mocked-device UI tier.** Pure UI tests without hardware would be a separate subproject, and
   the bugs worth catching there are caught by the UI channel against hardware too.
 
-The consequence is the done bar: a device counts as **done** only when every capability it claims
-and every behaviour it declares pass in **both** channels on real hardware (`Done` in
-[/GLOSSARY.md](../GLOSSARY.md)).
+### The done bar
+
+A device counts as **done** only when every capability its product claims (from
+`classify().capabilities()`, plus provisioning and the UI click-through) passes on real hardware in
+**both** channels, together with every behaviour its spec declares. One green channel is not done,
+and neither is a device that byte-verifies without ever acting on the bus, unless its spec states
+why no behaviour is observable (write-only outputs). [status.md](status.md) applies this bar per
+spec.
 
 ### What each check proves
 
@@ -307,8 +181,7 @@ A **capability** check is a write-path proof. Its oracle is always the same: the
 read-back matches busforge's image (zero owned drift, `verified: true`), re-checked through an
 independent `read-back` endpoint that decodes on a different path from the flash verify. It proves
 busforge can reliably *place* bytes. It does **not** prove the configuration is correct: a
-wrongly-but-consistently encoded value reads back green, which is exactly how an IEEE-754 float
-width bug once survived every offline check.
+wrongly-but-consistently encoded value, a float of the wrong width for example, reads back green.
 
 A **behaviour** check is the correctness proof. The framework configures the function, links its
 com-object to a random group address, flashes, then observes the bus through an independent
@@ -324,11 +197,9 @@ These three check in plain. A fresh address the runner creates for `heartbeat` o
 Data Secure mode "off", since on a secure device an address in "auto" mode is secured, as ETS does
 it; a secured object is checked with `securedOutput`.
 
-This is the only layer that catches a byte-perfect flash of a semantically wrong value. Bringing it
-up found two real product bugs on a System B actuator that a byte-verified read-back could never
-have seen (see [findings.md](findings.md)): a group-address flash refused as `RESTART_IGNORED` on a
-persist-on-`LoadCompleted` device, and a link that byte-verified green while the device's own
-com-object table kept the Communication flag cleared, so the link was functionally dead.
+This is the only layer that catches a byte-perfect flash of a semantically wrong value: a link,
+for example, that byte-verifies green while the device's own com-object table keeps the
+Communication flag cleared, so the link is functionally dead.
 
 ### What a device spec declares
 
@@ -355,7 +226,7 @@ and visible in the report, which is the difference between an exception and a si
 
 A spec with `provision: "import-knxproj"` whose device has a tool key in the project file is run
 securely end to end: the server gets the keys from the import, and the runner reads the same file for
-its own bench connections (reboot, load states, firmware), which open a secure session. Neither the
+its own connections to the device (reboot, load states, firmware), which open a secure session. Neither the
 keys nor the password reach the report or the evidence records. On top of the capabilities and
 behaviours such a run adds:
 
@@ -366,7 +237,7 @@ behaviours such a run adds:
 | Restore | Parameters and links the run changed are set back to the imported file's, written, and then the GA flash dry run must say `unchanged` and a read-back must show no parameter drift |
 
 The saved connection is matched on host and port (`BUSFORGE_BENCH_HOST`, `BUSFORGE_BENCH_PORT`,
-default 3681), since one bench machine can offer several interfaces.
+default 3681), since one host can offer several interfaces.
 
 ### The run
 
@@ -439,7 +310,7 @@ BUSFORGE_BENCH=1 bun run smoke <spec-id> --channel=api|ui [--seed=N]
 |---|---|
 | `BUSFORGE_BENCH` | Must be `1`. Without it the runner exits "refused: no bench", never "passed" |
 | `BUSFORGE_BENCH_HOST` | Host of the KNX interface this run drives. **Required, there is no default**: it must match a saved IP connection in busforge, and the runner refuses in preflight without it |
-| `BUSFORGE_BENCH_PORT` | KNXnet/IP port of that interface (default `3681`, the busforge bridge's port; a standard gateway uses `3671`) |
+| `BUSFORGE_BENCH_PORT` | KNXnet/IP port of that interface. The runner's default is `3681`, which matches a bridge started with `--port 3681`; the bridge's own default and a standard gateway use `3671` |
 | `BUSFORGE_API` | The server (default `http://localhost:3000`) |
 | `BUSFORGE_WEB` | The web app, `ui` channel only (default `http://localhost:5173`) |
 
@@ -450,14 +321,14 @@ spec, channel, seed, every verdict and the raw `FlashResult`s. Next to each repo
 `<report>.evidence.json`: one [evidence record](evidence-contract.md) per observed capability,
 click-through and behaviour, with the persistence result on the writes it covers, naming the server build (read from `/api/version` before the first
 run), the runner revision, the spec revision (a hash of the spec), the transport and the device's
-firmware revision where it reports one (device object PID 9, read over the bench interface after
+firmware revision where it reports one (device object PID 9, read over the same interface after
 the run). A run that stops before it reaches the device writes no device record, and the runner
 refuses to start when it cannot read the server's version. A failure inside a driver is recorded as
 a failure even when the harness caused it; a later record that supersedes it must say so.
 
 | Variable | Meaning |
 |---|---|
-| `BUSFORGE_BENCH_VIA` | `busforge-bridge` or `direct`: how the bench interface reaches the bus. Not detectable on the wire (the bridge's name is configurable), so without it records say `unknown` |
+| `BUSFORGE_BENCH_VIA` | `busforge-bridge` or `direct`: how the interface under test reaches the bus. Not detectable on the wire (the bridge's name is configurable), so without it records say `unknown` |
 
 The witness opens its own tunnel for group traffic only. An interface with a single tunnel channel
 (a typical KNX-USB stick behind the bridge) can serve it only between the server's bus operations,
@@ -488,12 +359,12 @@ byte-verifies.
 - **Firmware-side failure modes** such as a device that only tolerates full downloads: the framework
   surfaces them honestly but cannot prevent them.
 
-### Coverage today
+### Coverage
 
-Five device specs exist (`tools/smoke/specs/`), covering System B and System 7 devices across
-several manufacturers, including a module device and a device commissioned via `A_MemoryExtended`.
-That is a handful of devices, not a device fleet: the framework proves the code paths those devices
-exercise, and nothing else. Which specs are green, in which channel, is in [status.md](status.md).
+The specs in `tools/smoke/specs/` cover System B and System 7 devices of several manufacturers,
+including a module device, a device commissioned via `A_MemoryExtended` and a KNX Data Secure
+device. That is a handful of devices, not a device fleet: the framework proves the code paths those
+devices exercise, and nothing else. Which specs pass, in which channel, is in [status.md](status.md).
 
 ### Adding a device
 

@@ -74,9 +74,9 @@ bun run dev:web        # web UI on :5173, proxies /api
 bun run check          # typecheck, lint, tests and build across every workspace
 ```
 
-Some tests need files this repository does not carry: manufacturer catalogue data, ETS
-captures from the test bench and a DALI gateway backup from a real installation. They sit in
-a private corpus outside the repository. Without it, `bun run check` runs everything else,
+Some tests need files this repository does not carry: manufacturer catalogue data, which may
+not be redistributed, and captures and backups read from real devices. They sit in a private
+corpus outside the repository. Without it, `bun run check` runs everything else,
 skips those tests by name (`[needs private corpus] ...`) and ends with a status line listing
 their files; that is how it runs in public CI. With the corpus, export its absolute path first:
 
@@ -85,7 +85,7 @@ export BUSFORGE_CORPUS=/path/to/busforge-corpus
 bun run check          # last line: private corpus: present at /path/to/busforge-corpus; ...
 ```
 
-See [`docs/testing.md`](docs/testing.md#the-private-corpus) for the layout and the rules.
+See [`docs/testing.md`](docs/testing.md#the-private-corpus) for how those tests run and skip.
 
 Or self-host the container:
 

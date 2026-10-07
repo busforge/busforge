@@ -41,6 +41,11 @@ hardware. What it proves and what it deliberately does not prove is in [testing.
 Individual steps exist (`bun run typecheck`, `lint`, `test`, `build`) but `check` is the one that
 counts.
 
+Some tests read manufacturer data from a private corpus outside the repository. Without
+`BUSFORGE_CORPUS` they are skipped visibly and the check's last line names their files; a green run
+without the corpus is the gate for a contribution, and the maintainers also run it with the corpus
+([testing.md](testing.md#the-private-corpus)).
+
 ## Workspace layout
 
 Bun workspaces, `packages/*` + `apps/*` + `plugins/*` + `tools`.
@@ -64,10 +69,11 @@ and not part of `check`. Read-only unless stated otherwise.
 | Tool | Purpose |
 |---|---|
 | `readback.ts` | Dump a real device's commissioned memory and compare it against what busforge builds |
-| `dump-param-memory.ts` | Dump every reachable device's parameter memory into a ground-truth corpus |
-| `verify-images.ts` | Byte-verify the image build against that corpus, offline |
+| `dump-param-memory.ts` | Dump every reachable device's parameter memory into a directory of dumps |
+| `verify-images.ts` | Byte-verify the image build against those dumps, offline |
 | `paramtest.ts` | Single-device parameter image comparison from files, one memory read |
 | `etsdiff.ts` | Diff busforge's image against what ETS actually wrote, from a capture |
+| `knxproxy.ts` | KNXnet/IP-over-TCP logging proxy: records the capture `etsdiff.ts` reads |
 | `flashtest.ts` | **Writes.** Live group-address flash harness with revert |
 | `udp-ssh-relay.ts` | Carry KNXnet/IP over an SSH TCP forward when the direct UDP route is broken |
 | `smoke/runner.ts` | The hardware smoke framework, see [testing.md](testing.md) |
@@ -102,7 +108,7 @@ drops a `DO_NOT_COMMIT_device_memory.txt` marker in the output directory as a re
 
 ### dump-param-memory.ts
 
-Dumps every reachable device's parameter memory into a corpus, for both memory models (LSM4
+Dumps every reachable device's parameter memory into a directory, for both memory models (LSM4
 relative segments and absolute segments). Read-only. Unlike `readback.ts` it is **database-sourced**
 and needs no `.knxproj` password: application programs and values come from the server's own
 database.
@@ -116,12 +122,12 @@ is `apps/server/data/readback/parammem` (git-ignored).
 
 ### verify-images.ts
 
-Byte-verifies the image build against that corpus. **Offline**, no bus: it reads the dumped `.bin`
+Byte-verifies the image build against those dumps. **Offline**, no bus: it reads the dumped `.bin`
 files and compares them against what busforge builds now. This is the honest correctness check,
 against real devices rather than against our own frozen golden snapshot.
 
 ```bash
-bun run tools/verify-images.ts [corpus-dir]
+bun run tools/verify-images.ts [dump-dir]
 ```
 
 The match is **owned-scoped**: a segment passes when the bytes busforge derives from active
@@ -159,13 +165,13 @@ sent, which can never prove that what we sent is what ETS would have sent. For a
 application the visibility resolver could pick a different active set, and every test plus the
 verify would stay green while the device ran on a wrong image.
 
-One trap is baked into the tool because it once cost a wrong root cause: a relative segment is
+One trap is baked into the tool: a relative segment is
 written at the address the **device** assigns during allocation, so ETS's `A_MemoryExtended_Write`
 addresses are segment base + offset, not the 0-based offsets our image is indexed by. The tool
 infers that base from the capture; `--base` pins it. Diffing without it reports every write as
 divergent on an image that is in fact byte-identical.
 
-Input is a capture produced as described under [Capturing reference traffic](#capturing-reference-traffic).
+Input is a logging-proxy capture, as described under [Capturing reference traffic](#capturing-reference-traffic).
 
 ### flashtest.ts
 
@@ -226,10 +232,12 @@ state machine's control properties, and the closing `A_Restart`. Any group-only 
 *Group* Monitor, a group-monitor-only interface) misses the entire transaction. That single
 distinction is what makes most naive capture attempts useless.
 
-**The route that works today is an external packet capture** (Wireshark on the network segment
-between ETS and the interface). Capturing inside the bridge process is **not implemented**.
+**The capture the tools read is the log of the logging proxy** `tools/knxproxy.ts`, which ETS uses
+as its KNXnet/IP TCP interface ([testing.md](testing.md#taking-a-capture)). An external packet
+capture (Wireshark on the network segment between ETS and the interface) is the route for reading a
+transaction by eye. Capturing inside the bridge process is **not implemented**.
 
-### Wireshark, the working route
+### Wireshark
 
 Needs no code from busforge. Use Wireshark 3.0 or newer for its built-in KNX/IP dissector (the
 old third-party plugin does not decode the cEMI payload and is useless here). Have ETS commission
@@ -238,7 +246,7 @@ and filter on `knxip`. Because ETS programs using its assigned tunnel address as
 memory writes, load control, restart and the device's connection-oriented replies all traverse
 that tunnel.
 
-Two constraints shape the setup:
+Two constraints shape the setup, for the logging proxy and for Wireshark alike:
 
 - A USB interface only surfaces point-to-point frames addressed to its **own** individual address,
   so ETS must tunnel on that address for the programming dialogue to cross the bridge at all. If
@@ -253,12 +261,13 @@ we merely opened is not possible; that is a property of tunnelling, not a toolin
 **Honest limit.** A USB interface in data-link-layer mode hands over fully formed `L_Data.ind`, so
 the transcript carries APDU content and ordering (everything needed for load-procedure, memory,
 restart and secure work) but **not** L2 acknowledgements, repeat flags or sub-frame timing. Those
-need a true busmonitor (a TP-UART based interface), which no work so far has required.
+need a true busmonitor (a TP-UART based interface), which nothing described here needs.
 
 ### What each tap can see
 
 | Tap | Our own p2p programming | Third-party p2p | L2 acks / timing | Secure plaintext |
 |---|---|---|---|---|
+| Logging proxy (`tools/knxproxy.ts`) | yes | no (the tunnel filters by address) | no | ciphertext; decrypt with `tools/secure-capture-decode.ts` |
 | Wireshark on the tunnel | yes | no (the tunnel filters by address) | no | yes, via keyring import |
 | Wireshark on routing multicast | if it crosses the router | if it crosses the router | no | yes, via keyring |
 | ETS Bus Monitor (busmonitor-capable interface) | yes | yes | yes | yes, with keys loaded |
@@ -270,8 +279,9 @@ need a true busmonitor (a TP-UART based interface), which no work so far has req
 The bridge sees every cEMI frame in both directions, and the decoders a transcript would need
 (`parseCemiLData`, `parseApdu`, the `APCI` constants) already exist, so a logging decorator over
 the transport is a small piece of work. It has not been written: there is **no** capture flag on
-the bridge and no transaction log comes out of it. Until there is, use the Wireshark route above.
-Tracked in [roadmap.md](roadmap.md).
+the bridge and no transaction log comes out of it. Until there is, use the logging proxy
+([testing.md](testing.md#taking-a-capture)) or Wireshark above
+([roadmap.md](roadmap.md#verification)).
 
 ### Secure devices
 
@@ -280,8 +290,9 @@ If ETS commissions a Data Secure device, the management APDUs are wrapped in `Se
 APCI, connection-oriented versus broadcast, sequence progression, the number and size of secured
 writes, the restart) stays in clear, so the *shape* of the transaction is readable from ciphertext
 alone. For plaintext, either import an ETS keyring into Wireshark (Preferences → Protocols →
-KNXnet/IP → key file), or decrypt with busforge's own AES-128-CCM implementation and the tool key
-that rides in with the project (see [knx-secure.md](knx-secure.md)).
+KNXnet/IP → key file), or decrypt a logging-proxy capture with `tools/secure-capture-decode.ts`,
+busforge's own AES-128-CCM implementation, and the keys that ride in with the project (see
+[knx-secure.md](knx-secure.md)).
 
 ### Before you touch the bus
 

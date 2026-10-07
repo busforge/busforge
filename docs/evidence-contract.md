@@ -43,7 +43,7 @@ independent of Busforge:
 | `self-written` (a dump of bytes Busforge wrote earlier) | **no** |
 | `none` | no |
 
-A device from the occupied house therefore stops being a reference candidate the moment Busforge
+A device in an occupied installation therefore stops being a reference candidate the moment Busforge
 writes to it, and a record cannot hide that by leaving `priorBusforgeWrites` unknown. A reference
 pass must also name the compared artifact and its SHA-256: a comparison nobody can repeat is
 recorded as `not-assessed` with the reason, not as a pass.
@@ -112,7 +112,7 @@ factual hint, never a test state:
 | same mask or manufacturer only | no hint; technically eligible if `capabilities()` says so |
 
 Technically eligible Products may be programmed after an explicit notice that they are untested.
-The first relation gets its own state, `derived` (decided 2026-10-01): the same Hardware running the
+The first relation gets its own state, `derived`: the same Hardware running the
 same application program version is likely to behave the same, which is worth showing apart from a
 Product nothing is known about, but the catalog does not prove shared electronics and firmware. It
 sits between technically eligible and tested, never raises a cell to `pass`, and does not count
@@ -229,7 +229,7 @@ means the right one.
 | **Transfer verification** | GLOSSARY.md | the transfer axis |
 | **Capability** check | GLOSSARY.md, testing.md | a transfer record for one operation and channel |
 | **Behaviour** | GLOSSARY.md, testing.md | the behaviour axis |
-| **Done** | GLOSSARY.md, testing.md | every claimed operation transfer `pass` in both channels, every declared behaviour `pass` |
+| **Done** | testing.md | every claimed operation transfer `pass` in both channels, every declared behaviour `pass` |
 | **supported** (unqualified) | older documents | retired: a claim names its axes instead |
 
 ## The examples
@@ -243,19 +243,18 @@ means the right one.
 | [unknown-firmware.json](evidence/examples/unknown-firmware.json) | behaviour pass through an independent witness, firmware and transport unknown |
 | [conflicting-newer.json](evidence/examples/conflicting-newer.json) | a newer failure on indistinguishable conditions, which yields `conflict` |
 
-## Historical evidence against this format
+## Records from reports older than this format
 
-The 28 smoke reports of 2026-07-19 to 2026-07-25 were mapped onto records (the conversion lives
-outside the repository with the ticket). 126 records validate; three items were refused as
-evidence because the run stopped before any device was reached (a missing bench host, a dev server
-that was down).
+The 28 smoke reports written before this format existed were mapped onto records. 126 records
+validate; three items were refused as evidence because the run stopped before any device was
+reached (a missing interface host, a dev server that was down).
 
-Every report lacks the server build, the runner and spec revision, the transport and the firmware.
-The consequence is visible: for the GVS actuator, failures from the first runs and passes after
-the fixes carry no build, so they look like the same conditions and nine of its fourteen cells
-read `conflict`; one Jung behaviour cell does too. One Jung capability changed from `pass` to
-`unsafe` and back because the spec itself was edited, which only a spec revision can distinguish
-from a device outcome. Historical records stay what they are.
+Every such report lacks the server build, the runner and spec revision, the transport and the
+firmware, so failures and passes from different builds look like the same conditions: for the GVS
+actuator nine of its fourteen cells read `conflict` for that reason, and one Jung behaviour cell
+does too. A spec edit between runs shows as a changed outcome (one Jung capability reads `pass`,
+`unsafe` and `pass` again), which only a spec revision can tell apart from a device outcome. These
+records stay what they are.
 New runs record them: the smoke runner writes `<report>.evidence.json`, `tools/readback.ts` writes
 `evidence.json` and `tools/etsdiff.ts` takes `--evidence` ([testing.md](testing.md),
 [development.md](development.md)).
@@ -281,7 +280,7 @@ download ran in the same run.
 ### Firmware
 
 Firmware is read from the device object's `PID_FIRMWARE_REVISION` (object 0, PID 9), a single byte
-that is optional. On 2026-09-24 an MDT BE-06001 answered `0` and a MEAN WELL power supply did not
-implement it (it answered PID 25, `PID_VERSION`, which versions the interface object and is not read
+that is optional. An MDT BE-06001 answers `0`, and a MEAN WELL power supply does not implement it
+(it answers PID 25, `PID_VERSION`, which versions the interface object and is not read
 as firmware). A device without PID 9 keeps `firmware: unknown`. A revision of `0` is recorded as observed, but
 may be a placeholder the manufacturer never maintains; it tells two units apart only when it differs.

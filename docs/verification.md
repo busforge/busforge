@@ -48,7 +48,7 @@ A read-back records a device value as the programmed baseline only for the param
 **device's** configuration shows. Visibility follows parameter values (a sensor type set to "none"
 hides that sensor's settings), so relevance taken from the project alone skipped exactly the
 settings a device has and its project lacks: after "revert to the device", a flash would have reset
-them without any visible change (13 bytes on the house's OpenKNX RaumController). The
+them without any visible change (13 bytes on an OpenKNX RaumController). The
 read-back therefore overlays the device's values for every parameter active in the image (hidden
 Merker included) on the project and recomputes until the active set is stable, then records drift
 for what the project's or the device's configuration shows. It refuses (`READBACK_UNSTABLE`) if the
@@ -78,8 +78,8 @@ baseline from before this check carries `-1` (not counted) and is refused until 
 
 What this is proven on: tests over real application programs (MDT BE-02001.02 and Jung 400021SE as
 module devices, M-0081 for ref variants), and a one-off manual replay (not kept as a test) of the
-house's OpenKNX RaumController links read, where a "revert to the device" followed by
-a group-address flash would write exactly the links the device holds. On that device the revert
+links read from an OpenKNX RaumController, where a "revert to the device" followed by a
+group-address flash would write exactly the links the device holds. On that device the revert
 was then shown on hardware: the dry run reported `unchanged`, and a link added and removed again
 were each `verified` ([status.md](status.md)).
 
@@ -94,9 +94,8 @@ device rather than proven (see [device-memory-model.md](device-memory-model.md))
 mask still, `verify`, excludes device-internal markers the firmware re-stamps on every
 download, because asserting those would fail every successful flash.
 
-**It proves the bytes are RIGHT. It does not prove they are SAVED.** That distinction cost a
-full session and a device that came back factory-fresh, so it belongs here rather than in a
-postmortem nobody reads twice:
+**It proves the bytes are RIGHT. It does not prove they are SAVED.** A device can hold the bytes
+for the read-back and still come back factory-fresh after a restart:
 
 > A System B device (thelsing/knx) does not persist its configuration when it is told the
 > load is complete. `LdCtrlLoadCompleted` only flushes a buffer. The flash metadata (the four
@@ -139,14 +138,13 @@ confirm the bytes did not change.
 ## The gap all three share: our image versus ETS
 
 A read-back proves `device == our image`. It can never prove `our image == what ETS would
-write`, because the device faithfully holds whatever it was given. Two real bugs lived
-exactly in that gap and passed every check above: a 32-bit float encoded as a 16-bit DPT-9,
-and a com-object table sized to the wrong maximum.
+write`, because the device faithfully holds whatever it was given. A 32-bit float encoded as a
+16-bit DPT-9, or a com-object table sized to the wrong maximum, passes every check above.
 
 Closing it needs a different oracle: **an ETS download of the same device at the same
 configuration, captured on the wire**. `tools/etsdiff.ts` is that check, and it is the gate for
-the reference axis of [`evidence-contract.md`](evidence-contract.md). It found the float bug (and,
-once it was fixed, reported zero divergences for that capture).
+the reference axis of [`evidence-contract.md`](evidence-contract.md). A float of the wrong width
+shows in it as a divergence at that parameter's bytes.
 
 What it compares:
 
@@ -175,27 +173,26 @@ Busforge does.
 
 Worked case, the MDT BE-02001.02 (MV-0705, two captures in the [private corpus](testing.md#the-private-corpus), pinned by
 `tools/etsdiff.test.ts`): every byte ETS wrote matches, in the address, association and
-com-object tables and the parameter segment, at defaults and with one link. The comparison first
-found one divergence in the parameter segment, and it was a Busforge bug: the debounce time
-carries `LegacyPatchAlways`, which Busforge used to leave out of the image
+com-object tables and the parameter segment, at defaults and with one link. That includes the
+debounce time, which carries `LegacyPatchAlways` and therefore belongs in the image
 ([findings.md](findings.md) §8).
 
-Two lessons from using it, both cheap to relearn the hard way:
+Two rules for using it:
 
 - **Compare in the same address frame.** A System B relative segment is written at the address
   the *device* assigns during allocation, so ETS's absolute write addresses sit at
-  `segment base + offset` while our image is 0-based. Diffing the two frames directly made
-  every single write look divergent and produced a confident, wrong root cause (a resolver
-  "under-activation" bug that did not exist). A 100%-divergence result is a reason to suspect
+  `segment base + offset` while our image is 0-based. Diffing the two frames directly makes
+  every single write look divergent and suggests a root cause that does not exist. A
+  100%-divergence result is a reason to suspect
   the harness, not the code: correlate for a constant offset before authoring a cause. The
   tool takes each System B segment's base from the device's own answer to ETS's
   `PID_TABLE_REFERENCE` read in the capture; `--seg-base=<lsm>:<n>` pins one. Without either, the
   parameter segment's base is inferred from the alignment of distinctive multi-byte runs, and a
   table segment is not compared, which fails the gate. ETS's allocation (PID 5) gives the size and
   fill it asked for, so a byte it allocated with a fill and never wrote is compared as that fill.
-- **Test the competing hypothesis.** The suspected resolver was cleared by a control run:
-  writing every union member's default instead of only the active branch *diverges* from ETS,
-  so the active-branch gate is exactly what ETS does.
+- **Test the competing hypothesis.** Before blaming a component, run the control: writing every
+  union member's default instead of only the active branch, for example, *diverges* from ETS,
+  which shows that the active-branch gate is exactly what ETS does.
 
 Not covered yet: the property writes of a download (the program-id stamp, load events) are
 listed but not compared; the System B table-segment placement from `PID_TABLE_REFERENCE` is
@@ -209,8 +206,7 @@ itself, so no capture is needed. That is not built yet.
 A read-back verify is a **placement** proof. It says the device now holds the bytes we
 intended. It says nothing about whether the device still works.
 
-Two hardware findings make that concrete, and both were caught by observing the bus, not by
-reading memory back:
+Two hardware cases make that concrete; both show only on the bus, not in a memory read-back:
 
 - A group address linked by a flash that wrote only the address and association tables read
   back byte-perfect and was **functionally dead**, because the com-object table still carried
@@ -219,7 +215,7 @@ reading memory back:
   while the **application program object** dropped to ERROR, so the device answered management
   fine and ran no application at all ([load-procedures.md](load-procedures.md)).
 
-Both now have a guard, and both are the reason the hardware smoke framework
+Both have a guard, and both are the reason the hardware smoke framework
 ([testing.md](testing.md)) asserts bus behaviour and not only bytes.
 
 ## What protects you when flashing an unverified device
@@ -372,12 +368,14 @@ bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=
 bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml|.xml.gz|.knxprod> [--app-id=<M-XXXX_A-...>] --ia=<a.l.d> \
   [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
 # e.g. the MDT worked case (passes: every byte ETS wrote matches):
+# (<ia>, <ga-obj0> and <ga-obj6> are the device address and the group addresses of objects 0
+# and 6 in the mdt-be02001 case of tools/etsdiff.test.ts)
 bun run tools/etsdiff.ts "$BUSFORGE_CORPUS/captures/mdt-be02001-ets-fulldownload-linked.log" \
-  --app="$BUSFORGE_CORPUS/catalogue/M-0083_A-00B6-32-9642.xml.gz" --ia=1.1.56 --link=0:3/3/1
+  --app="$BUSFORGE_CORPUS/catalogue/M-0083_A-00B6-32-9642.xml.gz" --ia=<ia> --link=0:<ga-obj0>
 # An ETS partial download: --partial compares what it wrote and records one reference per flash
 # operation it touched (flashParams, flashLinks); a segment ETS left alone is not a gap.
 # --evidence records the capture path as given, so name it relative to the corpus root.
 repo=$PWD; (cd "$BUSFORGE_CORPUS" && bun run "$repo/tools/etsdiff.ts" captures/mdt-be02001-ets-partial-links.log \
-  --app=catalogue/M-0083_A-00B6-32-9642.xml.gz --ia=1.1.56 --link=0:3/3/1 --link=6:3/3/5 --partial \
+  --app=catalogue/M-0083_A-00B6-32-9642.xml.gz --ia=<ia> --link=0:<ga-obj0> --link=6:<ga-obj6> --partial \
   --evidence="$repo/docs/evidence/reference/mdt-be02001-partial-links.json")
 ```

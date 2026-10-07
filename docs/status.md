@@ -226,7 +226,7 @@ again, and a read-back equal to the project; it is not a bus power cut
 ([evidence-contract.md](evidence-contract.md)). Kept runs and their records are in
 [evidence/runs/](evidence/runs/).
 
-**The done bar** ([/GLOSSARY.md](../GLOSSARY.md)): a device counts as fully supported only when
+**The done bar** ([testing.md](testing.md#the-done-bar)): a device counts as fully supported only when
 every capability its product claims, plus provisioning and the UI click-through, passes on real
 hardware in **both** channels, together with every behaviour its spec declares. One green channel
 is not done, and neither is a device that byte-verifies without ever acting on the bus, unless its

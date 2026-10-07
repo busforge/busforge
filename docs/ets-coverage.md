@@ -32,7 +32,7 @@ limit, because it records drift only for the refs the view exposes.
 | `ParameterBlock` (heading from `Text` / `ParamRefId` / `Name`) | full | including item-less collector blocks, which render as an empty navigable section |
 | `ParameterBlock` with `Layout="Grid"` / `"Table"` | full | `<Rows>`/`<Columns>` geometry with per-item `Cell="row,col"`; an unreadable geometry is surfaced rather than swallowed |
 | `ParameterRefRef` / `ComObjectRefRef` | full | |
-| `choose` / `when` / `default` (and the `test` grammar) | full | every test string in the bundled catalogues parses; a token outside the known grammar refuses (`PARAM_TEST_UNSUPPORTED`) instead of falling through to `default` |
+| `choose` / `when` / `default` (and the `test` grammar) | full | every test string in the real catalogue fixtures parses; a token outside the known grammar refuses (`PARAM_TEST_UNSUPPORTED`) instead of falling through to `default` |
 | `ParameterSeparator` | full | rendered as heading, ruler or error by `UIHint` |
 | `Module` instantiation | full | scope rewrite, text-argument substitution, com-object base numbering; arguments from the device's `0.xml`, or resolved from `<Allocators>` for a device placed from the catalog |
 | `Repeat` | full | transparent container; expands through module instances |
@@ -62,8 +62,8 @@ limit, because it records drift only for the refs the view exposes.
 
 Unknown *elements* and uneditable *types* are surfaced in the UI. *Attributes* are the quieter
 class: an attribute the parser does not read changes what is shown, in what order, or whether it is
-shown at all, with nothing on screen to say so. The inventory below was taken against the bundled
-real catalogues and is the parity backlog.
+shown at all, with nothing on screen to say so. The inventory below was taken against the real
+catalogue fixtures and is the parity backlog.
 
 Read and honoured:
 
@@ -90,9 +90,9 @@ Not read, with the reason:
 Safe to ignore: `InternalDescription`, `Tag`, `DefaultUnionParameter`, `Inline`, `Icon`,
 `SecurityRequired`, plugin validation, and the sub-attributes of types that are unsupported anyway.
 
-**Keep this inventory current.** It is maintained by hand today. The mechanism that would make it
+**Keep this inventory current.** It is maintained by hand. The mechanism that would make it
 self-checking is a re-runnable audit: a script that, given a project's application XMLs, lists the
-attributes present in the data but never read. That script does not exist yet
+attributes present in the data but never read. That script does not exist
 ([roadmap.md](roadmap.md)). Until it does, a newly ignored attribute is found only by review, not
 automatically, and the risk this table is meant to remove stays open.
 
@@ -119,8 +119,9 @@ Three things hold that together:
    module definition's static offset plus the instance's value of the `Memory@BaseOffset` argument,
    taken from the device's `0.xml` on import and re-derived from `<Allocators>` for a device placed
    from the catalog. Module instances are byte-placed in both image codecs.
-3. **CI locks the invariant.** Per bundled fixture, every editable ref the configuration view
-   exposes must be placeable by the image builder. This is a **coverage** assertion, not set
+3. **The check locks the invariant.** Per real catalogue fixture, every editable ref the
+   configuration view exposes must be placeable by the image builder. The fixtures are in the
+   [private corpus](testing.md#the-private-corpus), so public CI skips this lock. This is a **coverage** assertion, not set
    equality: the image is a deliberate superset (`Access="None"` internal parameters, union members,
    the bytes of branches the view never shows), so equality would be wrong. The round trip is locked
    the same way, per fixture: the codec must be its own inverse on the real model wiring, so the

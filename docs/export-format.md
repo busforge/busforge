@@ -52,8 +52,7 @@ Key derivation and cipher are fixed so any implementation can reproduce them:
 Compression happens **before** encryption, never the other way around: ciphertext is
 indistinguishable from random and would not compress. The order is load-bearing, not cosmetic.
 
-A legacy plaintext `.busforge.json` (a bare JSON object, first byte `{`) is still accepted on import,
-so exports taken before compression existed keep working.
+A plaintext `.busforge.json` (a bare JSON object, first byte `{`) is accepted on import as well.
 
 ### Decrypting with a script
 
@@ -101,9 +100,9 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | KNX Data Secure tool keys | |
 
 Several fields are optional in the schema (building structure, restore points, bus log, tool keys,
-source) purely so artifacts written before those features existed still import. A re-imported project
+source), and an artifact without them imports. A re-imported project
 keeps the source its artifact carries, the file the project was first imported from; an artifact
-without one (a project created in Busforge, or an older export) is recorded as the source itself. The project list shows the
+without one (a project created in Busforge, say) is recorded as the source itself. The project list shows the
 source file's name, with its kind, size and SHA-256 on hover, so a project can be traced back to the
 file. The name is the one the upload carried, without control or bidi-override characters and cut at
 255 characters.

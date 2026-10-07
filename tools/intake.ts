@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Take a diagnostic package a user sent into the private corpus, list what was received, delete a
-// package (tools/received.ts; docs/testing.md, "Received diagnostic packages"). Works only on the
+// package (tools/received.ts; the procedure: received-packages.md in the corpus). Works only on the
 // corpus BUSFORGE_CORPUS names; opens no connection and serves nothing.
 //
 //   bun run tools/intake.ts add <package.json> --from=<text> --issue=<ref> --consent=<text>
@@ -55,7 +55,7 @@ for (const a of rest.filter((x) => x.startsWith("--"))) {
 
 const corpus = corpusRoot();
 if (corpus === null) {
-  console.error(`${CORPUS_ENV} is unset: received packages are kept in the private corpus (docs/testing.md)`);
+  console.error(`${CORPUS_ENV} is unset: received packages are kept in the private corpus (docs/testing.md, "The private corpus")`);
   process.exit(1);
 }
 
@@ -86,7 +86,7 @@ try {
   } else if (command === "remove") {
     if (positional.length !== 1) usage(`remove takes one id, got ${positional.length}`);
     const dir = removeReceived(corpus, positional[0], trackedFiles(), independent);
-    console.log(`deleted ${dir}; copies in backups of the corpus are not reached (docs/testing.md, "Deleting a package")`);
+    console.log(`deleted ${dir}; copies in backups of the corpus are not reached (received-packages.md in the corpus, "Deleting a package")`);
   } else {
     usage(command === undefined ? "no command" : `unknown command ${command}`);
   }

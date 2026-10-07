@@ -444,14 +444,13 @@ residuals decompose into named, bounded cases, none of them a missed general rul
   unlinked).
 - **Large or special objects.** A 14-byte "software version" object (object 116 of the Theben
   TheLuxa P300) kept `0x80` while 3-, 6- and 8-byte siblings had it cleared, which read as "left
-  unconfigured". ETS's full download of that application (2026-10-07) explains it: the object is
+  unconfigured". ETS's full download of that application explains it: the object is
   configured and declares `UpdateFlag="Enabled"`, and ETS writes `0xCB`, the update flag in `0x80`
   (above). Busforge writes it so for that application only.
 - **Device drift**, settled by a clean ETS re-flash rather than by code.
 
-None of these bit the configurations that have been driven on hardware so far, so a full
-download of a device whose configuration exercises them must be byte-checked before it is
-trusted.
+None of these shows in the configurations driven on hardware, so a full download of a device
+whose configuration exercises them must be byte-checked before it is trusted.
 
 ## Reading device memory
 
@@ -459,11 +458,11 @@ trusted.
 
 `KnxDevice.memRead` reads a segment in chunks. On the classic path a chunk is 12 bytes, the most a
 standard frame carries; a device that declares `PID_MAX_APDU_LENGTH` gets requests up to that length
-minus the 3 octets of APCI and address, capped at 48 bytes, the size the extended reads already
-carry over the bench's USB interface and the house's KNX IP interface (the path has its own limit,
-which the device's property does not know). The OpenKNX RaumController declares 254 and is read in
-48-byte chunks, which cut its 21.6 KB parameter read over the house interface from 241 s to about
-100 s.
+minus the 3 octets of APCI and address, capped at 48 bytes, the size extended reads are shown to
+carry over a KNX-USB interface and a KNX IP interface (the path has its own limit, which the
+device's property does not know). The OpenKNX RaumController declares 254 and is read in 48-byte
+chunks, which takes its 21.6 KB parameter read over a KNX IP interface to about 100 s, against
+241 s in 12-byte chunks.
 Some BIM M112 devices have **internal read boundaries**: they refuse any single
 `A_Memory_Read` that spans the boundary and answer with an empty data response. Every byte
 is individually readable; only a request that straddles the line is refused.
@@ -476,7 +475,7 @@ read-back of every segment that crosses such a boundary.
 
 `memWrite` uses a fixed-chunk loop and is **not** boundary-aware, but its read-back verify
 uses the corrected `memRead`, so a write that crossed a boundary fails loudly (verify
-mismatch) instead of corrupting silently. No flash target exercised so far crosses one, so
+mismatch) instead of corrupting silently. No flash target Busforge has driven crosses one, so
 that path is untested on hardware and deliberately left unchanged.
 
 ### A_MemoryExtended: reaching a segment above 64 KB
@@ -510,7 +509,7 @@ entirely by the extended path, everything at or below stays on the classic path.
 `PID_MAX_APDU_LENGTH` (device object, PID 56). A device that implements it is written with the
 confirmed `A_MemoryExtended_Write` at every address, in chunks of at most that length minus the
 5 octets around the data; one that does not is written with the classic service. ETS captures
-of the four bench devices show exactly this split: the GVS AMMA (55) and the Jung 400021SE (233)
+of four devices show exactly this split: the GVS AMMA (55) and the Jung 400021SE (233)
 are written extended only, the ABB US/U 4.2 and the MDT BE-02001.02 (property absent) classic
 only. The difference matters: the classic write is acknowledged by the transport layer before
 the firmware has stored it, and after a segment reallocation the GVS AMMA was overtaken by the
@@ -552,10 +551,10 @@ A device is end-to-end programmable only when both axes are handled.
 None of these needs a hand-written per-device recipe. They are selected by mask version and,
 for modern devices, described by the product XML, exactly the model ETS uses.
 
-## The read-back corpus
+## Read-back dumps
 
-To develop against ground truth, every reachable device of a reference installation was read
-back from the bus (read-only). The raw dumps live under `apps/server/data/readback/` and are
-**gitignored on purpose**: they are a real installation's memory, including its group
-addresses, the same class of personal data as a project's instance file. They are not
-committed, and no tool in this repository requires them.
+To develop against ground truth, the devices of an installation can be read back from the bus
+(read-only, `tools/readback.ts` and `tools/dump-param-memory.ts`). The raw dumps land under
+`apps/server/data/readback/` and are **gitignored on purpose**: they are a real installation's
+memory, including its group addresses, the same class of personal data as a project's instance
+file. They are not committed, and no test in this repository requires them.

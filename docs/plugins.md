@@ -55,9 +55,8 @@ empirical. The two kinds of configuration are independent: a parameter flash wri
 segment, a group-address flash writes the addressing tables, and Busforge **does not implement
 property load images at all**. A load procedure that declares one for anything other than a
 known-harmless stamp is refused outright (`LOAD_STEP_UNSUPPORTED`), so the device-specific
-interface objects are never written. It remains an argument, not evidence: how far the one DCA
-device in the corpus (the Theben DALI gateway) has actually been driven is recorded in
-[status.md](status.md).
+interface objects are never written. It remains an argument, not evidence: how far a DCA device
+(the Theben DALI gateway) has actually been driven is recorded in [status.md](status.md).
 
 ## The native module architecture
 
@@ -148,7 +147,8 @@ under Bun) into a typed model, and renders three sections: fixtures with their n
 and long addresses, lamp type and commissioning state; groups with their fixture counts; and scenes.
 
 Field meanings were recovered from the decompiled DCA and implemented from that documentation. The
-parser is covered by tests against a recorded backup store.
+parser is covered by tests against a recorded backup store, which lives in the
+[private corpus](testing.md#the-private-corpus); without it those tests are skipped.
 
 **There is no write path.** Nothing in this module touches the bus or the device. Writing a
 device-specific configuration back is on [roadmap.md](roadmap.md).

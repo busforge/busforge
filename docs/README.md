@@ -26,8 +26,8 @@ document says so.
 | [commissioning.md](commissioning.md) | Address assignment, the full download, and bringing up a factory-fresh device without ETS. |
 | [verification.md](verification.md) | How we know the bytes are right, and how to trace a byte-level difference to its cause. |
 | [evidence-contract.md](evidence-contract.md) | The evidence axes, the versioned evidence record, how far evidence reaches across products, and when a product counts as qualified. |
-| [findings.md](findings.md) | The protocol knowledge log: wire formats, load-procedure behaviour, the gotchas that cost days. |
-| [knx-secure.md](knx-secure.md) | KNX Data Secure: design, key handling, and the honest gap. |
+| [findings.md](findings.md) | The protocol facts: wire formats, load-procedure behaviour, and device behaviour no specification spells out. |
+| [knx-secure.md](knx-secure.md) | KNX Data Secure: design, key handling, and what is not shown. |
 | [raw-acquisition.md](raw-acquisition.md) | Design and implementation of the collector: reading identity, properties and bounded memory from a device Busforge cannot program, read-only, with every refusal recorded. |
 
 ## The application
@@ -46,7 +46,7 @@ document says so.
 | Document | What it answers |
 |---|---|
 | [development.md](development.md) | Local setup, the check gate, the workspace layout, and the command-line tools. |
-| [testing.md](testing.md) | The test levels, what each proves, and the hardware smoke framework. |
+| [testing.md](testing.md) | The test levels, what each proves, the tests that need the private corpus, and the hardware smoke framework. |
 | [deployment.md](deployment.md) | Self-hosting: container, volume, environment, reverse proxy. |
 
 Terminology specific to this project is defined in [`../GLOSSARY.md`](../GLOSSARY.md).

@@ -98,7 +98,7 @@ What the collector ([raw-acquisition.md](raw-acquisition.md#implementation)) doe
 - **Bound a System B table by the product XML** when its memory control block is absent, and check
   a present one for plausibility.
 - **A private route for diagnostic packages.** Only the receiving end exists
-  ([testing.md](testing.md#received-diagnostic-packages)); the transfer service (expiring
+  (`tools/intake.ts`); the transfer service (expiring
   invitations, size limits, no anonymous endpoint) is still to choose and build.
 
 ## KNX Data Secure

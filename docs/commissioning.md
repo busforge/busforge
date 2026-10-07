@@ -37,8 +37,8 @@ So the write never runs blind:
 ```
 
 An address counts as free when nothing answers there: silence, or, from an interface that
-confirms each frame (the bench's ABB KNX-USB stick behind the bridge, and over TCP since
-Busforge waits for the confirmation), a negative `L_Data.con`, meaning no device acknowledged
+confirms each frame (an ABB KNX-USB stick behind the bridge, for example, and any interface over
+TCP, where Busforge waits for the confirmation), a negative `L_Data.con`, meaning no device acknowledged
 the frame. The negative confirmation is read that way only when every one of three connection
 attempts gets it (a present device that is busy through the interface's own repetitions once is
 not an empty address), and only because a device answered the probe of step 1 moments before, so
@@ -211,16 +211,15 @@ falls back to a full read-back when the device reports no usable CRC.
 
 ### 7. A wrong byte can pass every check
 
-Two independent bugs made this concrete, and both are worth remembering as a class rather
-than as anecdotes:
+Two cases make this concrete, and both are a class rather than a one-off:
 
 - **A float encoded at the wrong width.** `<TypeFloat Encoding="IEEE-754 Single">` carries no
-  `SizeInBit`, and defaulting to 16 bits encoded a 32-bit float as a 2-byte DPT-9. The device
-  faithfully held the wrong bytes and every read-back and CRC check passed.
-- **A com-object table sized to the wrong maximum** (trap 1), which also verified green,
+  `SizeInBit`, and defaulting to 16 bits encodes a 32-bit float as a 2-byte DPT-9. The device
+  faithfully holds the wrong bytes and every read-back and CRC check passes.
+- **A com-object table sized to the wrong maximum** (trap 1), which also verifies green,
   because the verification compares the device against the very table that was built.
 
-The lesson is structural: a read-back proves `device == our image`, never
+The point is structural: a read-back proves `device == our image`, never
 `our image == what ETS would write`. Closing that gap needs a different oracle, which is what
 the ETS-capture diff in [verification.md](verification.md) is for.
 

@@ -7,7 +7,7 @@ import { ProductError } from "./errors.ts";
 // the flat static layer the image path needs, with module-def and union entries
 // dropped so it stays byte-identical to the legacy standalone parser it replaced.
 // One parser feeds both the UI (visibility/i18n) and the image (bytes); see
-// docs/ets-coverage.md "unify the model".
+// docs/ets-coverage.md "One model, two projections".
 
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.

@@ -13,8 +13,9 @@ _Avoid_: driver, handler, adapter.
 
 **DeviceCapabilities**:
 The record a `DeviceProfile` returns from `capabilities()` declaring what it can do:
-`readParams, readLinks, flashParams, flashLinks, fullDownload`. It is the single source of truth
-for what a device supports, used to gate the server endpoints and (now) surfaced to clients.
+`readParams, readLinks, flashParams, flashLinks, fullDownload, structuralFlash`. It is the single
+source of truth for what a device supports, used to gate the server endpoints and surfaced to
+clients.
 _Avoid_: features, supports, abilities.
 
 ## Testing
@@ -32,7 +33,7 @@ the bus) and **persistence** (the configuration survives a restart or power cycl
 _Avoid_: verified (without naming the axis).
 
 **Independent reference**:
-An ETS capture of the same configuration, or a device commissioned by another tool that Busforge
+An ETS download of the same configuration, or a device commissioned by another tool that Busforge
 has never written to. Only this can show that Busforge builds the right bytes; a read-back of bytes
 Busforge wrote cannot.
 _Avoid_: ground truth for a self-written dump.
@@ -50,40 +51,16 @@ it does not establish that those bytes encode the intended configuration or surv
 _Avoid_: configuration correctness proof.
 
 **Compatibility matrix**:
-A list of concrete KNX products that distinguishes compatibility claims by capability
-and evidence level, with actual hardware testing as the strongest level.
+The per-Product table of operations and their evidence state, built from the kept evidence records
+([docs/compatibility.md](docs/compatibility.md)). A Product that is not in it has no kept evidence.
 _Avoid_: market coverage percentage, mask count used as compatibility evidence.
 
-**Device submission**:
-A user's contribution of device information and diagnostic evidence to investigate
-compatibility and support reproducible testing without requiring programming knowledge.
-_Avoid_: automatic support guarantee.
-
-**Private diagnostic corpus**:
-The internally retained collection of submitted device data and memory dumps used for
-compatibility investigation and regression testing; its original contents are not published.
-_Avoid_: public product catalog.
-
-**Technical compatibility**:
-A capability-specific compatibility assessment based on understood device definitions and
-programming requirements, without claiming that the particular device has been hardware-tested.
-_Avoid_: hardware-verified, guaranteed compatibility.
-
-**Diagnostic capture**:
-An explicitly consented collection of device and project evidence that leaves device
-configuration, desired project values and programmed baselines unchanged; uploading is a separate consented action.
-_Avoid_: read-back adoption, automatic repair.
-
 **Diagnostic package**:
-The cleaned file a diagnostic capture produces in the app: the device's answers, without the
-installation's ids, connection address and device serial number, reviewed in full before the user
-saves it. A cancelled capture produces none.
+The cleaned file a read-only acquisition of one device produces in the app: the device's answers,
+without the installation's ids, connection address and device serial number, reviewed in full
+before the user saves it. A cancelled acquisition produces none
+([docs/raw-acquisition.md](docs/raw-acquisition.md#diagnostic-package)).
 _Avoid_: export (reserved for the project archive), dump.
-
-**Community functionality report**:
-A user's overall assessment that a concrete device works in their installation and usage,
-without asserting exhaustive testing of its capabilities or parameter combinations.
-_Avoid_: last-operation result, complete qualification certificate.
 
 **Capability**:
 A single programming path busforge can drive, exercised and verified against real hardware by the
@@ -117,12 +94,3 @@ The path a capability is driven through, over the *same* real hardware: `api` (t
 endpoints directly, the fast regression path) or `ui` (the real web app in a browser, the
 user-facing path). Assertions always read the API; the browser is driven, never asked to confirm
 itself.
-
-**Done**:
-A device counts as fully supported only when every capability it claims (its profile capabilities
-from `classify().capabilities()`, plus `provision` and `ui-click-through`) passes on real hardware in
-*both* channels wherever a UI surface exists, not just one, together with every behaviour its spec
-declares. A device that is green in `api` but never driven through `ui` (or vice versa) is **not**
-done, and neither is one that byte-verifies without ever acting on the bus, unless its spec states
-why no behaviour is observable (write-only outputs).
-_Avoid_: "supported" used loosely; here it means both channels green on hardware.
