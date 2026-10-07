@@ -174,8 +174,8 @@ trusting a row that does not.
   entries waits for such a capture ([roadmap.md](roadmap.md#device-coverage)).
 - **Parameters located in a property instead of memory** are not part of the image model, and no
   Busforge path reads or writes them. Typically this is the hardware type (object 0, PID 78; for
-  example on the Gira M-0008, Theben MIX 2, MDT IP Interface/Router and Jung 400021SE), on one
-  application (the MEAN WELL power supply) also the version (PID 25). In the plain ETS captures of the Jung 400021SE, whose
+  example on the Gira M-0008, Theben MIX 2, MDT IP Interface/Router, MEAN WELL power supply and Jung
+  400021SE), on the MEAN WELL also the version (PID 25). In the plain ETS captures of the Jung 400021SE, whose
   application carries such a parameter, ETS reads PID 78 and writes nothing to it, and so in the ETS
   captures of the Gira M-0008 (full download, partial parameter and links downloads, revert): one
   read of PID 78 each, no write. For the other applications no capture shows what ETS does.

@@ -753,7 +753,8 @@ object's communication flag differently from the application is refused there as
 flags stay as the device holds them. A product replacement drops the old application's overrides with its other
 configuration.
 
-On hardware an override has been written only by a System 7 full download. The System B paths (full
+On hardware an override has been written only by a System 7 full download, onto a unit that already
+held that value. The System B paths (full
 download, group-address flash) and the structural flash with an override are tested offline only.
 
 ## Structural flash

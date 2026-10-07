@@ -10,8 +10,9 @@ depends on is hardware-proven.
   parameter change that alters the com-object table as a structural flash
   ([load-procedures.md](load-procedures.md#structural-flash)); every other device gets the full
   download. Each further application needs an ETS capture of such a partial download and a smoke run
-  of its `structuralTrigger`: the GVS AMMA, the ABB US/U 4.2 (memory-mapped System 7), and
-  OpenKNX/thelsing, whose full download writes the tables before the parameter image.
+  of its `structuralTrigger`: the GVS AMMA (persists at every `LoadCompleted`), the ABB US/U 4.2
+  (memory-mapped System 7), and OpenKNX/thelsing, whose full download has to write the tables before
+  the parameter image, which the structural bracket does not.
 - **Deactivated parameters in the System 7 parameter flash.** ETS writes where its whole image
   changes, so a parameter a change deactivates goes back to its `<Data>` template value
   ([findings.md](findings.md) §28). The structural flash does that; the plain parameter flash still
@@ -19,8 +20,8 @@ depends on is hardware-proven.
 - **The Jung 400021SE clears the last byte of its parameter segment by itself** (offset `0x1E14`,
   [findings.md](findings.md) §27), so a parameter-flash dry run always reports one differing byte.
   Whether the byte is a one-shot marker to leave out of the comparison is not established.
-- **Idle unions in module instances.** The full download writes an idle union's
-  `DefaultUnionParameter` as ETS does, except in module instances, which no capture covers; there
+- **Idle unions in module instances.** The full download and the System B parameter flash write an
+  idle union's `DefaultUnionParameter` as ETS does, except in module instances, which no capture covers; there
   those bytes stay unowned.
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared
   procedures is executed; a procedure with image-property stamps the engine cannot compute is
@@ -102,13 +103,12 @@ What the collector ([raw-acquisition.md](raw-acquisition.md#implementation)) doe
 
 ## KNX Data Secure
 
-Data Secure is in the alpha scope: device access and programming with known credentials, and
-provisioning a factory device with its FDSK, so that setting up a secure device needs no existing
-ETS project. KNX IP Secure transport is a separate capability and not an alpha prerequisite.
-Diagnostic access uses valid credentials where they are required; raw acquisition is not a way
-around access control. Encrypted group communication, group-key setup and decoding secured
-telegrams in the monitor are wanted for the alpha as well, provided a feasibility investigation
-bears them out.
+Data Secure is in the alpha scope: device access and programming with known credentials,
+activating a factory device from its certificate so that setting up a secure device needs no
+existing ETS project, secured group communication with keys Busforge generates, and decoding secured
+telegrams in the monitor. How far each is shown is in [status.md](status.md). KNX IP Secure transport
+is a separate capability and not an alpha prerequisite. Diagnostic access uses valid credentials
+where they are required; raw acquisition is not a way around access control. What is still open:
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
@@ -119,7 +119,8 @@ bears them out.
   6 bits, and coordination with another tool sharing the sender address.
 - **Peers that only answer reads on a secured address, or transmit with it as a further address**
   (`SECURE_SENDERS_UNPROVEN`), and **a group key table that shrinks below the address table** need
-  an ETS capture each.
+  an ETS capture each. In the latter case an old key can stay at an index that still exists, the
+  verify then fails after the write, and nothing in Busforge clears it.
 - **Monitor replay history across reconnects**, and refreshing a device's stored sequence number from
   the secured telegrams the monitor decrypts.
 - **Unresolved `Links` tokens at import** can shift the sending address; the PID 54 sender rule

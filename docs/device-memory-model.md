@@ -336,6 +336,10 @@ for this family; OpenKNX devices run the open thelsing/knx stack, so it is read 
 firmware that consumes it (`group_object_table_object.cpp`, `group_object.cpp`), and Kaenx's
 independent implementation agrees bit for bit.
 
+A configuration that activates no object (every output of the GVS AMMA disabled) still gets the
+table: ETS writes the declared count with every entry `0x0000`, and so does Busforge. Only an
+application that declares no object at all is refused (`COM_OBJECT_TABLE_EMPTY`).
+
 The size field is the KNX "value field type" code, which is genuinely irregular (5 bytes is
 code 15, not 11), so it is written out rather than computed. The size comes from ETS's
 human-readable object size ("1 Bit", "14 Bytes"), not from the datapoint type: in one
