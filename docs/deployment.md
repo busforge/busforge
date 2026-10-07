@@ -359,7 +359,7 @@ release with the changelog. It skips when nothing changed since the last tag.
 Deploying a running instance is not part of the public pipeline. A site that runs its own forge,
 registry or deployment keeps that pipeline and its compose overlay to itself. The author's
 (`.forgejo/workflows/ci.yml`, Forgejo and a NAS) is still in this tree and leaves it before the
-repository is published ([roadmap.md](roadmap.md#publication)).
+repository is published.
 
 The hardware smoke framework is never part of CI. It needs a real bus and a real device; see
 [testing.md](testing.md).
