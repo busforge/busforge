@@ -1365,20 +1365,30 @@ export class System7Profile extends DeviceProfile {
       comObj: curL3 ?? undefined,
     } : undefined;
     // A captured application's tables move with the address table's length, so they are re-declared
-    // as ETS's partial download does (planCapturedSystem7GaFlash); planned here, so a table that does
-    // not fit is refused before anything is written.
+    // as ETS's partial download does, and only the bytes ETS's image holds are written
+    // (planCapturedSystem7GaFlash); planned here, so a table that does not fit is refused before
+    // anything is written.
     // A declared-order application's tables are unloaded and declared again as ETS's partial download
     // does it, and only the bytes the full download writes are written (planDeclaredOrderSystem7GaFlash):
     // the address table's own individual address is left to the device, so it is not read back either.
     const declaredOrder = etsDeclaredOrderSystem7(cfg.loadProcedures) ? planDeclaredOrderSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
-    const plan = etsCapturedSystem7(cfg.loadProcedures)
-      ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3).plan
-      : declaredOrder ? declaredOrder.plan : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
+    const captured = etsCapturedSystem7(cfg.loadProcedures) ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
+    const plan = captured ? captured.plan : declaredOrder ? declaredOrder.plan : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
     // On the declared-order path the change is counted over exactly the runs the plan writes, read where
     // it writes them (the address table's own individual address is neither written nor counted); a
     // table whose reference the device does not hold at the declared address counts whole, since the
     // device does not read it from there.
     let diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0); // 0 iff every table matches
+    if (captured) {
+      // Likewise over exactly the runs the captured plan writes, at their re-declared addresses: a
+      // table whose reference the device does not hold there counts whole.
+      diffBytes = 0;
+      for (const [lsm, at] of [[OBJ.ADDR_TABLE, captured.addrAt], [OBJ.ASSOC_TABLE, captured.assocAt]] as const) {
+        const placed = (await dev.tableAddr(lsm)) === at;
+        for (const r of captured.writes.filter((w) => w.lsm === lsm)) diffBytes += placed ? byteDiff(r.image, await dev.memRead(r.address, r.image.length)) : r.image.length;
+      }
+      for (const r of captured.comObjWrites) diffBytes += byteDiff(r.image, await dev.memRead(r.address, r.image.length));
+    }
     if (declaredOrder) {
       diffBytes = 0;
       for (const t of declaredOrder.tableRefs) {
@@ -1390,7 +1400,7 @@ export class System7Profile extends DeviceProfile {
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
-      imageBytes: addr.length + assoc.length + (l3?.bytes.length ?? 0),
+      imageBytes: captured ? [...captured.writes, ...captured.comObjWrites].reduce((n, w) => n + w.image.length, 0) : addr.length + assoc.length + (l3?.bytes.length ?? 0),
       ...(gaTablesLoaded ? {} : { loadIncomplete: "refuse" as const }),
       diffBytes,
       backup: prefix,
@@ -1413,6 +1423,20 @@ export class System7Profile extends DeviceProfile {
             if (!ok) return false;
           }
           for (const w of declaredOrder.segments) {
+            const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
+            if (!ok) return false;
+          }
+          return true;
+        }
+        if (captured) {
+          // As on the declared-order path: each table's reference at its re-declared address, then
+          // exactly the runs written, so the own individual address and the com-object segment's bytes
+          // behind its table, which are not written, are not read back either.
+          for (const [lsm, at] of [[OBJ.ADDR_TABLE, captured.addrAt], [OBJ.ASSOC_TABLE, captured.assocAt]] as const) {
+            const { ok } = await verifySettled(() => dev.tableAddr(lsm), (got) => got === at);
+            if (!ok) return false;
+          }
+          for (const w of [...captured.writes, ...captured.comObjWrites]) {
             const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
             if (!ok) return false;
           }

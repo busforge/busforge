@@ -481,8 +481,9 @@ const absDecl = (s: ReturnType<typeof flattenSteps>[number]): AbsDecl | null => 
 // the two declared segments taken as one region, the address table's segment exactly as long as the
 // table and the association table's directly behind it with the rest of the region. Each load-state
 // machine is unloaded first, and its task segment declared at the table's new address.
-// `etsRuns`: write of each table only the bytes ETS's full download writes (etsTableRuns); without it
-// the tables are written whole, the address table's own individual address included.
+// `etsRuns`: write of each table only the bytes ETS's image of its full and group-address downloads
+// holds (etsTableRuns); without it the tables are written whole, the address table's own individual
+// address included.
 export interface CapturedTables { steps: LoadStep[]; addrAt: number; assocAt: number; writes: { lsm: number; address: number; image: Buffer }[] }
 export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, opts: { etsRuns?: boolean } = {}): CapturedTables {
   const steps = flattenSteps(procedure, "full");
@@ -538,11 +539,15 @@ function capturedClose(procedure: LoadProcedures, requireReboot: boolean): LoadS
 
 // A captured application's group-address flash, as ETS's partial download after a link change writes
 // it (gira-m0008-ets-partial-links.log): both tables re-declared and written, the com-object table
-// written in the application's load bracket without unloading it, the stamps read, the restart.
-export function planCapturedSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true): CapturedTables & { plan: LoadPlan } {
-  const t = planCapturedTableBrackets(app, procedure, tables);
-  const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, { op: "writeMem", address: comObj.address, bytes: comObj.bytes }, { op: "loadCompleted", lsm: APP_LSM }] : [];
-  return { ...t, plan: [...t.steps, ...app3, ...capturedClose(procedure, requireReboot)] };
+// written in the application's load bracket without unloading it, the stamps read, the restart. Of
+// each table only the bytes ETS's image holds are written (etsTableRuns): the address table without
+// the device's own individual address, the com-object table to its counted entries, not the rest of
+// its segment. `comObjWrites`: what is written of the com-object table, for the read-back.
+export function planCapturedSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true): CapturedTables & { plan: LoadPlan; comObjWrites: { address: number; image: Buffer }[] } {
+  const t = planCapturedTableBrackets(app, procedure, tables, { etsRuns: true });
+  const comObjWrites = comObj ? etsTableRuns(app, comObj.address, builtComObjectTable(comObj.bytes), false) : [];
+  const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, ...comObjWrites.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })), { op: "loadCompleted", lsm: APP_LSM }] : [];
+  return { ...t, comObjWrites, plan: [...t.steps, ...app3, ...capturedClose(procedure, requireReboot)] };
 }
 
 // A declared-order application's group-address flash, as ETS's partial download after a link change
@@ -813,8 +818,8 @@ function etsWrittenRunsOf(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFul
 }
 
 // An MV-0705 com-object table as ETS builds it: the 3-byte header and one 4-byte entry per object its
-// first byte counts. A template longer than that (the Gira M-0008's, 8 bytes) keeps the rest, which ETS
-// leaves out of its image.
+// first byte counts. A template or a device's table longer than that (the Gira M-0008's, by 8 bytes)
+// keeps the rest, which ETS leaves out of its image.
 function builtComObjectTable(image: Buffer): Buffer {
   const length = 3 + 4 * image[0];
   if (length > image.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table counts ${image[0]} objects, ${length} B, but is only ${image.length} B; refusing to write a truncated table`);

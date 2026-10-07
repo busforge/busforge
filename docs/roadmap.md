@@ -132,23 +132,14 @@ started until the capability it depends on is hardware-proven.
   memory `0x0104` there and does it ETS's way only on the Gira M-0008 and the Auro M-0081_A-FE01
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
   the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
-- **Gira M-0008 group-address flash: the bytes ETS's image leaves out.** Resolved for the full
-  download by release-readiness ticket 38 ([load-procedures.md](load-procedures.md#which-bytes-ets-writes)).
-  The group-address flash still writes the address table's own address and the com-object table's
-  8 bytes behind its 91 entries, which ETS's group-address download leaves out; align it when the
-  flash is run on the unit.
 - **Bytes a shrunk group table leaves behind (owner decision).** ETS writes a System 7 group table
   only as long as it is built, so when a table shrinks its old tail stays in the declared segment
   behind the count-delimited table, and the PID 27 stamp, which covers the whole segment, keeps it
-  (Auro M-0081 1.1.x and, still to be confirmed from its captures, Gira M-0008 1.1.x; neither an
+  (Auro M-0081 1.1.x and Gira M-0008 1.1.x, both shown from ETS's captures; neither an
   ETS full download nor Busforge's clears them,
   [load-procedures.md](load-procedures.md#tables-shrink-their-old-bytes-stay)). Busforge writes
   nothing beyond the tables. Decide whether it should clear such bytes, by writing the rest of the
   declared segment, or keep ETS's behaviour.
-- **The Gira M-0008 parameter and group-address flash on a unit.** Both follow ETS's captures byte
-  for byte where ETS writes; the full download is proven on the house unit 1.1.x (and
-writing only the bytes of ETS's image), the two flashes have not run on one. A GA flash moves the association table, so its run needs the same
-  plan gate as the full download had.
 - **Configure KNX IP interfaces as alpha targets (decided).** The full download of an
   application declaring tunnelling entries is refused today (`FULL_DOWNLOAD_TUNNELING_ENTRIES`),
   because no Busforge path writes the interface's `AdditionalAddresses`. Capture an ETS download onto

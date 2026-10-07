@@ -285,9 +285,14 @@ departs from ETS, deliberately:
 - **The full download ran on the house unit 1.1.x**, first with whole segments
   (record), then with
   ETS's 822 bytes through the logging proxy (record).
-  The parameter and group-address flash have not run on a unit. The group-address flash still writes
-  the address table's own address and the com-object table whole, 375 bytes, where ETS's image of its
-  group-address download leaves out those two bytes and the last 8.
+  The group-address flash writes the bytes of ETS's image of its group-address download, 405 bytes
+  for the captured link: the tables without the own address, the com-object table to its 91 entries.
+  The parameter flash (3 s → 4 s → 3 s) and the group-address flash (object 4 to 15/7/250 and back)
+  ran on 1.1.x through the logging proxy: the group-address flash's wire equals ETS's
+  group-address download and the table part of its revert byte for byte, the unit's stamps after each
+  write equal those it reported after ETS's corresponding download (its parameter and group-address
+  downloads, its revert for the two writes back), and the last read equals
+  the reference (record).
 - **The full download needs the application in the device.** Every capture ran on a device holding
   this application, which ETS reads first (object 3 PID 13), with load-state machines 1, 2 and 3
   loaded. What ETS sends to any other device is not shown, so Busforge refuses that full download
@@ -478,8 +483,10 @@ How the captures show it:
   freshly loaded case.
 
 Busforge plans the full download of both applications by this rule (`etsWrittenRuns`,
-`packages/product/src/deviceflash.ts`), and `tools/etsdiff.test.ts` fails if it writes a byte the
-image ETS logged does not hold: for the Gira its 822 bytes equal the revert's image, byte for byte,
+`packages/product/src/deviceflash.ts`), and the Gira's group-address flash too
+(`planCapturedSystem7GaFlash`: its tables and com-object table, the 405 bytes of ETS's image of its
+group-address download, the 401 of the revert's tables). `tools/etsdiff.test.ts` fails if it writes
+a byte the image ETS logged does not hold: for the Gira its 822 bytes equal the revert's image, byte for byte,
 contain the 37 bytes of both full downloads' images and number those 37 plus the 785 removed, and its
 parameter bytes number the parameter download's 7 plus 414 removed (a count: the removed bytes'
 addresses are not logged); for the Auro its 151 equal the full download's image, and the parameter
@@ -528,11 +535,27 @@ tables exactly as ETS's revert did and left the same residues
 segments, or of the PID 27 stamps, against a reference taken before a table grew shows them as
 differences that the tables do not have.
 
-The Gira M-0008 (house unit 1.1.x) shows the same shape: after ETS's group-address download and its
-revert, `06 02 07 02` stay at `$4024-$4027`, and object 2's stamp, which begins with its re-declared
-segment length (`0x1D3`, 467), changed from `...D021` to `...AB26`. That those bytes are the tail of a
-longer association table written by its group-address download, and that the revert wrote a shorter
-one, is still to be confirmed from the Gira captures.
+The Gira M-0008 (house unit 1.1.x, private corpus `captures/gira-m0008-*`) shows the same mechanism,
+with a twist: its association table sits directly behind the address table, so it moves when the
+address table grows ([above](#ets-captured-system-7-downloads)).
+
+| Step | What ETS writes (capture line) | Object 2's stamp after it |
+| --- | --- | --- |
+| Group-address download, 15/7/250 linked to object 4 | `partial-links` l. 140: LSM 1 declared `0x4000+0x13`; l. 194: LSM 2 declared `0x4013+0x1D1`; l. 200 and 206: the association table at `0x4013`, count `0A`, its last 9 bytes `40 06 00 07 00 06 02 07 02` ending at `0x4027` | `000001D1 00F22033` (l. 433) |
+| The revert | `partial-revert` l. 125: `0x4000+0x11`; l. 179: `0x4011+0x1D3`; l. 185 and 191: the association table at `0x4011`, count `09`, ending at `0x4023`; ETS's log of it dumps `--` from `0x4024` (`gira-m0008-ets6log-partial-revert.txt`, row `0020`) | `000001D3 00F2AB26` (l. 789) |
+| A full download (the restore) | the same table at `0x4011` to `0x4023` (`fulldownload-restore` l. 185, 191) | `000001D3 00F2AB26` (l. 236) |
+
+So `06 02 07 02` at `$4024-$4027` are the last four bytes of the ten-entry association table the
+group-address download wrote, and the revert's nine-entry table ends four bytes before them. The
+stamp's leading word is the declared segment length of each download (`0x1D1` = 465 while the address
+table had 9 entries, `0x1D3` = 467 after the revert, as before ETS's partial downloads, where its full
+download read `000001D3 00F2D021`, `fulldownload` l. 237). Its checksum covers the whole declared segment, so
+with the same tables and four other bytes behind them it changed from `...D021` to `...AB26`. The read
+of 1.1.x taken before the captures holds `00 00 00 00` at `$4024-$4027`, the read after the revert
+`06 02 07 02`, and the reads after both Busforge full downloads still `06 02 07 02` with `...AB26`:
+Busforge, like ETS, writes the table to its length. Busforge's group-address flash adding and
+removing the same link wrote the same two tables and left the same four bytes and stamp
+(record).
 
 Whether Busforge should clear such residues, by writing the rest of a declared segment beyond the
 table, is an open decision ([roadmap.md](roadmap.md)). Today it writes nothing beyond the tables.

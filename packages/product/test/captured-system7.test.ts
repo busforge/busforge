@@ -134,6 +134,54 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(dev.tableRef.get(2)).toBe(0x400b);
   }, 20_000);
 
+  // ETS's image of its group-address download (gira-m0008-ets6log-partial-links.txt) leaves out the
+  // address table's own individual address and the com-object segment's bytes behind its counted
+  // entries; the flash writes neither and does not count them as a change.
+  test("group-address flash: neither the own individual address nor the com-object segment's bytes behind the table are written", async () => {
+    const dev = new GiraDevice(cfg);
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
+    const comObj = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
+    const tail = comObj.address + 3 + 4 * comObj.data[0];
+    expect(comObj.address + comObj.size - tail).toBe(8);
+    const marked = [0x4001, 0x4002, ...Array.from({ length: 8 }, (_, i) => tail + i)];
+    for (const a of marked) dev.mem.set(a, 0xa5);
+    const written: number[] = [];
+    const memWrite = dev.memWrite.bind(dev);
+    dev.memWrite = async (addr: number, data: Buffer) => { data.forEach((_, i) => written.push(addr + i)); return memWrite(addr, data); };
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: [...twoObjects, { comObjNum: 4, gaRaws: [0x7ffa] }], baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect(written.filter((a) => marked.includes(a))).toEqual([]);
+    expect(marked.map((a) => dev.mem.get(a))).toEqual(marked.map(() => 0xa5));
+  }, 20_000);
+
+  test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
+    const dev = new GiraDevice(cfg);
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
+    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
+    dev.ops = [];
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "unchanged" });
+    expect(dev.ops).toEqual([]);
+  }, 20_000);
+
+  // Equal table bytes are not enough: the device reads its association table from where object 2's
+  // reference points, so a table that stands elsewhere is counted as a change and written.
+  test("group-address flash: tables whose reference is not at the re-declared address are not unchanged", async () => {
+    const dev = new GiraDevice(cfg);
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
+    // The unit holds its own address in the address table, as a real one does (the download leaves it).
+    dev.mem.set(0x4001, 0x11).set(0x4002, 0x01);
+    const at = dev.tableRef.get(2)!;
+    dev.tableRef.set(2, at + 2);
+    for (let i = 20; i >= 0; i--) dev.mem.set(at + 2 + i, dev.mem.get(at + i) ?? 0);
+    const dry = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), dryRun: true });
+    expect(dry).toMatchObject({ kind: "dryRun" });
+    expect((dry as { diffBytes: number }).diffBytes).toBeGreaterThan(0);
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect([dev.tableRef.get(1), dev.tableRef.get(2)]).toEqual([0x4000, at]);
+  }, 20_000);
+
   test("group-address flash: a communication flag the project sets against the links is refused before any write", async () => {
     const dev = new GiraDevice(cfg);
     const off = new Map([[0, { flags: { comm: false } }]]);

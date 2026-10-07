@@ -648,26 +648,49 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     expect(etsOnly.filter((a) => held.get(a) !== ets.get(a))).toEqual([]);
   });
 
-  test("group-address flash: tables re-declared where ETS puts them, the com-object table rewritten with the new link bit", () => {
-    const links = [...baseline.links, { comObjNum: 4, gaRaws: [parseGa("15/7/250")] }].sort((a, b) => a.comObjNum - b.comObjNum);
-    const tables = buildGroupTablesMv0705(links, ia, { order: "ets-captured" });
-    // The group-address flash keeps the com-object table the device holds and changes only the link
-    // bits (System7Profile.flashGroupTables); the device's table is the one ETS wrote in the revert,
-    // its last 8 bytes, which ETS's image leaves out, taken from the segment's template.
-    const seg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
-    const held = Buffer.from(seg.data.map((b, i) => revert.get(seg.address + i) ?? b));
-    const comObj = { address: seg.address, bytes: withLinkedCommFlags(held, new Set(links.map((l) => l.comObjNum))) };
-    const { plan, assocAt } = planCapturedSystem7GaFlash(cfg, proc, tables, comObj);
+  // The group-address flash keeps the com-object table the device holds and changes only the link
+  // bits (System7Profile.flashGroupTables). What the device holds there: the segment's template under
+  // the bytes ETS wrote in a download (its last 8 bytes, which no ETS image holds, from the template).
+  const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
+  const heldComObj = (written: Map<number, number>) => Buffer.from(comObjSeg.data.map((b, i) => written.get(comObjSeg.address + i) ?? b));
+  const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], held: Buffer) => planCapturedSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia, { order: "ets-captured" }),
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(held, new Set(links.map((l) => l.comObjNum))) });
+  const withTestLink = [...baseline.links, { comObjNum: 4, gaRaws: [parseGa("15/7/250")] }].sort((a, b) => a.comObjNum - b.comObjNum);
+  const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+
+  test("group-address flash: tables re-declared where ETS puts them, exactly the bytes of ETS's image, the com-object table with the new link bit", () => {
+    const { plan, assocAt, comObjWrites } = gaFlash(withTestLink, heldComObj(revert));
     expect(assocAt).toBe(0x4013);
     expect(planSteps(plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-partial-links.log")));
     const ets = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-links.log"), ia).writes);
+    const log = etsLog("gira-m0008-ets6log-partial-links.txt");
     const ours = bytesOf(plan);
-    expect([...ours].filter(([a, b]) => ets.has(a) && ets.get(a) !== b)).toEqual([]);
-    expect([...ets.keys()].filter((a) => !ours.has(a))).toEqual([]);
-    // The group-address flash still writes the address table's own individual address and the
-    // com-object table's 8 bytes behind its 91 entries, which ETS's image leaves out (the full download
-    // does not, above).
-    expect(span([...ours.keys()].filter((a) => !ets.has(a)))).toEqual(["4001-4002", "4354-435b"]);
+    // ETS's image of this download is 405 bytes, none removed as held: the address table without its own
+    // individual address (17), the association table with ten entries (21), the com-object table to its
+    // 91 entries (367). Busforge writes exactly those bytes, with ETS's values, and nothing else: not
+    // $4001-$4002, not the com-object segment's 8 bytes behind the table.
+    expect([log.image.size, log.removed]).toEqual([405, 0]);
+    expect(sorted(ours)).toEqual(sorted(log.image));
+    expect(sorted(ours)).toEqual(sorted(ets));
+    expect(span([...ours.keys()])).toEqual(["4000-4000", "4003-4027", "41e5-4353"]);
+    expect(span(comObjWrites.flatMap((w) => Array.from(w.image, (_, i) => w.address + i)))).toEqual(["41e5-4353"]);
+  });
+
+  // The revert removes the link again. ETS's revert rewrote the application's data segments too (its
+  // stamps no longer matched); of its writes the group-address flash's share is the tables and the
+  // com-object table, which Busforge writes byte for byte, starting from the device ETS's group-address
+  // download left. The association table ends at $4023 again, so ETS's group-address download's last 4
+  // bytes ($4024-$4027) stay behind it (docs/load-procedures.md, "Tables shrink, their old bytes stay").
+  test("group-address flash of the revert: the tables and the com-object table ETS's revert writes, byte for byte, nothing behind them", () => {
+    const linksWritten = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-links.log"), ia).writes);
+    const { plan, assocAt } = gaFlash(baseline.links, heldComObj(linksWritten));
+    expect(assocAt).toBe(0x4011);
+    const ours = bytesOf(plan);
+    const tablesOf = (m: Map<number, number>) => new Map([...m].filter(([a]) => a < 0x435c));
+    expect(sorted(ours)).toEqual(sorted(tablesOf(revert)));
+    expect(sorted(ours)).toEqual(sorted(tablesOf(etsLog("gira-m0008-ets6log-partial-revert.txt").image)));
+    expect(span([...ours.keys()])).toEqual(["4000-4000", "4003-4023", "41e5-4353"]);
+    expect([0x4024, 0x4025, 0x4026, 0x4027].map((a) => linksWritten.get(a))).toEqual([0x06, 0x02, 0x07, 0x02]);
   });
 });
 
