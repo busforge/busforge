@@ -153,21 +153,33 @@ describe("property-mapped LSM controls (MV-0705)", () => {
   // (captures/auro-m0081-ets-fulldownload.log): 3/5 = 03 04 00000000 00000000, answered LOADING.
   test("taskCtrl1 is the PID 5 write of 03 04 and eight zero bytes, and the machine must stay LOADING", async () => {
     const d = new PropDev();
-    await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3 }, { op: "loadCompleted", lsm: 3 }]);
+    await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 0, count: 0 }, { op: "loadCompleted", lsm: 3 }]);
     expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000", "3/5=02000000000000000000"]);
     expect(d.mem).toEqual([]);
+  });
+  // The TheLuxa P300's LdCtrlTaskCtrl1 LsmIdx 3 Address 17875 Count 1 (captures/theluxa-p300-ets-fulldownload.log):
+  // 3/5 = 03 04 45D3 01 0000000000, answered LOADING.
+  test("taskCtrl1 carries the address (2 bytes) and the count (1 byte) behind 03 04", async () => {
+    const d = new PropDev();
+    await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 17875, count: 1 }, { op: "loadCompleted", lsm: 3 }]);
+    expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=030445d3010000000000", "3/5=02000000000000000000"]);
+  });
+  test("a taskCtrl1 whose count needs more than one byte is refused before it is sent", async () => {
+    const d = new PropDev();
+    expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 17875, count: 256 }]).catch((e: unknown) => String(e))).toContain("1-byte count");
+    expect(d.props).toEqual(["3/5=01000000000000000000"]);
   });
   test("a taskCtrl1 the device answers with ERROR stops the bracket before LoadCompleted", async () => {
     const d = new PropDev();
     const write = d.propWrite.bind(d);
     d.propWrite = async (obj: number, pid: number, data: Buffer) => { const r = await write(obj, pid, data); if (data[0] === 3 && data[1] === 4) d.state.set(obj, STATE.ERROR); return r; };
-    expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3 }, { op: "loadCompleted", lsm: 3 }]).catch((e: unknown) => e))
+    expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 0, count: 0 }, { op: "loadCompleted", lsm: 3 }]).catch((e: unknown) => e))
       .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
     expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000"]);
   });
   test("a taskCtrl1 on memory-mapped LSMs is refused before anything is sent", async () => {
     const d = new MMDev();
-    expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3 }], { memMappedLsms: true }).catch((e: unknown) => String(e))).toContain("memory-mapped");
+    expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3, address: 0, count: 0 }], { memMappedLsms: true }).catch((e: unknown) => String(e))).toContain("memory-mapped");
     expect(d.writes).toEqual([]);
   });
   test("a stamp read the device answers with no element fails the plan, after its restart", async () => {

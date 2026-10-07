@@ -378,10 +378,18 @@ Property-mapped System 7 uses a different layout, and it is **not** rebuilt from
 ```
 [count: u8][ramEnd: u16 BE]  then one 4-byte entry per com-object, entry i is com-object i (0-based)
 entry = [dataPtr: u16 BE][config: u8][type: u8]
-config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 unconfigured
+config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 (see below)
 ```
 
-There is no update or read-on-init bit. `dataPtr` points into the `0x07xx` RAM value
+There is no read-on-init bit. `0x80` is set in the manufacturer's template of many entries, and
+Busforge clears it on every configured object, except on the Theben TheLuxa P300
+(`M-0048_A-107E-12-5B58`): there ETS writes it as the object's update flag (object 116,
+`UpdateFlag="Enabled"`, written `0xCB` over the template's `0xDF`, private corpus
+`captures/theluxa-p300-ets6log-fulldownload.txt`, "Execute image" row `05D0`), and Busforge with it
+(`ETS_UPDATE_BIT_MV0705_APPS`, `packages/product/src/comobjbuild.ts`). That is one object of one
+application, and the only 14-byte object among them, so it is not taken as the meaning of `0x80` on
+MV-0705: on every other application a configured object's update flag leaves the bit cleared, as
+before. A second capture of a configured object with the update flag decides ([roadmap.md](roadmap.md)). `dataPtr` points into the `0x07xx` RAM value
 segment. L3 lives at the application's `<ComObjectTable CodeSegment>` fixed absolute address
 and is **not** behind the object-3 table pointer (`tableAddr(3)` returns 0 on MV-0705,
 unlike System B).
@@ -395,7 +403,8 @@ then overlays only the dynamic state. So the build is:
    every inactive entry).
 2. **Configured objects** (those the active configuration reaches):
    `config = priority | linked | read | write | transmit` from the resolved flags, `0x80`
-   dropped, `type` rewritten from the resolved size.
+   dropped (on the TheLuxa P300: `0x80` = the update flag, above), `type` rewritten from the
+   resolved size.
 3. **Unconfigured objects**: keep the template entry verbatim, clearing only a stale linked
    bit.
 
@@ -427,9 +436,11 @@ residuals decompose into named, bounded cases, none of them a missed general rul
   walk over-includes refs from module instances whose mode does not select them. Top-level
   objects are unaffected (the device configures a reached top-level object even when
   unlinked).
-- **Large or special objects.** A 14-byte "software version" object is left unconfigured
-  while 3-, 6- and 8-byte siblings are configured, so it is not a simple size rule (likely
-  "> 8 bytes / string DPT").
+- **Large or special objects.** A 14-byte "software version" object (object 116 of the Theben
+  TheLuxa P300) kept `0x80` while 3-, 6- and 8-byte siblings had it cleared, which read as "left
+  unconfigured". ETS's full download of that application (2026-10-07) explains it: the object is
+  configured and declares `UpdateFlag="Enabled"`, and ETS writes `0xCB`, the update flag in `0x80`
+  (above). Busforge writes it so for that application only.
 - **Device drift**, settled by a clean ETS re-flash rather than by code.
 
 None of these bit the configurations that have been driven on hardware so far, so a full

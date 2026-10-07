@@ -43,10 +43,11 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
 //   Address table:     [count:1][own IA:2 BE][GA:2 BE x N]   (count = 1 + N: the IA entry + N GAs)
 //   Association table: [count:1][groupIdx:1][comObjNum:1] x M
 // The associations are ordered by com-object then group index. With `order: "ets-captured"` (the
-// applications in loadproc.ts ETS_CAPTURED_SYSTEM7_APPS only) they are in the order ETS writes them
+// applications in loadproc.ts ETS_REGION_TABLES_SYSTEM7_APPS only) they are in the order ETS writes them
 // there: first each object's first link (first in the project's Links) by object number, then every
 // other link by object number and group index (Gira Tastsensor 3 Komfort, objects with three
-// addresses each, private corpus captures/gira-m0008-ets-partial-links.log and -partial-revert.log).
+// addresses each, private corpus captures/gira-m0008-ets-partial-links.log and -partial-revert.log;
+// Theben TheLuxa P300, captures/theluxa-p300-ets-partial-links.log).
 // Where every object has one link, both orders are the same.
 // `ownIa` is the device's individual address (the first address-table entry). Counts are a
 // single byte, so a device with > 254 group addresses or > 255 associations cannot be

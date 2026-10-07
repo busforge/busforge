@@ -292,19 +292,44 @@ export const etsCapturedSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => 
 // For these, ETS runs the full download's declared steps one by one, in the order the procedure
 // declares them (load-procedures.md, "Declared-order System 7 downloads"). The Auro presence detector
 // (M-0081_A-FE01-11-75D9, house unit), private corpus
-// captures/auro-m0081-ets-fulldownload.log and captures/auro-m0081-ets-partial-params.log, with ETS's
-// own log of each step beside them (auro-m0081-ets6log-*.txt):
+// captures/auro-m0081-ets-fulldownload.log and captures/auro-m0081-ets-partial-params.log, and the
+// Theben TheLuxa P300 (M-0048_A-107E-12-5B58, house unit),
+// captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, with ETS's
+// own log of each step beside them (*-ets6log-*.txt):
 //   - every LdCtrlAbsSegment and LdCtrlTaskSegment is the load-state machine's PID 5 write, and a
 //     segment's memory writes follow its declaration;
-//   - LdCtrlTaskCtrl1 LsmIdx 3 Address 0 Count 0 is the PID 5 write 03 04 and eight zero bytes, which
-//     the device answers LOADING; no other form of it is shown;
+//   - LdCtrlTaskCtrl1 is the PID 5 write 03 04, the declared Address (2 bytes) and Count (1 byte), and
+//     zero bytes to 10, which the device answers LOADING; only the form each capture shows is run
+//     (ETS_DECLARED_ORDER_TASK_CTRL1);
 //   - of a segment that declares a <Mask>, ETS writes the bytes the mask marks and the bytes a
 //     parameter's memory covers, of a table only those inside its built length; a segment without a
-//     <Mask> it writes whole, one without <Data> not at all.
-// The full download ran on a device that held this application, loaded; what ETS sends to one that
+//     <Mask> it writes whole, one without <Data>, or whose <Mask> marks nothing, not at all.
+// The TheLuxa's tables are re-declared as the Gira's are (ETS_REGION_TABLES_SYSTEM7_APPS).
+// Each full download ran on a device that held the application, loaded; what ETS sends to one that
 // does not is not shown, so that full download is refused (System7Profile.downloadFull).
-export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9"];
+export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9", "M-0048_A-107E-12-5B58"];
 export const etsDeclaredOrderSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(lp.app);
+
+// The LdCtrlTaskCtrl1 each declared-order application's capture shows ETS sending, as declared:
+// auro-m0081-ets-fulldownload.log (PID 5 03 04 00 00 00 ...) and theluxa-p300-ets-fulldownload.log
+// (PID 5 03 04 45 D3 01 00 ..., the TheLuxa's task-control block at 0x45D3 in its com-object table's
+// segment). Any other declaration refuses the full download.
+export const ETS_DECLARED_ORDER_TASK_CTRL1: Readonly<Record<string, { LsmIdx: string; Address: string; Count: string }>> = {
+  "M-0081_A-FE01-11-75D9": { LsmIdx: "3", Address: "0", Count: "0" },
+  "M-0048_A-107E-12-5B58": { LsmIdx: "3", Address: "17875", Count: "1" },
+};
+
+// ---- System 7 applications whose group tables ETS re-declares as one region ----
+// For these, ETS does not declare the address and association tables' segments as the procedure does:
+// it takes the two declared segments as one region, declares the address table's segment exactly as
+// long as the table and the association table's directly behind it with the rest, in the full and in
+// every group-address download, and writes the associations in its own order (grouptables.ts,
+// "ets-captured"). Gira M-0008 (gira-m0008-ets-*.log: 16384+17 and 16401+467 for declared 16384+243
+// and 16627+241) and Theben TheLuxa P300 (theluxa-p300-ets-*.log: 16384+9 and 16393+1011 for declared
+// 16384+511 and 16895+509). Both applications declare DynamicTableManagement="true"; the Auro, which
+// ETS declares as the procedure does, declares it "false".
+export const ETS_REGION_TABLES_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58"];
+export const etsRegionTablesSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_REGION_TABLES_SYSTEM7_APPS.includes(lp.app);
 
 // The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
 // declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next

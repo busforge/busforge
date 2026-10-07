@@ -419,7 +419,7 @@ function planSteps(plan: LoadPlan): string[] {
     else if (s.op === "unload" || s.op === "load" || s.op === "loadCompleted") out.push(`${s.op}:${s.lsm}`);
     else if (s.op === "writeMem") { if (out.at(-1) !== "write") out.push("write"); }
     else if (s.op === "readProp") out.push(`read ${s.obj}/${s.pid}#${s.start}`);
-    else if (s.op === "taskCtrl1") out.push(`taskCtrl1:${s.lsm}=0000000000000000`);
+    else if (s.op === "taskCtrl1") out.push(`taskCtrl1:${s.lsm}=${Buffer.from([s.address >> 8, s.address & 0xff, s.count, 0, 0, 0, 0, 0]).toString("hex")}`);
     else if (s.op === "restart") out.push("restart");
     else out.push(s.op);
   }
@@ -928,6 +928,200 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
         "LdCtrlLoad3", "LdCtrlWriteMem16476", "LdCtrlWriteMem16896", "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect",
       ]);
       expect([...l.image]).toEqual([...memoryImage(parseCapture(captureText(capture), ia).writes)].sort(([a], [b]) => a - b));
+    }
+  });
+});
+
+// ETS 6 downloads of the Theben TheLuxa P300 (M-0048_A-107E-12-5B58, MV-0705, LdCtrlTaskCtrl1 Address
+// 17875 Count 1, DynamicTableManagement), house unit, in this order: a full download;
+// a partial download after one parameter change ("Temperature calibration in 0.1 °C", AS-4800 offset 19,
+// 0 -> 1); one after linking object 16 ("C1 Block", unlinked before) to 15/7/250; and one that reverted
+// both. ETS runs the full download's declared steps in their declared order (ETS_DECLARED_ORDER_SYSTEM7_APPS),
+// but declares the two table segments as one region, as on the Gira (ETS_REGION_TABLES_SYSTEM7_APPS). The
+// project is not in the corpus. The configuration is read from what ETS wrote in the full download: the
+// links from its tables, the parameter values decoded by Busforge from the 576-byte parameter segment.
+corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => {
+  const xml = catalogueXml("M-0048_A-107E-12-5B58.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const IA = "1.2.10", ia = iaToNum(IA);
+  const FULL = "theluxa-p300-ets-fulldownload.log", PARTIAL = "theluxa-p300-ets-partial-params.log";
+  const LINKS = "theluxa-p300-ets-partial-links.log", REVERT = "theluxa-p300-ets-partial-revert.log";
+  const written = memoryImage(parseCapture(captureText(FULL), ia).writes);
+  const paramSeg = cfg.absoluteSegments.find((s) => s.address === 0x4800)!;
+  const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
+  const segOf = (seg: typeof paramSeg, img: Map<number, number>) => Buffer.from(seg.data.map((b, i) => img.get(seg.address + i) ?? b));
+  // What the device holds in the parameter and com-object segments after ETS's full download: both
+  // written whole.
+  const held = segOf(paramSeg, written), heldComObj = segOf(comObjSeg, written);
+
+  const baseline = (() => {
+    const at = (a: number) => written.get(a)!;
+    // ETS leaves the address table's own individual address (bytes 1-2) to the device.
+    const addr = Buffer.from(Array.from({ length: 1 + 2 * at(0x4000) }, (_, i) => (i === 1 ? ia >> 8 : i === 2 ? ia & 0xff : at(0x4000 + i))));
+    const assocAt = 0x4000 + addr.length;
+    const assoc = Buffer.from(Array.from({ length: 1 + 2 * at(assocAt) }, (_, i) => at(assocAt + i)));
+    const decoded = new Map(decodeAbsoluteImage(toAppModel(cfg, { includeUnions: true }), paramSeg.id, held));
+    let params = new Map<string, string>();
+    for (let i = 0; ; i++) {
+      const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
+      const next = new Map([...decoded].filter(([r]) => active.has(r)));
+      if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) break;
+      if (i > 16) throw new Error("the configuration read from the full download never settled");
+      params = next;
+    }
+    return { links: decodeGroupTablesMv0705(addr, assoc), params };
+  })();
+  const full = () => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: baseline.params, links: baseline.links, proc });
+  const TEMP = "M-0048_A-107E-12-5B58_P-2234";
+  const tempRef = () => [...baseline.params.keys()].find((k) => k.startsWith(`${TEMP}_`))!;
+
+  test("the configuration read from the full download: object 6 on three addresses, the temperature calibration 0", () => {
+    expect(baseline.links).toEqual([{ comObjNum: 6, gaRaws: [0x0014, 0x1800, 0x1801] }]);
+    expect(baseline.params.get(tempRef())).toBe("0");
+  });
+
+  const task = (l: number, a: number) => `taskSegment:${l}@${a}=000048107e12`;
+  test("full download: the declared steps in their declared order, the tables re-declared as one region, TaskCtrl1 as ETS sends it", () => {
+    const build = full();
+    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(captureSteps(FULL, ia)));
+    expect(planSteps(build.plan)).toEqual([
+      "unload:1", "unload:2", "unload:3",
+      "load:1", "absSegment:1@16384+9", "write", task(1, 16384), "loadCompleted:1",
+      "load:2", "absSegment:2@16393+1011", "write", task(2, 16393), "loadCompleted:2",
+      "load:3", "absSegment:3@1792+248", "absSegment:3@17404+500", "write", "absSegment:3@18432+576", "write",
+      task(3, 17894), "taskCtrl1:3=45d3010000000000", "loadCompleted:3", "restart",
+    ]);
+    expect(build.plan.filter((s) => (s.op === "absSegment" || s.op === "taskSegment") && s.viaProperty !== true)).toEqual([]);
+  });
+
+  test("full download: Busforge writes exactly the bytes ETS writes, with ETS's values", () => {
+    const build = full();
+    const ours = bytesOf(build.plan);
+    const log = etsLog("theluxa-p300-ets6log-fulldownload.txt");
+    // Not differential: 1090 bytes, the address table without its own individual address (AS-4000
+    // declares no <Mask>), the association table behind it, the com-object table's segment whole (the
+    // table's 117 entries and the application data behind them), the parameter segment whole, nothing
+    // of the RAM segment AS-0700 (its <Mask> marks no byte).
+    expect([log.image.size, log.removed]).toEqual([1090, 0]);
+    expect(sorted(ours)).toEqual(sorted(log.image));
+    expect(sorted(ours)).toEqual(sorted(written));
+    expect(span(ours)).toEqual(["4000-4000", "4003-400f", "43fc-45ef", "4800-4a3f"]);
+    expect(span(build.segments.flatMap((s) => Array.from(s.image, (_, i) => s.address! + i)))).toEqual(span(ours));
+    expect(cfg.absoluteSegments.find((s) => s.address === 0x4000)!.mask).toBeUndefined();
+  });
+
+  test("ETS's log: the declared full steps in their declared order, the table segments re-declared", () => {
+    const log = etsLog("theluxa-p300-ets6log-fulldownload.txt");
+    const declared = flattenSteps(proc, "full");
+    expect(log.steps.map((s) => s.verb)).toEqual(declared.map((s) => s.verb));
+    // ETS adds the application id and PEI type to each LdCtrlTaskSegment; the table segments' Address and
+    // Size, and their task segments' Address, are the region's. Every other declared attribute is as declared.
+    const diffs = declared.flatMap((d, i) => Object.entries(d.attrs).filter(([k, v]) => log.steps[i].attrs[k] !== v).map(([k]) => `${d.verb}${d.attrs.LsmIdx}.${k}=${log.steps[i].attrs[k]}`));
+    expect(diffs).toEqual(["LdCtrlAbsSegment1.Size=9", "LdCtrlAbsSegment2.Address=16393", "LdCtrlAbsSegment2.Size=1011", "LdCtrlTaskSegment2.Address=16393"]);
+  });
+
+  test("ETS's log of the parameter download: every parameter-covered byte of AS-4800, nothing of the com-object table", () => {
+    const log = etsLog("theluxa-p300-ets6log-partial-params.txt");
+    expect(log.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual(["LdCtrlConnect", "LdCtrlLoad3", "LdCtrlWriteMem17404", "LdCtrlWriteMem18432", "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect"]);
+    const covered = parameterMemoryBytes(cfg, paramSeg.id, paramSeg.size)!;
+    expect(sorted(log.image).map(([a]) => a)).toEqual(covered.flatMap((c, i) => (c ? [paramSeg.address + i] : [])));
+    expect(log.image.size).toBe(338);
+    expect(sorted(log.image)).toEqual(sorted(memoryImage(parseCapture(captureText(PARTIAL), ia).writes)));
+  });
+
+  // AS-4800 offset 0 is P-2228 "Hilfsparameter Download Erkennung" (Access="None", value $AA): ETS writes
+  // AA in every download, and the unit clears it to 00 once it has seen the download (every read of the
+  // house unit after one of ETS's downloads holds 00 there). What the unit holds after ETS's full download:
+  const onUnit = Buffer.from(held);
+  onUnit[0] = 0x00;
+
+  test("parameter flash: ETS's bracket, the changed byte and the download marker with ETS's values; ETS also writes every unchanged parameter byte", () => {
+    expect(held[0]).toBe(0xaa);
+    const after = new Map(baseline.params).set(tempRef(), "1");
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, onUnit]]));
+    expect([changedBytes, unplaceable]).toEqual([2, []]);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
+    expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
+    const ets = memoryImage(parseCapture(captureText(PARTIAL), ia).writes);
+    expect([...bytesOf(plan)]).toEqual([[0x4800, 0xaa], [0x4813, 0x01]]);
+    expect([ets.get(0x4800), ets.get(0x4813)]).toEqual([0xaa, 0x01]);
+    const etsOnly = [...ets.keys()].filter((a) => a !== 0x4800 && a !== 0x4813);
+    expect(etsOnly.filter((a) => onUnit[a - paramSeg.address] !== ets.get(a))).toEqual([]);
+  });
+
+  const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planCapturedSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia, { order: "ets-captured" }),
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
+  const withTestLink = [...baseline.links, { comObjNum: 16, gaRaws: [parseGa("15/7/250")] }];
+  const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+  const TABLES = (addrSize: number) => [
+    "unload:1", "unload:2",
+    "load:1", `absSegment:1@16384+${addrSize}`, "write", task(1, 16384), "loadCompleted:1",
+    "load:2", `absSegment:2@${16384 + addrSize}+${1020 - addrSize}`, "write", task(2, 16384 + addrSize), "loadCompleted:2",
+    "load:3", "write", "loadCompleted:3", "restart",
+  ];
+
+  test("group-address flash: tables re-declared where ETS puts them, exactly the bytes of ETS's image, the com-object table to its 117 entries with the new link bit", () => {
+    const { plan, assocAt, comObjWrites } = gaFlash(withTestLink, heldComObj);
+    expect(assocAt).toBe(0x400b);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(LINKS, ia)));
+    expect(planSteps(plan)).toEqual(TABLES(11));
+    const ets = memoryImage(parseCapture(captureText(LINKS), ia).writes);
+    const log = etsLog("theluxa-p300-ets6log-partial-links.txt");
+    const ours = bytesOf(plan);
+    expect([log.image.size, log.removed]).toEqual([489, 0]);
+    expect(sorted(ours)).toEqual(sorted(log.image));
+    expect(sorted(ours)).toEqual(sorted(ets));
+    expect(span(ours)).toEqual(["4000-4000", "4003-4013", "43fc-45d2"]);
+    expect(span(comObjWrites.flatMap((w) => Array.from(w.image, (_, i) => w.address + i)))).toEqual(["43fc-45d2"]);
+    // Each object's first link first: (1, 6), (4, 16), then object 6's others (2, 6), (3, 6).
+    expect(Buffer.from(Array.from({ length: 9 }, (_, i) => ours.get(0x400b + i)!)).toString("hex")).toBe("040106041002060306");
+    // Object 16's config byte gains the linked bit, nothing else in the table changes.
+    const cfgByte = comObjSeg.address + 3 + 16 * 4 + 2;
+    expect([heldComObj[cfgByte - comObjSeg.address], ours.get(cfgByte)]).toEqual([0x1b, 0x1f]);
+  });
+
+  test("group-address flash of the revert: the tables and the com-object table ETS's revert writes, byte for byte", () => {
+    const linksWritten = memoryImage(parseCapture(captureText(LINKS), ia).writes);
+    const { plan, assocAt } = gaFlash(baseline.links, segOf(comObjSeg, new Map([...written, ...linksWritten])));
+    expect(assocAt).toBe(0x4009);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(REVERT, ia)));
+    expect(planSteps(plan)).toEqual(TABLES(9));
+    const ours = bytesOf(plan);
+    const revert = memoryImage(parseCapture(captureText(REVERT), ia).writes);
+    const tablesOf = (m: Map<number, number>) => new Map([...m].filter(([a]) => a < 0x4800));
+    expect(sorted(ours)).toEqual(sorted(tablesOf(revert)));
+    expect(sorted(ours)).toEqual(sorted(tablesOf(etsLog("theluxa-p300-ets6log-partial-revert.txt").image)));
+    expect(span(ours)).toEqual(["4000-4000", "4003-400f", "43fc-45d2"]);
+    // The parameter bytes of the revert: the parameter flash writes the one byte back, with ETS's value;
+    // every other byte ETS writes there is the full download's.
+    const before = Buffer.from(onUnit);
+    before[19] = 1;
+    const par = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, before]]));
+    expect([...bytesOf(par.plan)]).toEqual([[0x4800, 0xaa], [0x4813, 0x00]]);
+    expect([revert.get(0x4800), revert.get(0x4813)]).toEqual([0xaa, 0x00]);
+    expect([...revert].filter(([a, b]) => a >= 0x4800 && written.get(a) !== b)).toEqual([]);
+  });
+
+  test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
+    const links = memoryImage(parseCapture(captureText(LINKS), ia).writes);
+    const revert = memoryImage(parseCapture(captureText(REVERT), ia).writes);
+    const behind = [0x4010, 0x4011, 0x4012, 0x4013];
+    expect(behind.map((a) => links.get(a))).toEqual([0x02, 0x06, 0x03, 0x06]);
+    expect(behind.filter((a) => revert.has(a))).toEqual([]);
+    expect(behind.filter((a) => bytesOf(gaFlash(baseline.links, heldComObj).plan).has(a))).toEqual([]);
+  });
+
+  test("ETS's logs of its group-address downloads: the table brackets re-declared, LSM 3 without unload or TaskCtrl1, the image it wrote", () => {
+    for (const [log, capture, addrSize] of [["theluxa-p300-ets6log-partial-links.txt", LINKS, 11], ["theluxa-p300-ets6log-partial-revert.txt", REVERT, 9]] as const) {
+      const l = etsLog(log);
+      expect(l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}${s.verb === "LdCtrlAbsSegment" ? `@${s.attrs.Address}+${s.attrs.Size}` : ""}`)).toEqual([
+        "LdCtrlConnect", "LdCtrlUnload1", "LdCtrlUnload2",
+        "LdCtrlLoad1", `LdCtrlAbsSegment1@16384+${addrSize}`, "LdCtrlTaskSegment1", "LdCtrlLoadCompleted1",
+        "LdCtrlLoad2", `LdCtrlAbsSegment2@${16384 + addrSize}+${1020 - addrSize}`, "LdCtrlTaskSegment2", "LdCtrlLoadCompleted2",
+        "LdCtrlLoad3", "LdCtrlWriteMem17404", "LdCtrlWriteMem18432", "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect",
+      ]);
+      expect(sorted(l.image)).toEqual(sorted(memoryImage(parseCapture(captureText(capture), ia).writes)));
     }
   });
 });

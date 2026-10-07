@@ -120,12 +120,19 @@ export async function declareTaskSegmentProp(dev: KnxDevice, lsm: number, addres
   await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x02, (address >> 8) & 0xff, address & 0xff, peiType, (manufacturer >> 8) & 0xff, manufacturer & 0xff, (appNumber >> 8) & 0xff, appNumber & 0xff, version]));
 }
 
-// LdCtrlTaskCtrl1 with Address 0 and Count 0 to a property-mapped LSM: AdditionalLoadControls 04 and
-// eight zero bytes on the LSM's PID 5, as ETS sends it to the Auro presence detector
-// (captures/auro-m0081-ets-fulldownload.log, answered LOADING). What a non-zero address or count puts
-// in the remaining bytes is not shown, so this writes the all-zero form only.
-export async function taskCtrl1ZeroProp(dev: KnxDevice, lsm: number) {
-  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0]));
+// LdCtrlTaskCtrl1 to a property-mapped LSM: AdditionalLoadControls 04 on the LSM's PID 5, then the
+// address (2 bytes, big-endian), the count (1 byte) and five zero bytes, as ETS sends it to the Auro
+// presence detector (Address 0 Count 0: 03 04 and eight zero bytes, captures/auro-m0081-ets-fulldownload.log)
+// and to the Theben TheLuxa P300 (Address 17875 Count 1: 03 04 45 D3 01 00 00 00 00 00,
+// captures/theluxa-p300-ets-fulldownload.log), both answered LOADING. The field widths are read from
+// that one non-zero example (01 00 would also fit a 2-byte little-endian count), so the planner sends
+// only the forms those captures show (product loadproc.ts ETS_DECLARED_ORDER_TASK_CTRL1), and a count
+// beyond one byte is refused here.
+export async function taskCtrl1Prop(dev: KnxDevice, lsm: number, address: number, count: number) {
+  if (!Number.isInteger(address) || address < 0 || address > 0xffff || !Number.isInteger(count) || count < 0 || count > 0xff) {
+    throw new Error(`LSM ${lsm}: TaskCtrl1 address ${address} / count ${count} does not fit the 2-byte address and 1-byte count the ETS captures show`);
+  }
+  await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, (address >> 8) & 0xff, address & 0xff, count, 0, 0, 0, 0, 0]));
 }
 
 // app-id stamp for PID 13: manufacturer(2) + applicationNumber(2) + version(1), big-endian

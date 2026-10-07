@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, etsRegionTablesSystem7, ETS_DECLARED_ORDER_TASK_CTRL1, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
+import { buildComObjectTableMv0705, etsUpdateBitMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 import { OBJ, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
@@ -67,8 +67,11 @@ export function planAbsoluteSegmentFlash(
     const current = opts.current?.get(t.id);
     // A byte is written iff it holds an owned (authoritative) bit and, when we know the device's
     // current memory, actually differs from it. An owned byte the device already holds correctly
-    // is skipped, so a no-op reconfiguration produces an empty plan. Bits of a written byte that no
-    // parameter owns are carried over from the device.
+    // is skipped, so a no-op reconfiguration produces an empty plan, except where the device rewrites
+    // a byte itself after each download: the Theben TheLuxa P300 clears its download marker P-2228
+    // (Access="None", $AA) to 00, so that byte differs every time and is written every time, as ETS
+    // writes it in every download. Bits of a written byte that no parameter owns are carried over
+    // from the device.
     if (opts.current && (!current || current.length !== t.size)) {
       throw new ProductError("PARAM_SEGMENT_NOT_READ", `the device's ${t.id} was not read in full (${current?.length ?? 0} of ${t.size} B); refusing to write its shared bytes without the bits it holds`);
     }
@@ -240,7 +243,7 @@ export function absoluteStructuralImages(
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   if (addr.length > addrSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the address table needs ${addr.length} B but its segment reserves only ${addrSeg.size} B; assign fewer group addresses`);
   if (assoc.length > assocSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${assocSeg.size} B; remove links`);
-  const comObj = buildComObjectTableMv0705(comObjSeg.data, opts.comObjectTable.active, opts.comObjectTable.linked);
+  const comObj = buildComObjectTableMv0705(comObjSeg.data, opts.comObjectTable.active, opts.comObjectTable.linked, { updateBit: etsUpdateBitMv0705(app.id) });
   if (comObj.length > comObjSeg.size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${comObj.length} B but its segment reserves only ${comObjSeg.size} B`);
   const all = (n: number) => new Array<number>(n).fill(0xff);
   const images: AbsStructuralImage[] = [
@@ -407,6 +410,10 @@ export interface AbsFullDownloadPlan {
   plan: LoadPlan;
   segments: AbsFullSegment[]; // every segment written, in write order
   imageBytes: number;
+  // Where the plan re-declares the address and association tables away from their declared segments
+  // (ETS_CAPTURED_SYSTEM7_APPS, ETS_REGION_TABLES_SYSTEM7_APPS): the address each table's load-state
+  // machine must reference (PID 7) after the download, or the device does not read the bytes written.
+  tableRefs?: { lsm: number; address: number }[];
 }
 
 // The declared "full" steps planAbsoluteFullDownload executes, with the attributes each needs. Connect,
@@ -416,6 +423,12 @@ const ABS_FULL_STEP_ATTRS: Record<string, readonly string[]> = {
   LdCtrlAbsSegment: ["LsmIdx", "Address", "Size"], LdCtrlTaskSegment: ["LsmIdx", "Address"],
   LdCtrlRestart: [], LdCtrlConnect: [], LdCtrlDisconnect: [], LdCtrlCompareProp: [],
 };
+
+// The declared LdCtrlTaskCtrl1 is exactly the one the ETS capture of this application shows.
+function capturedTaskCtrl1(procedure: LoadProcedures, s: ReturnType<typeof flattenSteps>[number]): boolean {
+  const c = procedure.app !== undefined ? ETS_DECLARED_ORDER_TASK_CTRL1[procedure.app] : undefined;
+  return !!c && Object.keys(s.attrs).length === 3 && s.attrs.LsmIdx === c.LsmIdx && s.attrs.Address === c.Address && s.attrs.Count === c.Count;
+}
 
 export interface StepRefusal { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" | "FULL_DOWNLOAD_STEP_MALFORMED" | "LOAD_PROCEDURE_UNSUPPORTED"; message: string }
 
@@ -431,9 +444,9 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures): StepRefusal 
   const declaredOrder = etsDeclaredOrderSystem7(procedure);
   for (const s of steps) {
     if (s.verb === "LdCtrlTaskCtrl1" && declaredOrder) {
-      const a = s.attrs;
-      if (a.LsmIdx !== "3" || a.Address !== "0" || a.Count !== "0") {
-        return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlTaskCtrl1 LsmIdx ${a.LsmIdx} Address ${a.Address} Count ${a.Count}; the ETS capture of this application shows only LsmIdx 3 with Address 0 and Count 0, refusing to guess what another form sends` };
+      if (!capturedTaskCtrl1(procedure, s)) {
+        const a = s.attrs, c = procedure.app !== undefined ? ETS_DECLARED_ORDER_TASK_CTRL1[procedure.app] : undefined;
+        return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlTaskCtrl1 LsmIdx ${a.LsmIdx} Address ${a.Address} Count ${a.Count}; the ETS capture of this application shows ${c ? `only LsmIdx ${c.LsmIdx} with Address ${c.Address} and Count ${c.Count}` : "none"}, refusing to guess what another form sends` };
       }
       continue;
     }
@@ -477,15 +490,13 @@ const absDecl = (s: ReturnType<typeof flattenSteps>[number]): AbsDecl | null => 
   return lsm === undefined || address === undefined || size === undefined ? null : { lsm, segType: segType(s), address, size, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s) };
 };
 
-// The address and association tables of a captured application, re-declared as ETS declares them:
-// the two declared segments taken as one region, the address table's segment exactly as long as the
-// table and the association table's directly behind it with the rest of the region. Each load-state
-// machine is unloaded first, and its task segment declared at the table's new address.
-// `etsRuns`: write of each table only the bytes ETS's image of its full and group-address downloads
-// holds (etsTableRuns); without it the tables are written whole, the address table's own individual
-// address included.
 export interface CapturedTables { steps: LoadStep[]; addrAt: number; assocAt: number; writes: { lsm: number; address: number; image: Buffer }[] }
-export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, opts: { etsRuns?: boolean } = {}): CapturedTables {
+
+// Where an application of ETS_REGION_TABLES_SYSTEM7_APPS gets its tables: the two declared table
+// segments as one region, the address table's segment as long as the table, the association table's
+// directly behind it with the rest of the region.
+interface TableRegion { d1: AbsDecl; d2: AbsDecl; addrAt: number; assocAt: number; assocSize: number }
+function tableRegion(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }): TableRegion {
   const steps = flattenSteps(procedure, "full");
   const decl = (lsm: number): AbsDecl => {
     const ds = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map(absDecl);
@@ -506,7 +517,17 @@ export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedu
   if (tables.addr.length + tables.assoc.length > region) {
     throw new ProductError("GA_TABLE_TOO_LARGE", `the address table (${tables.addr.length} B) and the association table (${tables.assoc.length} B) need more than the ${region} B the application reserves for both; remove links or assign fewer group addresses`);
   }
-  const addrAt = d1.address, assocAt = d1.address + tables.addr.length;
+  return { d1, d2, addrAt: d1.address, assocAt: d1.address + tables.addr.length, assocSize: region - tables.addr.length };
+}
+
+// The address and association tables of an application of ETS_REGION_TABLES_SYSTEM7_APPS, re-declared
+// as ETS declares them (tableRegion), each load-state machine unloaded first, and its task segment
+// declared at the table's new address.
+// `etsRuns`: write of each table only the bytes ETS's image of its full and group-address downloads
+// holds (etsTableRuns); without it the tables are written whole, the address table's own individual
+// address included.
+export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, opts: { etsRuns?: boolean } = {}): CapturedTables {
+  const { d1, d2, addrAt, assocAt, assocSize } = tableRegion(app, procedure, tables);
   const manufacturer = appManufacturerNumber(app);
   const writes: CapturedTables["writes"] = [];
   const bracket = (d: AbsDecl, at: number, size: number, bytes: Buffer): LoadStep[] => {
@@ -525,7 +546,7 @@ export function planCapturedTableBrackets(app: AppConfig, procedure: LoadProcedu
     steps: [
       { op: "unload", lsm: d1.lsm }, { op: "unload", lsm: d2.lsm },
       ...bracket(d1, addrAt, tables.addr.length, tables.addr),
-      ...bracket(d2, assocAt, region - tables.addr.length, tables.assoc),
+      ...bracket(d2, assocAt, assocSize, tables.assoc),
     ],
   };
 }
@@ -537,13 +558,15 @@ function capturedClose(procedure: LoadProcedures, requireReboot: boolean): LoadS
   return [...imageStampReads(procedure).map((r): LoadStep => ({ op: "readProp", ...r })), { op: "restart", requireReboot }];
 }
 
-// A captured application's group-address flash, as ETS's partial download after a link change writes
-// it (gira-m0008-ets-partial-links.log): both tables re-declared and written, the com-object table
-// written in the application's load bracket without unloading it, the stamps read, the restart. Of
+// The group-address flash of an application of ETS_REGION_TABLES_SYSTEM7_APPS, as ETS's partial download
+// after a link change writes it (gira-m0008-ets-partial-links.log, theluxa-p300-ets-partial-links.log):
+// both tables re-declared and written, the com-object table written in the application's load bracket
+// without unloading it, the stamps read where the application declares them, the restart. Of
 // each table only the bytes ETS's image holds are written (etsTableRuns): the address table without
 // the device's own individual address, the com-object table to its counted entries, not the rest of
 // its segment. `comObjWrites`: what is written of the com-object table, for the read-back.
 export function planCapturedSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true): CapturedTables & { plan: LoadPlan; comObjWrites: { address: number; image: Buffer }[] } {
+  if (!etsRegionTablesSystem7(procedure)) throw new ProductError("LOAD_STEP_UNSUPPORTED", "the group-address flash with re-declared tables is captured for the applications of ETS_REGION_TABLES_SYSTEM7_APPS only");
   const t = planCapturedTableBrackets(app, procedure, tables, { etsRuns: true });
   const comObjWrites = comObj ? etsTableRuns(app, comObj.address, builtComObjectTable(comObj.bytes), false) : [];
   const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, ...comObjWrites.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })), { op: "loadCompleted", lsm: APP_LSM }] : [];
@@ -563,7 +586,7 @@ export function planDeclaredOrderSystem7GaFlash(
   app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer },
   comObj: { address: number; bytes: Buffer } | null, requireReboot = true,
 ): { plan: LoadPlan; segments: { address: number; image: Buffer }[]; tableRefs: { lsm: number; address: number; runs: { address: number; image: Buffer }[] }[] } {
-  if (!etsDeclaredOrderSystem7(procedure)) throw new ProductError("LOAD_STEP_UNSUPPORTED", "the declared-order group-address flash is captured for the applications of ETS_DECLARED_ORDER_SYSTEM7_APPS only");
+  if (!etsDeclaredOrderSystem7(procedure) || etsRegionTablesSystem7(procedure)) throw new ProductError("LOAD_STEP_UNSUPPORTED", "the declared-order group-address flash is captured for the applications of ETS_DECLARED_ORDER_SYSTEM7_APPS whose tables ETS declares as the procedure does only");
   const steps = flattenSteps(procedure, "full");
   const manufacturer = appManufacturerNumber(app);
   const segments: { address: number; image: Buffer }[] = [];
@@ -636,7 +659,7 @@ export function planAbsoluteFullDownload(
   const addrTableAddr = tableAddr(app.groupTables.addressSegment, "address");
   const assocTableAddr = tableAddr(app.groupTables.associationSegment, "association");
   const comObjTableAddr = opts.comObjectTable ? tableAddr(app.groupTables.comObjectSegment, "com-object") : undefined;
-  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa, { order: etsCapturedSystem7(procedure) ? "ets-captured" : "object" });
+  const { addr, assoc } = buildGroupTablesMv0705(links, ownIa, { order: etsRegionTablesSystem7(procedure) ? "ets-captured" : "object" });
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
   const manufacturer = appManufacturerNumber(app);
@@ -662,7 +685,7 @@ export function planAbsoluteFullDownload(
     if (comObjTableAddr !== undefined && address === comObjTableAddr) {
       const seg = segByAddr.get(address);
       if (!seg || seg.data.length === 0) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the com-object table segment at ${address} carries no <Data> template; refusing to author L3 blind`);
-      const image = buildComObjectTableMv0705(seg.data, opts.comObjectTable!.active, opts.comObjectTable!.linked);
+      const image = buildComObjectTableMv0705(seg.data, opts.comObjectTable!.active, opts.comObjectTable!.linked, { updateBit: etsUpdateBitMv0705(app.id) });
       if (image.length > size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${image.length} B but its segment reserves only ${size} B`);
       return { image, verify: new Array<boolean>(image.length).fill(true), source: "comObjTable" };
     }
@@ -718,7 +741,7 @@ export function planAbsoluteFullDownload(
       }
     }
     plan.push(...t.steps, { op: "load", lsm: APP_LSM }, ...appWrites, { op: "loadCompleted", lsm: APP_LSM }, ...capturedClose(procedure, opts.requireReboot ?? true));
-    return { plan, segments, imageBytes: segments.reduce((n, s) => n + s.image.length, 0) };
+    return { plan, segments, imageBytes: segments.reduce((n, s) => n + s.image.length, 0), tableRefs: [{ lsm: OBJ.ADDR_TABLE, address: t.addrAt }, { lsm: OBJ.ASSOC_TABLE, address: t.assocAt }] };
   }
 
   const need = <T>(v: T | undefined, verb: string, what: string): T => {
@@ -726,23 +749,41 @@ export function planAbsoluteFullDownload(
     return v;
   };
   // An application ETS is captured downloading in its declared order (etsDeclaredOrderSystem7): its
-  // declarations are PID 5 writes, and of each segment only the bytes ETS writes are written.
+  // declarations are PID 5 writes, and of each segment only the bytes ETS writes are written. Where ETS
+  // re-declares the group tables as one region (etsRegionTablesSystem7), their two segments are declared
+  // and written where tableRegion puts them, the task segments at the tables' new addresses.
   const declaredOrder = etsDeclaredOrderSystem7(procedure);
   const via = declaredOrder ? { viaProperty: true as const } : {};
+  const region = declaredOrder && etsRegionTablesSystem7(procedure) ? tableRegion(app, procedure, { addr, assoc }) : null;
+  const regionTable = (lsm: number) => (!region ? null : lsm === OBJ.ADDR_TABLE ? { at: region.addrAt, size: addr.length, table: addr, source: "addrTable" as const } : lsm === OBJ.ASSOC_TABLE ? { at: region.assocAt, size: region.assocSize, table: assoc, source: "assocTable" as const } : null);
   for (const s of flattenSteps(procedure, "full")) {
     switch (s.verb) {
       case "LdCtrlUnload": plan.push({ op: "unload", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlLoad": plan.push({ op: "load", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlAbsSegment": {
         const l = need(lsmIdx(s), s.verb, "LsmIdx"), a = need(stepAddress(s), s.verb, "Address"), sz = need(stepSize(s), s.verb, "Size");
+        const moved = regionTable(l);
+        if (moved) {
+          plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: moved.at, size: moved.size, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s), ...via });
+          for (const run of etsTableRuns(app, moved.at, moved.table, l === OBJ.ADDR_TABLE)) {
+            plan.push({ op: "writeMem", address: run.address, bytes: run.image });
+            segments.push({ id: (l === OBJ.ADDR_TABLE ? app.groupTables.addressSegment : app.groupTables.associationSegment) ?? `@${run.address}`, lsm: l, source: moved.source, address: run.address, image: run.image, verify: new Array<boolean>(run.image.length).fill(true) });
+            imageBytes += run.image.length;
+          }
+          break;
+        }
         plan.push({ op: "absSegment", lsm: l, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s), ...via });
         const built = imageFor(a, sz);
         if (built && declaredOrder) {
           const seg = segByAddr.get(a);
           if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${a} the application does not define; refusing to write an image we cannot build`);
-          const table = built.source === "addrTable" || built.source === "assocTable" || built.source === "comObjTable";
-          const etsBuilt = built.source === "comObjTable" ? { ...built, image: builtComObjectTable(built.image) } : built;
-          for (const run of etsWrittenRuns(app, seg, etsBuilt, table ? "table" : "loaded", opts.moduleInstances)) {
+          // The group tables to their built length; the application's segments, the com-object table's
+          // among them, as segments loaded afresh (LSM 3 is unloaded and each declared): the TheLuxa P300's
+          // com-object table segment holds application data behind the table, and ETS writes it whole
+          // (theluxa-p300-ets6log-fulldownload.txt, "Execute image" rows 0x43FC-0x45EF).
+          const table = built.source === "addrTable" || built.source === "assocTable";
+          if (built.source === "comObjTable") refuseComObjectTableOverlaps(app, seg, built.image, opts.moduleInstances);
+          for (const run of etsWrittenRuns(app, seg, built, table ? "table" : "loaded", opts.moduleInstances)) {
             plan.push({ op: "writeMem", address: run.address, bytes: run.image });
             segments.push({ id: seg.id, lsm: l, source: built.source, ...run });
             imageBytes += run.image.length;
@@ -759,15 +800,17 @@ export function planAbsoluteFullDownload(
         }
         break;
       }
-      case "LdCtrlTaskSegment":
-        plan.push({ op: "taskSegment", lsm: need(lsmIdx(s), s.verb, "LsmIdx"), address: need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...via });
+      case "LdCtrlTaskSegment": {
+        const l = need(lsmIdx(s), s.verb, "LsmIdx");
+        plan.push({ op: "taskSegment", lsm: l, address: regionTable(l)?.at ?? need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...via });
         break;
-      // Only the all-zero form, and only where absoluteFullStepRefusal has let it through.
+      }
+      // Only the form the application's capture shows, and only where absoluteFullStepRefusal has let it through.
       case "LdCtrlTaskCtrl1":
-        if (!declaredOrder || s.attrs.LsmIdx !== "3" || s.attrs.Address !== "0" || s.attrs.Count !== "0") {
+        if (!declaredOrder || !capturedTaskCtrl1(procedure, s)) {
           throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}, which no ETS capture of this application shows; refusing to run a partial recipe`);
         }
-        plan.push({ op: "taskCtrl1", lsm: need(lsmIdx(s), s.verb, "LsmIdx") });
+        plan.push({ op: "taskCtrl1", lsm: need(lsmIdx(s), s.verb, "LsmIdx"), address: need(stepAddress(s), s.verb, "Address"), count: Number(s.attrs.Count) });
         break;
       case "LdCtrlLoadCompleted": plan.push({ op: "loadCompleted", lsm: need(lsmIdx(s), s.verb, "LsmIdx") }); break;
       case "LdCtrlRestart": plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true }); break;
@@ -777,17 +820,20 @@ export function planAbsoluteFullDownload(
         throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe`);
     }
   }
-  return { plan, segments, imageBytes };
+  return { plan, segments, imageBytes, ...(region ? { tableRefs: [{ lsm: OBJ.ADDR_TABLE, address: region.addrAt }, { lsm: OBJ.ASSOC_TABLE, address: region.assocAt }] } : {}) };
 }
 
 // The bytes of a segment ETS puts in its image, for the applications whose downloads are captured
 // (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS). One rule fits every
 // capture of both (docs/load-procedures.md, "Which bytes ETS writes"):
 //  - "table": an address, association or com-object table, only as long as it is built, and of that
-//    the bytes the segment's <Mask> marks (the address table's own individual address is outside it);
+//    the bytes the segment's <Mask> marks, never the address table's own individual address (bytes 1-2:
+//    outside the Gira's and the Auro's <Mask>, and left out of the TheLuxa P300's table, whose segment
+//    declares no <Mask>);
 //  - "loaded": a data segment ETS loads afresh (its load-state machine unloaded, LdCtrlAbsSegment
 //    executed), the bytes the <Mask> marks and every byte a parameter's memory covers, the whole
-//    segment where it declares no <Mask>;
+//    segment where it declares no <Mask>; nothing where the <Mask> marks no byte and no parameter
+//    covers one (the TheLuxa P300's RAM segment AS-0700, declared and not written);
 //  - "writtenIntoApplication": a data segment of an application ETS leaves loaded (its log turns the
 //    LdCtrlAbsSegment into LdCtrlWriteMem), every byte a parameter's memory covers and no other,
 //    whatever the <Mask> marks.
@@ -799,6 +845,7 @@ function etsWrittenRuns(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFullS
   const { image } = built;
   if (image.length > seg.size) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the image for segment ${seg.id} is ${image.length} B, longer than the segment's ${seg.size}; refusing to write past it`);
   const runs = etsWrittenRunsOf(app, seg, built, kind, moduleInstances);
+  if (runs.length === 0 && kind === "loaded" && segmentMask(seg)?.every((b) => b === 0)) return runs;
   if (runs.length === 0) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `of segment ${seg.id} no byte would be written; the ETS captures show none such, refusing to leave a segment with <Data> out silently`);
   return runs;
 }
@@ -810,8 +857,9 @@ function etsWrittenRunsOf(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFul
   if (!params) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter in segment ${seg.id} has a type of no known width, so the bytes the download writes there cannot be told; refusing to guess`);
   if (kind === "table") {
     if (params.some(Boolean)) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter's memory lies in the table segment ${seg.id}; no ETS capture shows which bytes it writes there, refusing to guess`);
-    refuseUnmarkedTableBytes(seg.id, mask, 0, image.length, seg.address === app.absoluteSegments.find((x) => x.id === app.groupTables.addressSegment)?.address);
-    return runsWhere(image, (i) => !mask || mask[i] !== 0, seg.address, built.verify, null);
+    const addressTable = seg.address === app.absoluteSegments.find((x) => x.id === app.groupTables.addressSegment)?.address;
+    refuseUnmarkedTableBytes(seg.id, mask, 0, image.length, addressTable);
+    return runsWhere(image, (i) => !(addressTable && (i === 1 || i === 2)) && (!mask || mask[i] !== 0), seg.address, built.verify, null);
   }
   if (!mask) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares no <Mask>, and no ETS capture shows which bytes of such a segment it writes into an application it leaves loaded; refusing to guess`);
   return runsWhere(image, kind === "loaded" ? (i) => mask[i] !== 0 || params[i] : (i) => params[i], seg.address, built.verify, params);
@@ -820,6 +868,16 @@ function etsWrittenRunsOf(app: AppConfig, seg: CfgAbsSegment, built: Pick<AbsFul
 // An MV-0705 com-object table as ETS builds it: the 3-byte header and one 4-byte entry per object its
 // first byte counts. A template or a device's table longer than that (the Gira M-0008's, by 8 bytes)
 // keeps the rest, which ETS leaves out of its image.
+// The com-object table's segment, written as a segment loaded afresh, is still the table's: refuse, as
+// for a table, a parameter whose memory lies anywhere in the segment (its image is the table authored
+// from the template, which carries no parameter value) and a <Mask> that leaves out a byte of the
+// table's counted entries.
+function refuseComObjectTableOverlaps(app: AppConfig, seg: CfgAbsSegment, image: Buffer, moduleInstances?: ModuleInstance[]): void {
+  const params = parameterMemoryBytes(app, seg.id, seg.size, { moduleInstances });
+  if (!params) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter in segment ${seg.id} has a type of no known width, so the bytes the download writes there cannot be told; refusing to guess`);
+  if (params.some(Boolean)) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter's memory lies in the com-object table segment ${seg.id}; no ETS capture shows which bytes it writes there, refusing to guess`);
+  refuseUnmarkedTableBytes(seg.id, segmentMask(seg), 0, builtComObjectTable(image).length, false);
+}
 function builtComObjectTable(image: Buffer): Buffer {
   const length = 3 + 4 * image[0];
   if (length > image.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table counts ${image[0]} objects, ${length} B, but is only ${image.length} B; refusing to write a truncated table`);
@@ -857,14 +915,15 @@ function runsWhere(image: Buffer, written: (i: number) => boolean, address: numb
 
 // A table ETS writes at `address`, which need not be the start of a segment (a captured application's
 // association table sits behind the address table, inside the address table's declared segment): the
-// runs of it the <Mask> of the segment holding each byte marks.
+// runs of it the <Mask> of the segment holding each byte marks, the address table's own individual
+// address (bytes 1-2) left out whatever the <Mask> says (etsWrittenRuns, "table").
 function etsTableRuns(app: AppConfig, address: number, table: Buffer, addressTable: boolean): { address: number; image: Buffer }[] {
   const marked = Array.from(table, (_, i) => {
     const a = address + i;
     const seg = app.absoluteSegments.find((s) => a >= s.address && a < s.address + s.size);
     if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the table written at ${address} reaches ${a}, which lies in no segment the application defines; refusing to write it blind`);
     const mask = segmentMask(seg);
-    return !mask || mask[a - seg.address] !== 0;
+    return !(addressTable && (i === 1 || i === 2)) && (!mask || mask[a - seg.address] !== 0);
   });
   marked.forEach((m, i) => {
     if (!m && !(addressTable && (i === 1 || i === 2))) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the <Mask> leaves out byte ${i} of the table written at ${address}; the ETS captures leave out only the address table's own individual address, refusing to drop a table byte`);

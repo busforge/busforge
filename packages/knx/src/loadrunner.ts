@@ -1,5 +1,5 @@
 import { KnxDevice, PID, OBJECT_TYPE_SECURITY } from "./device.ts";
-import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, declareAbsSegmentProp, declareTaskSegmentProp, taskCtrl1ZeroProp, securityLsmEvent, LSM, STATE } from "./flash.ts";
+import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, declareAbsSegmentProp, declareTaskSegmentProp, taskCtrl1Prop, securityLsmEvent, LSM, STATE } from "./flash.ts";
 import { KnxError } from "./errors.ts";
 import { loadedTableAddr } from "./grouptable-read.ts";
 
@@ -37,10 +37,10 @@ export type LoadStep =
   // Declare the task segment (LdCtrlTaskSegment) with the application identity the device checks
   // at LoadCompleted, over the same transport as absSegment.
   | { op: "taskSegment"; lsm: number; address: number; peiType: number; manufacturer: number; appNumber: number; version: number; viaProperty?: true }
-  // LdCtrlTaskCtrl1 with Address 0 and Count 0, the only form an ETS capture shows: the LSM's PID 5
-  // write of 03 04 and eight zero bytes (taskCtrl1ZeroProp). Asserts the LSM stays LOADING, as after a
-  // segment declaration. Property-mapped LSMs only.
-  | { op: "taskCtrl1"; lsm: number }
+  // LdCtrlTaskCtrl1: the LSM's PID 5 write of 03 04, the address, the count and zero bytes
+  // (taskCtrl1Prop). Asserts the LSM stays LOADING, as after a segment declaration. Property-mapped
+  // LSMs only; the planner emits only the forms an ETS capture shows.
+  | { op: "taskCtrl1"; lsm: number; address: number; count: number }
   // Read elements of a property and require an answer (LdCtrlLoadImageProp on the absolute
   // applications ETS is captured downloading: it reads the segment stamps, PID 27, after the last
   // LoadCompleted and writes nothing). The values are handed to RunOpts.onRead.
@@ -166,7 +166,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         break;
       case "taskCtrl1": {
         if (opts.memMappedLsms) throw new Error(`LSM ${step.lsm}: a TaskCtrl1 on a device whose LSMs are memory-mapped`);
-        await taskCtrl1ZeroProp(dev, step.lsm);
+        await taskCtrl1Prop(dev, step.lsm, step.address, step.count);
         const s = await lsmState(dev, step.lsm);
         if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after TaskCtrl1 (got ${stateName(s)})`);
         break;

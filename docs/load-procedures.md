@@ -37,9 +37,11 @@ both download kinds (parameters and group tables). It asserts the LSM state afte
 Memory writes verify by read-back, unless a step opts into the device's verify-mode echo
 instead (only the System B full download does). `writeSegment` resolves the segment address at execution
 time, because a relative segment's address is only assigned by the alloc step. `taskCtrl1` is
-`LdCtrlTaskCtrl1` in the one form an ETS capture shows (Address 0, Count 0: PID 5 `03 04` and eight
-zero bytes), property-mapped only, and asserts the LSM stays LOADING
-([below](#declared-order-system-7-downloads)).
+`LdCtrlTaskCtrl1` as the ETS captures show it: PID 5 `03 04`, the address (2 bytes), the count
+(1 byte) and zero bytes to 10 (Auro, Address 0 Count 0: `03 04` and eight zero bytes; TheLuxa P300,
+Address 17875 Count 1: `03 04 45 D3 01 00 00 00 00 00`), property-mapped only, a count beyond one
+byte refused; it asserts the LSM stays LOADING. The planner emits only the form each application's
+capture shows ([below](#declared-order-system-7-downloads)).
 
 Two transports drive the same events:
 
@@ -200,7 +202,8 @@ The same par policy holds for the declared steps addressed to those objects (`Ls
 `LOAD_STEP_UNSUPPORTED` before the device is asked anything, and `TaskCtrl1`, `TaskSegment` and
 `Unload` stay documented skips, except on the Auro M-0081_A-FE01, whose group-address flash sends
 `Unload` 1, 2 and each table's `AbsSegment` and `TaskSegment` as ETS does
-([below](#declared-order-system-7-downloads)). A declared `CompareProp` is a read of the device, not a step on these
+([below](#declared-order-system-7-downloads)), and on the Gira M-0008 and the TheLuxa P300, whose
+group-address flash re-declares both tables as one region ([below](#ets-captured-system-7-downloads)). A declared `CompareProp` is a read of the device, not a step on these
 tables, and the group-address flash runs none, as before (the ABB US/U 4.2 declares its
 application-id check on object 3; its parameter flash runs it, its group-address flash does not).
 Whether the group-address flash should run the application's checks first is an open question
@@ -215,10 +218,12 @@ of the catalogue lands there: `LdCtrlTaskCtrl1` (declared by six applications of
 fixtures, four of them owned, none of the MDT or ABB ones). The Gira M-0008 declares it too, but ETS
 does not send it there, and that application's full download runs as captured
 ([below](#ets-captured-system-7-downloads)). The Auro presence detector `M-0081_A-FE01` declares it as
-`LsmIdx="3" Address="0" Count="0"`, which its capture shows ETS sending, and runs it in that one form
-([below](#declared-order-system-7-downloads)). So the full download is refused for the Theben TheLuxa
-P300, the Theben Meteodata 140 S, the Steinel presence detector (M-008E) and the second Auro
-application (`M-0081_A-FF31`), and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
+`LsmIdx="3" Address="0" Count="0"` and the Theben TheLuxa P300 `M-0048_A-107E-12-5B58` as
+`LsmIdx="3" Address="17875" Count="1"`; each capture shows ETS sending it, and each runs it in the
+form its own capture shows, any other declaration refused (`ETS_DECLARED_ORDER_TASK_CTRL1`,
+[below](#declared-order-system-7-downloads)). So the full download is refused for the Theben
+Meteodata 140 S, the Steinel presence detector (M-008E) and the second Auro application
+(`M-0081_A-FF31`), and not offered: the planner and `capabilities()` share one check (`absoluteFullStepRefusal`), so the
 flag says `fullDownload` exactly where the planner runs the declared steps, and the parameter and
 group-address flash are offered exactly where their coverage blocks nothing (`operationRefusals`,
 pinned per catalogue fixture against a table written from the declared verbs in
@@ -232,7 +237,7 @@ flashed, and how far, is in [status.md](status.md).
 property-mapped MV-0705 included (the MDT BE-02001.02 full download is hardware-proven so). ETS
 writes them to the load-state machine's PID 5 on that mask instead, 10 bytes each
 (`03 00 addr size access memtype flags 00` and `03 02 addr pei manufacturer application version`;
-MDT BE-02001.02, Gira M-0008 and Auro M-0081 captures). Busforge does that only for the applications
+MDT BE-02001.02, Gira M-0008, Auro M-0081 and TheLuxa P300 captures). Busforge does that only for the applications
 below; the switch for the others waits for a bench run ([roadmap.md](roadmap.md)).
 
 ## ETS-captured System 7 downloads
@@ -259,7 +264,14 @@ The parameter download is `Load` 3, the changed bytes, `LoadCompleted` 3, the st
 restart; the group-address download re-declares the two tables as above, writes the com-object
 table in an LSM 3 bracket, reads the stamps and restarts. Busforge's parameter, group-address and
 full download run exactly these sequences (`planAbsoluteParFlash`, `planCapturedSystem7GaFlash`,
-`planAbsoluteFullDownload`), pinned against the captures in `tools/etsdiff.test.ts`. Where Busforge
+`planAbsoluteFullDownload`), pinned against the captures in `tools/etsdiff.test.ts`. The tables as one
+region, the associations in ETS's order and the group-address download above are shared with the
+Theben TheLuxa P300, whose captures show them too (`ETS_REGION_TABLES_SYSTEM7_APPS`; its full download
+otherwise runs in the declared order, [below](#declared-order-system-7-downloads)). Both applications
+declare `DynamicTableManagement="true"`, the Auro, whose tables ETS declares as the procedure does,
+`"false"`; whether ETS keys the region on that attribute is not shown. After the full download and the
+group-address flash Busforge checks that objects 1 and 2 reference (PID 7) the addresses the tables
+were declared at, since the bytes alone do not show the device reads them there. Where Busforge
 departs from ETS, deliberately:
 
 - **It writes ETS's whole image, not ETS's differential cut of it.** ETS reads the stamps before a
@@ -320,8 +332,8 @@ import stores it, and fails on exactly that byte without it.
 
 For some System 7 applications ETS runs the declared full-download steps one by one, in the order the
 procedure declares them, including a step Busforge refuses elsewhere. Busforge then runs them the
-same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). One so far: the Auro
-presence detector, `M-0081_A-FE01-11-75D9`, captured on the house unit 1.1.x, in this
+same way (`ETS_DECLARED_ORDER_SYSTEM7_APPS`, `packages/product/src/loadproc.ts`). Two so far: the
+Theben TheLuxa P300 ([below](#the-theluxa-p300)) and, first, the Auro presence detector, `M-0081_A-FE01-11-75D9`, captured on the house unit 1.1.x, in this
 order: a full download, a partial download after one parameter change, one after adding 15/7/250 as a
 second address on object 10 (which had 5/3/9), and one that reverted both, parameters and links in one
 (private corpus `captures/auro-m0081-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`,
@@ -337,7 +349,7 @@ and dumps the image it writes, `--` where it writes nothing).
 | `Load` 3, `AbsSegment` 3 at 1792+250 (`MemType="2"`, no `<Data>`) | declared, nothing written |
 | `AbsSegment` 3 at 16476+91, at 16896+256 (`Access="34"`) | declared, each followed by its writes: the com-object table, the parameter bytes |
 | `TaskSegment` 3 (16567) | PID 5 `03 02 40B7 00 0081 FE01 11` |
-| `TaskCtrl1` 3, `Address="0" Count="0"` | PID 5 `03 04` and eight zero bytes, answered LOADING (`taskCtrl1` in the load plan; no other form is accepted) |
+| `TaskCtrl1` 3, `Address="0" Count="0"` | PID 5 `03 04` and eight zero bytes, answered LOADING (`taskCtrl1` in the load plan; on this application no other form is accepted) |
 | `LoadCompleted` 3, `Restart` | PID 5 `02`; `A_Restart` |
 
 Before the procedure ETS reads the device descriptor and object 0 PIDs 56, 11, 12 and 78, and
@@ -436,19 +448,70 @@ with the same value. Each was verified, and the last read equals the reference. 
 5/3/9 was answered after the full download, after the parameter flash to LED = 0 and after the added
 address (15/7/250 too); after its removal 15/7/250 no longer answered and 5/3/9 did. A second pass of all five writes on the committed build 35ae113, with the pre-flight and verify checks of that build, gave the same results and had a group read after LED = 1 too (record, "Second pass on 35ae113"). Persistence is the restart each one ends with; no bus power cycle.
 
+### The TheLuxa P300
+
+The Theben TheLuxa P300, `M-0048_A-107E-12-5B58` (`DynamicTableManagement="true"`, `PreEts4Style`),
+captured on its only house unit in the same order: a full download, a partial download
+after one parameter change ("Temperature calibration in 0.1 °C", `AS-4800` offset 19, 0 to 1), one
+after linking the unlinked object 16 to a test address, and one that reverted both (private corpus
+`captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log`, ETS's own
+log of each beside it). ETS runs the declared full steps in their declared order, as on the Auro, but
+declares the two table segments as one region, as on the Gira ([above](#ets-captured-system-7-downloads)).
+
+| Declared (`full`, in this order) | What ETS sends, and Busforge with it |
+| --- | --- |
+| `Unload` 1, 2, 3 | PID 5 `04` each |
+| `Load` 1, `AbsSegment` 1 (16384+511), `TaskSegment` 1, `LoadCompleted` 1 | the segment as long as the address table (a 4-entry table: 16384+9), its bytes, the task segment at 16384 |
+| `Load` 2, `AbsSegment` 2 (16895+509), `TaskSegment` 2, `LoadCompleted` 2 | the rest of both segments directly behind it (16393+1011), the association table, the task segment at 16393 |
+| `Load` 3, `AbsSegment` 3 at 1792+248 (RAM, a `<Mask>` that marks no byte) | declared, nothing written |
+| `AbsSegment` 3 at 17404+500 (the com-object table's segment), at 18432+576 (`Access="255"`, `SegFlags="0"`) | declared, each written whole: the com-object table (117 entries, 471 bytes) and the application data behind it, the parameter segment |
+| `TaskSegment` 3 (17894) | PID 5 `03 02 45E6 ...` |
+| `TaskCtrl1` 3, `Address="17875" Count="1"` | PID 5 `03 04 45 D3 01 00 00 00 00 00`, answered LOADING; 17875 is `0x45D3`, inside the com-object table's segment behind the table |
+| `LoadCompleted` 3, `Restart` | PID 5 `02`; `A_Restart` |
+
+The image is 1090 bytes, not differential: `0x4000` and `0x4003-0x400F` (the address table without
+the device's own address, though `AS-4000` declares no `<Mask>`, and the association table),
+`0x43FC-0x45EF` and `0x4800-0x4A3F`. Busforge plans exactly these runs and writes them with ETS's
+values (`tools/etsdiff.test.ts`, "Theben TheLuxa P300"). `AS-4800` offset 0 is `P-2228`, a download
+marker (`Access="None"`, `$AA`): ETS writes `AA` in every download and the unit clears it to `00`
+afterwards, so the full download reads that byte back without comparing it, and the parameter flash writes it with
+every changed byte, as ETS does. The com-object table writes object 116's update flag in `0x80`
+([device-memory-model.md](device-memory-model.md#the-com-object-table-l3)).
+
+The parameter download is `Load` 3, the 338 parameter-covered bytes of `AS-4800`, `LoadCompleted` 3,
+`A_Restart`; its log executes `AS-43FC` as `LdCtrlWriteMem` but its image holds nothing of it. The
+group-address download unloads 1 and 2, re-declares the tables as one region (16384+11 and
+16395+1009 for a 5-entry address table), writes them, then `Load` 3, the com-object table to its
+471 bytes, `LoadCompleted` 3 and the restart: 489 bytes, no `Unload` 3, no `TaskCtrl1`. The revert runs
+the same brackets with the old tables (485 bytes of tables) and carries the 338 parameter bytes in the
+same LSM 3 bracket. Busforge runs the parameter flash (`planAbsoluteParFlash`, the changed byte and the
+download marker) and the group-address flash of the region applications (`planCapturedSystem7GaFlash`),
+each pinned byte for byte against these captures.
+
+Where Busforge departs from ETS, deliberately: as on the Auro (below), no verify mode, the load state
+read after each of its own load-state writes, the device read first, and the full download only onto a
+unit holding this application with load-state machines 1, 2 and 3 loaded and level 0 granted to the
+free key. The full download reads back the whole com-object table segment, `0x45D3-0x45EF` behind the
+table included, which ETS writes and which the unit held unchanged after the restart in every run.
+
+All three ran on the house unit, each through the logging proxy, each `verified`, with a
+read after the restart, a group read answered, and the wire compared with ETS's capture
+(record).
+
 ## Which bytes ETS writes
 
 Of a segment ETS does not always write every byte, and not always the same bytes: it depends on how
-it loads the segment. One rule fits the images ETS's own log dumps for the two applications Busforge
+it loads the segment. One rule fits the images ETS's own log dumps for the three applications Busforge
 runs as ETS was captured (Gira M-0008: full download twice, parameter, group-address and revert
-download; Auro M-0081_A-FE01: full, parameter, group-address and revert download); what the tests
+download; Auro M-0081_A-FE01 and TheLuxa P300 M-0048_A-107E: full, parameter, group-address and revert
+download); what the tests
 compare byte for byte and what by count is listed below. Each log has an
 "Execute image" dump, `--` where the image holds nothing.
 
 | Segment | How ETS loads it | What its image holds |
 | --- | --- | --- |
-| address, association or com-object table | in a full, group-address or revert download (a parameter download's image holds no table byte, though its log executes the com-object table's segment) | the table as long as it is built, and of that the bytes the segment's `<Mask>` marks (all, without a mask) |
-| data segment | afresh: its load-state machine unloaded, `LdCtrlAbsSegment` executed | the bytes the `<Mask>` marks and every byte a parameter's memory covers; the whole segment without a mask |
+| address, association or com-object table | in a full, group-address or revert download (a parameter download's image holds no table byte, though its log executes the com-object table's segment) | the table as long as it is built, and of that the bytes the segment's `<Mask>` marks (all, without a mask), never the address table's own individual address (bytes 1-2) |
+| data segment, the com-object table's segment in a full download that loads it afresh | afresh: its load-state machine unloaded, `LdCtrlAbsSegment` executed | the bytes the `<Mask>` marks and every byte a parameter's memory covers; the whole segment without a mask; nothing where the mask marks no byte and no parameter covers one |
 | data segment | into an application it leaves loaded: the log turns the `LdCtrlAbsSegment` into `LdCtrlWriteMem` ("Transformed from") | every byte a parameter's memory covers, and no other, whatever the `<Mask>` marks |
 
 "A parameter's memory" means every parameter of the segment, active in the configuration or not,
@@ -476,24 +539,34 @@ How the captures show it:
   segments. The 80 bytes are in no image.
 - **Gira, `AS-41E5`.** The com-object table counts 91 objects (the application declares 0 to 90),
   3 + 4 × 91 = 367 bytes of its 375-byte segment; every image ends at `0x4353`.
+- **TheLuxa P300.** `AS-4000` declares no `<Mask>`, yet every image leaves out bytes 1-2 of the
+  address table, as the Gira's and the Auro's masks do: the own address is left to the device
+  whatever the mask says. The com-object table's segment `AS-43FC` (no mask) is written whole in the
+  full download, which loads LSM 3 afresh: the table's 471 bytes and the 29 bytes of application data
+  behind it, the `TaskCtrl1` block at `0x45D3` among them; the group-address download writes the
+  table to its 471 bytes only. The RAM segment `AS-0700` declares a `<Mask>` of zeros and no parameter:
+  declared, nothing written.
 - **Auro, `AS-4200`.** Its full download unloads load-state machine 3 and executes its
   `LdCtrlAbsSegment`: the image holds offsets 3 and 36, which no parameter covers and the mask marks.
   Its parameter download writes the segment as `LdCtrlWriteMem` and shows `--` at exactly those two
   offsets. The explanation first read off the Auro ("the mask plus the parameter bytes") is the rule's
   freshly loaded case.
 
-Busforge plans the full download of both applications by this rule (`etsWrittenRuns`,
-`packages/product/src/deviceflash.ts`), and the Gira's group-address flash too
+Busforge plans the full download of all three applications by this rule (`etsWrittenRuns`, and
+`etsTableRuns` for tables re-declared as one region, `packages/product/src/deviceflash.ts`); a parameter's memory in the com-object table's segment and a
+mask gap inside the table stay refused where that segment is written afresh. The Gira's and the
+TheLuxa's group-address flash follow it too
 (`planCapturedSystem7GaFlash`: its tables and com-object table, the 405 bytes of ETS's image of its
 group-address download, the 401 of the revert's tables). `tools/etsdiff.test.ts` fails if it writes
 a byte the image ETS logged does not hold: for the Gira its 822 bytes equal the revert's image, byte for byte,
 contain the 37 bytes of both full downloads' images and number those 37 plus the 785 removed, and its
 parameter bytes number the parameter download's 7 plus 414 removed (a count: the removed bytes'
 addresses are not logged); for the Auro its 151 equal the full download's image, and the parameter
-download's image is pinned byte for byte. Other
+download's image is pinned byte for byte; for the TheLuxa its 1090 equal the full download's image
+and its group-address flash the 489 bytes of that image, byte for byte. Other
 applications keep their own plans.
 
-Two limits. The rule rests on two applications; in every capture "loaded afresh" and "the
+Two limits. The rule rests on three applications; in every capture "loaded afresh" and "the
 application stays in the device" coincide with the `LdCtrlAbsSegment` being executed or transformed,
 so which of them ETS keys it on is not shown. And a data segment without a `<Mask>` written into a
 loaded application occurs in no capture, so Busforge refuses that case
@@ -555,6 +628,13 @@ of 1.1.x taken before the captures holds `00 00 00 00` at `$4024-$4027`, the rea
 `06 02 07 02`, and the reads after both Busforge full downloads still `06 02 07 02` with `...AB26`:
 Busforge, like ETS, writes the table to its length. Busforge's group-address flash adding and
 removing the same link wrote the same two tables and left the same four bytes and stamp
+(record).
+
+The TheLuxa P300 shows it once more (private corpus `captures/theluxa-p300-*`): its group-address
+download wrote a nine-entry association table at `0x400B-0x4013`, the revert the old one at
+`0x4009-0x400F`, so after it `0x4011-0x4013` hold `06 03 06`, the old table's tail, where the read before
+held `7B 00 FF`, and object 2's stamp changed (`...D3ED` to `...A412`). Busforge's group-address flash
+adding and removing the same link left the same bytes and the same stamp
 (record).
 
 Whether Busforge should clear such residues, by writing the rest of a declared segment beyond the

@@ -7,13 +7,16 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // What each real application program may be offered, written down from the steps its manufacturer
 // declares in <LoadProcedures>, not computed by the code under test:
 //   - LdCtrlTaskCtrl1 in the full-download steps: no Busforge full download executes it, so the full
-//     download is refused (M-0048_A-107E, M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079).
+//     download is refused (M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079).
 //   - M-0008_A-10D7 declares it too, and LdCtrlLoadImageProp on objects 1, 2 and 3; ETS 6 is captured
 //     running all three of its downloads (loadproc.ts ETS_CAPTURED_SYSTEM7_APPS), which send neither the
 //     TaskCtrl1 nor a write for the LoadImageProp, so all three are offered.
 //   - M-0081_A-FE01 declares it as LsmIdx 3 Address 0 Count 0; ETS 6 is captured running its full
 //     download in the declared order, the TaskCtrl1 a PID 5 write of zeros (loadproc.ts
 //     ETS_DECLARED_ORDER_SYSTEM7_APPS), so its full download is offered.
+//   - M-0048_A-107E declares it as LsmIdx 3 Address 17875 Count 1; ETS 6 is captured running its full
+//     download in the declared order, the TaskCtrl1 a PID 5 write of 03 04 45 D3 01 and zeros
+//     (loadproc.ts ETS_DECLARED_ORDER_TASK_CTRL1), so its full download is offered.
 //   - LdCtrlLoadImageProp PID 27 in a System B fragment: ETS sends nothing for it (Jung capture), so it
 //     refuses nothing.
 //   - LdCtrlWriteProp to a manufacturer property in a System B fragment refuses the parameter flash and
@@ -25,7 +28,7 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0002_A-A001-13-63C2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0004_A-7072-21-99A7-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0008_A-10D7-11-2783-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
-  "M-0048_A-107E-12-5B58.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
+  "M-0048_A-107E-12-5B58.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-140C-14-EB70.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
   "M-0048_A-493B-21-B471.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0048_A-9071-20-F258-O00EF.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
@@ -163,8 +166,8 @@ corpusDescribe("the System 7 group-address flash holds the declared steps addres
   }
 });
 
-// Both captured full downloads ran on a unit holding the application, loaded, and are refused anywhere else.
-for (const [file, programId, otherVersion] of [["M-0008_A-10D7-11-2783-O000A.xml.gz", "000810d711", "000810d710"], ["M-0081_A-FE01-11-75D9.xml.gz", "0081fe0111", "0081fe0110"]] as const) {
+// Every captured full download ran on a unit holding the application, loaded, and is refused anywhere else.
+for (const [file, programId, otherVersion] of [["M-0008_A-10D7-11-2783-O000A.xml.gz", "000810d711", "000810d710"], ["M-0081_A-FE01-11-75D9.xml.gz", "0081fe0111", "0081fe0110"], ["M-0048_A-107E-12-5B58.xml.gz", "0048107e12", "0048107e11"]] as const) {
   corpusDescribe(`the captured ${file} full download runs only on a unit holding the application, loaded, as ETS's did`, () => {
     const xml = catalogueXml(file);
     const cfg = parseAppConfig(xml);

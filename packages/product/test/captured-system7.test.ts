@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, parseLoadProcedures, buildGroupTablesMv0705, System7Profile, ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS, absoluteFullStepRefusal, fullDownloadImageDigest, planDeclaredOrderSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, absoluteStructuralImages, etsUpdateBitMv0705, buildGroupTablesMv0705, System7Profile, ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS, absoluteFullStepRefusal, fullDownloadImageDigest, planDeclaredOrderSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -77,6 +77,14 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     // the association table, first links first: (1,0) (2,2), then 3/0/0 = index 3 on both: (3,0) (3,2)
     expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
     expect(dev.tableRef.get(2)).toBe(0x4009);
+  }, 20_000);
+
+  test("full download: a table reference the device does not hold at the re-declared address after the restart is not verified", async () => {
+    const dev = new GiraDevice(cfg);
+    dev.restart = async () => { dev.ops.push("restart"); dev.tableRef.set(2, 0x4011); };
+    const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
+    expect(r).toMatchObject({ kind: "flashed", verified: false });
+    expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
   }, 20_000);
 
   test("a device without this application is refused, untouched", async () => {
@@ -234,7 +242,7 @@ corpusDescribe("System 7 applications ETS is not captured on keep their download
       seen++;
       expect(absoluteFullStepRefusal(proc)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
     }
-    expect(seen).toBeGreaterThanOrEqual(4); // M-0048_A-107E, M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079
+    expect(seen).toBeGreaterThanOrEqual(3); // M-0048_A-140C, M-0081_A-FF31, M-008E_A-7079
   });
   test("their associations are ordered by object, then group index", () => {
     const { assoc } = buildGroupTablesMv0705(multi, 0x11fa);
@@ -409,5 +417,103 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
       const app: AppConfig = { ...cfg, params: new Map([...cfg.params, [odd.id, odd]]) };
       expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("no known width") }));
     });
+  });
+});
+
+corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full download, run against an emulated device", () => {
+  const xml = catalogueXml("M-0048_A-107E-12-5B58.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const IA = "1.2.10";
+  const base = { deviceId: "d", ia: IA, appXml: xml, params: new Map<string, string>(), dryRun: false, persistBackups: () => "backup" };
+  const links: ComObjectLink[] = [{ comObjNum: 6, gaRaws: [0x0014, 0x1800, 0x1801] }];
+  const COM = "M-0048_A-107E-12-5B58_AS-43FC";
+  const theLuxa = () => {
+    const dev = new GiraDevice(cfg);
+    dev.programId = Buffer.from("0048107e12", "hex");
+    dev.tableRef = new Map([[1, 0x4000], [2, 0x4009], [3, 0x43fc]]);
+    return dev;
+  };
+
+  test("full download: the tables re-declared as one region, TaskCtrl1 as captured, each table's reference checked after the restart", async () => {
+    const dev = theLuxa();
+    dev.tableRef.set(2, 0x4100);
+    const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
+      "unload:1", "unload:2", "unload:3",
+      "load:1", "absSegment:1@16384+9", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:2", "absSegment:2@16393+1011", "write", "taskSegment:2@16393", "loadCompleted:2",
+      "load:3", "absSegment:3@1792+248", "absSegment:3@17404+500", "write", "absSegment:3@18432+576", "write",
+      "taskSegment:3@17894", "taskCtrl1:3=45d3010000000000", "loadCompleted:3", "restart",
+    ]);
+    expect([dev.tableRef.get(1), dev.tableRef.get(2)]).toEqual([0x4000, 0x4009]);
+  }, 20_000);
+
+  test("full download: a table reference the device does not hold at the re-declared address after the restart is not verified", async () => {
+    const dev = theLuxa();
+    dev.restart = async () => { dev.ops.push("restart"); dev.tableRef.set(2, 0x41ff); };
+    const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
+    expect(r).toMatchObject({ kind: "flashed", verified: false });
+  }, 20_000);
+
+  const plan = (app: AppConfig, p: LoadProcedures = proc) => () => classify(app).planFullDownload(app.mask, { ia: IA, params: new Map(), links, proc: p });
+  test("the application as declared plans", () => {
+    expect(plan(cfg)).not.toThrow();
+  });
+  // The com-object table segment is written whole as a segment loaded afresh; what the table refusals
+  // guard still holds for it.
+  test("a parameter whose memory lies in the com-object table segment is refused", () => {
+    const some = [...cfg.params.values()].find((p) => p.offset !== undefined)!;
+    for (const offset of [20, 480]) {
+      const odd = { ...some, id: "M-0048_A-107E-12-5B58_P-99999", codeSegment: COM, offset, bitOffset: 0 };
+      const app: AppConfig = { ...cfg, params: new Map([...cfg.params, [odd.id, odd]]) };
+      expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("lies in the com-object table segment") }));
+    }
+  });
+  test("a <Mask> that leaves out a byte of the com-object table is refused", () => {
+    expect(cfg.absoluteSegments.find((s) => s.id === COM)!.mask).toBeUndefined();
+    const app: AppConfig = { ...cfg, absoluteSegments: cfg.absoluteSegments.map((s) => (s.id === COM ? { ...s, mask: Buffer.alloc(s.size, 0xff).fill(0, 10, 11) } : s)) };
+    expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("leaves out byte 10") }));
+  });
+  // Only LdCtrlTaskCtrl1 LsmIdx 3 Address 17875 Count 1 is captured on this application.
+  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "0", Count: "0" }, { LsmIdx: "3", Address: "17875", Count: "2" }, { LsmIdx: "2", Address: "17875", Count: "1" }, { LsmIdx: "3", Address: "17876", Count: "1" }];
+  for (const attrs of forms) {
+    test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
+      const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
+      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("only LsmIdx 3 with Address 17875 and Count 1") });
+      expect(plan(cfg, changed)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
+    });
+  }
+});
+
+// The update bit (config 0x80) of the MV-0705 com-object table is taken from one capture, the TheLuxa
+// P300's object 116 (comobjbuild.ts ETS_UPDATE_BIT_MV0705_APPS). Every other MV-0705 application keeps
+// the table it got before: a configured object's config byte without 0x80 whatever its update flag,
+// an unconfigured entry the template's minus the linked bit. Built through the structural flash's
+// path, with each application's default configuration.
+corpusDescribe("the update bit of the MV-0705 com-object table is set for the TheLuxa P300 only", () => {
+  let otherUpdating = 0;
+  for (const file of listCatalogue()) {
+    const cfg = parseAppConfig(catalogueXml(file));
+    if (cfg.mask !== "MV-0705" || cfg.groupTables.comObjectSegment === undefined) continue;
+    test(`${file}: 0x80 on a configured object only where ETS is captured writing it`, () => {
+      const active = buildDeviceConfig(cfg, new Map()).imageComObjects;
+      const seg = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
+      const table = absoluteStructuralImages(cfg, new Map(), [], 0x120a, { baseValues: new Map(), comObjectTable: { active, linked: new Set() } })
+        .find((i) => i.id === seg.id)!.image;
+      const theLuxa = cfg.id === "M-0048_A-107E-12-5B58";
+      expect(etsUpdateBitMv0705(cfg.id)).toBe(theLuxa);
+      for (let n = 0; n < seg.data[0]; n++) {
+        const at = 3 + n * 4 + 2, o = active.get(n);
+        if (!o) expect(table[at]).toBe(seg.data[at] & ~0x04);
+        else expect(table[at] & 0x80).toBe(theLuxa && o.flags.update ? 0x80 : 0);
+        if (o?.flags.update && !theLuxa) otherUpdating++;
+      }
+      if (theLuxa) expect(table[3 + 116 * 4 + 2]).toBe(0xcb);
+    });
+  }
+  test("another application has configured objects with the update flag, so the rule is exercised", () => {
+    expect(otherUpdating).toBeGreaterThan(0);
   });
 });

@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsDeclaredOrderSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsRegionTablesSystem7, etsDeclaredOrderSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -1150,7 +1150,7 @@ export class SystemBProfile extends DeviceProfile {
 // use the System-7 layout. Read-back, parameter flash and GA flash are all hardware-verified
 // on twisted-pair (M-0081): identity flash, re-point and revert each byte-matched.
 // The bits of a System 7 com-object config byte a project override can set (buildComObjectTableMv0705):
-// priority, read, write, transmit. Its communication bit follows the links.
+// priority, read, write, transmit. Its communication bit follows the links, its update bit the application.
 const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "transmit", "priority"];
 
 export class System7Profile extends DeviceProfile {
@@ -1173,11 +1173,12 @@ export class System7Profile extends DeviceProfile {
     //
     // Each write is offered only where its planner can run the procedure the application declares
     // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
-    // M-0081_A-FF31, M-0048, M-008E applications), a parameter or group-address flash with a step addressed
+    // M-0081_A-FF31, the Meteodata M-0048_A-140C and M-008E applications), a parameter or group-address flash with a step addressed
     // to what it writes that has no disposition. M-0008 declares both and is offered all three: ETS
     // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7). The
-    // Auro presence detector M-0081_A-FE01-11-75D9 is offered its full download for the same reason,
-    // its LdCtrlTaskCtrl1 in the one form the capture shows (etsDeclaredOrderSystem7).
+    // Auro presence detector M-0081_A-FE01-11-75D9 and the Theben TheLuxa P300 M-0048_A-107E-12-5B58 are
+    // offered their full download for the same reason, each LdCtrlTaskCtrl1 in the form its capture
+    // shows (etsDeclaredOrderSystem7).
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
@@ -1323,9 +1324,10 @@ export class System7Profile extends DeviceProfile {
     // configure is a link to nothing.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     // M-0081_A-FE01 runs planDeclaredOrderSystem7GaFlash below (hardware: house unit,
-    // docs/evidence/runs/auro-m0081-house-downloads.md); the other System 7 applications
+    // docs/evidence/runs/auro-m0081-house-downloads.md), the applications whose tables ETS
+    // re-declares (M-0008, the TheLuxa P300) planCapturedSystem7GaFlash; the other System 7 applications
     // outside the captured registries run planMv0705GaFlash.
-    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsCapturedSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });
+    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsRegionTablesSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -1364,15 +1366,16 @@ export class System7Profile extends DeviceProfile {
       assoc: await dev.memRead(await loadedTableAddr(dev, OBJ.ASSOC_TABLE, "association table"), assoc.length),
       comObj: curL3 ?? undefined,
     } : undefined;
-    // A captured application's tables move with the address table's length, so they are re-declared
-    // as ETS's partial download does, and only the bytes ETS's image holds are written
+    // The tables of an application of ETS_REGION_TABLES_SYSTEM7_APPS move with the address table's length,
+    // so they are re-declared as ETS's partial download does, and only the bytes ETS's image holds are written
     // (planCapturedSystem7GaFlash); planned here, so a table that does not fit is refused before
     // anything is written.
     // A declared-order application's tables are unloaded and declared again as ETS's partial download
     // does it, and only the bytes the full download writes are written (planDeclaredOrderSystem7GaFlash):
     // the address table's own individual address is left to the device, so it is not read back either.
-    const declaredOrder = etsDeclaredOrderSystem7(cfg.loadProcedures) ? planDeclaredOrderSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
-    const captured = etsCapturedSystem7(cfg.loadProcedures) ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
+    const regionTables = etsRegionTablesSystem7(cfg.loadProcedures);
+    const declaredOrder = etsDeclaredOrderSystem7(cfg.loadProcedures) && !regionTables ? planDeclaredOrderSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
+    const captured = regionTables ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
     const plan = captured ? captured.plan : declaredOrder ? declaredOrder.plan : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
     // On the declared-order path the change is counted over exactly the runs the plan writes, read where
     // it writes them (the address table's own individual address is neither written nor counted); a
@@ -1513,7 +1516,7 @@ export class System7Profile extends DeviceProfile {
     return { plan, imageBytes, segments: segments.map((s) => ({ id: s.id, lsm: s.lsm, source: s.source, address: s.address, image: s.image })) };
   }
 
-  private planSystem7Full(mask: string, ctx: FullDownloadInputs): { plan: LoadPlan; segments: AbsFullSegment[]; imageBytes: number } {
+  private planSystem7Full(mask: string, ctx: FullDownloadInputs): { plan: LoadPlan; segments: AbsFullSegment[]; imageBytes: number; tableRefs?: { lsm: number; address: number }[] } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     const propertyMapped = !isMemoryMappedLsm(mask);
@@ -1548,10 +1551,10 @@ export class System7Profile extends DeviceProfile {
     // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
     // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
     // the configuration is really there.
-    const { plan, segments, imageBytes } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable });
+    const { plan, segments, imageBytes, tableRefs } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
-    return { plan, segments, imageBytes };
+    return { plan, segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
   }
 
   // Commission an absolute-segment (System 7) device from its declared load procedure: author the
@@ -1622,7 +1625,7 @@ export class System7Profile extends DeviceProfile {
       }
     }
 
-    const { plan, segments, imageBytes } = this.planSystem7Full(mask, { ...ctx, proc });
+    const { plan, segments, imageBytes, tableRefs } = this.planSystem7Full(mask, { ...ctx, proc });
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
     // app's own segment declarations. OFF by default (ctx.backupBeforeUnload): the download rebuilds
@@ -1654,6 +1657,12 @@ export class System7Profile extends DeviceProfile {
       // recognition bytes the device re-stamps for itself (the MV-0701 P-2228 "Downloaderkennung").
       // Only a full byte-match across every segment is a verified download.
       verify: async () => {
+        // Tables re-declared away from their declared segments: the bytes alone do not show the device
+        // reads them there, so each table's reference (PID 7) must be the address it was declared at.
+        for (const t of tableRefs ?? []) {
+          const { ok } = await verifySettled(() => dev.tableAddr(t.lsm), (at) => at === t.address);
+          if (!ok) return false;
+        }
         for (const s of segments) {
           const back = await dev.memRead(s.address, s.image.length, undefined, (d, n) => ctx.onProgress?.("verify", d, n));
           if (!verifyMaskedBytes(back, s.image, s.verify)) return false;

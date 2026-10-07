@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import {
-  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
+  buildComObjectTable, buildComObjectTableMv0705, ETS_UPDATE_BIT_MV0705_APPS, etsUpdateBitMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
   parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
@@ -156,14 +156,15 @@ describe("the whole table", () => {
 // full download overlays only the dynamic config byte (and, for configured objects, the type). The
 // entry is 4 bytes: [dataPtr: u16 BE][config: u8][type: u8], one per object 0-based, after a 3-byte
 // [count: u8][ramEnd: u16 BE] header. config = prio(bits0-1) | 0x04 linked | 0x08 read | 0x10 write
-// | 0x40 transmit | 0x80 unconfigured. Byte-verified on the MDT BE-02001.02 (docs/commissioning.md).
+// | 0x40 transmit | 0x80 update. Byte-verified on the MDT BE-02001.02 (docs/commissioning.md), the update
+// bit on the Theben TheLuxa P300's object 116 (tools/etsdiff.test.ts).
 describe("the property-mapped (MV-0705) com-object table", () => {
   // count=2 -> entries for objects 0 and 1. obj0 carries a stale "linked" bit the author must clear;
   // obj1 is the one the configuration reaches.
   const template = Buffer.from([
     0x02, 0x12, 0x34,       // count=2, ramEnd=0x1234
-    0xaa, 0xbb, 0x80, 0x00, // obj0: dataPtr 0xAABB, config 0x80 (unconfigured), type 0
-    0xcc, 0xdd, 0x84, 0x00, // obj1: dataPtr 0xCCDD, config 0x84 (unconfigured + STALE linked), type 0
+    0xaa, 0xbb, 0x80, 0x00, // obj0: dataPtr 0xAABB, config 0x80 (the template's), type 0
+    0xcc, 0xdd, 0x84, 0x00, // obj1: dataPtr 0xCCDD, config 0x84 (the template's, with a STALE linked bit), type 0
   ]);
 
   test("a configured object gets its dynamic config + type; the data pointer is left untouched", () => {
@@ -172,9 +173,26 @@ describe("the property-mapped (MV-0705) com-object table", () => {
     const out = buildComObjectTableMv0705(template, active, new Set([1]));
     expect(out.subarray(0, 3)).toEqual(Buffer.from([0x02, 0x12, 0x34])); // header preserved
     expect(out.subarray(7, 9)).toEqual(Buffer.from([0xcc, 0xdd]));        // data pointer untouched
-    // config = Low(0b11) | linked(0x04) | read(0x08) | transmit(0x40) = 0x4F; 0x80 dropped; type = 1 Byte = 7.
+    // config = Low(0b11) | linked(0x04) | read(0x08) | transmit(0x40) = 0x4F; the template's 0x80 dropped
+    // (no update flag); type = 1 Byte = 7.
     expect(out[9]).toBe(0x4f);
     expect(out[10]).toBe(0x07);
+  });
+
+  const updating = () => new Map([[1, obj({ number: 1, objectSize: "14 Bytes", priority: "Low",
+    flags: { read: true, write: false, comm: true, transmit: true, update: true, readOnInit: false } })]]);
+  test("a configured object with the update flag gets 0x80 where updateBit is set, as ETS writes the TheLuxa P300's object 116", () => {
+    const out = buildComObjectTableMv0705(template, updating(), new Set(), { updateBit: true });
+    expect(out[9]).toBe(0xcb);
+    expect(out[10]).toBe(0x0e);
+  });
+  test("without updateBit a configured object's update flag leaves 0x80 cleared", () => {
+    expect(buildComObjectTableMv0705(template, updating(), new Set())[9]).toBe(0x4b);
+  });
+  test("only the TheLuxa P300's application sets the update bit", () => {
+    expect([...ETS_UPDATE_BIT_MV0705_APPS]).toEqual(["M-0048_A-107E-12-5B58"]);
+    expect(etsUpdateBitMv0705("M-0048_A-107E-12-5B58")).toBe(true);
+    expect(etsUpdateBitMv0705("M-0081_A-FF31-31-D6FF")).toBe(false);
   });
 
   test("an unconfigured object keeps its template entry verbatim, minus any stale linked bit", () => {

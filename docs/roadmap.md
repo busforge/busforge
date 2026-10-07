@@ -116,20 +116,31 @@ started until the capability it depends on is hardware-proven.
   Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
-- **Execute `LdCtrlTaskCtrl1` beyond the Auro M-0081_A-FE01.** It runs there in the one form its ETS
-  capture shows (Address 0, Count 0;,
+- **Execute `LdCtrlTaskCtrl1` on the Theben Meteodata 140 S.** It runs on the Auro M-0081_A-FE01 and the
+  Theben TheLuxa P300, each in the form its own ETS capture shows. The TheLuxa (Address 17875, Count 1;
+  record) shows the same
+  limit as the Auro: of its full download's bytes only a download marker differed from the unit. The
+  Auro (Address 0, Count 0;,
   [load-procedures.md](load-procedures.md#declared-order-system-7-downloads)), run on the house
   unit 1.1.x with the parameter and group-address flash
   (record): the full download's sequence,
   `TaskCtrl1` included, was accepted and the unit stayed loaded and answering, but every byte it
   planned already equalled the unit, so the transfer of changed bytes is shown by the two flashes,
-  not by the full download. The Theben Meteodata 140 S and TheLuxa P300
-  need their own ETS full-download capture each. The Gira M-0008 captures do not show the step: ETS
+  not by the full download. The Theben Meteodata 140 S needs its own ETS full-download capture. The Gira M-0008 captures do not show the step: ETS
   does not send it there. All units of these applications are installed in the house.
+- **What config bit `0x80` of the MV-0705 com-object table means.** On the Theben TheLuxa P300
+  ETS writes it as the update flag of a configured object (object 116, `UpdateFlag="Enabled"`,
+ ), and Busforge writes it so for that application only (`ETS_UPDATE_BIT_MV0705_APPS`,
+  [device-memory-model.md](device-memory-model.md#the-com-object-table-l3)). Every other MV-0705
+  application keeps the bit cleared on its configured objects, as before, though some declare objects
+  with the update flag (the second Auro application `M-0081_A-FF31`: 18 in its defaults). The one
+  object is also the only 14-byte object, so size is not ruled out as the reason. A second ETS capture
+  of a configured object with the update flag on another MV-0705 application decides whether it
+  becomes the rule.
 - **System 7 segment declarations as ETS sends them.** ETS writes `LdCtrlAbsSegment` and
   `LdCtrlTaskSegment` to the load-state machine's PID 5 on the property-mapped MV-0705, on the MDT
   BE-02001.02 too (`captures/mdt-be02001-ets-fulldownload-defaults.log`); Busforge sends them to
-  memory `0x0104` there and does it ETS's way only on the Gira M-0008 and the Auro M-0081_A-FE01
+  memory `0x0104` there and does it ETS's way only on the Gira M-0008, the Auro M-0081_A-FE01 and the TheLuxa P300
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Switching the MDT and
   the other MV-0705 applications needs a bench run of the MDT full download (smoke spec `mdt-be02001`).
 - **Bytes a shrunk group table leaves behind (owner decision).** ETS writes a System 7 group table

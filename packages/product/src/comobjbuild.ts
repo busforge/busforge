@@ -149,6 +149,15 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
   return buf;
 }
 
+// The MV-0705 applications whose configured objects carry their update flag in config bit 0x80 of the
+// com-object table, as ETS writes it: the Theben TheLuxa P300 (M-0048_A-107E-12-5B58), whose object 116
+// (UpdateFlag="Enabled") ETS writes as 0xCB over the template's 0xDF (private corpus
+// captures/theluxa-p300-ets6log-fulldownload.txt, "Execute image" row 05D0). That is one object of one
+// application, and the only 14-byte object among them, so it is not taken as a rule for MV-0705: every
+// other application's configured objects get 0x80 cleared (docs/roadmap.md, the open question).
+export const ETS_UPDATE_BIT_MV0705_APPS: readonly string[] = ["M-0048_A-107E-12-5B58"];
+export const etsUpdateBitMv0705 = (appId: string): boolean => ETS_UPDATE_BIT_MV0705_APPS.includes(appId);
+
 // Author the com-object table (L3) for a property-mapped System 7 device (mask MV-0705).
 //
 // UNLIKE System B, MV-0705 does not rebuild L3 from scratch. The app program's <ComObjectTable>
@@ -161,16 +170,17 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
 //
 // LAYOUT (mask MV-0705): [count: u8][ramEnd: u16 BE] then one 4-byte entry per com-object, entry i is
 // com-object i (0-based, so entry 0 is a real object, not the count): [dataPtr: u16 BE][config: u8][type: u8].
-//   config byte: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 unconfigured.
-//   (No update / readOnInit bit, unlike the System B flags byte.) type is the same KNX size code as
-//   the System B entry (sizeCodeForBits): 1 bit -> 0x00, 4 bit -> 0x03, 1 byte -> 0x07, 2 bytes -> 0x08.
+//   config byte: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 (see
+//   below). (No readOnInit bit, unlike the System B flags byte.) type is the same KNX size code as the
+//   System B entry (sizeCodeForBits): 1 bit -> 0x00, 4 bit -> 0x03, 1 byte -> 0x07, 2 bytes -> 0x08.
 //
 //   - Configured objects (the ones the active configuration reaches, `active` = imageComObjects):
-//     config = priority | linked | read | write | transmit from the resolved flags, 0x80 cleared;
+//     config = priority | linked | read | write | transmit from the resolved flags, and 0x80 = the
+//     update flag where `updateBit` is set (ETS_UPDATE_BIT_MV0705_APPS), cleared everywhere else;
 //     type rewritten from the resolved object size. `linked` = the object carries a group-address link.
 //   - Unconfigured objects (every other entry): keep the template entry verbatim, only clear the
 //     linked bit (a stale linked bit in the manufacturer template must not survive).
-export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>): Buffer {
+export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>, opts: { updateBit?: boolean } = {}): Buffer {
   if (template.length < 3) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
       `the MV-0705 com-object table template is ${template.length} B; too short to hold even the 3-byte header, refusing to author L3 from it`);
@@ -207,7 +217,7 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
     const f = obj.flags;
     out[cfgOff] =
       PRIORITY_BITS[obj.priority] | (linked.has(n) ? 0x04 : 0) |
-      (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0); // 0x80 (unconfigured) dropped
+      (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (opts.updateBit && f.update ? 0x80 : 0);
     out[cfgOff + 1] = code;
   }
   return out;
@@ -299,8 +309,9 @@ export function withInstanceOverrides(active: ReadonlyMap<number, CfgComObjImage
 }
 
 // Refuse a write whose com-object table cannot carry an override the project sets: one that changes
-// a flag or the priority the table has no bit for (the System 7 config byte has none for update and
-// read-on-init, and takes its communication bit from the links), or any override where the write
+// a flag or the priority the table has no bit for (the System 7 config byte has none for read-on-init,
+// takes its communication bit from the links, and its update bit only from the application: no capture
+// shows ETS writing a project's update override there), or any override where the write
 // does not author the table at all. Writing on would leave the object behaving as the application
 // says while the project says otherwise.
 export type OverridableBit = keyof ComObjFlags | "priority";
