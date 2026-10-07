@@ -23,6 +23,23 @@ depends on is hardware-proven.
 - **Idle unions in module instances.** The full download and the System B parameter flash write an
   idle union's `DefaultUnionParameter` as ETS does, except in module instances, which no capture covers; there
   those bytes stay unowned.
+- **The System B bracket ETS sends, on the bench devices too.** ETS's System B downloads unload the PEI
+  program (LSM 5) first in a full download, end every download with the PID 27 reads the application
+  declares and the confirmed restart (A_Restart type 1, erase code 1) on the same connection at once, as
+  the MV-07B0 master data's load procedures declare and the Jung 400021SE and GVS AMMA captures show.
+  Busforge sends that bracket on the Theben MIX 2 only (`ETS_BRACKET_SYSTEMB_APPS`,
+  [load-procedures.md](load-procedures.md#system-b-as-the-theben-mix-2s-captures-show-it)); on the other
+  System B devices its full download settles 8 s on a fresh connection before a basic restart, the
+  bracket their done bar was met with. Listing them needs their smoke specs run with ETS's bracket.
+- **ETS's association order on other System B applications.** On the Theben MIX 2 ETS writes each
+  object's first link before the further ones (`ETS_ASSOC_ORDER_SYSTEMB_APPS`), as on the System 7
+  applications with dynamic tables. No capture of another System B application has an object with two
+  addresses, so the order there is not shown.
+- **Which parameters ETS leaves out of an image.** On the Theben MIX 2 ETS writes no inactive parameter
+  that only branches its configuration rejects place (`ETS_REJECTED_BRANCH_UNWRITTEN_APPS`); on the GVS
+  AMMA it writes their defaults, and the MEAN WELL power supply's read-back matches only with them. The
+  feature of the application that decides it is not found (both reject by an evaluated `choose`; the
+  MIX 2's deciding parameters, the module types, have no memory).
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared
   procedures is executed; a procedure with image-property stamps the engine cannot compute is
   refused (`LOAD_STEP_UNSUPPORTED`).

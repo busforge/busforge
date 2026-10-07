@@ -636,6 +636,12 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
     const relaxed = planSystemBFullDownload(tables(), 0, false).find((s) => s.op === "restart") as { requireReboot?: boolean };
     expect(relaxed.requireReboot).toBe(false); // LoadCompleted-persist firmware: a live device is fine
   });
+
+  test("the close: a pause and a fresh link before the restart by default, the restart at once with closeAtOnce", () => {
+    const tail = (plan: ReturnType<typeof planSystemBFullDownload>) => plan.slice(plan.findLastIndex((s) => s.op === "loadCompleted") + 1).map((s) => s.op);
+    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "settle", "disconnect", "connect", "restart"]);
+    expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "restart"]);
+  });
 });
 
 describe("the download must not restart the device before it has saved", () => {

@@ -7,8 +7,8 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsRegionTablesSystem7, etsDeclaredOrderSystem7, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsRegionTablesSystem7, etsDeclaredOrderSystem7, etsAssocOrderSystemB, etsBracketSystemB, imageStampReads, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, withConfirmedRestart, withStampReads, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -714,16 +714,17 @@ export class SystemBProfile extends DeviceProfile {
     // Communication flag on every other object, so the com-object table build needs to know them.
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links);
+    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
 
     // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
     // device that does not reboot lost the download; other firmware persists at LoadCompleted and
     // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
     const requireReboot = !persistsOnLoadCompleted(cfg);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
-    const plan = withClosingWrites(planSystemBFullDownload({
+    const etsBracket = etsBracketSystemB(cfg.loadProcedures);
+    const plan = withStampReads(withConfirmedRestart(withClosingWrites(planSystemBFullDownload({
       params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security), closingPropWrites(proc, "full"));
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, etsBracket, etsBracket), closingPropWrites(proc, "full")), etsBracket), imageStampReads(proc));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
@@ -753,7 +754,7 @@ export class SystemBProfile extends DeviceProfile {
     const coverage = assertParCoverage(proc, "relative");
     refuseTunnelingEntries(this.requireCfg("full download"));
     await runDeclaredChecks(dev, coverage);
-    const { plan, imageBytes, target, comObj, addr, assoc, security } = this.planSystemBFull(mask, { ...ctx, proc });
+    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc });
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -806,6 +807,7 @@ export class SystemBProfile extends DeviceProfile {
 
     return runFlashOp(dev, mask, ctx, {
       imageBytes,
+      imageDigest: fullDownloadImageDigest(segments),
       // Everything is written: a full download owns every byte of every segment, so there is no
       // meaningful diff against what was there (and on a virgin device there was nothing).
       diffBytes: imageBytes,
@@ -845,7 +847,7 @@ export class SystemBProfile extends DeviceProfile {
           },
           ({ gt, crcOk, img, sec }) => {
             const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = crcOk || (img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify)));
+            const paramsOk = crcOk || (img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers)));
             const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
             return tablesOk && paramsOk && securityOk;
           },
@@ -939,7 +941,7 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        withClosingWrites(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), closingPropWrites(proc, "par")),
+        withStampReads(withConfirmedRestart(withClosingWrites(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), closingPropWrites(proc, "par")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures)),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
@@ -987,7 +989,7 @@ export class SystemBProfile extends DeviceProfile {
     }
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links);
+    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
@@ -1033,7 +1035,7 @@ export class SystemBProfile extends DeviceProfile {
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
         // The property write the application closes every download with (closingPropWrites) closes this one too.
-        await runLoadPlan(dev, withClosingWrites(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), closingPropWrites(cfg.loadProcedures, "grp"))); // rebuilt L3 carries the correct comm flags for the new link set
+        await runLoadPlan(dev, withStampReads(withConfirmedRestart(withClosingWrites(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), closingPropWrites(cfg.loadProcedures, "grp")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures))); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1088,7 +1090,7 @@ export class SystemBProfile extends DeviceProfile {
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
-    const { addr, assoc } = buildGroupTables(ctx.links);
+    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const mcb = declaredMcbWrites(proc, target.size, "par");
 
@@ -1106,7 +1108,7 @@ export class SystemBProfile extends DeviceProfile {
       comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
-    const closed = withClosingWrites(plan, closingPropWrites(proc, "par"));
+    const closed = withStampReads(withConfirmedRestart(withClosingWrites(plan, closingPropWrites(proc, "par")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures));
     return structural(runFlashOp(dev, mask, ctx, {
       imageBytes: image.length + comObj.length + addr.length + assoc.length,
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)

@@ -3,7 +3,7 @@ import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { iaToNum, ownedRuns, planSystemBGaFlash, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosingWrites, closingPropWrites, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, comObjInstanceOverride } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosingWrites, closingPropWrites, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, etsBracketSystemB, withStampReads, imageStampReads } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
@@ -1328,3 +1328,171 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
   });
 });
 
+
+// ETS 6 downloads of the three products of the Theben MIX 2 application (M-0048_A-493B-21-B471, MV-07B0,
+// System B, module slots, two declared memory-control-block regions), one unit each: HMG 6 T,
+// JMG 4 T, RMG 8 T. On each, in this order: a full download; a
+// partial download after one parameter change; one after linking one unlinked object to a test group address; and
+// one that reverted both. The configuration ETS downloaded is the project's, taken from its export
+// before the run without names (private corpus captures/mix2-*-config.json). ETS's own log holds the image of each download per load-state
+// machine (RelMemory(n), offsets in the segment); Busforge's segments are compared with it, the
+// parameter download's image with the bytes Busforge's parameter flash owns.
+const relImage = (file: string) => {
+  const out = new Map<number, Map<number, number>>();
+  let lsm = -1, inImage = false;
+  for (const l of captureText(file).split(/\r?\n/)) {
+    if (l.includes(" - Execute image:")) { inImage = true; continue; }
+    if (l.includes(" - Execute procedure:")) inImage = false;
+    if (!inImage) continue;
+    const range = l.match(/ - (\w+)(?:\((\d+)\))?\[\$([0-9A-F]+)-\$[0-9A-F]+\]:$/);
+    if (range) { lsm = range[1] === "RelMemory" && Number(range[3]) === 0 ? Number(range[2]) : -1; if (lsm > 0 && !out.has(lsm)) out.set(lsm, new Map()); continue; }
+    const row = l.match(/ - {2}([0-9A-F]{4}): ((?:(?:[0-9A-F]{2}|--) ?){1,16})$/);
+    if (row && lsm > 0) row[2].trim().split(" ").forEach((b, i) => { if (b !== "--") out.get(lsm)!.set(Number.parseInt(row[1], 16) + i, Number.parseInt(b, 16)); });
+  }
+  return out;
+};
+// The load controls of a System B download as ETS sent them and as Busforge plans them: load-state events,
+// allocations (size, mode), memory-control-block writes, the program id, the PID 27 reads after the last
+// LoadCompleted, the restart. Other reads and memory writes are left out; what each side does besides is
+// listed in the tests.
+function systemBCaptureBracket(file: string, ia: number): string[] {
+  const out: string[] = [];
+  for (const l of captureText(file).split("\n")) {
+    const m = l.includes("ETS->BRIDGE") ? l.match(/\| ([0-9a-fA-F]+)\s*$/) : null;
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.dst !== ia || fr.tpdu.length < 2) continue;
+    const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1];
+    if (apci === 0x3d7 && t[3] === 5) {
+      const d = t.subarray(6);
+      out.push(d[0] === 3 && d[1] === 0x0b ? `alloc:${t[2]}:${d.readUInt32BE(2)}:${d[6]}:${d[7]}` : `${({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[d[0]]}:${t[2]}`);
+    } else if (apci === 0x3d7 && t[3] === 27) out.push(`mcb:${t[2]}:${((t[4] & 0x0f) << 8) | t[5]}:${t.subarray(6).toString("hex")}`);
+    else if (apci === 0x3d7 && t[3] === 13) out.push(`stamp:${t.subarray(6).toString("hex")}`);
+    else if (apci === 0x3d7) out.push(`prop ${t[2]}/${t[3]}`);
+    else if (apci === 0x3d5 && t[3] === 27) out.push(`read:${t[2]}/27:${((t[4] & 0x0f) << 8) | t[5]}:${t[4] >> 4}`);
+    else if ((apci & 0x3c0) === 0x380) out.push(`restart:${t.subarray(1).toString("hex")}`);
+  }
+  return out.slice(out.findIndex((s) => s.startsWith("unload:") || s.startsWith("load:")));
+}
+function systemBPlanBracket(plan: LoadPlan): string[] {
+  return plan.flatMap((s): string[] => {
+    if (s.op === "unload" || s.op === "load" || s.op === "loadCompleted") return [`${s.op}:${s.lsm}`];
+    if (s.op === "alloc") return [`alloc:${s.lsm}:${s.size}:${s.fill ? 1 : 0}:${s.fill ? s.fillByte ?? 0 : 0}`];
+    if (s.op === "writeProp" && s.pid === 27) return [`mcb:${s.obj}:${s.start ?? 1}:${s.data.toString("hex")}`];
+    if (s.op === "writeProp") return [`prop ${s.obj}/${s.pid}`];
+    if (s.op === "stampAppId") return [`stamp:${s.data.toString("hex")}`];
+    if (s.op === "readProp" && s.pid === 27) return [`read:${s.obj}/27:${s.start}:${s.count ?? 1}`];
+    if (s.op === "restart") return [`restart:${s.confirmed ? "810100" : "80"}`];
+    return [];
+  });
+}
+// What a plan does between its last LoadCompleted and its restart, besides the PID 27 reads: ETS sends
+// nothing else there and restarts within a second, on the same connection.
+const closingExtras = (plan: LoadPlan) => plan.slice(plan.findLastIndex((s) => s.op === "loadCompleted") + 1).filter((s) => s.op !== "readProp" && s.op !== "restart").map((s) => s.op);
+corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
+  const xml = catalogueXml("M-0048_A-493B-21-B471.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const A = "M-0048_A-493B-21-B471";
+  const PRODUCTS = [
+    { name: "HMG 6 T", tag: "hmg6t", par: { ref: `${A}_MD-8_M-20_MI-1_P-6_R-6`, from: "10", to: "15", offset: 86 }, link: 76 },
+    { name: "JMG 4 T", tag: "jmg4t", par: { ref: `${A}_MD-6_M-16_MI-3_P-13_R-13`, from: "50", to: "51", offset: 206 }, link: 54 },
+    { name: "RMG 8 T", tag: "rmg8t", par: { ref: `${A}_MD-12_M-39_MI-1_P-28_R-442`, from: "4", to: "6", offset: 1191 }, link: 201 },
+  ];
+  // P-199 "A_Download erfolgt" (offset 39, bit 0x80, Access="None"): every full and parameter download
+  // writes it set, the unit clears it (docs/findings.md, LegacyPatchAlways).
+  const DOWNLOADED = 39;
+  for (const p of PRODUCTS) {
+    describe(p.name, () => {
+      const fixture = JSON.parse(captureText(`mix2-${p.tag}-config.json`)) as { ia: string; params: [string, string][]; instances: Parameters<typeof buildDeviceConfig>[3]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
+      const ia = iaToNum(fixture.ia);
+      const file = (kind: string) => `mix2-${p.tag}-ets-${kind}.log`;
+      const log = (kind: string) => relImage(`mix2-${p.tag}-ets6log-${kind}.txt`);
+      const build = (params: Map<string, string>, links: typeof fixture.links) => {
+        const view = buildDeviceConfig(cfg, params, undefined, fixture.instances);
+        return classify(cfg).planFullDownload(cfg.mask, { ia: fixture.ia, params, links, moduleInstances: fixture.instances, proc, comObjectOverrides: placeComObjOverrides(cfg, view, fixture.overrides) });
+      };
+      const params = new Map(fixture.params);
+      const full = build(params, fixture.links);
+      const segment = (b: typeof full, lsm: number) => b.segments.find((s) => s.lsm === lsm)!.image;
+      const asMap = (img: Buffer) => new Map(Array.from(img, (b, i) => [i, b] as [number, number]));
+      const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+      const withLink = [...fixture.links, { comObjNum: p.link, gaRaws: [parseGa("15/7/250")] }];
+
+      test("the configuration is the project's: the parameter changed is at ETS's value before it", () => {
+        expect(buildDeviceConfig(cfg, params, undefined, fixture.instances).imageValues.get(p.par.ref)).toBe(p.par.from);
+        expect(fixture.links.some((l) => l.comObjNum === p.link)).toBe(false);
+      });
+
+      test("full download: Busforge's four segments are ETS's image, byte for byte, the object-link tables included", () => {
+        const ets = log("fulldownload");
+        for (const lsm of [4, 3, 2, 1]) expect([lsm, sorted(asMap(segment(full, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+        // The active "Objektlink" union member of each module slot (offsets 330, 842, 1354) writes its
+        // BinaryValue, decoded.
+        const l4 = segment(full, 4);
+        expect([330, 842, 1354].map((o) => l4.subarray(o, o + 4).toString("hex")).some((h) => h !== "00000000")).toBe(true);
+      });
+
+      test("full download: every byte ETS wrote on the wire is Busforge's", () => {
+        const cap = parseCapture(captureText(file("fulldownload")), ia);
+        const refs = reportedTableReferences(cap);
+        const r = compareSegments(full.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
+        expect(r.segments.map((s) => [s.lsm, s.divergences.length])).toEqual([[4, 0], [3, 0], [2, 0], [1, 0]]);
+        expect(r.unattributed).toEqual([]);
+      });
+
+      test("full download: ETS's bracket, the PEI program unloaded first and the restart confirmed", () => {
+        const ets = systemBCaptureBracket(file("fulldownload"), ia);
+        expect(systemBPlanBracket(full.plan)).toEqual(ets);
+        expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
+        expect(ets.at(-1)).toBe("restart:810100");
+        expect(ets.slice(-5)).toEqual(["read:1/27:1:1", "read:2/27:1:1", "read:3/27:1:1", "read:4/27:1:2", "restart:810100"]);
+        // Busforge besides reads the load states of the three tables there and switches verify mode off
+        // (skipped where its writes are confirmed, as on this device); no pause, no new connection.
+        expect(closingExtras(full.plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode"]);
+      });
+
+      // What the unit holds after ETS's full download: ETS's image, with the download marker cleared.
+      const held = Buffer.from(segment(full, 4));
+      held[DOWNLOADED] &= 0x7f;
+      const parFlash = (values: Map<string, string>, current: Buffer) => {
+        const target = buildRelativeSegmentTarget(cfg, values, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!;
+        const { image } = mergeRelativeTarget(current, target);
+        const ours = new Map<number, number>();
+        for (const r of ownedRuns(image, target.owned)) r.bytes.forEach((b, i) => ours.set(r.offset + i, b));
+        const plan = withStampReads(withConfirmedRestart(planRelativeParFlash(4, image, target.owned, 0x3bfe, Buffer.from("0048493b21", "hex"), true, declaredMcbWrites(proc, target.size, "par")), etsBracketSystemB(proc)), imageStampReads(proc));
+        return { ours, image, plan };
+      };
+      const changed = new Map(params).set(p.par.ref, p.par.to);
+
+      test("parameter flash: exactly the bytes of ETS's parameter download, with its values, in ETS's bracket", () => {
+        const { ours, plan } = parFlash(changed, held);
+        expect(sorted(ours)).toEqual(sorted(log("partial-params").get(4)!));
+        expect([...ours].filter(([o, b]) => held[o] !== b).map(([o]) => o)).toEqual([DOWNLOADED, p.par.offset]);
+        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-params"), ia));
+      });
+
+      test("group-address flash: ETS's tables and com-object table, in ETS's bracket", () => {
+        const linked = build(params, withLink);
+        const ets = log("partial-links");
+        for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(linked, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+        expect(ets.get(4)?.size).toBe(0); // the application's range is listed with no byte in it
+        const plan = withStampReads(withConfirmedRestart(planSystemBGaFlash({ addr: segment(linked, 1), assoc: segment(linked, 2), comObj: segment(linked, 3) }, true, false), etsBracketSystemB(proc)), imageStampReads(proc));
+        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-links"), ia));
+      });
+
+      // ETS reverts both changes in one partial download, one bracket over all four objects (the
+      // structural bracket, docs/findings.md §28); Busforge reverts them with its parameter flash and its
+      // group-address flash. Their bytes are compared with ETS's, the brackets are each the one above.
+      test("revert: the parameter bytes and the tables ETS's revert holds", () => {
+        const after = parFlash(changed, held).image;
+        after[DOWNLOADED] &= 0x7f;
+        const { ours } = parFlash(params, after);
+        const ets = log("partial-revert");
+        expect(sorted(ours)).toEqual(sorted(ets.get(4)!));
+        expect(ours.get(p.par.offset)).toBe(held[p.par.offset]);
+        for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(full, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+        expect(systemBCaptureBracket(file("partial-revert"), ia).filter((s) => s.startsWith("unload:"))).toEqual(["unload:4", "unload:3", "unload:2", "unload:1"]);
+      });
+    });
+  }
+});

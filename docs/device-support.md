@@ -178,7 +178,8 @@ trusting a row that does not.
   400021SE), on the MEAN WELL also the version (PID 25). In the plain ETS captures of the Jung 400021SE, whose
   application carries such a parameter, ETS reads PID 78 and writes nothing to it, and so in the ETS
   captures of the Gira M-0008 (full download, partial parameter and links downloads, revert): one
-  read of PID 78 each, no write. For the other applications no capture shows what ETS does.
+  read of PID 78 each, no write, and so in the ETS captures of the Theben MIX 2's three products (full,
+  parameter, links and revert downloads). For the other applications no capture shows what ETS does.
 - **Devices that expose an object model instead of a memory image** (some IP interfaces answer an
   opaque device descriptor and offer no readable parameter model) have no read or program path
   yet.

@@ -8,8 +8,8 @@
 //        [--app-id=<M-XXXX_A-...>] [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
 //   common: [--base=<n>] [--seg-base=<lsm>:<n>]... [--partial] [--evidence=<out.json>]
 //
-// --project takes the device's configuration from the project (parameters, module instances and
-// links, exactly as an import stores them). Without a project, --app names the application program
+// --project takes the device's configuration from the project (parameters, module instances, links
+// and the flags it sets on com-objects, exactly as an import stores them). Without a project, --app names the application program
 // and the configuration is stated on the command line: nothing but --param/--link is set, every
 // other parameter is at its application default. --evidence writes the result as an evidence
 // record pointing at the capture by path and hash; the capture must be kept for the record to stay
@@ -51,8 +51,8 @@ import { gunzipSync } from "node:zlib";
 import { iaToNum, OBJ } from "../packages/knx/src/index.ts";
 import { loadKnxproj, readAppProgram, readZip } from "../packages/project/src/index.ts";
 import {
-  parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig,
-  type AppConfig, type ComObjectLink, type FullDownloadSegment, type ModuleInstance,
+  parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides,
+  type AppConfig, type ComObjectLink, type ComObjInstanceOverride, type FullDownloadSegment, type ModuleInstance,
 } from "../packages/product/src/index.ts";
 import { fullRef } from "../apps/server/src/refids.ts";
 import { etsdiffEvidence, gitRevision, sha256 } from "./evidence.ts";
@@ -259,7 +259,7 @@ function readAppXml(path: string, bytes: Buffer, appId: string | undefined): str
   return new TextDecoder().decode(zip.get(apps[0])!);
 }
 
-interface Subject { ia: string; name: string; productRef: string | null; appRef: string; appXml: string; params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; configuration: string }
+interface Subject { ia: string; name: string; productRef: string | null; appRef: string; appXml: string; params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; comObjectOverrides: Map<number, ComObjInstanceOverride>; configuration: string }
 
 async function loadSubject(opt: (k: string) => string | undefined, many: (k: string) => string[]): Promise<Subject> {
   const projPath = opt("project"), appPath = opt("app");
@@ -289,7 +289,9 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
     // A link on a com-object this configuration hides is kept in the project but not downloaded, by
     // the server as by ETS; say how many.
     const hidden = stored.size - links.length;
-    return { ia: d.ia, name: d.name, productRef: d.productRef, appRef: d.appRef, appXml, params, instances, links, configuration: `the project's configuration of ${d.ia} (${params.size} parameter values, ${instances.length} module instances, ${links.length} linked objects${hidden ? `, ${hidden} links on hidden objects not downloaded` : ""})` };
+    // The project's flags on its com-objects, placed as the server places them for its download.
+    const comObjectOverrides = placeComObjOverrides(cfg, view, proj.deviceComObjOverrides.find((o) => o.deviceId === d.id)?.overrides ?? []);
+    return { ia: d.ia, name: d.name, productRef: d.productRef, appRef: d.appRef, appXml, params, instances, links, comObjectOverrides, configuration: `the project's configuration of ${d.ia} (${params.size} parameter values, ${instances.length} module instances, ${links.length} linked objects${hidden ? `, ${hidden} links on hidden objects not downloaded` : ""})` };
   }
   const ia = opt("ia");
   if (!ia) throw new Error("--app needs --ia=<a.l.d>: the address table holds it, and only writes to it are compared");
@@ -307,7 +309,7 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
   });
   const cfg = parseAppConfig(appXml);
   const configuration = `application defaults${params.size ? ` with ${[...params].map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}, ${links.length ? `links ${links.map((l) => `#${l.comObjNum}->${l.gaRaws.map((g) => hex(g)).join("+")}`).join(", ")}` : "no links"}`;
-  return { ia, name: "(no project)", productRef: opt("product") ?? null, appRef: cfg.id, appXml, params, instances: [], links, configuration };
+  return { ia, name: "(no project)", productRef: opt("product") ?? null, appRef: cfg.id, appXml, params, instances: [], links, comObjectOverrides: new Map(), configuration };
 }
 
 async function main(): Promise<number> {
@@ -324,7 +326,7 @@ async function main(): Promise<number> {
   const profile = classify(cfg);
   // The planner the server's full download runs; it refuses what the server would refuse.
   const build = profile.planFullDownload(cfg.mask, {
-    ia: subject.ia, params: subject.params, links: subject.links, moduleInstances: subject.instances, proc: parseLoadProcedures(subject.appXml),
+    ia: subject.ia, params: subject.params, links: subject.links, moduleInstances: subject.instances, proc: parseLoadProcedures(subject.appXml), comObjectOverrides: subject.comObjectOverrides,
   });
 
   const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());

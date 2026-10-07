@@ -388,6 +388,56 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     expect(tun.sent.filter((f) => !f[0].toString(2).startsWith("11") && parseApdu(f).apci === APCI.RESTART).length).toBeGreaterThan(0);
   }, 20000);
 
+  // The confirmed restart (A_Restart type 1, erase code 1, channel 0), as ETS sends it to the Theben
+  // MIX 2: the device answers A_Restart_Response with an error code and its process time, then reboots.
+  const confirming = (error: number) => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === (APCI.RESTART | 0x01)) {
+        tun.reply([0xc2 | (p.seq << 2)]);
+        tun.reply([0x40 | (p.seq << 2) | 0x03, 0xa1, error, 0x00, 0x01]);
+      }
+    };
+    return { tun, dev };
+  };
+  test("confirmed: sends 81 01 00, takes the device's answer, and still demands the silence after it", async () => {
+    const { tun, dev } = confirming(0);
+    await dev.restart(true, true);
+    const sent = tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01));
+    expect(sent.map((f) => f.subarray(1).toString("hex"))).toEqual(["810100"]);
+    expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.RESTART)).toBe(false);
+  }, 20000);
+  test("confirmed: an answer with an error code is a refused restart", async () => {
+    const { dev } = confirming(1);
+    const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+    expect(String(failure)).toMatch(/RESTART_REFUSED|error code 1/);
+  }, 20000);
+  test("confirmed: a device that acknowledges, does not answer and keeps running did not reboot", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    // Transport-correct: a frame with the sequence number it saw last is a repetition, acknowledged
+    // and dropped; only a new number is answered.
+    let last = -1;
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      tun.reply([0xc2 | (p.seq << 2)]);
+      if (p.seq === last) return;
+      last = p.seq;
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) tun.reply([0x40 | (p.seq << 2) | 0x03, 0x40, 0x07, 0xb0]);
+    };
+    const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+    expect(String(failure)).toMatch(/RESTART_IGNORED|did not reboot/);
+  }, 20000);
+  test("confirmed: no answer at all is a device already gone, proven by its silence", async () => {
+    const { tun, dev } = restarted();
+    await dev.restart(true, true);
+    expect(tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01)).length).toBe(1);
+  }, 20000);
+
   test("a send the interface refuses PROPAGATES: silence we never caused proves nothing", async () => {
     const tun = new FakeTransport();
     const dev = new KnxDevice(tun, "1.2.11");

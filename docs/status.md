@@ -90,7 +90,9 @@ value.
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, survives a restart | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter, `verified` after the restart (see below) | hardware, one link added and removed, each `verified` after the restart, the added link answered a group read (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
-| Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
+| Theben HMG 6 T heating actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
+| Theben JMG 4 T blind actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
+| Theben RMG 8 T switch actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven | not proven | not proven | not proven | not proven |
 | Auro presence detector (M-0081_A-FE01) | MV-0705 | absolute | hardware | hardware, bracket and changed byte equal to ETS's partial download, the segment stamp equal to the one after ETS's download | hardware, add and remove with the tables unloaded and re-declared, wire and stamps equal to ETS's; unlinking and relinking a transmit-only object clears and sets its linked bit, written bytes and reads equal to ETS's (see below) | hardware, sequence only: on a unit already holding the application, every planned byte already equal, no changed byte transferred (see below) | hardware: answers group reads after each write, a removed address stops answering; a transmit-only object relinked by a GA flash sends on its address (see below) |
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
@@ -106,8 +108,8 @@ What each row does not show:
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and
   the parameter flash write them after the allocation ([load-procedures.md](load-procedures.md)).
-  The Theben MIX application (`M-0048_A-493B-21`) declares the same regions; its parameter flash
-  writes them too, but that bracket has not been driven on a Theben device.
+  The Theben MIX 2 application declares the same regions and is written the same way (device notes
+  below).
 - **OpenKNX RaumController.** The surgical parameter and group-address flash are operator
   observations on one unit in service (one parameter, one link), with no evidence record and no ETS
   reference (no ETS project matches the unit). In this firmware (thelsing/knx with OpenKNX Common) a
@@ -187,6 +189,24 @@ What each row does not show:
   every restart). It writes its table segment's `<Data>` behind the tables (this application only)
   and the update flag in config bit `0x80` (here and on the TheLuxa P300 only), both as ETS does. Persistence is the restart each
   write ends with; no bus power cycle.
+- **Theben MIX 2 `M-0048_A-493B-21-B471`** (System B, module slots, two memory-control-block
+  regions), three products, each with its own captures and runs: HMG 6 T, JMG 4 T, RMG 8 T. ETS 6 was
+  captured running a full, a parameter and a group-address download and their revert on one unit of
+  each ([load-procedures.md](load-procedures.md#system-b-as-the-theben-mix-2s-captures-show-it)).
+  Busforge's full download equals ETS's logged image byte for byte, the object-link tables (`BinaryValue`
+  union members) and ETS's association order included, its parameter flash the bytes of ETS's
+  parameter download, its group-address flash the tables of ETS's group-address download
+  (`tools/etsdiff.test.ts`). All three ran on each unit through a logging proxy, each `verified`: ETS's
+  load controls, the PID 27 reads and the confirmed restart on the wire, the parameter and table bytes
+  ETS wrote written with the same values. The full download leaves out runs of zeros the allocation's
+  fill already holds, which ETS also sends. Of the full download's bytes only the download marker
+  differed from the unit, so the transfer of changed bytes is shown by the two flashes (one parameter
+  and one link each, changed and reverted). The reverts are Busforge's parameter and group-address
+  flash, where ETS reverts both in one structural bracket; their bytes equal ETS's revert. Each unit
+  answered a group read after each write, an added address answered, and the final read equals the
+  reference, both memory-control-block regions included. The unit's download counter (device object
+  PID 30) moves alike under both tools. Persistence is the restart each write ends with; no bus power
+  cycle. The structural flash is not claimed for this application.
 - **Auro, Gira, TheLuxa and Meteodata full download** are refused onto a unit that does not hold the
   application with load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): no
   capture shows that case. None of their runs is a smoke run, so the compatibility matrix does not
@@ -207,14 +227,14 @@ What each row does not show:
 - **A wider set carries the weaker proof of a read-back match** (build the image, read the device's
   memory, compare the bytes we own, `tools/verify-images.ts`): 28 of 32 reachable devices of a real
   installation. Of the four residuals, two are secure interfaces and the rest are project-versus-device
-  drift or a self-stamped marker, not modelling gaps. Two units of the Theben HMG 6T show such drift
-  (the same parameters build correctly on their siblings). A read-back match is not a flash round-trip.
+  drift or a self-stamped marker, not modelling gaps. A Theben HMG 6 T unit holds old values in six bytes
+  of inactive parameters, which ETS's full download writes as zero. A read-back match is not a flash
+  round-trip.
 - **Offered, never driven.** Some applications are offered writes because their declared procedure
   is covered, and those writes have no hardware evidence on the product: the MDT Universal Interface 6-fold
-  (`M-0083_A-00B4-32-3919`, MV-0705) for all three, the Theben MIX 2 (`M-0048_A-493B-21-B471`) for its
-  group-address flash, its full download and its declared memory-control-block bracket, the Theben
-  DALI gateway (`M-0048_A-9071-20-F258-O00EF`) for all three, and the MEAN WELL power supply
-  (`M-0162_A-0004-11-F245`) for its group-address flash and full download.
+  (`M-0083_A-00B4-32-3919`, MV-0705) for all three, the Theben DALI gateway (`M-0048_A-9071-20-F258-O00EF`)
+  for all three, and the MEAN WELL power supply (`M-0162_A-0004-11-F245`) for its group-address flash and
+  full download.
 - **Sibling products on a proven mask are individually unproven.** A mask proven on one product
   means the memory model and load procedure are right, not that another product on that mask has
   been driven.
@@ -276,8 +296,8 @@ report a device family as working on the strength of a passing test suite.
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA and the Jung 400021SE, every segment
   byte for byte. Parameter flash: one ETS partial download of the Jung. Group-address flash: one ETS
   partial download each of the MDT, the ABB, the GVS and the Jung, every byte ETS wrote equal to Busforge's image. Plus the Auro
-  M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300 and the Theben Meteodata 140 S (device
-  notes above). Everywhere else the read-back proves
+  M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S and the three
+  Theben MIX 2 products (device notes above). Everywhere else the read-back proves
   `device == our image` and can never prove `our image == ETS`.
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
   and changes only each object's linked bit, as ETS does on both LSM styles. On a device whose table

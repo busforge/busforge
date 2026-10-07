@@ -103,8 +103,8 @@ reports success.
 | **executed** | `Load`, `LoadCompleted`, `Restart`, `AbsSegment`, `RelSegment` (mode 0 only, any fill value), `WriteAbsMem`/`WriteRelMem` (superseded by the strictly narrower surgical write), relative: `WriteProp` **to PID 27** on object 4 (the declared memory-control-block regions, written after the allocation), and a `WriteProp` an ETS capture shows for that application (the GVS AMMA's object 4 PID 67 = `01`, below) | performed by the planner/executor or the proven base bracket |
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`, as ETS checks it |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
-| **executed (read)** | absolute: `LoadImageProp` **to PID 27** on an application ETS is captured downloading (the Gira M-0008, [below](#ets-captured-system-7-downloads)): a property read of the stamps after the last `LoadCompleted` | ETS reads them there and writes nothing |
-| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** (ETS 6 sends nothing for it) | deliberately not executed, each with hardware or capture evidence |
+| **executed (read)** | `LoadImageProp` **to PID 27** on an application ETS is captured downloading: absolute, the Gira M-0008 ([below](#ets-captured-system-7-downloads)), one read per element; relative, the Theben MIX 2 ([below](#system-b-as-the-theben-mix-2s-captures-show-it)), one read of the declared elements. A property read of the stamps after the last `LoadCompleted` | ETS reads them there and writes nothing |
+| **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation). relative: `LoadImageProp` **to PID 27 only** on every other application (ETS 6 writes nothing for it) | deliberately not executed, each with hardware or capture evidence |
 | **blocked, refuse** | everything else: unknown verbs, `LoadImageProp` on any other absolute application, `WriteProp` to any other PID without such a capture, allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
 
 PID 27 is the memory-control-block table: per region of a segment, its size, a control byte and
@@ -121,7 +121,8 @@ region size, because the device may fill in the CRC. Entries whose regions do no
 another object or carry data beyond the entry are refused (`LOAD_STEP_UNSUPPORTED`). ETS sends no
 write for `LoadImageProp`; it reads the device's CRCs back afterwards. On an absolute device a
 declared `WriteProp` to PID 27 blocks; `LoadImageProp` is the stamp read the Gira M-0008 captures
-show, on that application only, and blocks everywhere else.
+show, on that application only, and blocks everywhere else. On the relative path Busforge sends it as
+the read ETS sends on the Theben MIX 2 only, and leaves it out elsewhere.
 
 A `CompareProp` honours its `Mask`, so a manufacturer that masks out its own manufacturer id
 and version and checks only the application number is compared the way it asks to be.
@@ -701,6 +702,53 @@ configuration.
 On hardware an override has been written only by a System 7 full download, onto a device that
 already held that value. The System B paths (full
 download, group-address flash) and the structural flash with an override are tested offline only.
+
+## System B as the Theben MIX 2's captures show it
+
+The Theben MIX 2 (`M-0048_A-493B-21-B471`, MV-07B0, `MergedProcedure`) declares one parameter segment of
+2003 bytes (`LdCtrlRelSegment` LSM 4, Mode 1 Fill 0 for the full download, Mode 0 for the parameter
+download) and two memory-control-block regions (object 4 PID 27, `0000066A 0032…` and, at element 2,
+`00000169 0032…`); the rest comes from the master data's MV-07B0 load procedures. ETS's downloads of
+its three products (HMG 6 T, JMG 4 T, RMG 8 T) and Busforge's plans, which `tools/etsdiff.test.ts`
+("Theben MIX 2") pins against them:
+
+| Download | Load controls, in order |
+| --- | --- |
+| full | `Unload` 5, 4, 3, 2, 1; `Load` 4, `AllocAbs` `030b 000007d3 01 00`, the two PID 27 elements; `Load`/alloc 3 (510 bytes), 1 and 2 at their tables' lengths; memory; PID 13 `0048493b21`; `LoadCompleted` 4, 3, 2, 1; PID 27 read of objects 1, 2, 3 and 4 (both elements in one read); the confirmed restart |
+| parameter | `Unload` 4; `Load` 4, `AllocAbs` `…07d3 00 00` (no fill), the two PID 27 elements; the parameter bytes; PID 13; `LoadCompleted` 4; the PID 27 reads; the confirmed restart |
+| group address | `Unload` 3, 2, 1; `Load`/alloc 3, 1, 2; the com-object table whole, both tables; `LoadCompleted` 3, 2, 1; the PID 27 reads; the confirmed restart. LSM 4 is not touched |
+
+Three of these Busforge sends on this application only (`ETS_BRACKET_SYSTEMB_APPS`); the MV-07B0 master
+data's `Load ap1` declares the first and the last for every System B application, and the bench captures of the Jung
+400021SE and GVS AMMA show all three ([roadmap.md](roadmap.md)):
+
+- **The PEI program's unload (LSM 5) first in the full download.** The master data wraps it in
+  `LdCtrlMapError`, so ETS ignores an error there; the MIX 2 answers it with its state, Unloaded.
+- **The close at once.** After the last `LoadCompleted` the PID 27 reads the application declares
+  (`LdCtrlLoadImageProp`, objects 1, 2, 3 and 4 with `Count="2"`, read as one request of two elements),
+  then the restart on the same connection, within a second. The unit starts its application at
+  `LoadCompleted`; a pause there lets it run and send its start-up telegrams before the restart.
+- **The confirmed restart**, A_Restart type 1 with erase code 1 and channel 0 (`81 01 00`, ETS6.log
+  `ConfirmedRestart_req`). The device answers A_Restart_Response, error 0 and the seconds it needs (1),
+  and reboots. Busforge refuses an answer with an error code (`RESTART_REFUSED`), waits the stated time
+  (at most 3 s) and then requires the device to be gone, as after the basic restart.
+
+What Busforge does besides: it reads the load states back after its load-state writes; the full
+download writes the parameter image sparsely against the allocation's fill, where ETS also sends the
+runs of zeros the allocation already holds; after the restart it probes the device into its reboot and
+reads it back on a new connection. ETS reads PID 7 before each segment. On every other System B device
+the full download keeps verify mode around its memory writes where they are unconfirmed, writes the
+tables before the parameter image, and settles for 8 s on a fresh connection before the restart.
+Reads and the left-out runs of zeros aside, the wire of each download is ETS's.
+
+ETS reverts a parameter change and a link change made together in one partial download with the
+structural bracket (unload 4, 3, 2, 1, every object reallocated without fill, [Structural
+flash](#structural-flash)). The structural flash is not claimed for this application; Busforge reverts the two with its
+parameter flash and its group-address flash, and their bytes equal those of ETS's revert.
+
+The images: the object-link tables are `BinaryValue` union members written with their enumeration's
+bytes, inactive parameters only rejected branches place are left out, and the associations are in
+ETS's order ([device-memory-model.md](device-memory-model.md), [ETS-captured System 7 downloads](#ets-captured-system-7-downloads)).
 
 ## Structural flash
 

@@ -336,6 +336,30 @@ export const ETS_DECLARED_ORDER_TASK_CTRL1: Readonly<Record<string, { LsmIdx: st
 export const ETS_REGION_TABLES_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
 export const etsRegionTablesSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_REGION_TABLES_SYSTEM7_APPS.includes(lp.app);
 
+// ---- System B applications whose associations ETS writes in its own order ----
+// For these, ETS writes each object's first link before every further link (grouptables.ts,
+// "ets-captured"), as on the System 7 applications of ETS_REGION_TABLES_SYSTEM7_APPS. The Theben MIX 2
+// (M-0048_A-493B-21-B471, HMG 6 T and JMG 4 T): objects with two and three
+// addresses (captures/mix2-hmg6t-ets6log-fulldownload.txt, mix2-jmg4t-ets6log-fulldownload.txt). The
+// System B bench captures (Jung 400021SE, GVS AMMA, ABB US/U 4.2, MDT BE-02001.02) link no object to
+// more than one address, so they show neither order.
+export const ETS_ASSOC_ORDER_SYSTEMB_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
+export const etsAssocOrderSystemB = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_ASSOC_ORDER_SYSTEMB_APPS.includes(lp.app);
+
+// ---- System B applications whose download Busforge brackets as ETS's captures show ----
+// Two steps of the MV-07B0 master data's load procedures (knx_master.xml, Procedure Load ap1, par, grp)
+// that ETS sends and Busforge sends on these applications only:
+//   - the full download's first unload, LdCtrlUnload LsmIdx="5" (the PEI program), its error mapped
+//     to none (LdCtrlMapError): PID 5 of object 5 = 04, the device answering Unloaded;
+//   - the closing LdCtrlRestart as the confirmed restart, A_Restart type 1 with erase code 1 and
+//     channel 0 (ETS6.log "ConfirmedRestart_req"), which the device answers before it reboots.
+// The Theben MIX 2 (M-0048_A-493B-21-B471, HMG 6 T, JMG 4 T, RMG 8 T): every
+// full, parameter and group-address download (captures/mix2-*-ets-*.log). The Jung 400021SE and GVS
+// AMMA bench captures show both too; their Busforge downloads were shown on hardware without them
+// (docs/roadmap.md).
+export const ETS_BRACKET_SYSTEMB_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
+export const etsBracketSystemB = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_BRACKET_SYSTEMB_APPS.includes(lp.app);
+
 // Applications of ETS_REGION_TABLES_SYSTEM7_APPS whose table segments carry <Data> bytes behind the tables
 // that ETS's full download writes, in the association table's bracket. Only the Theben Meteodata 140 S
 // shows it: AS-4000 offsets 511-512 = 00 00, not FF and marked by the <Mask> (meteodata-140s-ets6log-
@@ -350,16 +374,18 @@ export const etsTableSegmentDataSystem7 = (lp: Pick<LoadProcedures, "app">): boo
 // The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
 // declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next
 // download, which Busforge does not do (it reads the device instead), so they are only required to
-// arrive.
-export interface StampRead { obj: number; pid: number; start: number }
+// arrive. A declared Count is one read per element on the System 7 application (Gira capture) and
+// one read of all of them on the System B one (Theben MIX 2 captures: 4/27 with two elements).
+export interface StampRead { obj: number; pid: number; start: number; count?: number }
 export function imageStampReads(lp: LoadProcedures): StampRead[] {
-  if (!etsCapturedSystem7(lp)) return [];
+  const system7 = etsCapturedSystem7(lp);
+  if (!system7 && !etsBracketSystemB(lp)) return [];
   return flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlLoadImageProp").flatMap((s) => {
     const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), count = Number(s.attrs.Count ?? 1);
     if (!Number.isInteger(obj) || pid !== MCB_PID || !Number.isInteger(count) || count < 1 || count > 15) {
       throw new ProductError("LOAD_STEP_UNSUPPORTED", `${s.verb} ${JSON.stringify(s.attrs)} is not the PID 27 read the ETS captures show; refusing to guess what it reads`);
     }
-    return Array.from({ length: count }, (_, i) => ({ obj, pid, start: i + 1 }));
+    return system7 ? Array.from({ length: count }, (_, i) => ({ obj, pid, start: i + 1 })) : [{ obj, pid, start: 1, count }];
   });
 }
 
@@ -441,6 +467,8 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", app?
         if (capturedClosingWrite(step, app)?.ops.includes("par")) return { kind: "executed" };
         return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
       case "LdCtrlLoadImageProp":
+        // The stamp read after the last LoadCompleted (imageStampReads), where an ETS capture shows it.
+        if (app !== undefined && etsBracketSystemB({ app }) && Number(step.attrs.PropId) === MCB_PID) return { kind: "executed" };
         if (Number(step.attrs.PropId) === MCB_PID) {
           return { kind: "skipped", reason: "MCB CRC from the image (PID 27): ETS 6 sends no property write for it, the device computes the CRC" };
         }

@@ -11,10 +11,13 @@ import { ProductError } from "./errors.ts";
 
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
-export type ParamBase = "Value" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
+// "BinaryValue" is a TypeRestriction whose enumerations each carry the bytes ETS writes.
+export type ParamBase = "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
 // littleEndian: the application declares <Options ParameterByteOrder="LittleEndian">; a multi-byte
 // value is then stored least significant byte first.
-export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; }
+// binaryValues: for a BinaryValue type, each enumeration value's bytes (absent where an enumeration
+// declares none).
+export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; binaryValues?: Map<number, Buffer>; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
 export interface Segment { id: string; lsm: number; size: number; data: Buffer; }
@@ -28,11 +31,9 @@ export interface AppModel {
 
 const hex = (s: string) => parseInt(s, 16);
 
-// Map the config layer's richer type to the image codec's base. Only Float / Value
-// / Number drive the codec (Float = DPT codec; Value/Number = integer; everything
-// else is not represented in the image). The mapping must preserve those exact
-// distinctions, in particular BinaryValue -> Value (an integer-decodable enum), to
-// keep images byte-identical.
+// Map the config layer's richer type to the image codec's base: Float = DPT codec, Value/Number =
+// integer, BinaryValue = the chosen enumeration's bytes, IPAddress = four octets; everything else is
+// not represented in the image.
 function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
   // TypeTime (durations/periods) has no float or enum semantics: ETS stores it in the
   // parameter image as a plain unsigned integer, so encode it as Number. The config
@@ -43,7 +44,8 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
   switch (t.base) {
     case "Float": return "Float";
     case "Number": return "Number";
-    case "Value": case "BinaryValue": return "Value";
+    case "Value": return "Value";
+    case "BinaryValue": return "BinaryValue";
     case "Text": return "Text";
     // TypeIPAddress is a 4-byte host address; the image codec encodes the dotted-quad
     // string as 4 big-endian bytes (see image.ts encode).
@@ -66,7 +68,11 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
 // The MV-0705 absolute-segment build opts in: union branches are real parameter
 // memory there, and visibility resolution writes only the active branch.
 function paramType(app: AppConfig, t: CfgType): ParamType {
-  return { id: t.id, base: imageBase(t), sizeInBit: t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}) };
+  const base = imageBase(t);
+  return {
+    id: t.id, base, sizeInBit: t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}),
+    ...(base === "BinaryValue" ? { binaryValues: new Map(t.enums.flatMap((e) => (e.binary ? [[e.value, e.binary] as [number, Buffer]] : []))) } : {}),
+  };
 }
 
 export function toAppModel(app: AppConfig, opts: { includeUnions?: boolean; instances?: ModuleInstance[] } = {}): AppModel {

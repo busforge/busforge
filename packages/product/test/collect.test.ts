@@ -186,6 +186,22 @@ describe("raw acquisition on a System B device", () => {
     expect(memRecords(p, "association table").some((r) => r.outcome === "bytes")).toBe(true);
   });
 
+  test("a table of several memory-control-block regions is read to the end of the last", async () => {
+    const { sim, dev, reopen } = setup();
+    const region = (size: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size); b.writeUInt16BE(0x0032, 4); return b; };
+    sim.objects[4].props.get(27)!.elements.splice(0, 1, region(20), region(12));
+    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    expect(p.stop).toBeNull();
+    expect(memRecords(p, "application").reduce((n, r) => n + Number(r.target.length), 0)).toBe(32);
+  });
+
+  test("a memory-control-block region that is not 8 bytes leaves the table unread, and says why", async () => {
+    const { sim, dev, reopen } = setup();
+    sim.objects[4].props.get(27)!.elements.push(Buffer.alloc(4));
+    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    expect(memRecords(p, "application")).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("element 2 of 2 is not 8 bytes") }]);
+  });
+
   test("the duration bound stops the job", async () => {
     const { dev, reopen } = setup();
     let t = 0;

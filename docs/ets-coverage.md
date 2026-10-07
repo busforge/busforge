@@ -54,7 +54,7 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
 | `TypeColor` (RGB) | full | native colour picker, stores `#RRGGBB` |
 | `TypeNone` (named) | full | display-only caption, rendered read-only; a nameless one is a pure layout spacer and is dropped |
-| `TypeRestriction` `Base="BinaryValue"` | not supported | badge |
+| `TypeRestriction` `Base="BinaryValue"` | not editable | badge; the image writes the bytes of the enumeration its value names (`Access="None"` object-link tables of the Theben MIX 2) |
 | `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register |
 | `TypePicture` | not supported | badge |
 

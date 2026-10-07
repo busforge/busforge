@@ -61,6 +61,10 @@ export interface CollectPackage {
   finishedAt: number;
 }
 
+// The regions a table's memory control block may declare for the collector to read the table by: more
+// is a malformed answer, not a table.
+const MAX_MCB_REGIONS = 16;
+
 // docs/raw-acquisition.md, "Bounds". The duration and the failures in a row are the bounds a user is
 // told about. memoryBytes only guards against a device that states a wrong table size; at the request
 // rates of the bench (about 4 per second) the duration ends a job long before it.
@@ -410,10 +414,20 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
         return;
       }
       const ptr = await readProperty(step, t.object, 7, 1, 1, "device");
-      const mcb = await readProperty(step, t.object, 27, 1, 1, "device");
       if (!ptr || ptr.length !== 4) { rec({ step, space: "memory", target: { object: t.object }, source: "device", outcome: "not-attempted", detail: "no 4-byte table reference (PID 7), so no start" }); return; }
-      if (!mcb || mcb.length !== 8) { rec({ step, space: "memory", target: { object: t.object }, source: "device", outcome: "not-attempted", detail: "no memory control block (PID 27), so the length is unknown" }); return; }
-      const address = ptr.readUInt32BE(0), length = mcb.readUInt32BE(0);
+      // The memory control block (PID 27) has one element per region of the table, each [length:4]
+      // [flags:2][crc:2], the regions one behind the other from the table reference (two on the Theben
+      // MIX 2 application, as its load procedure declares them). The table is their sum.
+      const count = await readProperty(step, t.object, 27, 0, 1, "device");
+      const regions = count?.length === 2 ? count.readUInt16BE(0) : 0;
+      if (regions === 0 || regions > MAX_MCB_REGIONS) { rec({ step, space: "memory", target: { object: t.object }, source: "device", outcome: "not-attempted", detail: regions === 0 ? "no memory control block (PID 27), so the length is unknown" : `the memory control block (PID 27) declares ${regions} regions, more than the ${MAX_MCB_REGIONS} a table is read with` }); return; }
+      let length = 0;
+      for (let i = 1; i <= regions; i++) {
+        const mcb = await readProperty(step, t.object, 27, i, 1, "device");
+        if (!mcb || mcb.length !== 8) { rec({ step, space: "memory", target: { object: t.object }, source: "device", outcome: "not-attempted", detail: `memory control block (PID 27) element ${i} of ${regions} is not 8 bytes, so the length is unknown` }); return; }
+        length += mcb.readUInt32BE(0);
+      }
+      const address = ptr.readUInt32BE(0);
       if (address === 0) { rec({ step, space: "memory", target: { object: t.object }, source: "device", outcome: "not-attempted", detail: "the table reference is 0: not loaded" }); return; }
       if (length === 0) { rec({ step, space: "memory", target: { object: t.object, address }, source: "device", outcome: "not-attempted", detail: "the memory control block gives size 0" }); return; }
       await range(step, { address, length }, "device");

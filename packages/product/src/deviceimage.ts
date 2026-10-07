@@ -156,10 +156,10 @@ export function buildAbsoluteSegmentTargets(
 //  - A <Union> member or a module-instance (…_MI-…) parameter: OWNED only when ACTIVE
 //    (present in the visibility-resolved image set). Union members overlap one region,
 //    so only the selected branch may be written; an inactive branch must keep the
-//    device byte. The Theben channel devices' "Objektlink" unions are Access="None"
-//    Value="0" placeholders whose real content ETS computes from the channel/link
-//    allocation: they are never active in our resolver, so they stay UNOWNED and the
-//    flash preserves the device's computed table rather than zeroing it.
+//    device byte. The Theben MIX 2 "Objektlink" unions are Access="None" BinaryValue
+//    members, one per module type, chosen in a hidden parameter block by the slot's
+//    module type: the active one is owned and writes its enumeration's bytes, as ETS's
+//    image holds them (ETS captures of all three MIX 2 products).
 //  - LegacyPatchAlways params: owned like any other. ETS writes their value over the <Data> byte
 //    (MDT BE-02001.02 captures; the Theben MIX house devices hold the values, not <Data>).
 //  - A plain top-level param that is INACTIVE and whose memory falls inside an active
@@ -173,7 +173,25 @@ export function buildAbsoluteSegmentTargets(
 // text/time/malformed value claims no bytes.
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; }
+// Applications on which ETS leaves out a parameter that no active branch places when every one of its
+// placements lies in a branch of a choose ETS evaluated and did not take: its bytes keep the
+// allocation fill in a full download and are not in the image of a parameter download. A parameter
+// gated only by a choose on an unset Merker it writes at its default, as on every other application.
+// The Theben MIX 2 (M-0048_A-493B-21-B471), a JMG 4 T with its second extension slot empty
+// (P-201 = 0): ETS's full download leaves offset 1129 at 00, where P-63 "Zeit für zyklisches Senden
+// der Sammelrückmeldung" (default 2, channel CH-3 behind P-201 > 0) lies, and its parameter download
+// leaves out offset 1201 (P-36 "Kanal C2 verstärkt Kanal C1", behind P-201 = 4); both write the default
+// 15 of P-202 at offset 37, gated by the Merker P-21, which this configuration never places (private
+// corpus captures/mix2-jmg4t-ets6log-fulldownload.txt and -partial-params.txt, "Execute image"
+// RelMemory(4)). Not a rule of ETS: its GVS AMMA downloads (gvs-amma-ets-*.log) write such parameters'
+// defaults, and the MEAN WELL PSU's (M-0162) read-back matched only with them (the ownership rule
+// below, "PSU byte-match").
+export const ETS_REJECTED_BRANCH_UNWRITTEN_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
+
+// `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
+// set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
+// offset 39). Written, never asserted.
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -188,7 +206,9 @@ export function buildRelativeSegmentTarget(
   const model = toAppModel(app, { includeUnions: true, instances });
   const seg = model.segments.find((s) => s.lsm === lsm);
   if (!seg) return null;
-  const active = buildDeviceConfig(app, values, opts.lang, instances).imageValues;
+  const built = buildDeviceConfig(app, values, opts.lang, instances);
+  const active = built.imageValues;
+  const rejected = ETS_REJECTED_BRANCH_UNWRITTEN_APPS.includes(app.id) ? built.rejectedRefs : new Set<string>();
   // The unions with at least one active member (only those write an active member, not the default).
   const activeUnions = new Set<string>();
   for (const refId of active.keys()) {
@@ -224,34 +244,30 @@ export function buildRelativeSegmentTarget(
   seg.data.copy(img); // manufacturer default image (overwritten where owned)
   const owned = new Array<number>(seg.size).fill(0);
   const verify = new Array<number>(seg.size).fill(0);
+  const markers = new Array<number>(seg.size).fill(0);
 
   for (const ref of model.refs.values()) {
     const param = model.params.get(ref.paramId);
     if (!param || param.offset === undefined) continue;
     if (param.codeSegment && model.segments.find((s) => s.id === param.codeSegment)?.lsm !== lsm) continue;
     const cfgParam = app.params.get(ref.paramId);
-    // A parameter the integer codec cannot represent (more than 6 bytes wide) is an
-    // ETS-COMPUTED table, not a static default: the per-channel "Objektlink" link unions
-    // are hundreds of bits. We cannot reproduce them, so never own them; the device byte is
-    // preserved. This guard matters because ETS evaluates EVERY matching <when>, so an
-    // overlapping active branch can now reach such a union member (encode() would otherwise
-    // throw on it). Small Access="None" members with a real default (e.g. a 2-bit hidden
-    // behaviour setting) are NOT computed and stay ownable below. Threshold mirrors encode().
+    // An integer parameter wider than the integer codec (6 bytes) has no encoding Busforge knows;
+    // it is never owned and the device byte is preserved. A BinaryValue parameter of any width
+    // writes its enumeration's bytes.
     const wType = model.types.get(param.typeId);
-    if (wType && Number.isFinite(wType.sizeInBit) && byteWidth(wType.sizeInBit, param.bitOffset) > MAX_INT_BYTES) continue;
+    if (wType && wType.base !== "BinaryValue" && Number.isFinite(wType.sizeInBit) && byteWidth(wType.sizeInBit, param.bitOffset) > MAX_INT_BYTES) continue;
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.
     //  - inactive plain param that is user-facing (Access != None): own at its default;
     //    System B writes every such default and the device holds it (PSU byte-match).
-    //  - inactive Access="None" param: NOT owned. Its on-device value is ETS-computed
-    //    (e.g. the channel "Objektlink"/count tables), which our static default does not
-    //    reproduce; leave the device byte untouched. Hardware-checked on the Theben HMG
-    //    (writing the default 0 over those computed bytes would corrupt the config).
+    //  - inactive Access="None" param: NOT owned; the device byte stays.
+    //  - on ETS_REJECTED_BRANCH_UNWRITTEN_APPS, an inactive plain param every placement of which
+    //    lies in a branch the configuration rejects: NOT owned (below).
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
-    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset)) v = values.get(ref.id) ?? param.value;
+    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = values.get(ref.id) ?? param.value;
     //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
     //    capture, 2026-09-25: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
@@ -267,8 +283,9 @@ export function buildRelativeSegmentTarget(
     if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
+    if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
   }
-  return { lsm, size: seg.size, bytes: img, owned, verify };
+  return { lsm, size: seg.size, bytes: img, owned, verify, markers };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write
@@ -306,9 +323,10 @@ export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget)
 }
 
 // A full download writes every byte of its image, so its read-back asserts every byte a
-// verifiable parameter touches, the template bits beside it included.
-export function wholeBytes(mask: ReadonlyArray<number>): number[] {
-  return mask.map((m) => (m ? 0xff : 0));
+// verifiable parameter touches, the template bits beside it included, but not the bits of a
+// download marker (`markers`, see RelativeSegmentTarget), which the device changes itself.
+export function wholeBytes(verify: ReadonlyArray<number>, markers: ReadonlyArray<number> = []): number[] {
+  return verify.map((m, i) => (m ? 0xff & ~((markers[i] ?? 0) & ~m) : 0));
 }
 
 // Which bytes of an absolute segment some parameter's memory location covers, every parameter of the

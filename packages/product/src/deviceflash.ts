@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, etsRegionTablesSystem7, etsTableSegmentDataSystem7, ETS_DECLARED_ORDER_TASK_CTRL1, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, etsCapturedSystem7, etsDeclaredOrderSystem7, etsRegionTablesSystem7, etsTableSegmentDataSystem7, ETS_DECLARED_ORDER_TASK_CTRL1, imageStampReads, type LoadProcedures, type McbWrite, type ClosingPropWrite, type StampRead } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705, etsUpdateBitMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -149,6 +149,22 @@ export function planRelativeParFlash(lsm: number, image: Buffer, owned: Readonly
     // PERSIST_ON_LOAD_COMPLETED distinction the full download already makes.
     { op: "restart", requireReboot },
   ];
+}
+
+// A plan's restart as the confirmed restart (A_Restart type 1, erase code 1), where `confirmed`.
+export function withConfirmedRestart(plan: LoadPlan, confirmed: boolean): LoadPlan {
+  return confirmed ? plan.map((st) => (st.op === "restart" ? { ...st, confirmed: true } : st)) : plan;
+}
+
+// Put the stamp reads ETS sends after the last LoadCompleted (imageStampReads) right before the plan's
+// restart.
+export function withStampReads(plan: LoadPlan, reads: StampRead[]): LoadPlan {
+  if (!reads.length) return plan;
+  const at = plan.findLastIndex((st) => st.op === "restart");
+  if (at < 0 || plan.slice(0, at).every((st) => st.op !== "loadCompleted")) {
+    throw new ProductError("LOAD_STEP_UNSUPPORTED", "the load procedure declares reads that close the download, and this plan has no completed load and restart to place them in");
+  }
+  return [...plan.slice(0, at), ...reads.map((r): LoadStep => ({ op: "readProp", ...r })), ...plan.slice(at)];
 }
 
 // Put a download's closing property writes (closingPropWrites) right before its restart, where ETS

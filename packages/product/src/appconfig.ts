@@ -11,7 +11,9 @@ import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
 // The dynamic tree's child order is semantically significant (first-matching
 // `when`, default fallback, sequence of items), so we parse order-preserving.
 
-export interface EnumOption { value: number; text: string; id: string; displayOrder: number; }
+// `binary`: a BinaryValue enumeration's bytes (its base64 BinaryValue attribute, decoded), which
+// ETS writes for that value instead of the number.
+export interface EnumOption { value: number; text: string; id: string; displayOrder: number; binary?: Buffer; }
 export interface CfgType {
   id: string;
   base: "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Color" | "Time" | "IPAddress" | "Other";
@@ -365,7 +367,8 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
       // ETS shows enum options ordered by DisplayOrder, not document order.
       enums = childrenByTag(kidsOf(inner), "Enumeration").map((e, i) => {
         const ea = attrsOf(e);
-        return { value: Number(ea.Value), text: ea.Text ?? "", id: ea.Id, displayOrder: ea.DisplayOrder !== undefined ? Number(ea.DisplayOrder) : i };
+        return { value: Number(ea.Value), text: ea.Text ?? "", id: ea.Id, displayOrder: ea.DisplayOrder !== undefined ? Number(ea.DisplayOrder) : i,
+          ...(ea.BinaryValue !== undefined ? { binary: Buffer.from(String(ea.BinaryValue), "base64") } : {}) };
       }).sort((a, b) => a.displayOrder - b.displayOrder);
     } else if (tag === "TypeNumber") base = "Number";
     else if (tag === "TypeFloat") base = "Float";

@@ -199,15 +199,21 @@ that preserves a working device and one that corrupts a channel.
   ETS-flashed power supply misses 51 bytes of its image.
 - **A `<Union>` member or a module-instance (`…_MI-…`) parameter is owned only when it is the
   ACTIVE branch.** Overlapping branches must not all be written.
-- **An inactive `Access="None"` parameter is not owned.** Its on-device value is computed by
-  ETS, not derived from a static default. Theben channel devices carry wide `<Union>`s of
-  `Access="None"` "Objektlink" (com-object link) tables that ETS generates from the
-  channel/link allocation. Busforge cannot reproduce those bytes, so it leaves them
-  untouched rather than zeroing them with a full-image write.
-- **A parameter wider than 6 bytes is never owned.** The integer codec caps there
-  (`MAX_INT_BYTES`), and anything wider is an ETS-computed table rather than a static
-  default. This guard matters because the all-matching `<when>` walk can reach such a union
-  member.
+- **An inactive `Access="None"` parameter is not owned.** The device byte stays.
+- **A `BinaryValue` parameter writes the bytes of the enumeration its value names**, of any
+  width. The Theben MIX 2 carries one `<Union>` of `Access="None"` "Objektlink" members per module
+  slot (offsets 330, 842 and 1354 of its parameter segment, 21 to 116 bytes each), one member per
+  module type, chosen in a hidden parameter block by the slot's module type; the active member is
+  owned and written, as ETS's image holds it. A value with no declared bytes, or bytes that do not
+  fill the type from bit 0, is refused (`PARAM_BINARY_VALUE_UNDECLARED`).
+- **An integer parameter wider than 6 bytes is never owned.** The integer codec caps there
+  (`MAX_INT_BYTES`).
+- **On the Theben MIX 2, an inactive plain parameter in a branch the configuration rejects is not
+  owned**: one every placement of which lies in a `<when>` of a `choose` that was evaluated and not
+  taken (a module slot left empty, a channel function not chosen). ETS leaves its bytes at the
+  allocation fill and out of its parameter download. A `choose` on a Merker no active branch
+  places rejects nothing; what it gates is written at its default. Other applications are not
+  covered: the GVS AMMA's ETS downloads write such defaults (`ETS_REJECTED_BRANCH_UNWRITTEN_APPS`).
 - **A displaced channel variant is not owned.** A channel configured as a module occupies the
   memory of the simple-channel variant. The top-level variant's parameters still parse and
   still carry an offset there, but the memory belongs to the module instance, so an inactive

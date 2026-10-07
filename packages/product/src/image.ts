@@ -101,8 +101,8 @@ function parseIPv4(s: string): [number, number, number, number] | undefined {
 
 // Integer-codec width limit and byte-span rule, shared by encode/decode here and the
 // ownership mechanics in deviceimage.ts (which previously mirrored them by comment only).
-// The integer codec caps at 6 bytes; anything wider is an ETS-computed table, not a static
-// parameter (see deviceimage.ts).
+// The integer codec caps at 6 bytes; a wider parameter is either a BinaryValue (its
+// enumeration's bytes, binaryValueBytes) or not encodable (see deviceimage.ts).
 export const MAX_INT_BYTES = 6;
 
 // How many bytes a parameter field TOUCHES. A field is `sizeInBit` bits starting at bit
@@ -115,10 +115,28 @@ export const MAX_INT_BYTES = 6;
 export const byteWidth = (sizeInBit: number, bitOffset = 0): number => Math.max(1, Math.ceil((bitOffset + sizeInBit) / 8));
 
 // The type bases encode() can represent in the parameter image. MUST stay in sync with
-// encode() below: everything else (Text, Time, Color, BinaryValue, Other) writes nothing
+// encode() below: everything else (Text, Time, Color, Other) writes nothing
 // and therefore is never programmed by a flash. Consumers use this to avoid claiming
 // such a parameter as "programmed" (e.g. the post-flash baseline reset).
-export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "Number", "Float", "IPAddress"]);
+export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "BinaryValue", "Number", "Float", "IPAddress"]);
+
+// A BinaryValue parameter's bytes: those of the enumeration its value names, as declared. This is the
+// schema's definition of the type, not a behaviour read off one application's captures, so it holds
+// for every application; the ETS captures of the Theben MIX 2 show ETS writing it (the only
+// application of the corpus with a BinaryValue parameter in memory). The
+// enumeration's bytes fill the type exactly and start on a byte (the Theben MIX 2 object-link
+// tables, 21 to 116 bytes; the hardware-type restrictions, 6 bytes); any other shape, or a value no
+// enumeration declares bytes for, has no byte layout ETS is known to write, and is refused.
+function binaryValueBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
+  const where = `BinaryValue parameter type ${type.id} at offset ${offset}`;
+  if (type.littleEndian) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `a ${where} in an application with little-endian parameters: its byte layout is not known`);
+  const bytes = type.binaryValues?.get(Number(valStr));
+  if (!bytes) throw new ProductError("PARAM_BINARY_VALUE_UNDECLARED", `${where}: no enumeration declares bytes for the value "${valStr}"`);
+  if (bit !== 0 || type.sizeInBit !== bytes.length * 8) {
+    throw new ProductError("PARAM_BINARY_VALUE_UNDECLARED", `${where}: the enumeration's ${bytes.length} bytes do not fill the type's ${type.sizeInBit} bits from bit 0 (bit offset ${bit})`);
+  }
+  return bytes;
+}
 
 export function encode(img: Buffer, offset: number, bit: number, type: ParamType, valStr: string): boolean {
   if (!Number.isFinite(offset)) return false; // malformed memory (no/garbage Offset): no location to write
@@ -127,6 +145,12 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     const octets = parseIPv4(valStr);
     if (!octets || offset + 4 > img.length) return false; // malformed/short: own nothing
     for (let i = 0; i < 4; i++) img[offset + i] = octets[i]; // 4 bytes, big-endian (a.b.c.d)
+    return true;
+  }
+  if (type.base === "BinaryValue") {
+    const bytes = binaryValueBytes(type, offset, bit, valStr);
+    if (offset + bytes.length > img.length) throw new ProductError("PARAM_BINARY_VALUE_UNDECLARED", `BinaryValue parameter type ${type.id} at offset ${offset}: its ${bytes.length} bytes reach past the ${img.length}-byte segment`);
+    bytes.copy(img, offset);
     return true;
   }
   if (type.base === "Float") {
@@ -195,6 +219,13 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   if (type.base === "IPAddress") {
     if (offset + 4 > img.length) return undefined;
     return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
+  }
+  if (type.base === "BinaryValue") {
+    if (type.littleEndian || bit !== 0) return undefined; // mirror encode's refusal
+    for (const [v, bytes] of type.binaryValues ?? []) {
+      if (type.sizeInBit === bytes.length * 8 && offset + bytes.length <= img.length && img.subarray(offset, offset + bytes.length).equals(bytes)) return String(v);
+    }
+    return undefined;
   }
   if (type.base === "Float") {
     if (type.littleEndian) return undefined; // mirror encode's refusal

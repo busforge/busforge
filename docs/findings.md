@@ -934,3 +934,14 @@ channel and block. A test over every catalogue fixture checks the view against t
 and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over a real
 installation project, listing these objects changes only views, no parameter image, and every
 project link resolves.
+
+## 34. The Theben MIX 2 counts a download only after its counter was read
+
+The MIX 2 units (`M-0048_A-493B-21-B471`, all three products) keep a download counter in the device
+object, PID 30 (`PID_DOWNLOAD_COUNTER`, read-only, unsigned). It does not count every download. It adds
+2 at the first download after PID 30 was read, application or tables alike, and stays put for every
+further download until it is read again. A restart alone does not count, and reading another property
+does not re-arm it. So two downloads with no read of PID 30 between them add 2, the same two with a
+read between add 4, whichever tool runs them. No download writes PID 30, and Busforge's
+download paths never read it; the collector does (`tools/collect.ts` reads the device object's
+properties), so a package taken between two downloads changes what the second one does to the counter.

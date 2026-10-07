@@ -9,7 +9,7 @@
 // desynchronizing read and write. Layout facts, System B:
 // - Address table:     [count:2][GA:2]xN, GAs sorted ascending.
 // - Association table:  [count:2][groupIdx:2][comObjNum:2]xN (long form), entries
-//   ordered by com-object number then group index.
+//   ordered by com-object number then group index, or in ETS's order (`order`, below).
 //
 // The com-object table (flags/size) is NOT built here: it is read from the
 // device and written back unchanged, so flashing only re-points which group
@@ -20,7 +20,24 @@ import { ProductError } from "./errors.ts";
 export interface ComObjectLink { comObjNum: number; gaRaws: number[]; }
 export interface GroupTables { addr: Buffer; assoc: Buffer; }
 
-export function buildGroupTables(links: ComObjectLink[]): GroupTables {
+// The associations, by com-object then group index, or with `order: "ets-captured"` in the order
+// ETS writes them on the applications it is captured on: first each object's first link (first in the
+// project's Links) by object number, then every other link by object number and group index.
+// Where every object has one link, both orders are the same.
+type AssocOrder = "object" | "ets-captured";
+function associations(links: ComObjectLink[], idx: Map<number, number>, order: AssocOrder = "object"): { gi: number; co: number }[] {
+  const byObject = (a: { gi: number; co: number }, b: { gi: number; co: number }) => a.co - b.co || a.gi - b.gi;
+  const all = (from: number) => links.flatMap((l) => l.gaRaws.slice(from).map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })));
+  return order === "ets-captured"
+    ? [...links.filter((l) => l.gaRaws.length > 0).map((l) => ({ gi: idx.get(l.gaRaws[0])!, co: l.comObjNum })).sort(byObject), ...all(1).sort(byObject)]
+    : all(0).sort(byObject);
+}
+
+// `order: "ets-captured"` for the System B applications in loadproc.ts ETS_ASSOC_ORDER_SYSTEMB_APPS
+// only: the Theben MIX 2, objects with two and three addresses (private corpus
+// captures/mix2-hmg6t-ets6log-fulldownload.txt, mix2-jmg4t-ets6log-fulldownload.txt, "Execute image"
+// RelMemory(2)).
+export function buildGroupTables(links: ComObjectLink[], opts: { order?: AssocOrder } = {}): GroupTables {
   const gas = [...new Set(links.flatMap((l) => l.gaRaws))].sort((a, b) => a - b);
   const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
 
@@ -28,9 +45,7 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
   addr.writeUInt16BE(gas.length, 0);
   gas.forEach((g, i) => addr.writeUInt16BE(g, 2 + i * 2));
 
-  const entries = links
-    .flatMap((l) => l.gaRaws.map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })))
-    .sort((a, b) => a.co - b.co || a.gi - b.gi);
+  const entries = associations(links, idx, opts.order);
   const assoc = Buffer.alloc(2 + entries.length * 4);
   assoc.writeUInt16BE(entries.length, 0);
   entries.forEach((e, i) => { assoc.writeUInt16BE(e.gi, 2 + i * 4); assoc.writeUInt16BE(e.co, 4 + i * 4); });
@@ -42,24 +57,17 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
 // inverse of decodeGroupTablesMv0705, and the System-7 counterpart of buildGroupTables:
 //   Address table:     [count:1][own IA:2 BE][GA:2 BE x N]   (count = 1 + N: the IA entry + N GAs)
 //   Association table: [count:1][groupIdx:1][comObjNum:1] x M
-// The associations are ordered by com-object then group index. With `order: "ets-captured"` (the
-// applications in loadproc.ts ETS_REGION_TABLES_SYSTEM7_APPS only) they are in the order ETS writes them
-// there: first each object's first link (first in the project's Links) by object number, then every
-// other link by object number and group index (Gira Tastsensor 3 Komfort, objects with three
-// addresses each, private corpus captures/gira-m0008-ets-partial-links.log and -partial-revert.log;
-// Theben TheLuxa P300, captures/theluxa-p300-ets-partial-links.log).
-// Where every object has one link, both orders are the same.
+// The associations (see associations()) take `order: "ets-captured"` for the applications in loadproc.ts
+// ETS_REGION_TABLES_SYSTEM7_APPS only (Gira Tastsensor 3 Komfort, objects with three addresses each,
+// private corpus captures/gira-m0008-ets-partial-links.log and -partial-revert.log; Theben TheLuxa P300,
+// captures/theluxa-p300-ets-partial-links.log).
 // `ownIa` is the device's individual address (the first address-table entry). Counts are a
 // single byte, so a device with > 254 group addresses or > 255 associations cannot be
 // represented; that is far beyond any real TP device but guarded rather than silently wrapped.
-export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number, opts: { order?: "object" | "ets-captured" } = {}): GroupTables {
+export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number, opts: { order?: AssocOrder } = {}): GroupTables {
   const gas = [...new Set(links.flatMap((l) => l.gaRaws))].sort((a, b) => a - b);
   const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
-  const byObject = (a: { gi: number; co: number }, b: { gi: number; co: number }) => a.co - b.co || a.gi - b.gi;
-  const all = (ls: ComObjectLink[], from: number) => ls.flatMap((l) => l.gaRaws.slice(from).map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })));
-  const entries = opts.order === "ets-captured"
-    ? [...links.filter((l) => l.gaRaws.length > 0).map((l) => ({ gi: idx.get(l.gaRaws[0])!, co: l.comObjNum })).sort(byObject), ...all(links, 1).sort(byObject)]
-    : all(links, 0).sort(byObject);
+  const entries = associations(links, idx, opts.order);
   if (gas.length + 1 > 255 || entries.length > 255) throw new ProductError("GA_TABLE_TOO_LARGE", "MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
 
   const addr = Buffer.alloc(1 + 2 + gas.length * 2);

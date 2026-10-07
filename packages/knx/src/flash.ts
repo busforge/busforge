@@ -341,7 +341,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   // The memory-control-block entries the application declares (PID 27), written right after the
   // object's allocation as ETS does. They split a segment into regions the device checks at boot;
@@ -357,7 +357,9 @@ export function planSystemBFullDownload(tables: {
     // telegrams later, with no idea which one it was.
     { op: "verifyMode", on: true },
     // Everything goes back to unloaded first: a device that was half-programmed by a previous
-    // attempt must not contribute leftovers to this one.
+    // attempt must not contribute leftovers to this one. `unloadPei`: the PEI program's machine
+    // (LSM 5) first, the mask's declared first unload, where ETS is captured sending it.
+    ...(unloadPei ? [{ op: "unload", lsm: OBJ.PEI_PROGRAM } as LoadStep] : []),
     { op: "unload", lsm: P }, { op: "unload", lsm: C }, { op: "unload", lsm: A }, { op: "unload", lsm: D },
     // A Data Secure device's security object goes back to unloaded with the others, and is loaded
     // after every memory write and before any other object completes, as ETS does it.
@@ -388,6 +390,16 @@ export function planSystemBFullDownload(tables: {
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false }, { op: "loadCompleted", lsm: D, assert: false },
+    // `closeAtOnce`: the restart follows on the connection the download ran on, as ETS closes the
+    // download of an application it is captured on (Theben MIX 2: the restart within a second of the
+    // last LoadCompleted). The pause and the fresh link below are for thelsing/knx; a device that
+    // starts its application at LoadCompleted runs it for those seconds before the restart, sends its
+    // start-up telegrams then and refuses requests while it starts.
+    ...(closeAtOnce ? [
+      { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
+      { op: "verifyMode", on: false },
+      { op: "restart", requireReboot },
+    ] as LoadStep[] : [
     // The device believes any table it is handed (thelsing/knx validates nothing on LoadCompleted),
     // so the only proof that the four brackets closed is to read their states back.
     { op: "awaitReady" },
@@ -426,6 +438,7 @@ export function planSystemBFullDownload(tables: {
     // lost the lot the next time it was powered down, and came back factory-fresh.
     { op: "disconnect" }, { op: "connect" },
     { op: "restart", requireReboot },
+    ] as LoadStep[]),
   ];
 }
 

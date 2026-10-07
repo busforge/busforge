@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, wholeBytes } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
@@ -242,8 +242,7 @@ test("a Data-less segment: param bytes default to 0, gaps stay 0xFF, active over
 // RelativeSegment (System B) surgical target ownership. The relative path writes EVERY
 // non-union default (hardware: the PSU M-0162 full-image byte-match needs them), so a
 // visible param is owned even when inactive. But an Access="None" inactive param is NOT
-// owned (its on-device value is ETS-computed, e.g. the Theben "Objektlink" union tables;
-// our static default would corrupt it), and a union member is owned only when active.
+// owned (the device byte stays), and a union member is owned only when active.
 const relXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
 <ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Relative Owned">
@@ -297,11 +296,68 @@ test("relative target: visible owned (active+inactive), Access=None-inactive pre
   expect(!!t.verify[3]).toBe(false); // active Access=None union member: owned/written, not verified
 });
 
+test("a full download's read-back asserts whole bytes of verifiable parameters, not a download marker's bits", () => {
+  // Offset 0: a verifiable field beside a marker in bit 0x80; offset 1: a marker only; offset 2: a
+  // verifiable bit beside template bits no parameter owns.
+  expect(wholeBytes([0x7f, 0x00, 0x01], [0x80, 0x80, 0x00])).toEqual([0x7f, 0x00, 0xff]);
+  expect(wholeBytes([0x7f])).toEqual([0xff]);
+});
+
+// A union of Access="None" BinaryValue members, one chosen by a hidden choose, as the Theben MIX 2's
+// "Objektlink" tables: the active member writes its enumeration's bytes, the other member nothing.
+const binXml = (aBytes: string) => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
+<ApplicationProgram Id="M-0005_A-0003-01-0001" ApplicationNumber="3" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Binary Value">
+<Static>
+<ParameterTypes>
+<ParameterType Id="M-0005_A-0003-01-0001_PT-SEL"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="a" Value="0" Id="M-0005_A-0003-01-0001_PT-SEL_EN-0"/><Enumeration Text="b" Value="1" Id="M-0005_A-0003-01-0001_PT-SEL_EN-1"/></TypeRestriction></ParameterType>
+<ParameterType Id="M-0005_A-0003-01-0001_PT-A"><TypeRestriction Base="BinaryValue" SizeInBit="24"><Enumeration Text="" Value="0" Id="M-0005_A-0003-01-0001_PT-A_EN-0" BinaryValue="${aBytes}"/></TypeRestriction></ParameterType>
+<ParameterType Id="M-0005_A-0003-01-0001_PT-B"><TypeRestriction Base="BinaryValue" SizeInBit="16"><Enumeration Text="" Value="0" Id="M-0005_A-0003-01-0001_PT-B_EN-0" BinaryValue="CQk="/></TypeRestriction></ParameterType>
+</ParameterTypes>
+<Parameters>
+<Parameter Id="M-0005_A-0003-01-0001_P-1" ParameterType="M-0005_A-0003-01-0001_PT-SEL" Text="Module" Value="0"><Memory CodeSegment="M-0005_A-0003-01-0001_RS-1" Offset="0" BitOffset="0"/></Parameter>
+<Union SizeInBit="32"><Memory CodeSegment="M-0005_A-0003-01-0001_RS-1" Offset="1" BitOffset="0"/>
+<Parameter Id="M-0005_A-0003-01-0001_UP-A" ParameterType="M-0005_A-0003-01-0001_PT-A" Access="None" Text="Link A" Value="0" Offset="0" BitOffset="0"/>
+<Parameter Id="M-0005_A-0003-01-0001_UP-B" ParameterType="M-0005_A-0003-01-0001_PT-B" Access="None" Text="Link B" Value="0" Offset="0" BitOffset="0"/></Union>
+</Parameters>
+<ParameterRefs>
+<ParameterRef Id="M-0005_A-0003-01-0001_P-1_R" RefId="M-0005_A-0003-01-0001_P-1"/>
+<ParameterRef Id="M-0005_A-0003-01-0001_UP-A_R" RefId="M-0005_A-0003-01-0001_UP-A"/>
+<ParameterRef Id="M-0005_A-0003-01-0001_UP-B_R" RefId="M-0005_A-0003-01-0001_UP-B"/></ParameterRefs>
+<Code><RelativeSegment Id="M-0005_A-0003-01-0001_RS-1" LoadStateMachine="4" Size="5"><Data>AAAAAAA=</Data></RelativeSegment></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0005_A-0003-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0005_A-0003-01-0001_P-1_R"/>
+<ParameterBlock Id="M-0005_A-0003-01-0001_PB-2" Name="Hidden" Text="Hidden" Access="None">
+<choose ParamRefId="M-0005_A-0003-01-0001_P-1_R"><when test="0"><ParameterRefRef RefId="M-0005_A-0003-01-0001_UP-A_R"/></when><when test="1"><ParameterRefRef RefId="M-0005_A-0003-01-0001_UP-B_R"/></when></choose>
+</ParameterBlock>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+describe("a BinaryValue parameter writes its enumeration's bytes", () => {
+  test("the active union member's bytes, and nothing of the other member", () => {
+    const app = parseAppConfig(binXml("AQID"));
+    const a = buildRelativeSegmentTarget(app, new Map(), 4)!;
+    expect(a.bytes.toString("hex")).toBe("0001020300");
+    expect(a.owned.map((m) => (m ? 1 : 0))).toEqual([1, 1, 1, 1, 0]);
+    const b = buildRelativeSegmentTarget(app, new Map([["M-0005_A-0003-01-0001_P-1_R", "1"]]), 4)!;
+    expect(b.bytes.toString("hex")).toBe("0109090000");
+    expect(b.owned.map((m) => (m ? 1 : 0))).toEqual([1, 1, 1, 0, 0]);
+  });
+  test("bytes that do not fill the type are refused, not padded", () => {
+    expect(() => buildRelativeSegmentTarget(parseAppConfig(binXml("AQI=")), new Map(), 4)).toThrow(/PARAM_BINARY_VALUE_UNDECLARED|do not fill/);
+  });
+  test("a value no enumeration declares bytes for is refused", () => {
+    const model = toAppModel(parseAppConfig(binXml("AQID")), { includeUnions: true });
+    expect(() => encode(Buffer.alloc(4), 0, 0, model.types.get("M-0005_A-0003-01-0001_PT-A")!, "1")).toThrow(/no enumeration declares bytes/);
+  });
+});
+
 // The flash merge writes only owned bytes over the live device read and preserves the
 // rest; diffBytes counts only the owned bytes that actually change.
 const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned): RelativeSegmentTarget => {
   const bits = (m: (boolean | number)[]) => m.map((o) => (o === true ? 0xff : o === false ? 0 : o));
-  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify) };
+  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0) };
 };
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
@@ -516,7 +572,9 @@ corpusTest("the relative images of the full download and the parameter flash sta
   const h = (b: Buffer | boolean[]) => createHash("sha256").update(Buffer.isBuffer(b) ? b : Buffer.from(b.map((x) => (x ? 1 : 0)))).digest("hex").slice(0, 16);
   const pinned: [string, string, string][] = [
     ["M-0004_A-7072-21-99A7-O000A.xml.gz", "ac1f3be247fc3306/55d68d3167e051f6/186", "ac1f3be247fc3306/55d68d3167e051f6/186"],
-    ["M-0048_A-493B-21-B471.xml.gz", "6ba718daaf224267/d6ff5b529294fa99/28", "6ba718daaf224267/d6ff5b529294fa99/28"],
+    // At defaults every module slot is empty: the parameters only its channels place are left out
+    // (ETS_REJECTED_BRANCH_UNWRITTEN_APPS).
+    ["M-0048_A-493B-21-B471.xml.gz", "618de79d42321646/3c3dbc7ebbd077d1/18", "618de79d42321646/3c3dbc7ebbd077d1/18"],
     ["M-0048_A-9071-20-F258-O00EF.xml.gz", "46cbaee9e105624c/92067062ffcf6d7e/2993", "46cbaee9e105624c/92067062ffcf6d7e/2993"],
     ["M-0083_A-0137-20-7EB2.xml.gz", "1e314970f1fcd316/ec139466568e418e/249", "1e314970f1fcd316/ec139466568e418e/249"],
     ["M-0085_A-0072-30-69AA.xml.gz", "92c7b74b07859d64/50280f1974b73b94/229", "0637574cc5dee1f2/89a5a7b7cbcadf73/158"],

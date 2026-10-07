@@ -17,7 +17,9 @@ import { loadedTableAddr } from "./grouptable-read.ts";
 export type LoadStep =
   | { op: "connect" }
   | { op: "disconnect" }
-  | { op: "restart"; requireReboot?: boolean } // requireReboot defaults true; false for firmware that persists at LoadCompleted (see KnxDevice.restart)
+  // requireReboot defaults true; false for firmware that persists at LoadCompleted. confirmed: the
+  // confirmed restart (A_Restart type 1, erase code 1) instead of the basic one (see KnxDevice.restart).
+  | { op: "restart"; requireReboot?: boolean; confirmed?: boolean }
   | { op: "unload"; lsm: number }
   // load/loadCompleted assert the resulting LSM state by default (LOADING / LOADED). A
   // download that historically did NOT assert inline and checked completion only in a
@@ -44,8 +46,9 @@ export type LoadStep =
   | { op: "taskCtrl1"; lsm: number; address: number; count: number }
   // Read elements of a property and require an answer (LdCtrlLoadImageProp on the absolute
   // applications ETS is captured downloading: it reads the segment stamps, PID 27, after the last
-  // LoadCompleted and writes nothing). The values are handed to RunOpts.onRead.
-  | { op: "readProp"; obj: number; pid: number; start: number }
+  // LoadCompleted and writes nothing). The values are handed to RunOpts.onRead. `count` elements from
+  // `start` in one request (default 1), all of them required.
+  | { op: "readProp"; obj: number; pid: number; start: number; count?: number }
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
@@ -135,7 +138,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
     switch (step.op) {
       case "connect": await dev.connect(); break;
       case "disconnect": await dev.disconnect(); break;
-      case "restart": await dev.restart(step.requireReboot ?? true); break;
+      case "restart": await dev.restart(step.requireReboot ?? true, step.confirmed ?? false); break;
       case "unload": {
         open.add(step.lsm);
         await lsmEvent(dev, step.lsm, LSM.UNLOAD, opts.memMappedLsms);
@@ -173,8 +176,9 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       }
       case "readProp": {
         try {
-          const v = await dev.propReadCounted(step.obj, step.pid, step.start, 1);
-          if (v.count === 0) throw new KnxError("PROPERTY_READ_EMPTY", `object ${step.obj} PID ${step.pid} element ${step.start}: the device answered with no element, where the load procedure reads one`);
+          const count = step.count ?? 1;
+          const v = await dev.propReadCounted(step.obj, step.pid, step.start, count);
+          if (v.count !== count) throw new KnxError("PROPERTY_READ_EMPTY", `object ${step.obj} PID ${step.pid} element ${step.start}: the device answered with ${v.count} element(s), where the load procedure reads ${count}`);
           opts.onRead?.(step.obj, step.pid, step.start, v.value);
         } catch (e) { unread ??= e instanceof Error ? e : new KnxError("PROPERTY_READ_EMPTY", String(e)); }
         break;

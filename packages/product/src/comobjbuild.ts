@@ -38,7 +38,7 @@
 //      its group-object array on boot, and the device death-looped and reverted to factory. ETS sizes
 //      to 1359. The declared maximum comes from buildDeviceConfig (maxComObjectNumber).
 import type { AppConfig, ComObjFlags, ComObjPriority } from "./appconfig.ts";
-import type { CfgComObjImage } from "./config.ts";
+import type { CfgComObjImage, DeviceConfigBuild } from "./config.ts";
 import { ProductError } from "./errors.ts";
 
 // KNX "value field type" codes (KNX spec 3.5.1, "Value Field Types"), the inverse of the
@@ -295,6 +295,35 @@ export function comObjInstanceOverride(attrs: Readonly<Record<string, string>>):
     } else {
       throw new ProductError("COM_OBJECT_OVERRIDE_INVALID", `a stored com-object override carries the attribute ${attr}, which is not a flag or the priority`);
     }
+  }
+  return out;
+}
+
+// A project's com-object overrides over a configuration view already built: the stored rows
+// (com-object ref ids without the application prefix) placed on the object numbers of `view`.
+// The objects the table is written from (imageComObjects) are placed too: an object of a block the
+// page does not show is still written.
+export function placeComObjOverrides(app: AppConfig, view: Pick<DeviceConfigBuild, "blocks" | "imageComObjects">, rows: readonly { comObjRefId: string; attrs: Readonly<Record<string, string>> }[]): Map<number, ComObjInstanceOverride> {
+  const out = new Map<number, ComObjInstanceOverride>();
+  const numByRef = new Map<string, number>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
+  for (const o of view.imageComObjects.values()) numByRef.set(o.refId, o.number);
+  for (const r of rows) {
+    const full = `${app.id}_${r.comObjRefId}`;
+    const num = numByRef.get(full);
+    if (num === undefined) {
+      // An application object, or an object of a module instance (its ref id names the instance,
+      // MI-n), that the configuration does not show is not written, and neither is its override.
+      if (app.comObjectRefs.has(full) || /(^|_)MI-\d+_/.test(r.comObjRefId)) continue;
+      throw new ProductError("COM_OBJECT_OVERRIDE_UNRESOLVED", `the project sets flags on the communication object ${r.comObjRefId}, which this configuration does not resolve to an object of the application; refusing to write the com-object table without them`);
+    }
+    const o = comObjInstanceOverride(r.attrs);
+    const prev = out.get(num);
+    if (!prev) { out.set(num, o); continue; }
+    const clash = (Object.keys(o.flags) as (keyof typeof o.flags)[]).some((k) => k in prev.flags && prev.flags[k] !== o.flags[k])
+      || (o.priority !== undefined && prev.priority !== undefined && o.priority !== prev.priority);
+    if (clash) throw new ProductError("COM_OBJECT_OVERRIDE_CONFLICT", `the project sets a flag of communication object #${num} twice, differently; refusing to pick one`);
+    out.set(num, { flags: { ...prev.flags, ...o.flags }, priority: o.priority ?? prev.priority });
   }
   return out;
 }

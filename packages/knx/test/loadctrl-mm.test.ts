@@ -110,9 +110,12 @@ class PropDev {
     return Buffer.from([this.state.get(obj) ?? 0]);
   }
   async propRead(obj: number, pid: number) { return Buffer.from([pid === 5 ? this.state.get(obj) ?? 0 : 0]); }
-  async propReadCounted(obj: number, pid: number, start: number) {
-    this.props.push(`read ${obj}/${pid}#${start}`);
-    return this.stamp.length ? { objectIndex: obj, pid, count: 1, start, value: this.stamp } : { objectIndex: obj, pid, count: 0, start, value: Buffer.alloc(0) };
+  // Answers at most `elements` elements, each the stamp.
+  elements = 15;
+  async propReadCounted(obj: number, pid: number, start: number, count = 1) {
+    this.props.push(`read ${obj}/${pid}#${start}${count > 1 ? `n${count}` : ""}`);
+    const n = this.stamp.length ? Math.min(count, this.elements) : 0;
+    return { objectIndex: obj, pid, count: n, start, value: Buffer.concat(Array.from({ length: n }, () => this.stamp)) };
   }
 }
 
@@ -188,6 +191,16 @@ describe("property-mapped LSM controls (MV-0705)", () => {
     expect(await runLoadPlan(asDev(d), [{ op: "taskCtrl1", lsm: 3, address: 18155, count: 1 }, { op: "loadCompleted", lsm: 3 }], { memMappedLsms: true }).catch((e: unknown) => e))
       .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
     expect(d.writes.map((w) => w.hex)).toEqual(["33040046eb010000000000"]);
+  });
+  test("a stamp read of two elements is one request, and fails the plan when fewer come back", async () => {
+    const d = new PropDev();
+    const reads: string[] = [];
+    await runLoadPlan(d as unknown as KnxDevice, [{ op: "readProp", obj: 4, pid: 27, start: 1, count: 2 }, { op: "restart" }], { onRead: (o, p, s, v) => reads.push(`${o}/${p}#${s}=${v.length}`) });
+    expect(d.props).toEqual(["read 4/27#1n2"]);
+    expect(reads).toEqual(["4/27#1=16"]);
+    d.props = [];
+    d.elements = 1;
+    expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "readProp", obj: 4, pid: 27, start: 1, count: 2 }, { op: "restart" }]).catch((e: unknown) => e)).toMatchObject({ code: "PROPERTY_READ_EMPTY" });
   });
   test("a stamp read the device answers with no element fails the plan, after its restart", async () => {
     const d = new PropDev();

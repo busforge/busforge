@@ -133,6 +133,8 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
 export const RESTART_MASTER = 0x01;
+// The response flag in the same low bits (A_Restart_Response).
+const RESTART_RESPONSE = 0x20;
 export const ERASE = {
   CONFIRMED_RESTART: 0x01,
   FACTORY_RESET: 0x02,          // everything, including the individual address
@@ -148,6 +150,7 @@ export const OBJ = {
   ASSOC_TABLE: 2,  // association table
   COMOBJ_TABLE: 3, // com-object table
   APP_PROGRAM: 4,  // application program / parameter segment
+  PEI_PROGRAM: 5,  // PEI program (interface object type 4 on MV-07B0)
 } as const;
 
 // Connection-oriented KNX management on top of the tunnel: T_Connect, numbered
@@ -788,6 +791,37 @@ export class KnxDevice {
     await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
     this.seq = (this.seq + 1) & 0x0f;
   }
+  private async sendConfirmedRestart(): Promise<void> {
+    let take: (p: ParsedApdu | null) => void = () => undefined;
+    const answer = new Promise<ParsedApdu | null>((res) => { take = res; });
+    try {
+      // One try, waiting for the transport acknowledgement only: a second restart to a device that
+      // is already rebooting is not sent. The answer is taken by a waiter set up before the send.
+      await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); });
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION") { this.respResolve = null; throw e; }
+      // Unacknowledged, the frame still counts as sent, as the basic restart's does: the probe in
+      // restart() must not go out with the restart's sequence number, which a device that took the
+      // restart and kept running would discard as a repetition and so look rebooted.
+      this.seq = (this.seq + 1) & 0x0f;
+    }
+    const timer = setTimeout(() => take(null), 2000);
+    const r = await answer;
+    clearTimeout(timer);
+    if (r === null) { this.respResolve = null; return; }
+    if (r.apci !== (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER) || r.data.length < 3) {
+      this.respResolve = null;
+      throw new KnxError("RESTART_REFUSED", `the confirmed restart was answered with service 0x${r.apci.toString(16)} ${r.data.toString("hex")}, not an A_Restart_Response`);
+    }
+    if (r.data[0] !== 0) { this.respResolve = null; throw new KnxError("RESTART_REFUSED", `the device refused the confirmed restart with error code ${r.data[0]}`); }
+    // The seconds the device says its restart takes, before it is probed; at most 3, well inside the
+    // 6 s a silent transport connection lasts, so a device that does not reboot is still found
+    // answering.
+    await new Promise((res) => setTimeout(res, Math.min(r.data.readUInt16BE(1), 3) * 1000));
+    this.respResolve = null;
+  }
+
 
   // A_Restart, acknowledged — never fired blind.
   //
@@ -824,8 +858,14 @@ export class KnxDevice {
   // A_Restart at all (hardware-verified on the GVS AMMA: the configuration survived a power cycle
   // even though the device kept answering here). For those, a restart that does not reboot is not a
   // failure, so the caller passes requireReboot=false. The A_Restart is still sent either way.
-  async restart(requireReboot = true): Promise<void> {
-    await this.sendRestart();
+  // `confirmed`: the confirmed restart, A_Restart type 1 with erase code 1 (CONFIRMED_RESTART) and
+  // channel 0, which ETS sends at the end of a System B download (Theben MIX 2 captures, ETS6.log
+  // "ConfirmedRestart_req"). The device answers it with A_Restart_Response, an error code and the
+  // seconds it needs, and reboots. An error code other than 0 is a refused restart. No answer is
+  // allowed: the device may be gone before it gets one out, and the silence below is the proof.
+  async restart(requireReboot = true, confirmed = false): Promise<void> {
+    if (confirmed) await this.sendConfirmedRestart();
+    else await this.sendRestart();
     try {
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch {

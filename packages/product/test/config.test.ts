@@ -232,6 +232,45 @@ describe("assign target lands in imageValues (written to memory)", () => {
   });
 });
 
+describe("rejectedRefs: parameters every placement of which lies in a branch not taken", () => {
+  const xml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-9" ApplicationNumber="9" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Rejected" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-9_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="99" /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-9_P-SLOT" Name="Slot" ParameterType="M-TEST_A-9_PT-N" Text="Slot" Value="0" />
+      <Parameter Id="M-TEST_A-9_P-M" Name="Merker" ParameterType="M-TEST_A-9_PT-N" Access="None" Text="Merker" Value="1" />
+      <Parameter Id="M-TEST_A-9_P-1" Name="InSlot" ParameterType="M-TEST_A-9_PT-N" Text="In slot" Value="2"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-9_P-2" Name="ByMerker" ParameterType="M-TEST_A-9_PT-N" Text="By Merker" Value="3"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="1" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-9_P-3" Name="Twice" ParameterType="M-TEST_A-9_PT-N" Text="Twice" Value="4"><Memory CodeSegment="M-TEST_A-9_RS-4" Offset="2" BitOffset="0" /></Parameter>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-9_P-SLOT_R" RefId="M-TEST_A-9_P-SLOT" />
+      <ParameterRef Id="M-TEST_A-9_P-M_R" RefId="M-TEST_A-9_P-M" />
+      <ParameterRef Id="M-TEST_A-9_P-1_R" RefId="M-TEST_A-9_P-1" />
+      <ParameterRef Id="M-TEST_A-9_P-2_R" RefId="M-TEST_A-9_P-2" />
+      <ParameterRef Id="M-TEST_A-9_P-3_R" RefId="M-TEST_A-9_P-3" />
+    </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-9_PB-1" Name="m" Text="Main">
+      <ParameterRefRef RefId="M-TEST_A-9_P-SLOT_R" />
+      <choose ParamRefId="M-TEST_A-9_P-SLOT_R">
+        <when test="&gt;10"><ParameterRefRef RefId="M-TEST_A-9_P-M_R" /></when>
+        <when test="4"><ParameterRefRef RefId="M-TEST_A-9_P-1_R" /><ParameterRefRef RefId="M-TEST_A-9_P-3_R" /></when>
+      </choose>
+      <choose ParamRefId="M-TEST_A-9_P-M_R"><when test="1"><ParameterRefRef RefId="M-TEST_A-9_P-2_R" /><ParameterRefRef RefId="M-TEST_A-9_P-3_R" /></when></choose>
+    </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const app = parseAppConfig(xml);
+  test("a choose on a set parameter rejects; one on an unset Merker rejects nothing", () => {
+    const b = buildDeviceConfig(app, new Map());
+    expect(b.imageValues.has("M-TEST_A-9_P-1_R")).toBe(false);
+    expect(b.imageValues.has("M-TEST_A-9_P-2_R")).toBe(false);
+    expect([...b.rejectedRefs].sort()).toEqual(["M-TEST_A-9_P-1_R", "M-TEST_A-9_P-M_R"]);
+  });
+  test("a parameter reached is never rejected", () => {
+    const b = buildDeviceConfig(app, new Map([["M-TEST_A-9_P-SLOT_R", "4"]]));
+    expect(b.imageValues.get("M-TEST_A-9_P-1_R")).toBe("2");
+    expect([...b.rejectedRefs].sort()).toEqual(["M-TEST_A-9_P-M_R"]);
+  });
+});
+
 describe("module instantiation", () => {
   test("parses module defs and detects modules", () => {
     expect(moduleApp.hasModules).toBe(true);

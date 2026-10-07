@@ -294,3 +294,9 @@ corpusTest("the stamp reads of the captured M-0008: obj 1 and 2 once, obj 3 for 
   const odd = { ...lp, blocks: [{ steps: [step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "13" })] }] };
   expect(() => imageStampReads(odd)).toThrow("not the PID 27 read");
 });
+
+test("the stamp reads of the captured System B application: one read per declaration, 4/27 with both elements at once", () => {
+  const lp = { app: "M-0048_A-493B-21-B471", blocks: [{ steps: [1, 2, 3].map((o) => step("LdCtrlLoadImageProp", { ObjIdx: String(o), PropId: "27" })).concat(step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27", Count: "2" })) }] } as unknown as Parameters<typeof imageStampReads>[0];
+  expect(imageStampReads(lp)).toEqual([{ obj: 1, pid: 27, start: 1, count: 1 }, { obj: 2, pid: 27, start: 1, count: 1 }, { obj: 3, pid: 27, start: 1, count: 1 }, { obj: 4, pid: 27, start: 1, count: 2 }]);
+  expect(imageStampReads({ ...lp, app: "M-0083_A-00A2-12-4E6E" })).toEqual([]);
+});

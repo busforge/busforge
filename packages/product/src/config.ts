@@ -153,6 +153,10 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // internal parameters, which ETS writes to the memory image even though they are
   // hidden from the UI; the image build needs them. See buildDeviceConfig.
   imageValues: Map<string, string>;
+  // The top-level ParameterRefs every placement of which lies in a branch of a choose the image
+  // pass evaluated and did not take. A choose on an unset Merker evaluates nothing, so what it
+  // gates is not in here; neither is a ref placed nowhere.
+  rejectedRefs: Set<string>;
   // Resolved com-objects reached in the active dynamic tree, keyed by resolved object
   // number. Unlike `blocks` this INCLUDES com-objects inside Access="None" blocks (hidden
   // from the UI but still present in the device's com-object table / L3) and per-instance
@@ -703,7 +707,7 @@ export function buildDeviceConfig(
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": { assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "paramRef": { if (scope === TOP) place(n.refId, false); assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         // Record EVERY reached com-object (active branches, descending into Access="None"
         // blocks, per module instance) with its resolved flags, so the com-object-table
         // build sees hidden objects' flags too. Keyed by resolved number; a later active
@@ -727,7 +731,15 @@ export function buildDeviceConfig(
           if (!app.params.get(app.refs.get(n.target)?.paramId ?? "")?.union) imageValues.set(tid, av);
           break;
         }
-        case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope, imgEnv)) imgCollect(w.children, scope); break; }
+        case "choose": {
+          const taken = selectWhens(n.paramRefId, n.whens, scope, imgEnv);
+          if (scope === TOP) {
+            const evaluated = resolve(n.paramRefId, scope, imgEnv) !== undefined;
+            for (const w of n.whens) if (!taken.includes(w)) placements(w.children, evaluated);
+          }
+          for (const w of taken) imgCollect(w.children, scope);
+          break;
+        }
         // A Button owns no memory (it only names a script action), so it contributes
         // nothing to the image. A Grid/Table block is a layout, not a memory scope: its
         // <Rows>/<Columns> hold no parameters, and the placed items are the ordinary
@@ -743,7 +755,19 @@ export function buildDeviceConfig(
       }
     }
   };
+  // Each top-level ParameterRef's placements: reached, or in a branch not taken (rejected when its
+  // choose was evaluated). Everything inside a branch not taken counts as that branch.
+  const placedRejected = new Map<string, boolean>();
+  const place = (refId: string, rejected: boolean) => placedRejected.set(refId, (placedRejected.get(refId) ?? true) && rejected);
+  const placements = (nodes: DynNode[], rejected: boolean) => {
+    for (const n of nodes) {
+      if (n.kind === "paramRef") place(n.refId, rejected);
+      else if (n.kind === "container" || n.kind === "block") placements(n.children, rejected);
+      else if (n.kind === "choose") for (const w of n.whens) placements(w.children, rejected);
+    }
+  };
   imgCollect(app.dynamic, TOP);
+  const rejectedRefs = new Set([...placedRejected].filter(([, rejected]) => rejected).map(([r]) => r));
 
   // The com-object TABLE length the firmware needs: the highest com-object number the app DECLARES,
   // active or not. imageComObjects is choose-gated (it only sees the objects the current config
@@ -801,7 +825,7 @@ export function buildDeviceConfig(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, imageComObjects, maxComObjectNumber };
+  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber };
 }
 
 // One com-object of an application program's full declaration, resolved the way the
