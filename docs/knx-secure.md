@@ -425,7 +425,7 @@ two common classes of secure device cannot serve:
   flash has nothing to write. Supporting it means building a property-based configuration path, a
   separate unimplemented capability, not "adding DefaultProcedure". The MDT IP Interface/Router
   (MV-07B0) does have a System B parameter segment, but it is the house's gateway (next point), and
-  its tunnelling entries are not modeled ([owned-products.md](owned-products.md)).
+  its tunnelling entries are not modeled ([device-support.md](device-support.md#known-gaps)).
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
   restarts it, which drops the connection carrying the flash.
 

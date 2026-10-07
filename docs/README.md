@@ -29,7 +29,6 @@ document says so.
 | [findings.md](findings.md) | The protocol knowledge log: wire formats, load-procedure behaviour, the gotchas that cost days. |
 | [knx-secure.md](knx-secure.md) | KNX Data Secure: design, key handling, and the honest gap. |
 | [raw-acquisition.md](raw-acquisition.md) | Design and implementation of the collector: reading identity, properties and bounded memory from a device Busforge cannot program, read-only, with every refusal recorded. |
-| [owned-products.md](owned-products.md) | Every owned application program traced through parser, image and load procedure: which operation is offered, which one plans, and which gaps are defects or missing evidence. |
 
 ## The application
 
@@ -49,6 +48,5 @@ document says so.
 | [development.md](development.md) | Local setup, the check gate, the workspace layout, and the command-line tools. |
 | [testing.md](testing.md) | The test levels, what each proves, and the hardware smoke framework. |
 | [deployment.md](deployment.md) | Self-hosting: container, volume, environment, reverse proxy. |
-| [adr/](adr/) | Architecture decision records. |
 
 Terminology specific to this project is defined in [`../GLOSSARY.md`](../GLOSSARY.md).

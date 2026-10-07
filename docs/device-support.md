@@ -154,8 +154,31 @@ trusting a row that does not.
   group-address flash are offered, but the full download of an application that declares tunnelling
   entries (`MaxTunnelingUserEntries`) is refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`), because no
   Busforge path writes the interface's tunnelling addresses. The gate reads only that attribute: an
-  interface application that omits it is not recognised as one and keeps the full download. Details in
-  [owned-products.md](owned-products.md).
+  interface application that omits it is not recognised as one and keeps the full download.
+  The tunnelling addresses are device-instance data in the project (`AdditionalAddresses`), not part
+  of the load procedure or the parameter image; Busforge reads them only to resolve secured senders.
+  What ETS writes for them, and whether a download without them changes the tunnels the interface
+  serves, is not established: no capture of a download onto an IP interface exists. Since the full
+  download unloads and reallocates every load object, it is refused before any bus traffic, on the
+  System B and the System 7 path (unit-tested on `M-0083_A-0137` and on a System 7 application with
+  the attribute added, since no System 7 application in the catalogue declares it). An application whose family is
+  refused anyway (the MV-0012 IP Interface Secure) keeps `FULL_DOWNLOAD_UNSUPPORTED`. The capability
+  flag does not offer the download either, so a device never verified since it was placed keeps the
+  surgical flashes instead of being sent to the download; read-back and secure
+  identify stay available. Those flashes leave the properties the entries live in alone, but they are
+  not harmless: they rewrite the parameter segment, or the group tables, the com-object table and
+  (with a tool key on file) the security object, and both end in a restart of the interface, which
+  cannot be flashed over its own connection ([knx-secure.md](knx-secure.md)). The product data gives
+  the interface a System B parameter model (the IP settings are parameters), while it answered
+  `0xFFFF` when read plainly; whether a secured read returns its parameter segment is not shown. Writing the
+  entries waits for such a capture ([roadmap.md](roadmap.md#device-coverage)).
+- **Parameters located in a property instead of memory** are not part of the image model, and no
+  Busforge path reads or writes them. Typically this is the hardware type (object 0, PID 78; for
+  example on the Gira M-0008, Theben MIX 2, MDT IP Interface/Router and Jung 400021SE), on one
+  application (the MEAN WELL power supply) also the version (PID 25). In the plain ETS captures of the Jung 400021SE, whose
+  application carries such a parameter, ETS reads PID 78 and writes nothing to it, and so in the ETS
+  captures of the Gira M-0008 (full download, partial parameter and links downloads, revert): one
+  read of PID 78 each, no write. For the other applications no capture shows what ETS does.
 - **Devices that expose an object model instead of a memory image** (some IP interfaces answer an
   opaque device descriptor and offer no readable parameter model) have no read or program path
   yet.

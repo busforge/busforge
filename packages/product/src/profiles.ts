@@ -289,7 +289,7 @@ function absoluteParRefusal(proc: LoadProcedures): OperationRefusal | null {
 // is refused without that segment, so the table there was written by another tool. The declared steps
 // addressed to those objects must each have a disposition, as for the parameter flash. A declared
 // CompareProp is a read of the device, not a step on these tables: the group-address flash runs none,
-// and whether it should run the application's checks first is an open question (owned-products.md).
+// and whether it should run the application's checks first is an open question (docs/roadmap.md).
 function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; size: number } | null } | { refusal: OperationRefusal } {
   const segId = cfg.groupTables.comObjectSegment;
   const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);

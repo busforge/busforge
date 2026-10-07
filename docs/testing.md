@@ -282,6 +282,25 @@ set. Two consequences, both deliberate:
 - A capability the product does **not** claim gets the opposite check: its endpoint must **refuse**
   with a coded error. Guarding the guardrail is part of the run.
 
+### Why capabilities and behaviours
+
+- **Read-back is a write-path proof, not a correctness proof.** A value encoded wrongly but
+  consistently reads back green. So read-back stays the capability oracle (Busforge can place the
+  bytes and the device accepts them), and a **behaviour** on the bus is the correctness proof.
+- **Capabilities are the product's `DeviceCapabilities`, not a parallel vocabulary**, so the test's
+  view of what a device supports cannot drift from the server's own endpoint gate.
+- **Both channels run over the same hardware.** API-only never catches a broken user-facing path;
+  UI-only loses the fast regression.
+- **Configuration values are fuzzed** (seeded, bounded, biased to boundaries and enum values) over
+  the device's own parameter and com-object model, with "device read-back equals Busforge's image"
+  as the oracle. Hard-coded single values cover too little.
+- **No mocked-device UI tier.** Pure UI tests without hardware would be a separate subproject, and
+  the bugs worth catching there are caught by the UI channel against hardware too.
+
+The consequence is the done bar: a device counts as **done** only when every capability it claims
+and every behaviour it declares pass in **both** channels on real hardware (`Done` in
+[/GLOSSARY.md](../GLOSSARY.md)).
+
 ### What each check proves
 
 A **capability** check is a write-path proof. Its oracle is always the same: the device's own

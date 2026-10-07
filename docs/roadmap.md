@@ -116,6 +116,12 @@ started until the capability it depends on is hardware-proven.
   Parked: the two matching units are installed in the house without easy console access.
 - **Devices that answer an opaque device descriptor and expose no parameter model** (IP
   interfaces) need a different read path or genuine secure support; which one is not yet decided.
+- **Decide whether the group-address flash runs the application's checks.** A declared
+  `CompareProp` (the ABB US/U 4.2's application-id check on object 3, for example) is a read of the
+  device, not a step on the group tables; the parameter flash and the full download run it, the
+  group-address flash runs none on either system
+  ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). Whether it should, and
+  in what scope, is open.
 - **`LdCtrlTaskCtrl1` beyond the captured applications.** It runs on the Auro M-0081_A-FE01 (Address 0,
   Count 0), the Theben TheLuxa P300 (17875/1) and the Meteodata 140 S (18155/1, over `0x0104`), each in
   the form its own ETS capture shows, each run on its house unit
@@ -184,6 +190,15 @@ Two runs still to be made, then what the collector
   today a wrong PID 27 size is held only by the 1 MiB memory guard and the 10-minute bound.
 
 ## KNX Data Secure
+
+Data Secure is in the alpha scope: device access and programming with known credentials, and
+provisioning a factory device with its FDSK, so that setting up a secure device needs no existing
+ETS project. KNX IP Secure transport is a separate capability and not an alpha prerequisite.
+Diagnostic access uses valid credentials where they are required; raw acquisition is not a way
+around access control. Encrypted group communication, group-key setup and decoding secured
+telegrams in the monitor are wanted for the alpha as well, provided a feasibility investigation
+bears them out: the existing management encryption does not establish those workflows, and their
+effort and hardware evidence are open.
 
 - **No smoke behaviour exercises a fresh address Busforge secures.** The plain behaviours pin their
   fresh addresses to "off"; a group-address flash on a secure device secures a fresh "auto" address with

@@ -207,7 +207,7 @@ group-address flash re-declares both tables as one region ([below](#ets-captured
 tables, and the group-address flash runs none, as before (the ABB US/U 4.2 declares its
 application-id check on object 3; its parameter flash runs it, its group-address flash does not).
 Whether the group-address flash should run the application's checks first is an open question
-([owned-products.md](owned-products.md)).
+([roadmap.md](roadmap.md#device-coverage)).
 
 The System 7 **full download** walks the procedure's `full` steps (`planAbsoluteFullDownload`) and
 executes `Unload`, `Load`, `AbsSegment` (with the segment write), `TaskSegment`, `LoadCompleted`
@@ -228,8 +228,31 @@ presence detector (M-008E) and the second Auro application
 flag says `fullDownload` exactly where the planner runs the declared steps, and the parameter and
 group-address flash are offered exactly where their coverage blocks nothing (`operationRefusals`,
 pinned per catalogue fixture against a table written from the declared verbs in
-`packages/product/test/offer-what-plans.test.ts`; [owned-products.md](owned-products.md)). The
-refusal comes before the device is asked anything, its declared checks included.
+`packages/product/test/offer-what-plans.test.ts`). The
+refusal comes before the device is asked anything, its declared checks included. What
+`LdCtrlTaskCtrl1` sends on another application, or with another address or count, is not shown, so
+each further application declaring it needs its own ETS full download captured on the wire before it
+is run.
+
+What the user sees follows the same flag. The routes answer a refused full download with the
+planner's own code (`FULL_DOWNLOAD_STEP_UNSUPPORTED`), the device page lists the withheld writes with
+that reason, and the compatibility matrix shows them `refused`. After an interrupted flash that left
+such a device unloaded (`FLASH_INTERRUPTED_UNLOADED` and the other codes of an unloaded device), the
+flash dialog offers no download and says that only ETS can complete the load.
+
+The flag also drives two route guards on these applications. A device never verified since it was
+placed, or since its product was replaced, is refused the parameter and the group-address flash
+with a reason that names ETS instead of the impossible download (`NEVER_PROGRAMMED_USE_ETS`):
+none of these applications declares a `CompareProp`, so a surgical flash would write into a device whose
+application nothing checks. A parameter change that alters the com-object table is refused with
+`COM_OBJECT_TABLE_STALE_USE_ETS`. Both are route-tested offline on `M-0081_A-FF31`. Applications
+that are offered their full download (the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa
+P300 and Meteodata 140 S) send such a device to
+it instead (`NEVER_PROGRAMMED_USE_DOWNLOAD`, `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`), and that download
+itself refuses a device that does not hold the application with load-state machines 1, 2 and 3
+loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`, [below](#ets-captured-system-7-downloads)). An application
+whose full download is refused for another reason (the tunnelling entries of an IP interface,
+[device-support.md](device-support.md#known-gaps)) keeps its surgical flashes.
 
 Being dispositioned is not a hardware claim: which application programs have actually been
 flashed, and how far, is in [status.md](status.md).
@@ -729,6 +752,9 @@ keeps it too, but sets each object's communication bit from the links; a project
 object's communication flag differently from the application is refused there as well. Its other
 flags stay as the device holds them. A product replacement drops the old application's overrides with its other
 configuration.
+
+On hardware an override has been written only by a System 7 full download. The System B paths (full
+download, group-address flash) and the structural flash with an override are tested offline only.
 
 ## Structural flash
 

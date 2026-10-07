@@ -258,7 +258,7 @@ const grpSteps = (lp: LoadProcedures): LdStep[] =>
 
 // The steps a procedure names for a group-table download ("grp" or "all") that the System B
 // group-address flash does not run. A CompareProp is not among them: the group-address flash runs no
-// declared check, an open question kept in docs/owned-products.md. Every other such step, a property
+// declared check, an open question kept in docs/roadmap.md. Every other such step, a property
 // write without a capture above included, refuses the flash rather than be skipped.
 export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: string }[] {
   return grpSteps(lp).flatMap((s) => {
