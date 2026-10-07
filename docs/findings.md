@@ -315,6 +315,16 @@ tables), then a restart from a separate witness connection: `1.1.56 -> 0/0/250 G
 later. So an object linked purely by the System 7 GA flash transmits, which is what the linked bit
 decides. Not shown on the memory-mapped ABB US/U 4.2.
 
+**On the Auro presence detector (M-0081_A-FE01, property-mapped MV-0705) a transmit-only object
+relinked by the GA flash transmits too (house unit 1.1.x).** Its object 9 (`trigger`, transmit flag, no read flag)
+lost its only address in a group-address download and got it back, first by ETS 6 and then by the
+System 7 GA flash: config byte `0x47` -> `0x43` -> `0x47`, the same bytes from both. After the GA
+flash relinked it (the unit held no association of the object before), the first transmit the
+listener logged was the trigger on that address:
+` GROUP 1.1.x -> 5/2/6 0081` (a passive listener; record).
+Unlike the MDT run, silence while unlinked was not observed (unlinked for minutes at night), so on
+this product the run shows the relinked object working, not that the bit alone decides it.
+
 **The general lesson:** flash exactly the segments that diverge from the device, at segment
 granularity, and do not fall back to a full download for a change that only moves L1/L2/L3.
 And a read-back verify is a **placement** proof, never a **behaviour** proof: a link can be
