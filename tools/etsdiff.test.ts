@@ -786,8 +786,8 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
   // the group-address flash builds it from a read of the device (System7Profile.flashGroupTables).
   const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
   const heldComObj = Buffer.from(comObjSeg.data.map((b, i) => written.get(comObjSeg.address + i) ?? b));
-  const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[]) =>
-    planDeclaredOrderSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObjSeg.address, bytes: withLinkedCommFlags(heldComObj, new Set(links.map((l) => l.comObjNum))) });
+  const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer = heldComObj) =>
+    planDeclaredOrderSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
   const second = baseline.links.map((l) => (l.comObjNum === 10 ? { ...l, gaRaws: [...l.gaRaws, parseGa("15/7/250")] } : l));
   const TABLE_BRACKETS = (t: string) => [
     "unload:1", "unload:2",
@@ -846,8 +846,57 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     expect(behind.filter((a) => ours.has(a))).toEqual([]);
   });
 
-  test("ETS's logs of the group-address and the revert download: the table brackets, LSM 3 without unload or TaskCtrl1, the image it wrote", () => {
-    for (const [log, capture] of [["auro-m0081-ets6log-partial-links.txt", LINKS], ["auro-m0081-ets6log-partial-revert.txt", REVERT]] as const) {
+  // Object 9 ("trigger") has the transmit flag and no read flag; with object 10 it is the only object
+  // this configuration activates, and both are linked, so the linked bit changes on this unit only by
+  // unlinking one of them; the two captures remove object 9's only address and add it back.
+  const UNLINK = "auro-m0081-ets-partial-unlink9.log", RELINK = "auro-m0081-ets-partial-relink9.log";
+  const configByte = (table: Buffer | Map<number, number>, n: number) => {
+    const at = 3 + n * 4 + 2;
+    return Buffer.isBuffer(table) ? table[at] : table.get(comObjSeg.address + at);
+  };
+  const without9 = baseline.links.filter((l) => l.comObjNum !== 9);
+  const comObjOf = (img: Map<number, number>) => Buffer.from(Array.from({ length: heldComObj.length }, (_, i) => img.get(comObjSeg.address + i)!));
+
+  test("object 9 transmits only, and the full download links it: config 0x47 (linked, transmit, no read)", () => {
+    const objects = buildDeviceConfig(cfg, baseline.params).imageComObjects;
+    expect([...objects.keys()].sort((a, b) => a - b)).toEqual([9, 10]);
+    expect(objects.get(9)!.flags).toMatchObject({ read: false, transmit: true, comm: true });
+    expect([configByte(heldComObj, 9), configByte(heldComObj, 10)]).toEqual([0x47, 0x4f]);
+  });
+
+  test("group-address flash that unlinks object 9: ETS's partial download, the linked bit cleared and nothing else", () => {
+    const { plan } = gaFlash(without9);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(UNLINK, ia)));
+    expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
+    const ets = memoryImage(parseCapture(captureText(UNLINK), ia).writes);
+    const ours = bytesOf(plan);
+    expect([...ours].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
+    expect(span(ours)).toEqual(["4000-4000", "4003-4004", "402f-4031", "405c-40b6"]);
+    expect([configByte(ets, 9), configByte(ets, 10)]).toEqual([0x43, 0x4f]);
+    // The com-object table differs from the one the device held in object 9's config byte only.
+    const after = comObjOf(ets);
+    expect([...after].flatMap((b, i) => (b !== heldComObj[i] ? [comObjSeg.address + i] : []))).toEqual([comObjSeg.address + 3 + 9 * 4 + 2]);
+  });
+
+  test("group-address flash that links object 9 again: ETS's partial download, from the com-object table ETS's unlink left, the linked bit set", () => {
+    const unlinked = comObjOf(memoryImage(parseCapture(captureText(UNLINK), ia).writes));
+    expect(configByte(unlinked, 9)).toBe(0x43);
+    const { plan } = gaFlash(baseline.links, unlinked);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(RELINK, ia)));
+    const ets = memoryImage(parseCapture(captureText(RELINK), ia).writes);
+    const ours = bytesOf(plan);
+    expect([...ours].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
+    expect(span(ours)).toEqual(["4000-4000", "4003-4006", "402f-4033", "405c-40b6"]);
+    expect([configByte(ets, 9), configByte(ets, 10)]).toEqual([0x47, 0x4f]);
+    // ETS's relink writes the same tables and com-object table as its full download.
+    expect([...ets].filter(([a, b]) => written.get(a) !== b)).toEqual([]);
+  });
+
+  test("ETS's logs of its group-address downloads (address added, revert, object 9 unlinked and linked again): the table brackets, LSM 3 without unload or TaskCtrl1, the image it wrote", () => {
+    for (const [log, capture] of [
+      ["auro-m0081-ets6log-partial-links.txt", LINKS], ["auro-m0081-ets6log-partial-revert.txt", REVERT],
+      ["auro-m0081-ets6log-partial-unlink9.txt", UNLINK], ["auro-m0081-ets6log-partial-relink9.txt", RELINK],
+    ] as const) {
       const l = etsLog(log);
       expect(l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual([
         "LdCtrlConnect", "LdCtrlUnload1", "LdCtrlUnload2",

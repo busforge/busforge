@@ -93,7 +93,7 @@ value.
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6T (M-0048) | MV-07B0 | relative, module device | hardware | hardware, module-instance parameter | not proven | not proven | not proven |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven (see below) | not proven | not proven | not proven | not proven |
-| Auro presence detector (M-0081) | MV-0705 | absolute | hardware | hardware, on the house unit 1.1.x through the logging proxy, bracket and changed byte equal to ETS's partial download of `M-0081_A-FE01`, the unit's segment stamp equal to the one after ETS's download (see below) | hardware, add and remove on 1.1.x with the declared-order plan (tables unloaded and re-declared, as ETS's partial download), wire and stamps equal to ETS's (see below) | hardware, `M-0081_A-FE01` onto the house unit 1.1.x holding the application, declared order with `LdCtrlTaskCtrl1`; 151 bytes, all equal to the unit as ETS had left it, read after the restart equal to the reference: the sequence was accepted and the unit stayed loaded and answering, but no byte changed, so the transfer of changed bytes is shown by the two flashes, not by the full download (see below) | hardware: the unit answered a group read after the full download, after the parameter flash to LED = 0 and after the GA flash adding an address (on that address too); after the GA revert the removed address no longer answered and 5/3/9 did (all five writes repeated on 35ae113 with a group read after LED = 1 too) |
+| Auro presence detector (M-0081) | MV-0705 | absolute | hardware | hardware, on the house unit 1.1.x through the logging proxy, bracket and changed byte equal to ETS's partial download of `M-0081_A-FE01`, the unit's segment stamp equal to the one after ETS's download (see below) | hardware, add and remove on 1.1.x with the declared-order plan (tables unloaded and re-declared, as ETS's partial download), wire and stamps equal to ETS's (see below); unlinking and relinking the transmit-only object 9 clears and sets its linked bit as ETS's captured downloads do, written bytes and reads equal to ETS's | hardware, `M-0081_A-FE01` onto the house unit 1.1.x holding the application, declared order with `LdCtrlTaskCtrl1`; 151 bytes, all equal to the unit as ETS had left it, read after the restart equal to the reference: the sequence was accepted and the unit stayed loaded and answering, but no byte changed, so the transfer of changed bytes is shown by the two flashes, not by the full download (see below) | hardware: the unit answered a group read after the full download, after the parameter flash to LED = 0 and after the GA flash adding an address (on that address too); after the GA revert the removed address no longer answered and 5/3/9 did (all five writes repeated on 35ae113 with a group read after LED = 1 too); 5/3/9 answered after unlinking and relinking object 9 too, whose own transmit was not observed (no motion at night) |
 | Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | plans as ETS was captured; on hardware only before the stamp reads (see below) | plans as ETS was captured, not proven | hardware, onto the house unit holding the application; exactly the 822 bytes of ETS's image, shown on the wire (see below) | hardware: the unit answers a group read on object 64 after the download |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
@@ -253,6 +253,15 @@ Notes attached to that table:
   application with load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`):
   no capture shows that case. Not a
   smoke run, so the compatibility matrix does not count it.
+  **The linked bit (house unit 1.1.x, record):**
+  ETS 6 was captured removing the only address of object 9 (`trigger`: transmit flag, no read flag)
+  and adding it back, each a partial download: the config byte `0x47` → `0x43` → `0x47`, the rest of
+  the com-object table unchanged. Busforge's group-address flash plans both exactly
+  (`tools/etsdiff.test.ts`) and then ran both on the unit, `verified`: the same sequence and the same
+  bytes written, in the same load-state sequence, as ETS's (ETS's verify-mode switch and Busforge's read-backs aside), and
+  each read afterwards equal to the read after ETS's download of the same links, stamps included.
+  The unit answered a group read on 5/3/9 after each.
+  That object 9 then transmits on the link the flash set is not observed: it sends on motion, and in the night after the run none reached it (no telegram on 5/2/6 in the listening window, record); that is no motion, not a negative result.
 - **Full download on the System 7 applications declaring `LdCtrlTaskCtrl1`** (owned: Theben TheLuxa
   P300, Theben Meteodata 140 S; in the catalogue also Steinel M-008E and the second Auro application
   `M-0081_A-FF31`; not the Gira M-0008 nor the Auro M-0081_A-FE01, above) is refused before any write:
@@ -377,10 +386,10 @@ report a device family as working on the strength of a passing test suite.
   and changes only each object's linked bit; ETS rewrites that bit on a group-address download on
   both LSM styles (MDT and ABB partial-download captures). On a device holding a correct table
   that equals ETS's bytes; on one whose table another tool left wrong, the other bytes stay wrong.
-  The M-0081 gets that bit rewritten too; its ETS group-address capture linked an object
-  that was linked already, so no capture of that product shows the bit changing. A freshly linked read-capable object was proven to work on hardware, and so was
+  On the M-0081 (house unit 1.1.x) ETS's and Busforge's group-address downloads clear
+  and set the bit of the transmit-only object 9 with the same bytes (notes above). A freshly linked read-capable object was proven to work on hardware, and so was
   a **transmit-only object** linked by a GA flash alone (MDT BE-02001, see
-  [findings.md](findings.md) §7); on the memory-mapped ABB the latter is not shown. A property-mapped application that names no com-object table segment keeps the device's
+  [findings.md](findings.md) §7; on the M-0081 the transmit after the flash is not observed yet); on the memory-mapped ABB the latter is not shown. A property-mapped application that names no com-object table segment keeps the device's
   table; a memory-mapped one is refused.
 - **KNX Data Secure is shown on two devices.** The smoke spec `jung-400021se-secure` (both channels,
  ) covers the secured full download, parameter and GA flash, read-back, persistence, a
