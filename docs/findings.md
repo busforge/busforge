@@ -275,79 +275,74 @@ group tables match our image), yet the object is **functionally deaf**: it neith
 `GroupValueRead` nor transmits on change. A textbook case of green not meaning
 device-correct.
 
-Three runs on a System B actuator isolated it: a full download that already carried the links
-produced a status object that transmitted and answered reads; a baseline download without them
-followed by a GA flash that added them produced an object silent in both directions; the same GA
-flash rewriting L3 brought it back. The switch relay clacked in every case, so neither the write
-path nor the device's reaction was ever in doubt: only the object linked purely by a GA flash was
-dead, and it came alive the instant L3 was rewritten with its Communication flag set. Which
-devices hold this proof is in [status.md](status.md).
+Three downloads on a System B actuator isolate it: a full download that already carries the links
+gives a status object that transmits and answers reads; a baseline download without them followed
+by a GA flash that adds them gives an object silent in both directions; the same GA flash rewriting
+L3 brings it back. The switch relay clacks in every case, so neither the write path nor the device's
+reaction is in doubt: only the object linked purely by a GA flash is dead, and it comes alive the
+instant L3 is rewritten with its Communication flag set. Which devices hold this proof is in
+[status.md](status.md).
 
-**The fix:** the System B GA flash rebuilds L3 from the current link set and writes
-**L3+L1+L2 in one bracket**. It stays surgical, because those three are small tables, so it
-never touches the large parameter image, which is why a mere link change is not promoted to a
-full download. The staleness gate still guarantees the only L3 change is link-driven, so a
-pure re-point of an already-linked object writes L3 byte-identical (a no-op).
+**So the System B GA flash** rebuilds L3 from the current link set and writes **L3+L1+L2 in one
+bracket**. It stays surgical, because those three are small tables, so it never touches the large
+parameter image, which is why a mere link change is not promoted to a full download. The staleness
+gate guarantees the only L3 change is link-driven, so a pure re-point of an already-linked object
+writes L3 byte-identical (a no-op).
 
-**One behaviour change to keep in mind.** The GA flash used to write the device's own L3 back
-verbatim; it now **re-authors L3 from Busforge's model** of the com-object table. On a device
-Busforge itself programmed that is byte-identical apart from the link-driven flags. But a
-device last programmed elsewhere (by ETS, or with drifted parameters) may hold an L3 that
-differs in non-link bytes, and a GA flash now rewrites those objects too, then verifies green
-against Busforge's own table. So after a GA flash the device's L3 is Busforge's, not whatever it
-held before, which is the standing verify-versus-ETS gap ([verification.md](verification.md))
+**The GA flash authors L3 from Busforge's model** of the com-object table, it does not write the
+device's own L3 back. On a device Busforge itself programmed that is byte-identical apart from the
+link-driven flags. But a device last programmed elsewhere (by ETS, or with drifted parameters) may
+hold an L3 that differs in non-link bytes, and a GA flash rewrites those objects too, then verifies
+green against Busforge's own table. So after a GA flash the device's L3 is Busforge's, not whatever
+it held before, which is the standing verify-versus-ETS gap ([verification.md](verification.md))
 reaching the GA path.
 
 **System 7 does the same, because ETS does.** Its L3 config byte carries a per-object `linked`
 bit, and ETS partial downloads after a link change rewrite L3 with the group tables on both LSM
 styles (MDT BE-02001.02 property-mapped: the whole table; ABB US/U 4.2 memory-mapped: only the
-changed config bytes; 2026-09-26). Where the application names the L3 segment, the System 7 GA
-flash reads the table the device holds, changes only each object's linked bit and writes
-L3+L1+L2 in one bracket. On a device holding the table its last full download wrote, that is
-ETS's bytes.
+changed config bytes). Where the application names the L3 segment, the System 7 GA flash reads the
+table the device holds, changes only each object's linked bit and writes L3+L1+L2 in one bracket.
+On a device holding the table its last full download wrote, that is ETS's bytes.
 
-**And on System 7 such an object comes alive (MDT BE-02001.02, 2026-10-01).** Input A set to
-"switch / toggle when closing" gives object 1, "Status for toggle": no read flag, transmit flag, and
-with the device-wide "Status for toggle: request" the device sends a GroupValueRead on it after every
-start. A full download with the object unlinked, then a restart: no group telegram from the device. A
-GA flash that linked only that object to 0/0/250 (9 bytes differed: the linked bit and the group
-tables), then a restart from a separate witness connection: `1.1.56 -> 0/0/250 GroupValueRead` 2.3 s
-later. So an object linked purely by the System 7 GA flash transmits, which is what the linked bit
-decides. Not shown on the memory-mapped ABB US/U 4.2.
+**And on System 7 such an object comes alive (MDT BE-02001.02).** Input A set to "switch / toggle
+when closing" gives object 1, "Status for toggle": no read flag, transmit flag, and with the
+device-wide "Status for toggle: request" the device sends a GroupValueRead on it after every start.
+After a full download with the object unlinked and a restart, the device sends no group telegram. After
+a GA flash that links only that object (9 bytes differ: the linked bit and the group tables) and a
+restart observed from a separate connection, the device sends its GroupValueRead on the new address
+2.3 s later. So an object linked purely by the System 7 GA flash transmits, which is what the
+linked bit decides. Not shown on the memory-mapped ABB US/U 4.2.
 
 **On the Auro presence detector (M-0081_A-FE01, property-mapped MV-0705) a transmit-only object
-relinked by the GA flash transmits too (house unit 1.1.x).** Its object 9 (`trigger`, transmit flag, no read flag)
-lost its only address in a group-address download and got it back, first by ETS 6 and then by the
-System 7 GA flash: config byte `0x47` -> `0x43` -> `0x47`, the same bytes from both. After the GA
-flash relinked it (the unit held no association of the object before), the first transmit the
-listener logged was the trigger on that address:
-` GROUP 1.1.x -> 5/2/6 0081` (a passive listener; record).
-Unlike the MDT run, silence while unlinked was not observed (unlinked for minutes at night), so on
-this product the run shows the relinked object working, not that the bit alone decides it.
+relinked by the GA flash transmits too.** Its object 9 (`trigger`, transmit flag, no read flag) loses
+its only address in a group-address download and gets it back, by ETS 6 and by the System 7 GA flash
+alike: config byte `0x47` -> `0x43` -> `0x47`, the same bytes from both. After the GA flash relinks
+it, the first transmit a passive listener logs is the object's trigger on that address. Silence
+while unlinked is not shown on this product, so here the evidence is that the relinked object works,
+not that the bit alone decides it.
 
 **The general lesson:** flash exactly the segments that diverge from the device, at segment
 granularity, and do not fall back to a full download for a change that only moves L1/L2/L3.
 And a read-back verify is a **placement** proof, never a **behaviour** proof: a link can be
-byte-perfect and still deaf, which is why the smoke framework observes the bus. It was the
-behaviour check, not the read-back, that caught this.
+byte-perfect and still deaf, which is why the smoke framework observes the bus. It is the
+behaviour check, not the read-back, that catches this.
 
 ## 8. `LegacyPatchAlways` means "always write the value", not "leave it to ETS"
 
 The application-program attribute `LegacyPatchAlways="true"` marks a parameter ETS writes into the
-image on every download, over the `<Data>` byte, even when the value is the default. Busforge read
-it the other way round, as an ETS-internal marker it must not author, and left such parameters out
-of the image model. Two independent sources show what ETS does:
+image on every download, over the `<Data>` byte, even when the value is the default. It is not an
+ETS-internal marker a tool may leave out. Two independent sources show what ETS does:
 
 - **ETS captures.** Two ETS full downloads of the MDT BE-02001.02 write `0x1e` (30 ms, the
   parameter's value) at the debounce time `P-7`, whose `<Data>` byte is `0x32` (50 ms). `P-7` is a
-  visible, editable parameter, so a user's debounce setting never reached the device either.
-- **House devices ETS commissioned.** Three Theben MIX actuators (application
-  `M-0048_A-493B-21-B471`) hold the parameter values at all three of their `LegacyPatchAlways`
-  parameters (3, 15 and the "Download erfolgt" bit), where Busforge's image had `0`.
+  visible, editable parameter, so leaving it out would keep a user's debounce setting off the device.
+- **Devices ETS commissioned.** Three Theben MIX actuators (application `M-0048_A-493B-21-B471`)
+  hold the parameter values at all three of their `LegacyPatchAlways` parameters (3, 15 and the
+  "Download erfolgt" bit), where an image without them holds `0`.
 
-The earlier exclusion had raised the owned-byte match on a Theben device only because it removed
-those bytes from the comparison. `LegacyPatchAlways` parameters are now built and owned like any
-other; `tools/etsdiff.ts` matches the MDT captures byte for byte.
+Leaving these parameters out of a comparison only hides them; it does not make an image match.
+Busforge builds and owns `LegacyPatchAlways` parameters like any other; `tools/etsdiff.ts` matches
+the MDT captures byte for byte.
 
 ## 9. Several ParameterRefs of one Parameter share one value
 
@@ -357,67 +352,66 @@ default 5), shown while the minutes field is 0, and `R-1` (`Value="0"`), shown w
 Both are tested by chooses that pick one of two union members for the milliseconds field.
 
 A ref's `Value` is the default of that ref when it is the one shown; it is not a separate value.
-ETS showed it directly: switching the minutes to 1 set the seconds to 0 once, and ETS's export then
-stored a value only for the minutes; the seconds written (0) came from `R-1`'s default. With the
-minutes at 0 it evaluated the choose on `R-1` as 5, the shared value, and wrote the union member
-for 5 seconds (0 ms). Busforge evaluated `R-1` with its own default 0, activated the other member
-too, and wrote 100 ms over it.
+ETS shows it directly: switching the minutes to 1 sets the seconds to 0 once, and ETS's export then
+stores a value only for the minutes; the seconds written (0) come from `R-1`'s default. With the
+minutes at 0 it evaluates the choose on `R-1` as 5, the shared value, and writes the union member
+for 5 seconds (0 ms). Evaluating `R-1` with its own default 0 instead activates the other member
+too and writes 100 ms over it.
 
 So a parameter has one value, and it is the placed ref's: one stored on a placed ref, else the
 default of the placed ref. A value the project stores on a ref that no active branch places is a
 leftover of an earlier configuration and is neither written nor read by a test. The Theben Meteodata
 140 S (`M-0048_A-140C-14-EB70`) shows it: its project stores 5 on `UP-6673_R-6690` while the placed
-`R-6677` has nothing stored, and ETS's full download (capture) wrote `R-6677`'s default
-1, as for the two sibling unions (`0x496F-0x4971`, `0x499F-0x49A1`, `0x49CF`, `0x49D1`: 1 2 3).
-Two house Auros (`M-0081_A-FE01-11-75D9`) programmed by ETS show the same: the project stores a
-value on an unplaced ref of `P-7` and `P-16`, and the devices hold the placed ref's default.
+`R-6677` has nothing stored, and ETS's full download writes `R-6677`'s default 1, as for the two
+sibling unions (`0x496F-0x4971`, `0x499F-0x49A1`, `0x49CF`, `0x49D1`: 1 2 3). Two Auros
+(`M-0081_A-FE01-11-75D9`) programmed by ETS show the same: the project stores a value on an unplaced
+ref of `P-7` and `P-16`, and the devices hold the placed ref's default.
+
 The same holds when a configuration switches which ref is shown: the newly placed ref's default
-applies, not the value stored on the ref shown before, as ETS did on the Jung (above). A value the
+applies, not the value stored on the ref shown before, as ETS does on the Jung (above). A value the
 user set through the old ref stays stored and returns when that ref is placed again.
 Only a parameter none of whose refs is placed reads a value stored on its refs (for a choose).
-A placed ref with nothing stored keeps its own default, because
-applications select an internal parameter's value by which ref an active branch places; when
-several refs with different defaults are placed, each keeps its own, since which one ETS would use
-is unknown. Which refs are placed is determined once, by walking the tree until the placement no
-longer changes, and every pass (the view and the image) reads the same placement. When this rule
-took its present form, the images of every device's stored configuration in the house project and
-of every catalogue fixture at its defaults were compared before and after: only the Meteodata (8
-bytes) and the two Auros (1 byte each) changed, each to the byte the device holds. Configurations
-edited after a ref switch change too, by design; no capture shows ETS after such an edit beyond the
-Jung's.
+A placed ref with nothing stored keeps its own default, because applications select an internal
+parameter's value by which ref an active branch places; when several refs with different defaults
+are placed, each keeps its own, since which one ETS would use is unknown. Which refs are placed is
+determined once, by walking the tree until the placement no longer changes, and every pass (the
+view and the image) reads the same placement. Against the stored configurations of a real
+installation project and every catalogue fixture at its defaults, this rule changes the image only
+for the Meteodata (8 bytes) and the two Auros (1 byte each), each to the byte the device holds.
+Configurations edited after a ref switch change too, by design; no capture shows ETS after such an
+edit beyond the Jung's.
 
 ## 10. `ParameterByteOrder="LittleEndian"` reverses multi-byte parameters
 
 An application's `<Options>` may declare `ParameterByteOrder="LittleEndian"` (the ABB US/U 4.2
 does). ETS then writes a multi-byte parameter least significant byte first: a 16-bit value of 450
-lands as `c2 01`, not `01 c2` (2026-09-26 partial-download capture). Busforge applies it to
-byte-aligned integer parameters whose width is a whole number of bytes. A float, or a
-little-endian field that does not start on a byte boundary, is refused: no capture shows how ETS
-places one, and reversing it by guess would write a plausible wrong value.
+lands as `c2 01`, not `01 c2` (partial-download capture). Busforge applies it to byte-aligned
+integer parameters whose width is a whole number of bytes. A float, or a little-endian field that
+does not start on a byte boundary, is refused: no capture shows how ETS places one, and reversing
+it by guess would write a plausible wrong value.
 
 ## 11. A choose on a union member nothing places takes its default branch
 
 Unions overlay several parameters on the same bytes; only the member an active branch places is
 meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated
-with that member's default, it took a branch that activated three com-objects (5, 6, 8); ETS
-leaves them out (2026-09-26 partial-download capture). So a choose on a union member that is not
-placed and has no stored value takes only its default branch. A stored value on such a member
-still counts; the capture shows only the case without one, so that half is an assumption. The
-rule is narrow on purpose: a broader variant (every unplaced ref) changed the image of another
-bundled application at its defaults, with no capture to justify it.
+with that member's default, it takes a branch that activates three com-objects (5, 6, 8); ETS
+leaves them out (partial-download capture). So a choose on a union member that is not placed and
+has no stored value takes only its default branch. A stored value on such a member still counts;
+the capture shows only the case without one, so that half is an assumption. The rule is narrow on
+purpose: a broader variant (every unplaced ref) changes the image of another bundled application at
+its defaults, with no capture to justify it.
 
 ## 12. A parameter owns bits, not the byte it shares
 
-Several parameters, and union members, share one byte. The parameter flash used to own every
-byte a written parameter touched and fill the byte's other bits from the application's `<Data>`
-template. On the GVS AMMA (2026-09-26, bench) byte 64 holds "Output 3&4 function" in its top two
-bits and that channel's unions in the rest. With the channel disabled the unions are idle; the
-full download writes their `DefaultUnionParameter` (0), as ETS does, but a later parameter flash
-wrote the template's 1s beside the two owned bits (`00` became `3f`). The read-back passed,
-because the device held exactly what was written. The firmware did not ignore those bits: at the
-next group-address flash it set the Communication, Read and Transmit flags of object 8 in the
-com-object table by itself while the table was written, so the table read back `4f` where
-Busforge wrote `00`.
+Several parameters, and union members, share one byte. Owning every byte a written parameter
+touches, and filling the byte's other bits from the application's `<Data>` template, is wrong. On
+the GVS AMMA byte 64 holds "Output 3&4 function" in its top two bits and that channel's unions in
+the rest. With the channel disabled the unions are idle; the full download writes their
+`DefaultUnionParameter` (0), as ETS does. A parameter flash that writes the template's 1s beside the
+two owned bits (`00` becomes `3f`) passes its read-back, because the device holds exactly what was
+written. The firmware does not ignore those bits: at the next group-address flash it sets the
+Communication, Read and Transmit flags of object 8 in the com-object table by itself while the
+table is written, so the table reads back `4f` where `00` was written.
 
 So ownership is a bit mask per byte on both memory models: a written byte takes the owned bits
 from Busforge's image and every other bit from the device, and the read-back compares only the
@@ -426,27 +420,27 @@ owned bits. The full download still writes whole bytes; its image is compared wi
 ## 13. Write a device the way ETS does: confirmed, when it says it can take it
 
 The classic `A_Memory_Write` is answered only by the transport layer's T_ACK, which a device
-sends before its firmware has stored the bytes. On the GVS AMMA (2026-09-26, bench), writing the
-1066-byte com-object table right after reallocating its segment left one byte wrong every time:
-0x3786 held the value just written to 0x377a, twelve bytes (one chunk) earlier. Every frame on
-the wire was correct and acknowledged (logged through a proxy); written slowly, the table landed
-exactly. The device was being overtaken.
+sends before its firmware has stored the bytes. On the GVS AMMA, writing the 1066-byte com-object
+table classically right after reallocating its segment leaves one byte wrong every time: 0x3786
+holds the value just written to 0x377a, twelve bytes (one chunk) earlier. Every frame on the wire
+is correct and acknowledged (logged through a proxy); written slowly, the table lands exactly. The
+device is being overtaken.
 
 ETS never writes that device classically. It reads `PID_MAX_APDU_LENGTH` (device object, PID 56)
 after the descriptor, and on a device that answers it (GVS AMMA 55, Jung 400021SE 233) it uses
 the confirmed `A_MemoryExtended_Write` at every address, waiting for each write response; on
 the ABB US/U 4.2 and MDT BE-02001.02, which do not implement the property, it writes classic.
 Its first chunk size on the GVS, 50 bytes, is the maximum APDU minus the 5 octets around the
-data; the USB interface refused that frame and ETS continued with 35. Busforge now makes the
-same choice from the same property, with its own transport limit as the second bound, and the
-table lands exactly.
+data; the USB interface refused that frame and ETS continued with 35. Busforge makes the same
+choice from the same property, with its own transport limit as the second bound, and the table
+lands exactly.
 
 ## 14. What ETS writes in a partial download, and what Busforge writes
 
-The four partial-download captures of 2026-09-26 show one rule per device family, derived from
-which bytes changed between the two configurations and which ETS wrote:
+Four ETS partial-download captures show one rule per device family, derived from which bytes
+changed between the two configurations and which ETS wrote:
 
-| Family (bench device) | ETS reads first | Parameter segment | Group and com-object tables |
+| Family (captured device) | ETS reads first | Parameter segment | Group and com-object tables |
 |---|---|---|---|
 | System B (GVS AMMA, Jung 400021SE) | nothing | unload, realloc **without** fill, then exactly the bytes its parameter model owns (GVS 229 of 2816, Jung 186 of 7701), idle unions' `DefaultUnionParameter` included | reallocated and written whole |
 | System 7 memory-mapped (ABB US/U 4.2) | the tables and parameters | only the bytes that differ from the device | only the bytes that differ (2, 1 and 2) |
@@ -456,48 +450,44 @@ Busforge follows the same rules. The System B parameter flash owns the idle unio
 too and writes only the bytes holding an owned bit, each read back as it is written. It relies on
 the device keeping the rest across the reallocation, as ETS does, only while the segment stays at
 its old address; if the allocation moves it, the whole image is written. Its final read-back
-checks every byte of the segment against the image or against the read before the flash. The memory-mapped System 7 group-address
-flash reads the tables at their new length and writes only the differing bytes; the
-property-mapped one writes whole tables, the individual address included (ETS skips those two
-bytes; they hold the same value). The parameter
-flash on System 7 already wrote only owned bytes that differ. `tools/etsdiff.test.ts` holds the
-System B parameter bytes against the captures, address and value. All four bench devices pass both
-smoke channels with persistence on the build that introduced these rules (`50d6b80`, 2026-09-27,
-evidence/runs/2026-09-27); the GVS parameter flash took about 77 s
-instead of 96-116 s. The byte-level ETS comparison of the partial downloads lives in tests only; no
-reference evidence record is emitted for it yet.
+checks every byte of the segment against the image or against the read before the flash. The
+memory-mapped System 7 group-address flash reads the tables at their new length and writes only
+the differing bytes; the property-mapped one writes whole tables, the individual address included
+(ETS skips those two bytes; they hold the same value). The parameter flash on System 7 writes only
+owned bytes that differ. `tools/etsdiff.test.ts` holds the System B parameter bytes against the
+captures, address and value. Writing only the owned bytes brings the GVS parameter flash to about
+77 s, against 96-116 s when every byte of the segment is written. The byte-level ETS comparison of the partial
+downloads lives in tests only; no reference evidence record is emitted for it yet. Which devices
+pass these flashes on hardware is in [status.md](status.md).
 
-## 15. Tunnelling over TCP has no acknowledgement, and the bench bridge hid it
+## 15. Tunnelling over TCP has no acknowledgement
 
-Against the house's MDT SCN-IP000.03, every operation over a TCP tunnel failed with
-`TUNNEL_ACK_TIMEOUT`, and the `auto` transport (TCP first) never read a single device answer. Two
-client faults, both invisible on the bench:
+KNXnet/IP Tunnelling v2 over TCP has no TUNNELLING_ACK: xknx's `TCPTunnel` neither waits for one
+nor sends one, and ETS sends none. A client that waits for one fails every operation with
+`TUNNEL_ACK_TIMEOUT` against the MDT SCN-IP000.03, which sends none, while Busforge's own bridge,
+which acknowledges every TCP request anyway, hides the fault. Busforge's client writes each request
+once and acknowledges nothing over TCP.
 
-- **The client waited for a TUNNELLING_ACK over TCP.** KNXnet/IP Tunnelling v2 uses none on TCP (xknx's
-  `TCPTunnel` neither waits for one nor sends one; ETS sends none to the bench bridge either). The
-  bridge acknowledges every TCP request anyway, so against it the wait always ended. The client now
-  writes each request once and acknowledges nothing over TCP.
-- **The `auto` wrapper copied the receive callbacks only at connect time.** A device session installs
-  its `onCemi` on the already connected transport, so the device's answers never reached it (the
-  capture showed 1.1.x answering its descriptor read correctly, T_ACK and all, and Busforge timing
-  out). The bench connection is pinned to `tcp`, which bypasses the wrapper.
-
-With both fixed, a full read-back of the OpenKNX RaumController 1.1.x over the house interface
-completed over `auto` (TCP) (operator observation, no evidence record).
+A second trap of the same kind: a transport wrapper that picks TCP or UDP at connect time
+(Busforge's `auto`, which tries TCP first) must forward the receive callbacks a device session
+installs **after** the connect. Copying them only at connect time drops every device answer (the
+device answers correctly, T_ACK and all, and the client times out). A connection pinned to `tcp`
+bypasses the wrapper, so it does not show this. With both rules in place, a full read-back of the
+OpenKNX RaumController over `auto` (TCP) through the MDT interface completes (operator observation,
+no evidence record).
 
 What the TCP client gives up with the acknowledgement: a per-frame sign of a half-open link, since a
 socket write does not fail on a dead peer. The connection-state heartbeat (which the client runs on
-TCP too, see §23) notices a dead link within about 90 s. In between, the client now waits for the
+TCP too, see §23) notices a dead link within about 90 s. In between, the client waits for the
 interface's `L_Data.con` on every send, matched by destination and TPDU, not by sequence (§25).
 
 ## 16. OpenKNX reads its flash, not what was just written
 
-The first surgical parameter flash on an OpenKNX device (the house's RaumController 1.1.x,
-one byte: a channel's start delay 1 to 2 s) stopped with `FLASH_VERIFY_MISMATCH`: the
-confirmed `A_MemoryExtended_Write` of the 73 owned bytes was answered with success for every chunk,
-and the read straight after it still showed the old value in the last byte. About a minute later a
-read showed the new one. The flash had stopped before LoadCompleted, so the parameter load-state
-machine stayed Loading and the application did not run.
+On an OpenKNX device a confirmed `A_MemoryExtended_Write` is answered with success for every
+chunk, and a read straight after it can still show the old bytes (in one case a read about a
+minute later showed the new byte; after the restart the read shows it). A flash that read-back-verifies before LoadCompleted therefore
+stops with `FLASH_VERIFY_MISMATCH` and leaves the parameter load-state machine Loading, with the
+application not running.
 
 The firmware explains it (OpenKNX/knx and thelsing/knx `master`, same logic): `BauSystemB`
 answers both memory write services right after `Memory::writeMemory`, which on a flash platform
@@ -505,94 +495,80 @@ copies the bytes into a RAM buffer of one erase block and returns. The buffer re
 on a commit (from the restart request, "flush the EEPROM before resetting") or when a later write
 moves to another erase block. Both memory read services read the flash itself through
 `toAbsolute` (XIP on the RP2040). So any read-back before the restart can show old bytes. The
-classic write's verify mode never caught it because its echo is a copy of the request data, not a
+classic write's verify mode does not catch it because its echo is a copy of the request data, not a
 read.
 
-What changed:
+What Busforge does about it:
 
 - **No read-back of a confirmed write before the restart**, as ETS does it: the per-chunk return
-  code and the read-back after the restart are the proof. A full download on this device would have
-  hit the same wall, since its echo requests had turned into read-backs on the confirmed path.
+  code and the read-back after the restart are the proof. A full download meets the same wall if
+  it reads back on the confirmed path.
 - **A flash never calls a device "unchanged" while a load-state machine it brackets is not LOADED.**
-  The first recovery attempt reported `unchanged` with LSM 4 still Loading; a System B flash now
-  runs its bracket to complete the load, a System 7 flash refuses (`DEVICE_LOAD_INCOMPLETE`).
-- **Read-back relevance comes from the device's values** (see [verification.md](verification.md)).
-  The Busforge project held defaults for this device while the device held its real sensors and
-  channels; before the fix, reverting to the device and flashing would have reset 13 bytes.
+  A System B flash runs its bracket to complete the load, a System 7 flash refuses
+  (`DEVICE_LOAD_INCOMPLETE`).
+- **Read-back relevance comes from the device's values** (see [verification.md](verification.md)),
+  so a project holding defaults for a device that holds its real configuration does not reset it.
+- **The verify reconnects and reads once more after a silence:** the rebooted device can go silent
+  partway into a long read-back while its application starts.
 
-Recovery that day: the device held its original value again after a second write had been
-committed, so a LoadCompleted on LSM 4 and an A_Restart brought it back; all four load-state
-machines LOADED, parameter drift zero, and its presence object answered a group read.
+A one-byte surgical parameter flash with these rules on the OpenKNX RaumController is written,
+committed at the restart, all four load-state machines LOADED, and a separate read-back after the
+restart shows the new value; the flash's own read-back is cut off when the rebooted device goes
+silent about 9 KB into the 21.6 KB segment, which is why the verify reconnects. The revert to the
+original value completes as `flashed`, `verified: true`, and the presence object answers a group
+read afterwards (operator observation, no evidence record). A device left with LSM 4 Loading is recovered by a LoadCompleted on LSM 4 and an
+`A_Restart` once the right bytes are committed.
 
-With the fixes, the same one-byte change went through: written, committed at the restart, all
-four load-state machines LOADED, and a separate read-back after the restart showed the new value.
-That flash itself reported an error, because the rebooted device went silent 9 KB into the 21.6 KB
-read-back while its application started; the verify now reconnects and reads once more after such a
-silence. The revert to the original value then completed as `flashed`, `verified: true`, and the
-presence object answered a group read afterwards. Operator observation over the house interface,
-no evidence record.
+## 17. A module parameter resolves through its module definition
 
+To decide which stored parameters a flash wrote, Busforge maps a module-instance ref back to its
+definition. Module expansion builds instance ids by inserting `_M-k_MI-n`, so the inverse strips
+exactly that: `…_MD-1_M-100_MI-1_P-149_R-142` maps to `…_MD-1_P-149_R-142`. Stripping only `_MI-n`
+leaves `_M-k` in place, no module-instance parameter matches its definition, and every one of them
+counts as unwritten and keeps its old baseline after any verified download or flash. For a
+parameter with no device memory that changes the set of com-objects (the Jung 400021SE's channel
+function, "Kanalfunktion", whose value 8 removes objects #253 and #254), the stale baseline makes
+the com-object table guard compare equal values and let a surgical flash through where a full
+download is needed; the device then keeps the table without those objects. The smoke spec's
+persistence step catches that, because a link placed on #254 is gone after the restart.
 
-## 17. A module parameter resolves through its module definition, or the baseline never learns it
-
-The bench regression failed on the Jung 400021SE with a seed that swept channel 1's
-"Kanalfunktion" (`…_MD-1_M-100_MI-1_P-149_R-142`) from 1 to 8 and back. The value 8 (door/window
-status) removes com-objects #253 and #254, so the mutation was correctly promoted to a full
-download. The revert was not: it went out as a surgical parameter flash, reported `verified`, and
-the device kept the table without #253 and #254. The persistence step caught it after the restart,
-because the link the run had placed on #254 was gone from the device.
-
-The cause was one regex. To decide which stored parameters a flash wrote, Busforge maps a
-module-instance ref back to its definition, and stripped only `_MI-n`, so
-`…_MD-1_M-100_P-149_R-142` never matched the definition `…_MD-1_P-149_R-142`. Every
-module-instance parameter of every module device therefore counted as unwritten and kept its old
-baseline after any verified download or flash. For "Kanalfunktion", which has no device memory,
-the baseline still implied the default after the download that programmed 8, so the com-object
-table guard compared 1 with 1 and let the surgical flash through.
-
-The mapping now strips `_M-k_MI-n`, the exact inverse of how the module expansion builds instance
-ids (checked over every module fixture: 4384 Jung and 4648 MDT refs, no mismatch). The same seed
-on the Jung then promoted the revert to a full download and passed, persistence included. Baselines
-written before the fix still lack these parameters; see [roadmap.md](roadmap.md).
+The mapping is checked over every module fixture (4384 Jung and 4648 MDT refs, no mismatch). On the
+Jung, the same mutation and revert then promotes the revert to a full download and passes,
+persistence included.
 
 ## 18. A device in secure mode ignores a plain A_Restart
 
-Busforge's first secured full download of the Jung 400021SE (2026-09-28) wrote every segment and the
-security object, closed every load bracket, and then failed with `RESTART_IGNORED`. The decrypted
-capture showed why: `sendRestart` built its frame beside the request machine and sent A_Restart in
-clear. The device acknowledged it on the transport layer (T_ACK) and then did nothing with it, and
-answered the secured descriptor read that followed. A device in secure mode accepts no plain
-application service on a secured tool connection, and a T_ACK says only that the frame arrived.
+A device in secure mode accepts no plain application service on a secured tool connection. A plain
+`A_Restart` after a secured full download of the Jung 400021SE is acknowledged on the transport
+layer (T_ACK) and then ignored; the device answers the secured descriptor read that follows. A T_ACK
+says only that the frame arrived.
 
-Every numbered service now goes through one wire step (`KnxDevice.onWire`), the restart and the
-master reset included. The rerun restarted and verified. The restart check caught it because it
-proves the reboot by the device's silence, not by the acknowledgement; a check that trusted the
-T_ACK would have called this download done.
+Every numbered service in Busforge goes through one wire step (`KnxDevice.onWire`), the restart and
+the master reset included, so on a secured connection each is secured. The restart check proves the
+reboot by the device's silence, not by the acknowledgement; a check that trusted the T_ACK would
+call such a download done (`RESTART_IGNORED` is the refusal).
 
-Two sizes from the same capture: ETS never sends a secured request longer than 40 octets on the
-bench path (after 151-byte frames went unanswered it wrote 22-byte memory chunks and 18-element
-property writes, both exactly 40), and Busforge now holds secured writes to that.
+On the path it was captured on (a KNXnet/IP tunnel through Busforge's bridge to TP), ETS never
+sends the Jung a secured request longer than 40 octets:
+after 151-byte frames go unanswered it writes 22-byte memory chunks and 18-element property writes,
+both exactly 40. Busforge holds secured writes to that.
 
 ## 19. What a factory-fresh secure device demands of the activation
 
-Activating the Jung 400021SE after a physical master reset (2026-09-29) failed three times before it
-worked, each time on something only the device could show (the second item below is a precaution
-taken on the way, not one of them). None of it was visible against the
-already-secured device, and none of it against the decrypted ETS capture read only for its content.
+Activating the Jung 400021SE after a physical master reset fails until two things are right, both
+shown only by the factory-fresh device (the sequence start below is a precaution, not one of them).
+None of it shows against an already-secured device, and none in the decrypted ETS capture read only
+for its content.
 
 - **An unanswered Sync leaves a transport connection behind.** Trying the stored key first, then the
-  factory key on a new link, got a T_ACK and no answer, until the failed attempt was closed with a
-  T_Disconnect. This is shown: the same run with only the sequence change below still failed, and
-  with the T_Disconnect added it worked, while a script that always disconnected opened the device
-  under its factory key every time.
-- **The tool's Sync sequence now starts at a clock.** Busforge started every session at 1; ETS starts
-  at a millisecond clock (`0x004024085340`), and Busforge now at milliseconds since 2018-01-01, so the
-  start grows across sessions as replay protection expects. That a factory device ignores a repeated
-  start of 1 was the first suspicion here and was never shown on its own: the run that suggested it
-  also lacked the T_Disconnect.
+  factory key on a new link, gets a T_ACK and no answer until the failed attempt is closed with a
+  T_Disconnect. Shown: without the T_Disconnect the activation fails, with it the device opens under
+  its factory key every time.
+- **The tool's Sync sequence starts at a clock.** ETS starts at a millisecond clock, Busforge at
+  milliseconds since a fixed epoch (`TOOL_SEQUENCE_EPOCH`), so the start grows across sessions as
+  replay protection expects. That a factory device ignores a repeated start of 1 is suspected, not shown on its own.
 - **Switching security mode on takes three octets**, reserved, service 0 and mode 1, exactly as ETS
-  sends them. Two octets (a misreading of the capture, pinned by a test that read it the same way)
-  are refused with return code `0xF2`.
+  sends them. Two octets are refused with return code `0xF2`.
 
 A master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither answered nor
 carried out by this device; its only way back to the factory key is physical: bus voltage on with the
@@ -600,233 +576,194 @@ programming button held (slow blinking), release, hold again for 5 s (fast blink
 
 ## 20. A secure device answers no secured group read from a sender it does not list
 
-On 2026-09-29 the bench tunnel (1.1.100) sent the ETS-secured Jung 400021SE two GroupValueReads on its
-secured address 0/0/1, whose object has the read flag: one plain, one secured with the address's key
-from the project (SCF 0x10, a fresh sequence). Neither got an answer. The plain one is expected, the
-object's security flag demands authentication and confidentiality. For the secured one, ETS had
-loaded the device's security individual address table (PID 54) empty, and a receiver keeps the last
-sequence per sender there; a sender it does not list is dropped. That this is the reason is
-consistent with the table's content, not shown by a second experiment (adding 1.1.100 to PID 54
-would be a write to the security object).
+A secured GroupValueRead (SCF 0x10, the address's group key, a fresh sequence) from a tunnel the Jung
+400021SE does not list in its security individual address table (PID 54) gets no answer, even though
+the object has the read flag; a plain one gets none either, as the object's security flag demands
+authentication and confidentiality. A receiver keeps the last sequence per sender in PID 54 and
+drops a sender it does not list. That this is the reason is consistent with the table's content
+(ETS had loaded it empty) and with §22, where the same read is answered once
+ETS lists the tunnel.
 
 What follows for Busforge: it cannot stimulate a secured object from the bus without being entered
 in the device's PID 54. Observing needs no table, a monitor only needs the group key, so the monitor's
-decryption can be shown on the bus only by a telegram the device sends by itself (here, its contact
-input).
-
+decryption can be shown on the bus by a telegram the device sends by itself (a contact input, say).
 
 ## 21. The Jung ignores a Sync request that comes less than a second after the previous one
 
-A re-download of the ETS-secured Jung 400021SE from ETS 6.4.1 failed every time on the bench
-(2026-09-29, four attempts: two partial, two full application downloads, with and without an added
-secured sender). The decrypted capture was the same each time: a Sync answered, a secured descriptor
-read and a secured serial read answered, then a second S-A_Sync_Req that the device never answered,
-after which ETS gave up (its later attempts use another key and its own sequence, which the device
-also ignores). No write left ETS; the device stayed as it was. The first commissioning (ticket 28)
-worked because it needs only one Sync.
-
-A replica of ETS's frames from a script (same connectionless secured services, same control bytes,
-the same plain reads in between, direct to the bridge and through the logging proxy) was answered
-every time, until it also matched ETS's **pace**. Measured with the second Sync.req sent a fixed time
-after the first (each gap run at least twice): 800 and 900 ms no answer, 1000, 1200, 1500 ms and
-longer answered. ETS 6 sends its second Sync about 0.8 s after the first, just inside the window.
-
-So the Jung drops a Sync.req that arrives within about a second of the previous one; the bridge, the
-proxy, the tool key, the device's sequence state and the secured-sender assignment are not the cause
-(an earlier note here blamed the re-download path and the bench bridge; both were wrong). Whether
-ETS with a slower interface stays outside the window is not known. On the bench, the capture proxy
-now holds back a Sync.req until 1.2 s after the last one, and ETS can download the device again.
+The Jung 400021SE drops an `S-A_Sync_Req` that arrives within about a second of the previous one.
+A script replaying ETS's frames (same connectionless secured services, same control bytes, the same
+plain reads in between, direct to the bridge and through a logging proxy) is answered every time
+until it also matches ETS's pace. Measured with the second Sync.req sent a fixed time after the
+first (each gap run at least twice): 800 and 900 ms no answer, 1000, 1200, 1500 ms and longer answered.
+ETS 6 sends its second Sync about 0.8 s after the first, just inside the window, so an ETS
+re-download of the secured Jung fails every time (partial and full application downloads, with and
+without an added secured sender): one Sync answered, a secured descriptor and serial read
+answered, the second Sync unanswered, then ETS gives up without writing (its later attempts use
+another key and its own sequence, which the device also ignores). A first commissioning needs only one
+Sync and is not affected. The bridge, a proxy, the tool key, the device's sequence state and the
+secured-sender assignment are not the cause. Whether ETS with a slower interface stays outside the
+window is not known; a capture proxy that holds back a Sync.req until 1.2 s after the last one lets
+ETS download the device.
 
 Busforge runs one Sync per session, and its activation's second Sync (under the new key) follows
-several writes, so it had not met this. `KnxDevice` keeps 1.2 s between two Syncs to the same
-device (`SYNC_GAP_MS`), across transports: two previews of the flash dialog back to back, each on
-its own tunnel, met the window on 2026-09-30 (the second got `SECURE_SYNC_NO_RESPONSE`).
+several writes. `KnxDevice` still keeps 1.2 s between two Syncs to the same device (`SYNC_GAP_MS`),
+across transports: two previews of the flash dialog back to back, each on its own tunnel, otherwise
+meet the window (`SECURE_SYNC_NO_RESPONSE`).
 
 ## 22. How ETS loads a secured sender into a receiver's PID 54, and what it buys
 
-With the Sync spacing in place (§21), ETS 6.4.1 downloaded the Jung 400021SE after an MDT IP Router
-Secure's tunnelling channel (set to 1.1.100) had been made a sender of the secured 0/0/1 (drag the
-address onto the channel in Topology). The partial download completed (2026-09-29, capture
-`ets-pid54-sender-reference.log` on the bench, decrypted with the project's tool key). Its security
-object bracket, in order (A_PropertyExtValue_WriteCon to object type 17, instance 1):
+With the Sync spacing in place (§21), ETS 6.4.1 downloads the Jung 400021SE after an MDT IP Router
+Secure's tunnelling channel is made a sender of a secured group address (drag the address onto the
+channel in Topology). Its security object bracket in that partial download, in order
+(A_PropertyExtValue_WriteCon to object type 17, instance 1, decrypted with the project's tool key):
 
 | Write | Bytes after the object/PID header | Meaning |
 |---|---|---|
 | PID 54, start 0, 1 element | `0000` | clear the table (element 0 is the count) |
-| PID 54, start 1, 1 element | `1164 000000000000` | entry 1: sender 1.1.100, last sequence 0 |
+| PID 54, start 1, 1 element | `<IA:2> 000000000000` | entry 1: the tunnel's individual address, last sequence 0 |
 | PID 53, start 1, 1 element | `0001` + 16-byte key | key of address-table index 1 |
 | PID 61, start 1 | one flag per object, 18 elements per write | as in the first commissioning |
 
-So a PID 54 entry is 8 bytes, the sender's individual address then its last accepted sequence, and
-ETS starts a newly listed sender at sequence 0 (any first telegram is fresh). The device confirmed each
-write with a count of 1. The Jung itself, the only other device on 0/0/1 and its sender, is not listed
-in its own table.
+So a PID 54 entry is 8 bytes, the sender's individual address then its last accepted sequence (6
+bytes), and ETS starts a newly listed interface sender at sequence 0 (any first telegram is fresh).
+The device confirms each write with a count of 1. A device is never listed in its own table (shown on two devices).
 
-Effect, shown right after: a secured GroupValueRead on 0/0/1 from 1.1.100 (group key, SCF 0x10) now
-draws a secured GroupValueResponse from the Jung (value 0, contact open), where before the download
-the same frame was ignored (§20). With several senders the order is not shown here (one entry);
-thelsing/knx looks entries up by binary search, so ascending by address is the safe order.
+Effect: a secured GroupValueRead on that address from the listed tunnel (group key, SCF 0x10) draws a
+secured GroupValueResponse from the Jung, where before the download the same frame is ignored (§20).
 
-**Two secure devices on one secured address (2026-09-30).** ETS 6.4.1 secure-commissioned the bench's
-GVS AMMA (1.1.203) from its certificate and linked its switching object (receives) and its status
-object (transmits) to 0/0/1, beside the Jung (object 253 transmits on it), then downloaded both
-partially (capture `ets-gvs-secure-2026-09-30.log`, decrypted with the exported project's keys). Each
-PID 54 was cleared and then written with two elements in one request:
+**Two secure devices on one secured address.** With the GVS AMMA secure-commissioned by ETS from its
+certificate, its switching object (receives) and its status object (transmits) linked to the same
+secured address as the Jung (whose object 253 transmits on it), and both downloaded partially, ETS
+clears each PID 54 and writes two elements in one request:
 
 | Receiver | Entry 1 | Entry 2 |
 |---|---|---|
-| GVS 1.1.203 | `1164 000000000000` (1.1.100, sequence 0) | `11cc 000000010bcd` (the Jung) |
-| Jung 1.1.204 | `1164 000000000000` | `11cb 0000000ab9ae` (the GVS) |
+| GVS AMMA | the tunnel, sequence 0 | the Jung, at a sequence ETS saw it send |
+| Jung 400021SE | the tunnel, sequence 0 | the GVS AMMA, at a sequence ETS saw it send |
 
-So ETS listed the other secured device that transmits on the address (one pair of devices shown),
-ascending by address, never the device itself, and started it not at 0 but at the `SequenceNumber`
-the project holds for that device: `0x0AB9AE` is the GVS's value in the exported project. An interface sender still starts at 0.
-The Jung was downloaded although ETS showed it as needing nothing: ETS does not flag a receiver whose
-sender list changed. A device whose objects on the address only receive is not listed (below).
+So ETS lists the other secured device that transmits on the address, ascending by address, never the
+device itself (one pair of devices shown; thelsing/knx looks entries up by binary search, so
+ascending is also the safe order for more). It starts such a device not at 0 but at the
+`SequenceNumber` the project holds for it. An interface sender still starts at 0. ETS downloads a
+receiver whose sender list changed even though it shows it as needing nothing: it does not flag such
+a receiver.
 
-**Where ETS's value comes from.** It is the last sequence ETS saw that device send. The GVS answered
-the last request of its own download (13:37:12) with sequence `0x0AB9AE`, the value ETS wrote into the
-Jung's table 47 s later. The Jung's Sync response declared `0x010BCD` as its next sequence and its first
-answer used it; that is the value in the GVS's table. So ETS takes a device's tool-access answers to
-come from the counter it sends group telegrams from. On the Jung that holds: its sending counter, PID 59
-of the security object, read `0x011028` on 2026-09-30 evening, and the last answer of its next session
-carried `0x011030`. For the GVS it is not compared. Busforge records
-the same value after each session (`SecureSession.peerSequence`, the key store's `seq_group`).
+**Where ETS's value comes from.** It is the last sequence ETS saw that device send: the GVS's answer
+to the last request of its own download carries the value ETS writes into the Jung's table; the
+Jung's Sync response declares its next sequence, its first answer uses it, and that is the value in
+the GVS's table. So ETS takes a device's tool-access answers to come from the counter it sends group
+telegrams from. On the Jung that holds: its sending counter, PID 59 of the security object, and the
+sequences of its next session's answers continue from the same counter. For the GVS it is not
+compared. Busforge records the same value after each session (`SecureSession.peerSequence`, the key
+store's `seq_group`).
 
-**A device that only receives, a plain device, a new address (2026-10-01).** Three more ETS 6.4.1 runs
-on the same bench, partial downloads of the GVS only, captured and decrypted
-(`scratchpad/cap-1001`, local):
+**A device that only receives, a plain device, a new address.** Further ETS 6.4.1 partial downloads
+of the GVS only:
 
-- *Only receives.* The Jung's transmitting object 253 unlinked from 0/0/1 and its receive-only object
-  254 ("Schalten - Status": communication and write flags, no read or transmit flag) linked instead. The GVS's PID 54 came back as
-  `1164 000000000000` alone: ETS does not list another secured device whose objects on the address
-  only receive.
-- *A plain device.* Linking the MDT BE-02001's transmitting object to 0/0/1: with the address's
-  security on "Automatisch" (the default) ETS warns that 0/0/1 will then communicate unencrypted, for
-  every device on it; with "Erzwungen an" it refuses the link ("Eine sichere Gruppenadresse kann
-  nicht zu einem Gerät gelinkt werden, welches keine Sicherheit unterstützt"). ETS never programs a
-  plain device onto an address that stays secured. (Both dialogs cancelled; nothing was downloaded.)
-- *A new address.* The GVS's switching object linked to a new 0/0/2 as well: the address is secured
-  automatically, and the download wrote a second PID 53 element, `0002` and a 16-byte key ETS made for
-  it. PID 54 stayed `1164` alone: a new address gets no interface sender of its own.
-- *A key table that shrinks.* Deleting 0/0/2 again, the next download wrote PID 53 element 1 only,
-  start 1, and never touched element 0: the GVS kept two entries, the second for address-table index 2,
-  which the one-entry address table no longer has. ETS leaves such an entry; it refers to nothing.
+- *Only receives.* With the Jung's transmitting object 253 unlinked from the address and its
+  receive-only object 254 ("Schalten - Status": communication and write flags, no read or transmit
+  flag) linked instead, the GVS's PID 54 holds the tunnel alone: ETS does not list another secured
+  device whose objects on the address only receive.
+- *A plain device.* Linking the MDT BE-02001's transmitting object to the secured address: with the
+  address's security on "Automatisch" (the default) ETS warns that the address will then communicate
+  unencrypted, for every device on it; with "Erzwungen an" it refuses the link ("Eine sichere
+  Gruppenadresse kann nicht zu einem Gerät gelinkt werden, welches keine Sicherheit unterstützt").
+  ETS never programs a plain device onto an address that stays secured.
+- *A new address.* The GVS's switching object linked to a second, new address as well: the address is
+  secured automatically, and the download writes a second PID 53 element, `0002` and a 16-byte key ETS
+  makes for it. PID 54 keeps the tunnel alone: a new address gets no interface sender of its own.
+- *A key table that shrinks.* Deleting that address again, the next download writes PID 53 element 1
+  only, start 1, and never touches element 0: the GVS keeps two entries, the second for address-table
+  index 2, which the one-entry address table no longer has. ETS leaves such an entry; it refers to
+  nothing.
 
-**How the project file carries the mode (2026-10-02).** Three exports of the bench project from ETS
-6.4.1 with 0/0/1 set in turn to each mode: "Automatisch" writes no `Security` attribute on the
-`<GroupAddress>`, "Erzwungen an" writes `Security="On"` beside the `Key`, "Erzwungen aus" writes
-`Security="Off"` and drops the `Key`. Switching to "Erzwungen aus" first shows a warning that the
-address will communicate unencrypted. ETS's undo brought the address back to "Automatisch" with the
-same key (compared by hash across the exports).
+**How the project file carries the mode.** ETS 6.4.1 exports with the address set in turn to each
+mode: "Automatisch" writes no `Security` attribute on the `<GroupAddress>`, "Erzwungen an" writes
+`Security="On"` beside the `Key`, "Erzwungen aus" writes `Security="Off"` and drops the `Key`.
+Switching to "Erzwungen aus" first shows a warning that the address will communicate unencrypted.
+ETS's undo brings the address back to "Automatisch" with the same key.
 
 ## 23. A refused TCP connect from Bun proves nothing, and TCP tunnels need the heartbeat too
 
-On 2026-09-29 the dev server failed every bus operation for minutes with `TCP connect to
-198.51.100.231:3671 failed: connect ECONNREFUSED`, while `nc` from the same Mac connected to the same
-port and the bridge was listening. Restarting the server fixed it at once. Two things were learned:
-
 **Bun's `ECONNREFUSED` is not a refusal.** Bun 1.3.8 reports every TCP connect that fails at once as
-`ECONNREFUSED` (errno -61). Reproduced on the Mac: with `ulimit -n 64` an exhausted descriptor table
-gives `ECONNREFUSED`, and a connect to `0.0.0.1`, where Node reports `EHOSTUNREACH`, gives
-`ECONNREFUSED` in Bun too. A refused connect in Bun does not stick either: refused-then-listening
-recovers on the next attempt, locally and against the bench host, and 40 tunnel connect/disconnect cycles
-leak no descriptors. The most likely cause of the stuck server is macOS Local Network privacy denying
-the long-lived process LAN access (`EHOSTUNREACH` in Node terms). That is a documented pattern on
-macOS 15 and later (Apple developer forums 776552, 765285): new processes and Apple's own binaries
-(`nc`) are unaffected, and restarting the process ends it. **Not proven here**: the unified log was
-not readable, and the failure has not recurred under a probe yet. ETS runs on the bench host, so "after an
-ETS download" in the first report was most likely coincidence. The client's connect error now says
-that Bun cannot tell these causes apart, instead of passing `ECONNREFUSED` on as the cause.
+`ECONNREFUSED` (errno -61). Reproduced on macOS: with `ulimit -n 64` an exhausted descriptor table
+gives `ECONNREFUSED`, and a connect to an address in the reserved "this network" block, where Node
+reports `EHOSTUNREACH`, gives `ECONNREFUSED` in Bun too. A refused connect in Bun does not stick: refused-then-listening recovers on
+the next attempt, and 40 tunnel connect/disconnect cycles leak no descriptors. A long-lived Bun
+process on macOS that gets every connect "refused" while `nc` reaches the same listening port, and
+that recovers on restart, most likely lost LAN access to macOS Local Network privacy (`EHOSTUNREACH`
+in Node terms). That is a documented pattern on macOS 15 and later (Apple developer forums 776552,
+765285): new processes and Apple's own binaries (`nc`) are unaffected, and restarting the process
+ends it. Not proven here. The client's connect error says that Bun cannot tell these causes apart,
+instead of passing `ECONNREFUSED` on as the cause.
 
-**The connection-state heartbeat runs on TCP.** Busforge's client armed no heartbeat on TCP and its
-bridge never reaped a quiet TCP channel, on the belief that KNXnet/IP v2 drops the procedure there.
-Both references contradict that: ETS 6 sent a CONNECTIONSTATE_REQUEST over its TCP tunnel to the
-bridge (`06 10 02 07 00 10 01 00 08 02 00 00 00 00 00 00`, capture `ets-plain-redownload.log`), and
-Calimero's `ClientConnection` starts the 60 s heartbeat regardless of transport. Without it, a TCP
-client whose FIN never arrived kept its channel on the bridge indefinitely (three ESTABLISHED
-connections from the Mac with no process behind them, every new tunnel refused with status `0x24`),
-and a Busforge monitor over TCP would have kept showing "connected" over a dead link. Both sides now
-run the procedure on TCP exactly as on UDP.
+**The connection-state heartbeat runs on TCP.** KNXnet/IP v2 does not drop the procedure on TCP:
+ETS 6 sends a CONNECTIONSTATE_REQUEST over its TCP tunnel
+(`06 10 02 07 00 10 01 00 08 02 00 00 00 00 00 00`), and Calimero's `ClientConnection` starts the
+60 s heartbeat regardless of transport. Without it, a TCP client whose FIN never arrives keeps its
+channel on the server indefinitely (ESTABLISHED connections with no process behind them, every new
+tunnel refused with status `0x24`), and a monitor over TCP keeps showing "connected" over a dead link.
+Busforge's client and bridge both run the procedure on TCP exactly as on UDP.
 
-Shown on hardware the same evening: a raw TCP client that opened a channel and sent nothing kept it
-for 150 s on the old bridge and was dropped at 124 s by the new one (DISCONNECT_REQUEST, then FIN).
-A Busforge TCP tunnel idle for 190 s stayed up against the new bridge and read a device afterwards,
-and stayed up for 190 s against the house's MDT KNX IP interface, which therefore answers the
-heartbeat over TCP (three unanswered requests would have closed it after about 90 s). ETS is not
-affected by the reaper: in every capture it closes its device-management channel within
-milliseconds of reading two properties, and it was never silent for more than 8 s on an open tunnel.
+Shown on hardware: a raw TCP client that opens a channel and sends nothing is dropped by Busforge's
+bridge at about 124 s (DISCONNECT_REQUEST, then FIN). A Busforge TCP tunnel idle for 190 s stays up
+against the bridge and reads a device afterwards, and stays up for 190 s against an MDT KNX IP
+interface, which therefore answers the heartbeat over TCP (three unanswered requests would close it
+after about 90 s). ETS is not affected by the reaper: in every capture it closes its
+device-management channel within milliseconds of reading two properties, and it is never silent for
+more than 8 s on an open tunnel.
 
 ## 24. A device may close the connection instead of answering
 
-A plain `A_FunctionPropertyExtState_Read` of PID 51 (security mode, object type 17) on the four bench
-devices (2026-09-30) got four different answers. The GVS AMMA with Secure, never activated, answered
-return code 0, mode 0. The Jung 400021SE in secure mode answered return code `0xFC` (access denied),
-and a plain serial read with no element. The ABB US/U 4.2 did not acknowledge the request at all.
-The MDT BE-02001.02 acknowledged each of the three tries on the transport layer, never answered, and
-about six seconds after the first sent a `T_Disconnect` (`0x81`).
+A plain `A_FunctionPropertyExtState_Read` of PID 51 (security mode, object type 17) gets four
+different answers from four devices. The GVS AMMA with Secure, never activated, answers return code
+0, mode 0. The Jung 400021SE in secure mode answers return code `0xFC` (access denied), and a plain
+serial read with no element. The ABB US/U 4.2 does not acknowledge the request at all. The MDT
+BE-02001.02 acknowledges each of three tries on the transport layer, never answers, and about six
+seconds after the first sends a `T_Disconnect` (`0x81`). Why the MDT closes is not shown: six seconds
+is also the transport layer's connection timeout, so it may close an idle connection rather than
+refuse the service.
 
-Busforge had taken that `T_Disconnect` for an answer: its request machine only recognised the
-numbered control frames (`T_ACK`/`T_NAK`, `0xC0` and above), so `0x81` was parsed as a data frame
-with service `0x100`, acknowledged with a `T_ACK`, and reported as "answered with service 0x100".
-Why the MDT closed is not shown: six seconds is also the transport layer's connection timeout, so
-it may have closed an idle connection rather than refused the service.
+A request machine that recognises only the numbered control frames (`T_ACK`/`T_NAK`, `0xC0` and
+above) parses `0x81` as a data frame with service `0x100`, acknowledges it and reports an answer.
+In Busforge a device's `T_Connect`/`T_Disconnect` is never acknowledged or delivered, and a
+`T_Disconnect` ends the request in flight as `DEVICE_CLOSED_CONNECTION` without asking again: a
+closed connection takes no further numbered frame. It is deliberately not `DEVICE_NOT_ANSWERING`,
+which callers read as silence: a device that closes is present. The address check before an
+individual-address write counts it as taken (a device in another tool's connection answers a
+stranger's frame this way), and the read after a restart reconnects and reads once more, as it does
+after silence.
 
-A device's `T_Connect`/`T_Disconnect` is now never acknowledged or delivered, and a `T_Disconnect`
-ends the request in flight as `DEVICE_CLOSED_CONNECTION` without asking again: a closed connection
-takes no further numbered frame. It is deliberately not `DEVICE_NOT_ANSWERING`, which callers read as
-silence: a device that closes is present. The address check before an individual-address write
-counts it as taken (a device in another tool's connection answers a stranger's frame this way), and
-the read after a restart reconnects and reads once more, as it does after silence.
+## 25. A device that "stops answering" may be a stalled TCP stream
 
-## 25. A secured parameter flash that "stopped answering" was a stalled TCP stream
+A long run of secured management requests over a TCP tunnel can look like `DEVICE_NOT_ANSWERING`,
+to a client that does not wait for the interface's confirmation, with the device not at fault. Traced through a logging proxy: every secured read is answered within about
+300 ms up to one request the interface still confirms (`L_Data.con`); after it nothing more arrives
+on that TCP stream, while the server side holds it with unsent bytes queued towards the client
+(`FIN-WAIT-1`), which is where the device's answer is. Polling the server's TCP state shows lost
+segments on a Wi-Fi path that TCP resends after about 200 ms; a few losses in a row put TCP into
+retransmission back-off (0.2, 0.4, 0.8, 1.6, 3.2 s), longer than a device request's three tries of
+about 2 s each. Neither the device nor Data Secure is the cause: a stream that stalls for a few
+seconds cuts off a long run of management requests.
 
-The secure smoke spec on the Jung 400021SE broke off twice in a parameter flash with
-`DEVICE_NOT_ANSWERING`: on 2026-09-29 (seed 3986290679, after the parameter object was unloaded, so
-the device kept no application until a full download) and on 2026-09-30 with the same seed, this time
-in the read-back after the restart. The 2026-09-30 run went through a logging proxy on the Mac:
+Busforge tells the two apart by waiting, over TCP, for the interface's confirmation of every send
+(§15), matched by destination and TPDU. A missing confirmation within 3 s is `TUNNEL_CON_TIMEOUT`
+("the link to the interface stalled, or the interface is stuck; whether the device answered is
+unknown"), not `DEVICE_NOT_ANSWERING`. It is not retried (a repetition would queue behind the stuck
+frame), and the load runner and the reconnect after a restart pass it on rather than report the
+device as silent. Shown on hardware: the confirmation matches against Busforge's bridge and an MDT
+KNX IP interface (reads and a secured smoke run). Not shown: `TUNNEL_CON_TIMEOUT` on a real stall.
 
-- Every secured read of the verify loop was answered within about 300 ms, up to one request that the
-  bridge still confirmed (`L_Data.con`) at 12:30:28.637. After it nothing came back on that TCP
-  stream: no T_ACK, no answer, and no confirmation for the two repetitions.
-- The bridge on the bench host held that stream afterwards with 349 unsent bytes queued towards the Mac
-  (`FIN-WAIT-1`), which is where the Jung's answer was.
-- Busforge disconnected and reconnected at once. The bridge still held the dead channel and has one
-  tunnel address, so every reconnect was refused with `0x24` until it reaped the channel at
-  12:32:32, 120 s after its last heartbeat. Every later step of the run failed on that refusal.
-- The same seed then passed in full. Polling the bridge's TCP state every 250 ms during that run
-  showed a lost segment on the Wi-Fi path between the bench host and the Mac that TCP resent after about
-  200 ms. A few losses in a row put TCP into retransmission back-off (0.2, 0.4, 0.8, 1.6, 3.2 s),
-  longer than the device request's three tries of about 2 s each.
-
-So the device was not the cause, and neither was Data Secure: a stream that stalls for a few seconds
-cut off a long run of management requests. Not shown: that the 2026-09-29 abort had the same cause
-(no transport data was recorded then; the symptom is the same).
-
-Busforge had no way to tell the two apart, because over TCP it did not wait for the interface's
-confirmation (§15). It now does, matched by destination and TPDU, and a missing confirmation within
-3 s is `TUNNEL_CON_TIMEOUT` ("the link to the interface stalled, or the interface is stuck; whether
-the device answered is unknown") instead of `DEVICE_NOT_ANSWERING`. It is not retried (a repetition
-would queue behind the stuck frame), and the load runner and the reconnect after a restart pass it on
-rather than report the device as silent. What does not change: a new tunnel opened before the bridge
-has reaped the dead channel is still refused (`0x24`) until 120 to 130 s after that channel's last
-frame, because the bench bridge has one tunnel address. The same picture recurred
-(`ESTAB` with 160 bytes queued towards a Mac port that no longer existed, connects refused with
-`0x24`); that day's log shows no channel outliving the 120 s. Staged on the bench (a
-client's port dropped by the bench host's firewall, then the client killed), the bridge released the channel
-after the 120 s and served the next connect ([connections.md](connections.md)); that stream had
-nothing queued, so the queue itself was not staged. Shown on hardware: the confirmation
-matched on the bench bridge and on the house's MDT KNX IP interface (reads and a secured smoke run).
-Not shown: `TUNNEL_CON_TIMEOUT` on a real stall, which needs the stall to recur. An interrupted flash
-still leaves the device where the bracket stood; recovering it is a full download, started by the
-user.
-
+What it does not change: a server with one tunnel address that still holds the dead channel refuses
+every new tunnel with `0x24` until it reaps that channel, 120 to 130 s after the channel's last frame
+on Busforge's bridge ([connections.md](connections.md)). A flash interrupted that way leaves the
+device where the bracket stood; recovering it is a full download, started by the user.
 
 ## 26. An OpenKNX object with no group address transmits to 0/0/0
 
-On the OpenKNX AB-PRE at 1.1.x, freshly commissioned by Busforge, sent its measurements to
-group address 0/0/0. The cause is in the KNX stack OpenKNX runs (thelsing/knx, unchanged in the
-OpenKNX fork; source read at thelsing `980c047` and OpenKNX `57b5b05`):
+An OpenKNX device sends an object that has the communication and transmit flags set but no
+association to group address 0/0/0. The cause is in the KNX stack OpenKNX runs (thelsing/knx,
+unchanged in the OpenKNX fork):
 
 - `BauSystemBDevice::sendNextGroupTelegram` skips an object whose communication flag is off. One with
   the communication and transmit flags set goes on to `ApplicationLayer::groupValueWriteRequest`.
@@ -834,40 +771,39 @@ OpenKNX fork; source read at thelsing `980c047` and OpenKNX `57b5b05`):
   association that is `-1`, cast to `0xFFFF` (the read path checks for `< 0`, the write path does not).
 - `AddressTableObject::getGroupAddress(0xFFFF)` is out of range and returns `0`: group address 0/0/0.
 
-So an unlinked object with its communication flag on transmits to 0/0/0. Busforge left that flag on
-for unlinked objects until (`dddf900`, "Clear the Communication flag on com-objects that
-carry no group address", as ETS does), which matches the date of the observation. With the flag
-cleared the stack skips the object. A 5.5-minute listen on the house line (97 group
-telegrams, 19 senders) saw nothing to 0/0/0; 1.1.x itself sent nothing in that window. The unchecked
-lookup is an upstream bug; a device configured by any tool that leaves the flag on would show it.
+The unchecked lookup is an upstream bug; a device configured by any tool that leaves the flag on for
+an unlinked object shows it. Busforge clears the Communication flag on com-objects that carry no group
+address, as ETS does (§7), so the stack skips them. The 0/0/0 sends are seen on an OpenKNX AB-PRE
+commissioned with the flag on for unlinked objects. That clearing the flag stops them is shown by the
+source only: a listen on a live line with an OpenKNX device programmed that way sees nothing sent to
+0/0/0, but that device sent nothing at all in the window.
 
 ## 27. The Jung 400021SE clears the last byte of its parameter segment
 
-A full ETS 6.4.1 download of the Jung after a master reset (2026-10-01; ETS activated it from its
-certificate, then downloaded everything; capture decrypted with the exported project's keys) shows the
-whole load of the parameter segment:
+A full ETS 6.4.1 download of the Jung after a master reset (ETS activates it from its certificate,
+then downloads everything; capture decrypted with the exported project's keys) shows the whole load
+of the parameter segment:
 
 - LSM 4 is allocated with `0x1E15` bytes, then PID 27 of object 4 gets the two elements the application
   declares (`LdCtrlWriteProp`): `00001E14 0033 0000` and `00000001 0133 0000`, a region of `0x1E14`
-  bytes and one of a single byte, the segment's last. Busforge writes the same (`3c54107`).
+  bytes and one of a single byte, the segment's last. Busforge writes the same.
 - The memory writes put `01` at offset `0x1E14`: parameter P-1, default 1. Busforge's full-download
   image and its parameter-flash target both have `01` there.
 - `LdCtrlLoadImageProp` is no write: at the end ETS only reads PID 27 of objects 1 to 4 back, each entry
   now carrying the device's CRC.
 
-Read back through Busforge a few minutes later, the segment equals what ETS wrote in every byte but
-`0x1E14`, which holds `00`. The device clears that byte itself. This is why a Busforge parameter-flash
-dry run reported one differing byte after a verified full download: not a builder fault, the device's
-own state. What the byte means to the firmware is not known.
+Read back through Busforge afterwards, the segment equals what ETS wrote in every byte but `0x1E14`,
+which holds `00`. The device clears that byte itself. So a Busforge parameter-flash dry run after a
+verified full download reports one differing byte: not a builder fault, the device's own state. What
+the byte means to the firmware is not known.
 
 ## 28. What ETS writes when a parameter change alters the com-object table
 
-ETS 6.4.1, "Programmieren > Partiell", four captures on 2026-10-01 (`scratchpad/cap-1001`, local; trimmed
-fixtures `captures/*-ets-partial-structure.log` and `captures/mdt-be02001-ets-fulldownload-b7.log` of the
-[private corpus](testing.md#the-private-corpus)):
-the Jung 400021SE with K2 switched from "Schalten" to "Dimmen und Farbtemperatur" and back (decrypted
-with the exported project's keys), and the MDT BE-02001.02 with input B switched from "Kontaktzustand
-senden" to the two-object short/long function, downloaded once in full by ETS, then switched back.
+ETS 6.4.1, "Programmieren > Partiell", four captures: the Jung 400021SE with K2 switched from
+"Schalten" to "Dimmen und Farbtemperatur" and back (decrypted with the exported project's keys), and
+the MDT BE-02001.02 with input B switched from "Kontaktzustand senden" to the two-object short/long
+function, downloaded once in full by ETS, then switched back. Trimmed fixtures of these captures are
+in the [private corpus](testing.md#the-private-corpus).
 
 **System B (Jung): one bracket over all four objects and the security object.** Both directions:
 
@@ -894,12 +830,12 @@ loaded without an unload and gets the parameter bytes and the com-object table, 
 share it: 220 bytes in 30 runs, many of them unchanged. One `A_Restart` closes it.
 
 **ETS restores the template value of a parameter that goes inactive.** Going back to "Kontaktzustand
-senden", ETS wrote `01` at `0x44B2`, a byte of input B's short/long settings that the new function no
+senden", ETS writes `01` at `0x44B2`, a byte of input B's short/long settings that the new function no
 longer uses; `01` is the segment's `<Data>` template there, the short/long function had `00`. So ETS
 writes the bytes where its whole image changes, not only those of active parameters.
 
-**Every byte ETS wrote matches Busforge's image for the same configuration**: 42 on the Jung (through
-a local conversion of the decrypted capture that leaves out the security object's writes) and 222 on the MDT,
+**Every byte ETS writes matches Busforge's image for the same configuration**: 42 on the Jung (through
+a conversion of the decrypted capture that leaves out the security object's writes) and 222 on the MDT,
 none divergent (`tools/etsdiff.ts --partial`, `tools/etsdiff.test.ts`). The structural flash is built
 on these brackets (see [load-procedures.md](load-procedures.md#structural-flash)). Where it differs
 from ETS: on System B it writes every byte its parameter model owns, as the parameter flash does; on
@@ -909,20 +845,18 @@ ETS changed, with ETS's values, given the configuration ETS had downloaded befor
 
 ## 29. ETS imports only the certificates from a keyring
 
-ETS 6.4.1 under Wine on the bench host, 2026-10-02, a new project "Keyring Test" with the Jung 400021SE
-(activated by ETS, its tool key held by the project "Bench") inserted from the catalog at 1.1.204.
-*Projekt > Sicherheit > Schlüsselbund importieren* asks for a project password first, then for the
-keyring's.
+ETS 6.4.1, a new project with the Jung 400021SE (activated by ETS, its tool key held by another
+project) inserted from the catalog. *Projekt > Sicherheit > Schlüsselbund importieren* asks for a
+project password first, then for the keyring's.
 
 - A Busforge keyring with the Jung's `ToolKey`, `SequenceNumber` and `SerialNumber` and no `FDSK`:
-  "Import fehlgeschlagen. Die Datei enthält keine Gerätezertifikate." Password and signature passed.
-- The same with the Jung's `FDSK`: "1 Gerätezertifikat(e) importiert", listed by serial
-  (`000A:00000204`), not assigned. So did a file from the export endpoint, and one with an `Interface`
-  element.
-- *Info > Geräteinfo* of 1.1.204 in that project: mask `FFFF` and the address, nothing else (a plain
-  read of a secured device). The same after the serial was set on the device and the certificate showed
-  as assigned to it. In "Bench", over the same bridge: mask `07B0`, serial, firmware, application
-  loaded and running.
+  "Import fehlgeschlagen. Die Datei enthält keine Gerätezertifikate." Password and signature pass.
+- The same with the Jung's `FDSK`: "1 Gerätezertifikat(e) importiert", listed by serial, not
+  assigned. So does a file from the export endpoint, and one with an `Interface` element.
+- *Info > Geräteinfo* of the device in that project: mask `FFFF` and the address, nothing else (a plain
+  read of a secured device). The same after the serial is set on the device and the certificate shows
+  as assigned to it. In the project holding the tool key, over the same interface: mask `07B0`,
+  serial, firmware, application loaded and running.
 
 ETS therefore uses a keyring's certificates for a device it commissions itself, and ignores the tool
 key of a device that is already activated. A device Busforge activated reaches ETS only through a
@@ -930,36 +864,33 @@ master reset and the certificate.
 
 ## 30. The GVS AMMA ignores a Sync shortly after one it could not authenticate
 
-Measured on the bench GVS AMMA (1.1.203, Data Secure, 2026-10-03, over the bench bridge, one tunnel):
-a Sync with a wrong tool key goes unanswered, as it should. A Sync with the right key that follows it
-about 3.1 s later (the wrong one's 3 s timeout, a T_Disconnect and a new T_Connect in between) also
-goes unanswered; the next one, 0.4 s after that, is answered. With 2, 5, 10 or 20 s more between them
-the right key is answered at once. The Jung 400021SE answers the right key straight after the wrong
-one. So the AMMA does not lock out after a failed authentication; it drops a Sync within a few seconds
-of an unauthentic one. Where exactly the window ends (between about 3 and 5 s) is not measured. The
-smoke spec of a device that does this declares it (`secondSyncAfterWrongKey`, today only the GVS); the
-robustness check then records the silent first Sync and requires the second to open the session.
+On the GVS AMMA in Data Secure (one tunnel, over Busforge's bridge): a Sync with a wrong tool key goes unanswered, as it
+should. A Sync with the right key that follows it about 3.1 s later (the wrong one's 3 s timeout, a
+T_Disconnect and a new T_Connect in between) also goes unanswered; the next one, 0.4 s after that, is
+answered. With 2, 5, 10 or 20 s more between them the right key is answered at once. The Jung 400021SE
+answers the right key straight after the wrong one. So the AMMA does not lock out after a failed
+authentication; it drops a Sync within a few seconds of an unauthentic one. Where exactly the window
+ends (between about 3 and 5 s) is not measured. The smoke spec of a device that does this declares it
+(`secondSyncAfterWrongKey`, today only the GVS); the robustness check then records the silent first
+Sync and requires the second to open the session.
 
-## 31. A flash cut off inside its load bracket, driven through the UI
+## 31. A flash cut off inside its load bracket
 
-On the bench MDT BE-02001.02 (1.1.56, 2026-10-03, build `7933bb2`, server and browser on the bench host next
-to the bridge): input B's "Sendeverzögerung" changed 0 to 2 in the imported "Bench" project (after
-a verified full download of that project), the parameter flash started from the flash dialog, and the
-server's TCP socket to the bridge killed (`ss -K`) as soon as its task reported the write phase, step
-1 of 2. The task failed `FLASH_INTERRUPTED_UNLOADED` ("the write broke off inside its load bracket and
-may have left the device unloaded; TUNNEL_CLOSED"), 4 s after it started. The dialog showed that
-message and offered the full download; taken from the dialog, it verified (276 bytes). The parameter
-was then set back and flashed, verified. A group-address preview that nobody started ran 1.5 s after
-the failure and stopped with `MASK_MISMATCH` ("device mask MV-44A508"); where it came from and what the
-half-loaded device answered is not established (open ticket). The kill was one run with one cut point;
-other cut points (after LoadCompleted, inside the table writes) were not tried.
+A parameter flash started from the flash dialog, with the server's TCP socket to the interface killed
+as soon as the task reports its write phase (shown on the MDT BE-02001.02), fails as
+`FLASH_INTERRUPTED_UNLOADED` ("the write broke off inside its load bracket and may have left the
+device unloaded; TUNNEL_CLOSED") within seconds. The dialog shows that message and offers the full
+download, which verifies; a later parameter flash of the same device verifies too. Shown at that one
+cut point only; other cut points (after LoadCompleted, inside the table writes) are not tried.
+About 1.5 s after the failure a group-address preview nobody started runs and stops with
+`MASK_MISMATCH` (the device answering mask `MV-44A508`); where it comes from and what the
+half-loaded device answers is not known.
 
 ## 32. ETS does not run the Gira M-0008's declared procedure
 
 ETS 6 downloads of the Gira Tastsensor 3 Komfort (`M-0008_A-10D7-11-2783-O000A`, MV-0705,
-`DynamicTableManagement="true"`) on the house unit 1.1.x, a full, a parameter, a
-group-address and a reverting partial download, each with ETS's own log of the steps it executed
-(private corpus `captures/gira-m0008-ets-*.log`, `gira-m0008-ets6log-*.txt`):
+`DynamicTableManagement="true"`), a full, a parameter, a group-address and a reverting partial
+download, each captured with ETS's own log of the steps it executes:
 
 - The address and association table segments are taken as one region. ETS declares LSM 1 exactly as
   long as the address table and LSM 2 directly behind it (`16384+17`, `16401+467` for the declared
@@ -979,26 +910,26 @@ group-address and a reverting partial download, each with ETS's own log of the s
 
 What Busforge sends for it, and where it departs from ETS: [load-procedures.md](load-procedures.md#ets-captured-system-7-downloads).
 
-
 ## 33. Objects outside a shown ParameterBlock are linked too
 
 Links are resolved against the configuration view: an object the view does not list keeps its link in
-the project, but Busforge's group tables leave it out. Two placements were not listed, and both are
-linked by ETS:
+the project, but the group tables built from the view leave it out. Two placements are linked by ETS
+and must be listed:
 
 - A `ComObjectRefRef` directly under a `<Channel>` (or a `ChannelIndependentBlock`), outside every
   `ParameterBlock`. The Theben Meteodata 140 S (`M-0048_A-140C-14-EB70`) places its measured-value
   objects 0-4, 6 and 15 there; ETS lists them and its address table holds their 7 links (count `0x14`
-  = own address + 19 in the full-download capture), where Busforge built 13. The TheLuxa
-  P300 (`M-0048_A-107E-12-5B58`, 8 objects) and MIX 2 `M-0048_A-9071` (18) do the same.
+  = own address + 19 in its full download, against 13 without them). The TheLuxa P300
+  (`M-0048_A-107E-12-5B58`, 8 objects) and MIX 2 `M-0048_A-9071` (18) do the same.
 - A `ComObjectRefRef` inside a `ParameterBlock Access="None"`. The MIX 2 `M-0048_A-493B-21-B471`
-  keeps its central objects 241-252 in such a block ("Gemeinsame Objekte"); the house devices hold
-  associations for objects 243 and 248, which the project links.
+  keeps its central objects 241-252 in such a block ("Gemeinsame Objekte"); devices ETS programmed
+  hold associations for those of them the project links.
 
-The view now lists them: an object directly under a container goes into the container's own section
+The view lists them: an object directly under a container goes into the container's own section
 (a text-less container gets one, named by its `Name`), an object of a hidden block into the section
 that encloses the block. Every active object the image pass reaches must appear in the view, or the
 configuration is refused (`CONFIG_VIEW_INCOMPLETE`), and so is anything placed outside every
 channel and block. A test over every catalogue fixture checks the view against the image pass
-and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over every
-device of the house project only views changed, no image; every project link resolves.
+and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over a real
+installation project, listing these objects changes only views, no parameter image, and every
+project link resolves.
