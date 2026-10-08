@@ -163,11 +163,10 @@ export class UiDriver {
       try { await this.awaitSettled(offer); }
       catch { throw new Error(`flashDownload: the dialog offers no full download — ${await this.dialogText()}`); }
       await page.click((await page.$('[data-testid="flash-needs-download"]')) ? '[data-testid="flash-needs-download"]' : '[data-testid="flash-full-download"]');
-      // The offer dry-runs the download first; confirm it once the preview is ready. The bus is serial,
-      // so that preview can wait behind the dialog's own previews (run twice under the dev server's
-      // StrictMode, about 70 s each on a Data Secure device); a download preview that reads the unit
-      // (partial form) takes about 105 s on its own.
-      await page.waitForSelector('[data-testid="confirm-download"], [data-testid="flash-dl-fail"], [data-testid="flash-download-retry"]', { timeout: 420_000 });
+      // The offer dry-runs the download first; confirm it once the preview is ready. The offer shows
+      // only after the dialog's own previews have answered, so nothing waits ahead of it on the bus; a
+      // download preview that reads the unit (partial form) takes about 105 s on a Data Secure device.
+      await page.waitForSelector('[data-testid="confirm-download"], [data-testid="flash-dl-fail"], [data-testid="flash-download-retry"]', { timeout: 180_000 });
       if (!(await page.$('[data-testid="confirm-download"]'))) throw new Error(`flashDownload: preview failed — ${await this.dialogText()}`);
       await page.click('[data-testid="confirm-download"]');
       await this.awaitSettled('[data-testid="flash-dl-ok"], [data-testid="flash-dl-fail"]');

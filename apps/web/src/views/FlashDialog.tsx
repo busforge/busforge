@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
 import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad } from "../lib/flashRecovery.ts";
+import { previewRuns, previewEffect, previewEach, type IsLive } from "../lib/previewRun.ts";
 
 export type FlashTarget = "params" | "ga";
 const runDry = (t: FlashTarget, projectId: string, deviceId: string) =>
@@ -59,23 +60,19 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
 
   // Dry-run each target on open (and on retry): each opens its own bus connection, so no
   // manual connect is needed. The bus is serial server-side, so we await them in order to
-  // keep the connection clean and the preview readable.
-  const check = useCallback(() => {
+  // keep the connection clean and the preview readable. One preview at a time (see previewRun.ts).
+  const [previews] = useState(previewRuns);
+  const previewKey = `${projectId}|${device.id}|${targets.join(",")}`;
+  const preview = useCallback((live: IsLive) => {
     const init: Record<string, Part> = {};
     for (const tg of targets) init[tg] = { ...freshPart(), checking: true };
     setParts(init);
     setDl(null); // a fresh preview leaves any earlier full-download offer behind
-    // Deliberately not awaited: this runs the previews in the background while the dialog paints.
-    // Nothing is lost by that, because every target's own failure is caught and shown ON the target
-    // (setPart error) — the loop cannot reject.
-    void (async () => {
-      for (const tg of targets) {
-        try { const r = await runDry(tg, projectId, device.id); setPart(tg, { dry: r, checking: false }); }
-        catch (e) { setPart(tg, { error: e, checking: false }); }
-      }
-    })();
+    return previewEach(targets, (tg) => runDry(tg, projectId, device.id),
+      (tg, r) => setPart(tg, "ok" in r ? { dry: r.ok, checking: false } : { error: r.error, checking: false }), live);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, device.id, targets.join(",")]);
+  }, [previewKey]);
+  const check = () => previews.start(previewKey, preview);
 
   const list = targets.map((tg) => ({ tg, p: parts[tg] ?? freshPart() }));
   const anyChecking = list.some((x) => x.p.checking);
@@ -94,7 +91,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // A result already on screen stays there: a later foreign write must not replace it with a preview.
   const hasResult = useRef(false);
   hasResult.current = list.some((x) => x.p.done) || !!dl?.done;
-  useEffect(() => { if (open && tasksLoaded && !blocked && !hasResult.current) check(); }, [open, check, tasksLoaded, blocked]);
+  useEffect(() => previewEffect(previews, open && tasksLoaded && !blocked && !hasResult.current, previewKey, preview),
+    [previews, open, previewKey, preview, tasksLoaded, blocked]);
+  // A retry the effect did not start has no cleanup of its own: closing the dialog stops it here.
+  useEffect(() => () => previews.pause(), [previews]);
 
   const anyDone = list.some((x) => x.p.done);
   // A change that alters the com-object table previews as one structural write on every target it
@@ -256,8 +256,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={anyFlashing || dlBusy}>{anyDone || dl?.done ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
-          {/* Generic target retry, only before the full-download offer is taken. */}
-          {!!firstError && !anyFlashing && !anyChecking && !dl && (
+          {/* Generic target retry, only before the full-download offer is taken, and not while a foreign
+              write runs (the preview follows once it has finished). */}
+          {!!firstError && !anyFlashing && !anyChecking && !dl && !blocked && (
             <Button variant="outline" onClick={check} data-testid="flash-retry">
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>
