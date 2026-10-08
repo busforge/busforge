@@ -261,8 +261,8 @@ memory-mapped, System B), or by a rule for every KNX device. Busforge codes each
 level, keyed on the catalogue attribute, the load-procedure element or the mask, never on a list of
 applications (the one list left decides where the structural flash is offered, not what it sends,
 [below](#structural-flash)). The captures are the tests: `tools/etsdiff.test.ts` plans the captured
-downloads from the catalogue and compares each with ETS's wire and ETS's logged image; the captures
-of the MDT BE-06001.02 have no such test yet. A capture-matched plan is
+downloads from the catalogue and compares each with ETS's wire and ETS's logged image. A
+capture-matched plan is
 reference evidence (Busforge's bytes and steps equal ETS's), not a hardware claim; what has run on
 which device is in [status.md](status.md).
 
@@ -282,7 +282,7 @@ which device is in [status.md](status.md).
 | R12 | **A declared `LdCtrlWriteProp` to a property other than PID 27** after the last `LoadCompleted` is written as declared, at its place before the restart, its echo checked where `Verify="true"` | KNX-wide (load procedure) | `LdCtrlWriteProp` | GVS AMMA (full and partial download); no other fixture declares one |
 | R13 | **Config bit `0x80` of a System 7 com-object table entry** is the configured object's update flag ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)) | family System 7 | `ComObject@UpdateFlag` (the resolved flags) | TheLuxa (object 116), Meteodata (objects 9, 13 and more), MDT BE-06001.02 (objects 36, 39); the Gira, Auro, MDT BE-02001.02 and ABB comparisons pass with it |
 | R14 | **Parameters the configuration does not show**: where the application says so, ETS leaves out an inactive parameter every placement of which lies in a branch of an evaluated `choose` that was not taken; its bytes keep the allocation fill in a full download and are not in a parameter download. So a parameter a change activated keeps, after that change is reverted, the value the change wrote: neither tool writes it once it is inactive again, and only a full download that reallocates with fill clears it. Elsewhere such a parameter is written at its parameter default, not at a value the project still stores for it (System B, `buildRelativeSegmentTarget`) | catalogue | `<Options DownloadInvisibleParameters="None">` | Theben MIX 2 (it shows the difference), Jung 400021SE (declares it, its captures unchanged by it); without it the GVS AMMA's downloads write the defaults, the MEAN WELL power supply reads back with them, and the MDT IP Interface/Router's full download writes the defaults of inactive texts and flags its project holds other values for |
-| R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products; captures of the Theben DALI-Gateway and the MDT BE-06001.02 exist without a test |
+| R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products and the MDT BE-06001.02; captures of the Theben DALI-Gateway exist without a test |
 | R16 | **What a differential download sends into a segment the unit keeps**, region by region of the segment's memory-control block (PID 27): where the region's CRC-control byte is 0, the bytes that differ from the unit; where it is not 0, past the regions, or on a segment that reports none, every byte the image carries. The application's regions are the ones it declares (its `LdCtrlWriteProp` to PID 27), the com-object table's the ones the unit reports. ETS compares against its own record of the last download, Busforge against the unit it reads, so the two send the same bytes whenever that record equals the unit (`differentialMask`). The verify reads the whole segment back and checks every owned bit against the configuration and every other bit against the unit's read, except the `Access="None"` bytes the device sets itself | KNX-wide (System B) | the memory-control block's CRC-control byte | Jung 400021SE: the application's 7700-byte region (control 0) only where it changed, its declared one-byte region (control 1) in every download, the com-object table (control 0) only when it changed, one byte; Theben DALI-Gateway: the com-object table (control 1) whole although unchanged, the application (control 0) unchanged and not reloaded; OpenKNX RaumController parameter downloads: the application (control 0) differential, the com-object table (no memory-control block) whole |
 
 **Which bytes of a data segment**, the rule behind R1 and R2 ([below](#which-bytes-ets-writes)):
@@ -401,9 +401,9 @@ shown on the device is in [status.md](status.md).
 
 Every other System 7 full download is ETS's declared form ([R2](#the-rules-by-level)): the declared
 full-download steps one by one, in the order the procedure declares them, `LdCtrlTaskCtrl1` included
-([R4](#the-rules-by-level)). Busforge runs them the same way. Three applications show it with their
+([R4](#the-rules-by-level)). Busforge runs them the same way. Four applications show it with their
 captures here: the Theben TheLuxa P300 ([below](#the-theluxa-p300)), the Theben Meteodata 140 S on a memory-mapped mask
-([below](#the-meteodata-140-s-memory-mapped)) and the Auro presence detector, `M-0081_A-FE01-11-75D9`,
+([below](#the-meteodata-140-s-memory-mapped)), the MDT BE-06001.02 ([below](#the-mdt-be-0600102)) and the Auro presence detector, `M-0081_A-FE01-11-75D9`,
 whose ETS downloads are captured in this order: a full download, a partial download after one
 parameter change, one after adding a second group address to object 10, and one that reverted both,
 parameters and links in one, each with ETS's own log, which names every `LdCtrl*` step it executes
@@ -592,7 +592,45 @@ Its structural flash runs the revert's steps, and every byte it writes is in ETS
 the revert with ETS's value; the writes on the wire are not compared, since ETS leaves out what the
 unit holds.
 
-How far the three are shown on the device is in [status.md](status.md).
+### The MDT BE-06001.02
+
+The MDT Universal Interface 6-fold BE-06001.02, `M-0083_A-00B4-32-3919` (`DynamicTableManagement="false"`,
+no `PreferPartialDownloadIfApplicationLoaded`, a module device), its ETS downloads captured in the
+same order: a full download, a partial download after one parameter change ("Time for long keypress",
+`AS-44C8` offset 4, 0.5 s to 0.6 s), one after linking the unlinked object 48 to a group address, and
+one that reverted both, each with ETS's own log. ETS runs the declared full steps in their declared
+order and declares the table segments as declared, as on the Auro.
+
+| Declared (`full`, in this order) | What ETS sends, and Busforge with it |
+| --- | --- |
+| `Unload` 1, 2, 3 | PID 5 `04` each |
+| `Load` 1, `AbsSegment` 1 (16384+513), `TaskSegment` 1, `LoadCompleted` 1 | the address table without the device's own address (`AS-4000`'s `<Mask>` leaves bytes 1-2 out), the task segment PID 5 `03 02 4000 01 0083 00B4 32` |
+| `Load` 2, `AbsSegment` 2 (16897+511), `TaskSegment` 2, `LoadCompleted` 2 | the association table, the task segment at 16897 |
+| `Load` 3, `AbsSegment` 3 at 1792+190 and at 1982+1 (RAM, `MemType="2"`; the second `SegType="1"`, a stack segment: PID 5 `03 01 07BE 0001 00 02 00 00`) | declared, nothing written |
+| `AbsSegment` 3 at 17408+200, at 17608+372 | declared, each written whole: the com-object table's segment and the parameter segment |
+| `TaskSegment` 3 (17408), `LoadCompleted` 3, `Restart` | PID 5 `03 02 4400 ...`; PID 5 `02`; `A_Restart` |
+
+The image is 594 bytes, not differential: `0x4000`, `0x4003-0x400C`, `0x4201-0x420B`,
+`0x4400-0x463B`. Busforge plans exactly these runs and writes them with ETS's values
+(`tools/etsdiff.test.ts`, "MDT BE-06001.02"), the external inputs of logic 1 and 2 (objects 36, 39,
+`UpdateFlag="Enabled"`) with config `0xD3` ([R13](#the-rules-by-level)). Before its first memory write
+ETS reads device control (object 0 PID 14) and writes it back with `0x04` set: `05` in the full and the
+parameter download, where the read shows the application stopped (`0x01`), `04` in the other two.
+
+The parameter download is `Load` 3 without an unload or a declaration, 277 bytes of `AS-44C8`, the
+image with gaps (its log executes both of LSM 3's data segments as `LdCtrlWriteMem`, its image holds
+nothing of the com-object table), `LoadCompleted` 3, `A_Restart`. The group-address download unloads
+1 and 2, writes the tables in their declared segments, then `Load` 3, the com-object table to its 49
+entries (199 bytes, the segment's last byte not written), `LoadCompleted` 3 and the restart: 225
+bytes. The revert runs the same brackets with the old tables and carries the same 277 bytes in
+the same LSM 3 bracket; the tables shrink and leave their old bytes behind them
+([below](#tables-shrink-their-old-bytes-stay)). Busforge's parameter flash writes the two changed
+bytes in ETS's bracket, its group-address flash ETS's 225 bytes in ETS's steps, and its structural
+flash runs the revert's steps and writes every byte the revert changes, with ETS's value. Before
+each partial download ETS reads `$B6EC` and object 3 PID 13; Busforge reads the device and the
+program id instead, the departures listed for the Auro ([above](#declared-order-system-7-downloads)).
+
+How far the four are shown on the device is in [status.md](status.md).
 
 ## Which bytes ETS writes
 
@@ -833,12 +871,12 @@ from the device, then `LoadCompleted` 3, the closing steps and the restart
 It is **offered** only on the applications in `STRUCTURAL_FLASH_CAPTURED` (`profiles.ts`), each
 tested against an ETS capture of such a download (`tools/etsdiff.test.ts`): the Jung 400021SE and the
 MDT BE-02001.02, whose captures reshape the com-object table, and the Auro presence detector
-`M-0081_A-FE01`, the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S
-and the Theben MIX 2, whose captures revert a parameter change and a link change in one download;
+`M-0081_A-FE01`, the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S,
+the Theben MIX 2 and the MDT BE-06001.02, whose captures revert a parameter change and a link change
+in one download;
 that revert changes link bits, not the com-object set. The list is evidence, not ETS behaviour: an
 application joins it with its capture test. The Theben DALI-Gateway's structural plan equals its ETS
-revert capture (`tools/etsdiff.test.ts`) and is not offered yet; the MDT BE-06001.02 has such captures
-without a test, and is not offered. The thelsing/OpenKNX and GVS stacks stay off,
+revert capture (`tools/etsdiff.test.ts`) and is not offered yet. The thelsing/OpenKNX and GVS stacks stay off,
 because the bracket rests on firmware behaviour they are shown not to share (keeping a segment's
 bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX, the
 flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other

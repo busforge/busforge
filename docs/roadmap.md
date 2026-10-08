@@ -12,12 +12,12 @@ depends on is hardware-proven.
   the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
   flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
   System B partial form of the full download (Jung 400021SE, Theben DALI-Gateway), and the structural
-  flash newly offered on the Auro, Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2. Each needs its
+  flash newly offered on the Auro, Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2, and every
+  write of the MDT BE-06001.02. Each needs its
   run on the device.
 - **Structural flash on more applications.** It is offered only where its plan is tested against an
   ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The
-  Theben DALI-Gateway's plan is tested against its capture and not offered yet; the MDT BE-06001.02
-  has such captures and waits for its tests. The GVS
+  Theben DALI-Gateway's plan is tested against its capture and not offered yet. The GVS
   AMMA (persists at every `LoadCompleted`) and OpenKNX/thelsing (whose full download has to write the
   tables before the parameter image, which the structural bracket does not) stay off for their
   firmware.

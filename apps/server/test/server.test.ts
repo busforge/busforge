@@ -96,9 +96,9 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     // fullDownload true: property-mapped System 7 authors its com-object table into the declared
     // <ComObjectTable CodeSegment> (buildComObjectTableMv0705), live-hardware certified on the sibling
     // MDT BE-02001.02 (1.1.56). A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
-    // structuralFlash false: offered only where it is tested against ETS's capture of one (profiles.ts
-    // STRUCTURAL_FLASH_CAPTURED), and this application is not.
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false });
+    // structuralFlash true: offered where it is tested against ETS's capture of one (profiles.ts
+    // STRUCTURAL_FLASH_CAPTURED), as this application's revert is.
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true });
   });
 
   test("System B device: read-back and GA flash both supported", () => {

@@ -235,6 +235,7 @@ export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLI
 export const STRUCTURAL_FLASH_CAPTURED: readonly string[] = [
   "M-0004_A-7072-21-99A7", // Jung 400021SE
   "M-0083_A-00B6-32-9642", // MDT BE-02001.02
+  "M-0083_A-00B4-32-3919", // MDT BE-06001.02
   "M-0081_A-FE01-11-75D9", // Auro presence detector
   "M-0008_A-10D7-11-2783", // Gira Tastsensor 3 Komfort
   "M-0048_A-107E-12-5B58", // Theben TheLuxa P300

@@ -285,7 +285,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
   // tested in this file (this suite, and "structural flash of the revert" in each application's suite).
   test("the applications offered the structural flash are exactly those tested against an ETS capture of one", () => {
     expect([...STRUCTURAL_FLASH_CAPTURED].sort()).toEqual([
-      "M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
+      "M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
       "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471",
     ].sort());
     for (const id of STRUCTURAL_FLASH_CAPTURED) {
@@ -524,7 +524,7 @@ corpusDescribe("etsdiff --partial evidence", () => {
 });
 
 // What ETS sent to the device from its first load-state event on, as steps: load-state events,
-// segment declarations, one "write" per run of memory writes, device-control writes, property reads,
+// segment declarations (a stack segment, SegType 1, marked "/t1"), one "write" per run of memory writes, device-control writes, property reads,
 // the restart. Its reads before the first event (identity, stamps for its differential download)
 // are not part of the procedure.
 function captureSteps(file: string, ia: number): string[] {
@@ -536,14 +536,14 @@ function captureSteps(file: string, ia: number): string[] {
     const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1];
     if (apci === 0x3d7 && t[3] === 5) {
       const d = t.subarray(6);
-      out.push(d[0] === 3 ? (d[1] === 0 ? `absSegment:${t[2]}@${d.readUInt16BE(2)}+${d.readUInt16BE(4)}` : d[1] === 4 ? `taskCtrl1:${t[2]}=${d.subarray(2).toString("hex")}` : `taskSegment:${t[2]}@${d.readUInt16BE(2)}=${d.subarray(4).toString("hex")}`)
+      out.push(d[0] === 3 ? (d[1] <= 1 ? `absSegment:${t[2]}@${d.readUInt16BE(2)}+${d.readUInt16BE(4)}${d[1] ? "/t1" : ""}` : d[1] === 4 ? `taskCtrl1:${t[2]}=${d.subarray(2).toString("hex")}` : `taskSegment:${t[2]}@${d.readUInt16BE(2)}=${d.subarray(4).toString("hex")}`)
         : `${({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[d[0]]}:${t[2]}`);
     }
     // A memory-mapped load-state machine (MV-0701) takes the same controls as an 11-byte memory write to
     // 0x0104: the LSM and the event in the first byte, the property form's fields behind a segment-id byte.
     else if ((apci & 0x3c0) === 0x280 && t.readUInt16BE(2) === 0x0104) {
       const d = t.subarray(4), lsm = d[0] >> 4, ev = d[0] & 0x0f;
-      out.push(ev === 3 ? (d[1] === 0 ? `absSegment:${lsm}@${d.readUInt16BE(3)}+${d.readUInt16BE(5)}` : d[1] === 4 ? `taskCtrl1:${lsm}=${d.subarray(3).toString("hex")}` : `taskSegment:${lsm}@${d.readUInt16BE(3)}=${d.subarray(5).toString("hex")}`)
+      out.push(ev === 3 ? (d[1] <= 1 ? `absSegment:${lsm}@${d.readUInt16BE(3)}+${d.readUInt16BE(5)}${d[1] ? "/t1" : ""}` : d[1] === 4 ? `taskCtrl1:${lsm}=${d.subarray(3).toString("hex")}` : `taskSegment:${lsm}@${d.readUInt16BE(3)}=${d.subarray(5).toString("hex")}`)
         : `${({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[ev]}:${lsm}`);
     }
     else if (!out.length) continue;
@@ -564,7 +564,7 @@ function captureSteps(file: string, ia: number): string[] {
 function planSteps(plan: LoadPlan, propDataMax = 10): string[] {
   const out: string[] = [];
   for (const s of plan) {
-    if (s.op === "absSegment") out.push(`absSegment:${s.lsm}@${s.address}+${s.size}`);
+    if (s.op === "absSegment") out.push(`absSegment:${s.lsm}@${s.address}+${s.size}${s.segType ? `/t${s.segType}` : ""}`);
     else if (s.op === "taskSegment") out.push(`taskSegment:${s.lsm}@${s.address}=${Buffer.from([s.peiType, s.manufacturer >> 8, s.manufacturer & 0xff, s.appNumber >> 8, s.appNumber & 0xff, s.version]).toString("hex")}`);
     else if (s.op === "unload" || s.op === "load" || s.op === "loadCompleted") out.push(`${s.op}:${s.lsm}`);
     else if (s.op === "writeMem") { if (out.at(-1) !== "write") out.push("write"); }
@@ -579,14 +579,16 @@ function planSteps(plan: LoadPlan, propDataMax = 10): string[] {
   return out;
 }
 // ETS switches the device into verify mode before its first memory write (reads device control,
-// object 0 PID 14, and writes 04) and takes the device's echo of each write. Busforge reads every write back instead
-// (KnxDevice.memWrite), the proof the MV-0705 parameter flash is hardware-proven on, so this is the
-// one step of ETS's it leaves out.
-const VERIFY_MODE = ["read 0/14#1", "prop 0/14=04"];
+// object 0 PID 14, and writes it back with bit 0x04 set: 04, or 05 where the read showed the application
+// stopped, as on the MDT BE-06001.02 with LSM 3 unloaded or loading) and takes the device's echo of each
+// write. Busforge reads every write back instead (KnxDevice.memWrite), the proof the MV-0705 parameter
+// flash is hardware-proven on, so this is the one step of ETS's it leaves out.
+const VERIFY_READ = "read 0/14#1";
+const isVerifyWrite = (s: string) => /^prop 0\/14=[0-9a-f]{2}$/.test(s) && (Number.parseInt(s.slice(-2), 16) & 0x04) !== 0;
 const withoutVerifyMode = (steps: string[]) => {
-  const at = steps.indexOf(VERIFY_MODE[1]);
-  expect([steps.filter((s) => VERIFY_MODE.includes(s)), steps[at - 1]]).toEqual([VERIFY_MODE, VERIFY_MODE[0]]);
-  return steps.filter((s) => !VERIFY_MODE.includes(s));
+  const at = steps.findIndex(isVerifyWrite);
+  expect([steps.filter((s) => s === VERIFY_READ || isVerifyWrite(s)).length, steps[at - 1]]).toEqual([2, VERIFY_READ]);
+  return steps.filter((s) => s !== VERIFY_READ && !isVerifyWrite(s));
 };
 const STAMPS = ["read 1/27#1", "read 2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `read 3/27#${i}`)];
 const bytesOf = (plan: LoadPlan) => {
@@ -636,11 +638,12 @@ const etsLog = (file: string) => {
 function system7StructuralFlash(o: {
   cfg: ReturnType<typeof parseAppConfig>; proc: ReturnType<typeof parseLoadProcedures>; ia: number; device: Map<number, number>;
   params: Map<string, string>; baseParams: Map<string, string>; links: { comObjNum: number; gaRaws: number[] }[];
-  overrides?: Parameters<typeof withInstanceOverrides>[1];
+  overrides?: Parameters<typeof withInstanceOverrides>[1]; moduleInstances?: ModuleInstance[];
 }) {
-  const view = buildDeviceConfig(o.cfg, o.params);
+  const instances = o.moduleInstances ?? [];
+  const view = buildDeviceConfig(o.cfg, o.params, undefined, instances);
   const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, o.overrides), linked: new Set(o.links.map((l) => l.comObjNum)) };
-  const images = absoluteStructuralImages(o.cfg, o.params, o.links, o.ia, { baseValues: o.baseParams, comObjectTable });
+  const images = absoluteStructuralImages(o.cfg, o.params, o.links, o.ia, { baseValues: o.baseParams, baseInstances: instances, moduleInstances: instances, comObjectTable });
   const current = new Map(images.map((w) => [w.address, Buffer.from(Array.from({ length: w.image.length }, (_, i) => {
     const b = o.device.get(w.address + i);
     if (b === undefined) throw new Error(`the unit's byte at ${(w.address + i).toString(16)} is not known`);
@@ -1814,7 +1817,7 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
   const unit = (lsm: number) => Buffer.from(fx.segments[lsm].hex, "hex");
   const withLink = [...fx.links, { comObjNum: LINKED, gaRaws: [parseGa("15/7/250")] }];
   // ETS switches the unit into verify mode (object 0 PID 14 = 04) before its first memory write; Busforge's full
-  // download does the same (its verifyMode step), its partial flashes read each write back (VERIFY_MODE above).
+  // download does the same (its verifyMode step), its partial flashes read each write back (withoutVerifyMode above).
   const etsBracket = (file: string) => systemBCaptureBracket(file, ia).filter((st) => st !== "prop 0/14");
 
   test("the configuration is the project's: the parameter changed is at ETS's value before it, the object unlinked", () => {
@@ -2036,4 +2039,196 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
       expect(systemBPlanBracket(plan)).toEqual(logBracket(file));
     });
   }
+});
+
+// ETS 6 downloads of the MDT Universal Interface 6-fold BE-06001.02 (M-0083_A-00B4-32-3919, MV-0705, module device,
+// ProductProcedure, DynamicTableManagement="false") on the house unit, private corpus captures/mdtui-*, each with ETS's
+// own log, in this order: a full download; a partial download after "Time for long keypress" (P-8, AS-44C8 offset 4)
+// went from 0.5 s to 0.6 s; one after linking the unlinked object 48 ("In operation") to 15/7/250; and one that reverted
+// both in one. The configuration is the project's (captures/mdtui-unit-config.json). Before the partial downloads the
+// tests take the unit to hold each segment's template under the bytes of ETS's full download (unitMemory).
+corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
+  const xml = catalogueXml("M-0083_A-00B4-32-3919.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const fx = JSON.parse(captureText("mdtui-unit-config.json")) as {
+    ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: [number, ComObjInstanceOverride][];
+  };
+  const ia = iaToNum(fx.ia);
+  const params = new Map(fx.params);
+  const FULL = "mdtui-ets-fulldownload.log", PARTIAL = "mdtui-ets-partial-params.log";
+  const LINKS = "mdtui-ets-partial-links.log", REVERT = "mdtui-ets-partial-revert.log";
+  const wire = (file: string) => memoryImage(parseCapture(captureText(file), ia).writes);
+  const LONG_PRESS = { ref: "M-0083_A-00B4-32-3919_P-8_R-7", from: "33268", to: "33368" };
+  const LINKED = 48;
+  const full = () => classify(cfg).planFullDownload(cfg.mask, { ia: fx.ia, params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: new Map(fx.overrides), proc });
+  const written = wire(FULL);
+  const held = unitMemory(cfg, ia, written);
+  const segmentHeld = (address: number) => {
+    const seg = cfg.absoluteSegments.find((s) => s.address === address)!;
+    return { seg, bytes: Buffer.from(Array.from({ length: seg.size }, (_, i) => held.get(address + i)!)) };
+  };
+  const comObj = segmentHeld(0x4400);
+  const configAt = (n: number) => comObj.seg.address + 3 + n * 4 + 2;
+  const gaFlash = (links: typeof fx.links) =>
+    planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObj.seg.address, bytes: withLinkedCommFlags(comObj.bytes, new Set(links.map((l) => l.comObjNum))) });
+  const withLink = [...fx.links, { comObjNum: LINKED, gaRaws: [parseGa("15/7/250")] }];
+  const TABLE_BRACKETS = [
+    "unload:1", "unload:2",
+    "load:1", "absSegment:1@16384+513", "write", "taskSegment:1@16384=01008300b432", "loadCompleted:1",
+    "load:2", "absSegment:2@16897+511", "write", "taskSegment:2@16897=01008300b432", "loadCompleted:2",
+    "load:3", "write", "loadCompleted:3", "restart",
+  ];
+  // What the unit held before the revert: the full download, then the parameter and the group-address download.
+  const beforeRevert = () => unitMemory(cfg, ia, written, wire(PARTIAL), wire(LINKS));
+  const structural = (device: Map<number, number>) => system7StructuralFlash({ cfg, proc, ia, device, params, baseParams: new Map(params).set(LONG_PRESS.ref, LONG_PRESS.to), links: fx.links, moduleInstances: fx.instances });
+
+  test("the configuration is the project's: five linked objects, the long keypress at 0.5 s, object 48 unlinked", () => {
+    expect(fx.links.map((l) => l.comObjNum)).toEqual([0, 6, 12, 18, 44]);
+    expect(buildDeviceConfig(cfg, params, undefined, fx.instances).imageValues.get(LONG_PRESS.ref)).toBe(LONG_PRESS.from);
+    expect(fx.links.some((l) => l.comObjNum === LINKED)).toBe(false);
+  });
+
+  test("full download: the declared steps in their declared order, as ETS sends them, verify mode aside", () => {
+    const build = full();
+    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(captureSteps(FULL, ia)));
+    expect(planSteps(build.plan)).toEqual([
+      "unload:1", "unload:2", "unload:3",
+      "load:1", "absSegment:1@16384+513", "write", "taskSegment:1@16384=01008300b432", "loadCompleted:1",
+      "load:2", "absSegment:2@16897+511", "write", "taskSegment:2@16897=01008300b432", "loadCompleted:2",
+      // The two RAM segments (MemType 2), the second a stack segment (SegType 1): declared, nothing written.
+      "load:3", "absSegment:3@1792+190", "absSegment:3@1982+1/t1", "absSegment:3@17408+200", "write", "absSegment:3@17608+372", "write",
+      "taskSegment:3@17408=01008300b432", "loadCompleted:3", "restart",
+    ]);
+    expect(build.plan.filter((s) => (s.op === "absSegment" || s.op === "taskSegment") && s.viaProperty !== true)).toEqual([]);
+  });
+
+  test("full download: Busforge writes exactly the bytes ETS writes, with ETS's values, the update bit of objects 36 and 39 included", () => {
+    const build = full();
+    const cap = parseCapture(captureText(FULL), ia);
+    const r = compareSegments(build.segments.map((seg) => ({ seg, address: seg.address, baseSource: "plan" })), memoryImage(cap.writes), etsAllocations(cap), []);
+    expect(r.segments.flatMap((s) => [...s.divergences, ...s.busforgeOnly, ...s.etsOnly])).toEqual([]);
+    expect(r.unattributed).toEqual([]);
+    // The address table without the own individual address, the association table, the com-object table and the
+    // parameter segment whole, 594 bytes.
+    expect(span(bytesOf(build.plan))).toEqual(["4000-4000", "4003-400c", "4201-420b", "4400-463b"]);
+    expect([...bytesOf(build.plan)].sort(([a], [b]) => a - b)).toEqual([...written].sort(([a], [b]) => a - b));
+    // The external inputs of logic 1 and 2 (UpdateFlag="Enabled"): config 0xD3, update bit 0x80 set.
+    expect([configAt(36), configAt(39)].map((a) => written.get(a))).toEqual([0xd3, 0xd3]);
+  });
+
+  // ETS's PID 5 declarations (event 03: segments, task segments), in order, as "lsm:data".
+  const declarations = (file: string) => captureText(file).split("\n").flatMap((l) => {
+    const m = l.includes("ETS->BRIDGE") ? l.match(/\| ([0-9a-fA-F]+)\s*$/) : null;
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.dst !== ia || fr.tpdu.length < 7) return [];
+    const t = fr.tpdu;
+    return (((t[0] & 0x03) << 8) | t[1]) === 0x3d7 && t[3] === 5 && t[6] === 3 ? [`${t[2]}:${t.subarray(6).toString("hex")}`] : [];
+  });
+  const planDeclarations = (plan: LoadPlan) => plan.flatMap((s) => (s.op === "absSegment"
+    ? [`${s.lsm}:${Buffer.from([3, s.segType, s.address >> 8, s.address & 0xff, s.size >> 8, s.size & 0xff, s.access, s.memType, s.segFlags, 0]).toString("hex")}`]
+    : s.op === "taskSegment"
+      ? [`${s.lsm}:${Buffer.from([3, 2, s.address >> 8, s.address & 0xff, s.peiType, s.manufacturer >> 8, s.manufacturer & 0xff, s.appNumber >> 8, s.appNumber & 0xff, s.version]).toString("hex")}`]
+      : []));
+
+  test("full download: every segment and task declaration carries ETS's bytes, access, memory type and flags included", () => {
+    expect(planDeclarations(full().plan)).toEqual(declarations(FULL));
+    expect(declarations(FULL)).toContain("3:030107be000100020000");
+  });
+
+  // Device control (object 0 PID 14): the unit's answer to ETS's read, ETS's write, the unit's answer to the write.
+  const deviceControl = (file: string) => captureText(file).split("\n").flatMap((l) => {
+    const m = l.match(/\| ([0-9a-fA-F]+)\s*$/);
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.tpdu.length < 7 || fr.tpdu[2] !== 0 || fr.tpdu[3] !== 14) return [];
+    const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1];
+    if (apci === 0x3d6 && fr.src === ia) return [`answer ${t.subarray(6).toString("hex")}`];
+    if (apci === 0x3d7 && fr.dst === ia) return [`write ${t.subarray(6).toString("hex")}`];
+    return [];
+  });
+
+  test("ETS's verify mode: device control written back with 0x04 set, 05 where the unit showed the application stopped", () => {
+    expect([FULL, PARTIAL, LINKS, REVERT].map((f) => deviceControl(f).filter((x, i, a) => a.indexOf(x) === i))).toEqual([
+      ["answer 01", "write 05", "answer 05"], ["answer 01", "write 05", "answer 05"],
+      ["answer 00", "write 04", "answer 04"], ["answer 00", "write 04", "answer 04"],
+    ]);
+  });
+
+  test("ETS's log: it executes the declared full steps in their declared order, with the image Busforge writes", () => {
+    const log = etsLog("mdtui-ets6log-fulldownload.txt");
+    const declared = flattenSteps(proc, "full");
+    expect(log.steps.map((s) => s.verb)).toEqual(declared.map((s) => s.verb));
+    expect(declared.flatMap((d, i) => Object.entries(d.attrs).filter(([k, v]) => log.steps[i].attrs[k] !== v))).toEqual([]);
+    expect([...log.image].sort(([a], [b]) => a - b)).toEqual([...bytesOf(full().plan)].sort(([a], [b]) => a - b));
+  });
+
+  test("ETS's log of the parameter download: Load 3 without unload, 277 bytes of AS-44C8, nothing of the com-object table", () => {
+    const log = etsLog("mdtui-ets6log-partial-params.txt");
+    expect(log.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual(["LdCtrlConnect", "LdCtrlCompareProp", "LdCtrlLoad3", "LdCtrlWriteMem17408", "LdCtrlWriteMem17608", "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect"]);
+    expect(log.image.size).toBe(277);
+    expect(span([...log.image.keys()])[0]).toBe("44c8-44c9");
+    expect([...log.image]).toEqual([...wire(PARTIAL)].sort(([a], [b]) => a - b));
+  });
+
+  test("parameter flash: ETS's bracket, and the changed bytes with ETS's values; ETS also writes every unchanged parameter-covered byte", () => {
+    const after = new Map(params).set(LONG_PRESS.ref, LONG_PRESS.to);
+    const pseg = segmentHeld(0x44c8);
+    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[pseg.seg.id, pseg.bytes]]), { moduleInstances: fx.instances });
+    expect([changedBytes, unplaceable]).toEqual([2, []]);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
+    expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
+    const ets = wire(PARTIAL);
+    const ours = bytesOf(plan);
+    expect([...ours]).toEqual([[0x44cc, 0x82], [0x44cd, 0x58]]);
+    expect([...ours].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
+    // Every byte only ETS writes is what the unit already holds.
+    const etsOnly = [...ets.keys()].filter((a) => !ours.has(a));
+    expect(etsOnly.length).toBe(275);
+    expect(etsOnly.filter((a) => held.get(a) !== ets.get(a))).toEqual([]);
+  });
+
+  test("group-address flash: ETS's partial download, the tables in their declared brackets, the com-object table to its counted entries with the new link bit", () => {
+    expect(parseGa("15/7/250")).toBe(0x7ffa);
+    const { plan } = gaFlash(withLink);
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(LINKS, ia)));
+    expect(planSteps(plan)).toEqual(TABLE_BRACKETS);
+    const ets = wire(LINKS);
+    const ours = bytesOf(plan);
+    expect([...ours].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
+    // The com-object table is 3 + 49 x 4 = 199 bytes; the segment's last byte (0x44C7) is not written.
+    expect(span(ours)).toEqual(["4000-4000", "4003-400e", "4201-420d", "4400-44c6"]);
+    // 15/7/250 sorted to the end of the address table, its association (object 48, index 6) behind the others.
+    expect([ours.get(0x4000), ours.get(0x400d), ours.get(0x400e), ours.get(0x4201), ours.get(0x420c), ours.get(0x420d)]).toEqual([7, 0x7f, 0xfa, 6, 6, LINKED]);
+    // Of the com-object table only object 48's config byte changes: the linked bit.
+    expect([...ours].filter(([a, b]) => a >= comObj.seg.address && held.get(a) !== b)).toEqual([[configAt(LINKED), 0x4f]]);
+    expect(held.get(configAt(LINKED))).toBe(0x4b);
+  });
+
+  test("ETS's logs of the group-address download and the revert: the table brackets, LSM 3 without unload, the image it wrote", () => {
+    for (const [log, capture] of [["mdtui-ets6log-partial-links.txt", LINKS], ["mdtui-ets6log-partial-revert.txt", REVERT]] as const) {
+      const l = etsLog(log);
+      expect(l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual([
+        "LdCtrlConnect", "LdCtrlCompareProp", "LdCtrlUnload1", "LdCtrlUnload2",
+        "LdCtrlLoad1", "LdCtrlAbsSegment1", "LdCtrlTaskSegment1", "LdCtrlLoadCompleted1",
+        "LdCtrlLoad2", "LdCtrlAbsSegment2", "LdCtrlTaskSegment2", "LdCtrlLoadCompleted2",
+        "LdCtrlLoad3", "LdCtrlWriteMem17408", "LdCtrlWriteMem17608", "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect",
+      ]);
+      expect([...l.image]).toEqual([...wire(capture)].sort(([a], [b]) => a - b));
+    }
+  });
+
+  test("structural flash of the revert: ETS's bracket set, and every byte ETS changed with ETS's value", () => {
+    const device = beforeRevert();
+    expectRevertForm(structural(device).plan, REVERT, ia, device);
+    // ETS's revert changes the two table counts, object 48's linked bit and the long keypress, nothing else.
+    expect([...wire(REVERT)].filter(([a, b]) => device.get(a) !== b).map(([a]) => a.toString(16))).toEqual(["4000", "4201", "44c5", "44cc", "44cd"]);
+  });
+
+  test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
+    const behind = [0x400d, 0x400e, 0x420c, 0x420d];
+    expect(behind.map((a) => wire(LINKS).get(a))).toEqual([0x7f, 0xfa, 0x06, LINKED]);
+    expect(behind.filter((a) => wire(REVERT).has(a))).toEqual([]);
+    const ours = [...bytesOf(structural(beforeRevert()).plan).keys(), ...bytesOf(gaFlash(fx.links).plan).keys()];
+    expect(behind.filter((a) => ours.includes(a))).toEqual([]);
+  });
 });
