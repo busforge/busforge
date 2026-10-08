@@ -68,7 +68,7 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
         { verb: "LdCtrlLoadCompleted", attrs: { LsmIdx: "3", AppliesTo: "full" } },
         { verb: "LdCtrlRestart", attrs: { AppliesTo: "full" } },
       ] }],
-      verbs: [], unknown: [],
+      verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false,
     };
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(app, new Map(), fullOnly, current);
     // the par download sees no par-applicable segment declaration -> the changed segment is
@@ -84,7 +84,7 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
     dev[firstOwned] = dev[firstOwned] ^ 0xff;
     const current = new Map(targets.map((t) => [t.id, t.id === as4200.id ? dev : Buffer.from(t.bytes)]));
     // a procedure that does not declare AS-4200 (no LdCtrlAbsSegment for its address)
-    const emptyProc: LoadProcedures = { style: "ProductProcedure", blocks: [], verbs: [], unknown: [] };
+    const emptyProc: LoadProcedures = { style: "ProductProcedure", blocks: [], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false };
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(app, new Map(), emptyProc, current);
     expect(plan).toEqual([]);
     expect(changedBytes).toBe(0);
@@ -107,7 +107,7 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
         { verb: "LdCtrlLoadCompleted", attrs: { LsmIdx: "3" } },
         { verb: "LdCtrlRestart", attrs: {} },
       ] }],
-      verbs: [], unknown: [],
+      verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false,
     };
     const { plan, changedBytes, segments, unplaceable } = planAbsoluteParFlash(app, new Map(), noLoad, current);
     expect(plan).toEqual([]);

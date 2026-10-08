@@ -139,7 +139,7 @@ corpusTest("a memory-mapped full download authors the com-object table as ETS do
   const template = app.absoluteSegments.find((s) => s.address === 0x43fe)!.data;
   const l3 = (params: Map<string, string>, links: { comObjNum: number; gaRaws: number[] }[]) => {
     const active = buildDeviceConfig(app, params).imageComObjects;
-    return planAbsoluteFullDownload(app, params, links, 0x11c9, parseLoadProcedures(xml), { requireReboot: false, propertyMapped: false, comObjectTable: { active, linked: new Set(links.map((l) => l.comObjNum)) } })
+    return planAbsoluteFullDownload(app, params, links, 0x11c9, parseLoadProcedures(xml), { requireReboot: false, propertyMapped: false, form: "declared", comObjectTable: { active, linked: new Set(links.map((l) => l.comObjNum)) } })
       .segments.find((s) => s.address === 0x43fe)!.image;
   };
   const defaults = l3(new Map(), []);

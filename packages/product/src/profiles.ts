@@ -1,4 +1,4 @@
-import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -7,8 +7,8 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, lsmIdx, stepAddress, etsCapturedSystem7, etsRegionTablesSystem7, etsDeclaredOrderSystem7, etsAssocOrderSystemB, etsBracketSystemB, imageStampReads, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, withClosingWrites, withConfirmedRestart, withStampReads, planCapturedSystem7GaFlash, planDeclaredOrderSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -208,19 +208,33 @@ export const persistsOnLoadCompleted = (app: AppConfig): boolean => PERSIST_ON_L
 const HOLD_APPLICATION_ON_GA_FLASH = new Set<number>([0x0004]);
 export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLICATION_ON_GA_FLASH.has(appManufacturer(app));
 
-// Application programs the structural flash (flashStructure) is claimed for, each matched against an
-// ETS partial download of such a change (docs/findings.md §28) and run on its bench device. Keyed by
-// the program, not the manufacturer: another product of the same maker may run another stack. The bracket
-// rests on device behaviour that differs between stacks: a System B device keeping a segment's bytes
-// across a reallocation without fill at the same address (the com-object table is written only where
-// it differs), the order of the writes (thelsing/OpenKNX needs the tables before a long parameter
-// write, see planSystemBFullDownload), and the extra LoadCompleted events a persist-at-LoadCompleted
-// device turns into flash commits (the GVS, see HOLD_APPLICATION_ON_GA_FLASH). Everything not listed
-// keeps the full download for such a change.
-//   Jung 400021SE (System B, Data Secure): ETS capture both directions, smoke spec, 2026-10-01.
-//   MDT BE-02001.02 (System 7, property-mapped): ETS capture, smoke spec, 2026-10-01.
-const STRUCTURAL_FLASH = ["M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642"];
-const structuralFlashProven = (app: AppConfig): boolean => STRUCTURAL_FLASH.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
+// The structural flash (one bracket set over the application, the com-object table and both group
+// tables, findings.md §28) follows the family's rule on every application; it is offered only on the
+// applications whose ETS capture of such a download it is tested against (tools/etsdiff.test.ts,
+// "structural flash"): the revert of a parameter and a link change in one download, and for the first
+// two a change that reshapes the com-object table. Every other application takes the full download for
+// such a change, or ETS. This is evidence, not ETS behaviour: an entry is added with its capture test.
+// Two firmware stacks stay off regardless, hardware-shown not to take the bracket: thelsing/OpenKNX
+// loses a download whose tables follow a long parameter write (planSystemBFullDownload), the GVS stack
+// (persist at LoadCompleted) failed its next flash after an extra LoadCompleted.
+export const STRUCTURAL_FLASH_CAPTURED: readonly string[] = [
+  "M-0004_A-7072-21-99A7", // Jung 400021SE
+  "M-0083_A-00B6-32-9642", // MDT BE-02001.02
+  "M-0081_A-FE01-11-75D9", // Auro presence detector
+  "M-0008_A-10D7-11-2783", // Gira Tastsensor 3 Komfort
+  "M-0048_A-107E-12-5B58", // Theben TheLuxa P300
+  "M-0048_A-140C-14-EB70", // Theben Meteodata 140 S
+  "M-0048_A-493B-21-B471", // Theben MIX 2
+];
+const structuralFlashCaptured = (app: AppConfig): boolean =>
+  STRUCTURAL_FLASH_CAPTURED.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
+
+// Firmware that persists its download on a timer after the last memory write and must be left alone
+// before the restart, on a fresh connection (thelsing/OpenKNX, see planSystemBFullDownload). Every other
+// System B download closes as ETS closes it: the restart on the same connection right after the steps
+// that close it (Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway captures).
+const SETTLE_BEFORE_RESTART = new Set<number>([0x00fa]);
+const closesAtOnce = (app: AppConfig): boolean => !SETTLE_BEFORE_RESTART.has(appManufacturer(app));
 
 // An IP interface serves its tunnelling connections from individual addresses outside the parameter
 // image and the load procedure (MaxTunnelingUserEntries of them, the project's AdditionalAddresses).
@@ -299,7 +313,29 @@ function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; 
   }
   const tableSteps = { ...cfg.loadProcedures, blocks: cfg.loadProcedures.blocks.map((b) => ({ ...b, steps: b.steps.filter((st) => st.verb !== "LdCtrlCompareProp") })) };
   const refusal = parRefusal(assessParCoverage(tableSteps, "absolute", new Set([OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])])), "group-address flash");
-  return refusal ? { refusal } : { l3 };
+  if (refusal) return { refusal };
+  // What the planner refuses for the application itself (its procedure style, where its tables go) is
+  // refused here too, so the flash is not offered only to stop at the plan.
+  try {
+    planSystem7GaFlash(cfg, cfg.loadProcedures, buildGroupTablesMv0705([], 0), null);
+  } catch (e) {
+    if (e instanceof ProductError) return { refusal: { code: e.code, message: e.message } };
+    throw e;
+  }
+  return { l3 };
+}
+
+// The memory-control-block regions a loaded segment reports (PID 27), element by element until they
+// cover `size` bytes; null where the object reports none.
+async function readMcbRegions(dev: KnxDevice, obj: number, size: number): Promise<McbRegion[] | null> {
+  const regions: McbRegion[] = [];
+  for (let element = 1, covered = 0; covered < size && element <= 16; element++) {
+    const e = await dev.propRead(obj, PID.MCB_TABLE, element);
+    if (e.length < 8) break;
+    regions.push({ size: e.readUInt32BE(0), control: e[4] });
+    covered += e.readUInt32BE(0);
+  }
+  return regions.length ? regions : null;
 }
 
 // Run the procedure's declared CompareProp pre-flights (the hardware/application check
@@ -543,7 +579,19 @@ export interface FullDownloadInputs {
   // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
   // is authored. Absent: the project sets none.
   comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
+  // The unit holds this application, loaded (program id equal, load-state machines 1-3 LOADED). On a
+  // System 7 application declaring PreferPartialDownloadIfApplicationLoaded it selects ETS's partial form
+  // of the full download (deviceflash.ts absoluteFullForm). On a System B application declaring it, the
+  // unit holds it when its application object is LOADED with this program id, and the download takes
+  // ETS's partial form (planRelativePartialFullDownload), which needs `unitMemory`.
+  // Absent: not known to hold it.
+  unitHoldsApplication?: boolean;
+  unitMemory?: RelativeUnitMemory;
 }
+// What a System B unit holding the application has in its application segment and com-object table,
+// read before the partial form: the bytes, where each segment is, and the memory-control-block regions
+// (PID 27) each reports, null where it reports none.
+export interface RelativeUnitMemory { params: Buffer; paramsAt: number; paramsMcb: McbRegion[] | null; comObj: Buffer; comObjAt: number; comObjMcb: McbRegion[] | null }
 // One segment a full download writes. `address` is null where the device assigns it (a System B
 // relative segment, allocated during the download); `fillByte` is set where the allocation pre-fills
 // the segment, so the bytes of `image` equal to it are not transmitted but are still the segment's content.
@@ -646,7 +694,7 @@ export class SystemBProfile extends DeviceProfile {
     return {
       readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
-      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashProven(this.cfg) && !refused.flashParams && !refused.flashLinks,
+      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashCaptured(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
   }
 
@@ -675,6 +723,10 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    if (inputs.proc.preferPartialIfLoaded && inputs.unitHoldsApplication) {
+      const { plan, segments, imageBytes } = this.planSystemBPartial(inputs);
+      return { plan, segments, imageBytes };
+    }
     return this.planSystemBFull(mask, inputs);
   }
 
@@ -686,7 +738,75 @@ export class SystemBProfile extends DeviceProfile {
     // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
     // AMMA). Threaded into the plan so the allocation and the sparse image write agree with it.
     const fillByte = relParamFillByte(proc);
+    const { target, comObj, addr, assoc, security } = this.systemBImages(cfg, ctx);
 
+    // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
+    // device that does not reboot lost the download; other firmware persists at LoadCompleted and
+    // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
+    const requireReboot = !persistsOnLoadCompleted(cfg);
+    // The mask's full download unloads the PEI program first (MV-07B0 Load ap1); the application's
+    // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
+    const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
+      params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg)), proc.secureEnabled), proc, "full");
+    const imageBytes = target.size + comObj.length + addr.length + assoc.length;
+
+    return {
+      plan, imageBytes, target, comObj, addr, assoc, security,
+      segments: [
+        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, fillByte },
+        { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
+        { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
+        { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
+      ],
+    };
+  }
+
+  // ETS's partial form of the full download (planRelativePartialFullDownload), against what the unit
+  // holds (`ctx.unitMemory`). The application segment's image is the unit's segment with the owned bytes
+  // of this configuration laid over it, so what no parameter owns stays as the unit holds it.
+  private planSystemBPartial(ctx: FullDownloadInputs): FullDownloadBuild & { params: Buffer; target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables; changedBytes: number } {
+    const cfg = this.requireCfg("full download");
+    const proc = ctx.proc;
+    assertParCoverage(proc, "relative");
+    refuseTunnelingEntries(cfg);
+    const unit = ctx.unitMemory;
+    if (!unit) {
+      throw new ProductError("FULL_DOWNLOAD_UNIT_UNKNOWN", "the unit holds this application, so the download takes ETS's partial form, which writes only what the unit does not hold; it cannot be planned without the unit's application segment and com-object table");
+    }
+    const { target, comObj, addr, assoc, security } = this.systemBImages(cfg, ctx);
+    const unitSize = unit.paramsMcb ? unit.paramsMcb.reduce((n, r) => n + r.size, 0) : unit.params.length;
+    if (unit.params.length !== target.size || unitSize !== target.size) {
+      throw new ProductError("FULL_DOWNLOAD_UNIT_LAYOUT", `the unit's application segment is ${unitSize} B where this application's is ${target.size} B; refusing to merge into a segment of another layout`);
+    }
+    const { image } = mergeRelativeTarget(unit.params, target);
+    // The application's regions as the application declares them (written again after its allocation),
+    // else as the unit reports them; the com-object table's as the unit reports them (differentialMask).
+    const mcb = declaredMcbWrites(proc, target.size);
+    const paramsWrite = differentialMask(changedOwned(image, unit.params, target.owned), target.owned, declaredMcbRegions(mcb) ?? unit.paramsMcb);
+    const comObjWrite = differentialMask(differingBytes(comObj, unit.comObj), new Array<number>(comObj.length).fill(0xff), unit.comObjMcb);
+    const writes = (m: number[]) => m.filter((x) => x !== 0).length;
+    const plan = withClosing(withConfirmedRestart(planRelativePartialFullDownload(LSM, {
+      params: writes(paramsWrite) ? { image, owned: paramsWrite, keptAt: unit.paramsAt } : null,
+      comObj: writes(comObjWrite) ? { image: comObj, owned: comObjWrite, keptAt: unit.comObjAt } : null,
+      addr, assoc,
+    }, programIdStamp(cfg), !persistsOnLoadCompleted(cfg), mcb, security), proc.secureEnabled), proc, "full");
+    const changedBytes = writes(paramsWrite) + writes(comObjWrite) + addr.length + assoc.length;
+    return {
+      plan, imageBytes: image.length + comObj.length + addr.length + assoc.length, params: image, target, comObj, addr, assoc, security, changedBytes,
+      segments: [
+        { id: "L4 parameter segment", lsm: LSM, source: "params", address: unit.paramsAt, image },
+        { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: unit.comObjAt, image: comObj },
+        { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
+        { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
+      ],
+    };
+  }
+
+  // The images a full download writes, in either form: the parameter target, the com-object table
+  // authored for this configuration and its links, both group tables and, on a Data Secure device, the
+  // security object.
+  private systemBImages(cfg: AppConfig, ctx: FullDownloadInputs): { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -694,8 +814,8 @@ export class SystemBProfile extends DeviceProfile {
         `${unmapped.length} stored value(s) cannot be placed in this device's parameter image (e.g. ${unmapped[0]}); refusing to commission a device with a configuration we cannot express`);
     }
 
-    // A full download owns the whole segment, so unlike the surgical parameter flash there is no
-    // live image to merge into: every byte we do not derive is the allocation's zero fill.
+    // In the full form the download owns the whole segment: every byte we do not derive is the
+    // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 
@@ -714,28 +834,9 @@ export class SystemBProfile extends DeviceProfile {
     // Communication flag on every other object, so the com-object table build needs to know them.
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
-
-    // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
-    // device that does not reboot lost the download; other firmware persists at LoadCompleted and
-    // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
-    const requireReboot = !persistsOnLoadCompleted(cfg);
+    const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
-    const etsBracket = etsBracketSystemB(cfg.loadProcedures);
-    const plan = withStampReads(withConfirmedRestart(withClosingWrites(planSystemBFullDownload({
-      params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, etsBracket, etsBracket), closingPropWrites(proc, "full")), etsBracket), imageStampReads(proc));
-    const imageBytes = target.size + comObj.length + addr.length + assoc.length;
-
-    return {
-      plan, imageBytes, target, comObj, addr, assoc, security,
-      segments: [
-        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, fillByte },
-        { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
-        { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
-        { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
-      ],
-    };
+    return { target, comObj, addr, assoc, security };
   }
 
   // Commission a System B device from nothing: write the application id, the parameter image, the
@@ -754,6 +855,22 @@ export class SystemBProfile extends DeviceProfile {
     const coverage = assertParCoverage(proc, "relative");
     refuseTunnelingEntries(this.requireCfg("full download"));
     await runDeclaredChecks(dev, coverage);
+    // Which form ETS runs: an application declaring PreferPartialDownloadIfApplicationLoaded on a unit
+    // holding it takes the partial form. ETS tells by the application object's load state and program
+    // id (Jung 400021SE, Theben DALI-Gateway captures). The partial form keeps what the unit holds, so
+    // Busforge also wants the three tables LOADED and the application segment at this application's
+    // size (its memory-control block, PID 27); a unit that is not, which no capture shows ETS on, gets
+    // the full form, which rewrites every object. So do the two firmware stacks hardware-shown not to
+    // take the structural bracket this form is made of (STRUCTURAL_FLASH_CAPTURED above).
+    if (proc.preferPartialIfLoaded && closesAtOnce(this.requireCfg("full download")) && !persistsOnLoadCompleted(this.requireCfg("full download"))) {
+      const cfg = this.requireCfg("full download");
+      const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
+      if (id.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
+        const size = this.systemBImages(cfg, { ...ctx, proc }).target.size;
+        const paramsMcb = await readMcbRegions(dev, LSM, size);
+        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, size, paramsMcb);
+      }
+    }
     const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc });
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
@@ -857,6 +974,56 @@ export class SystemBProfile extends DeviceProfile {
     });
   }
 
+  // The partial form on a unit holding the application (planSystemBPartial): the unit's application
+  // segment and com-object table are read first, as the base the owned bytes are merged into and the
+  // backup, then only what differs is written. The verify checks every byte the way the structural
+  // flash does: the owned bits against the new configuration, the rest against what the unit held.
+  private async downloadPartialForm(dev: KnxDevice, mask: string, ctx: FullDownloadCtx, proc: LoadProcedures, size: number, paramsMcb: McbRegion[]): Promise<FlashResult> {
+    const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
+    const current = await dev.memRead(paramsAt, size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const cur = await readGroupTables(dev, undefined, false);
+    const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
+    const unitMemory: RelativeUnitMemory = {
+      params: current, paramsAt, paramsMcb,
+      comObj: cur.comObj, comObjAt, comObjMcb: await readMcbRegions(dev, OBJ.COMOBJ_TABLE, cur.comObj.length),
+    };
+    const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory });
+    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
+    const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
+    return runFlashOp(dev, mask, ctx, {
+      imageBytes,
+      imageDigest: fullDownloadImageDigest(segments),
+      diffBytes: changedBytes
+        + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
+          + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
+      backup: `${prefix}-params.bin`,
+      backups: ctx.dryRun ? [] : [
+        { file: `${prefix}-params.bin`, bytes: current },
+        { file: `${prefix}-comobj.bin`, bytes: cur.comObj },
+        { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
+        { file: `${prefix}-addr.bin`, bytes: cur.addr },
+      ],
+      write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
+        const { ok } = await verifySettled(
+          async () => ({
+            app: await lsmState(dev, OBJ.APP_PROGRAM),
+            tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
+            back: await dev.memRead(await dev.tableAddr(LSM), params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
+            tables: await readGroupTables(dev),
+            sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
+          }),
+          ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && verifyMaskedBytes(back, params, paramMask)
+            && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)
+            && (!security || (sec !== null && sameSecurityObject(sec, security))),
+        );
+        return ok;
+      },
+    });
+  }
+
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
     const cfg = this.requireCfg("read-back");
     const { model, instances } = moduleAwareModel(cfg, ctx.liveParams, ctx.moduleInstances ?? []);
@@ -941,7 +1108,7 @@ export class SystemBProfile extends DeviceProfile {
       backups: [{ file: backupFile, bytes: current }],
       write: () => runLoadPlan(
         dev,
-        withStampReads(withConfirmedRestart(withClosingWrites(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), closingPropWrites(proc, "par")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures)),
+        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
@@ -989,7 +1156,7 @@ export class SystemBProfile extends DeviceProfile {
     }
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
+    const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
@@ -1034,8 +1201,8 @@ export class SystemBProfile extends DeviceProfile {
         // LOAD/LoadCompleted on an object holding no application is a transition this flash has no
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
-        // The property write the application closes every download with (closingPropWrites) closes this one too.
-        await runLoadPlan(dev, withStampReads(withConfirmedRestart(withClosingWrites(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), closingPropWrites(cfg.loadProcedures, "grp")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures))); // rebuilt L3 carries the correct comm flags for the new link set
+        // The steps the application closes every download with (closingSteps) close this one too.
+        await runLoadPlan(dev, withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), cfg.loadProcedures.secureEnabled), cfg.loadProcedures, "grp")); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1090,7 +1257,7 @@ export class SystemBProfile extends DeviceProfile {
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
-    const { addr, assoc } = buildGroupTables(ctx.links, { order: etsAssocOrderSystemB(cfg.loadProcedures) ? "ets-captured" : "object" });
+    const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const mcb = declaredMcbWrites(proc, target.size, "par");
 
@@ -1108,7 +1275,7 @@ export class SystemBProfile extends DeviceProfile {
       comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
-    const closed = withStampReads(withConfirmedRestart(withClosingWrites(plan, closingPropWrites(proc, "par")), etsBracketSystemB(cfg.loadProcedures)), imageStampReads(cfg.loadProcedures));
+    const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
     return structural(runFlashOp(dev, mask, ctx, {
       imageBytes: image.length + comObj.length + addr.length + assoc.length,
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
@@ -1174,17 +1341,12 @@ export class System7Profile extends DeviceProfile {
     // group communication on a flashed link, unchanged across a bus power-cycle (docs/commissioning.md).
     //
     // Each write is offered only where its planner can run the procedure the application declares
-    // (operationRefusals): a full download with a step it cannot execute (LdCtrlTaskCtrl1 on the
-    // M-0081_A-FF31 and M-008E applications), a parameter or group-address flash with a step addressed
-    // to what it writes that has no disposition. M-0008 declares both and is offered all three: ETS
-    // is captured running its downloads, and Busforge runs them as captured (etsCapturedSystem7). The
-    // Auro presence detector M-0081_A-FE01-11-75D9, the Theben TheLuxa P300 M-0048_A-107E-12-5B58 and the
-    // Theben Meteodata 140 S M-0048_A-140C-14-EB70 are offered their full download for the same reason,
-    // each LdCtrlTaskCtrl1 in the form its capture shows (etsDeclaredOrderSystem7).
+    // (operationRefusals): a full download in at least one of its forms (absoluteFullForm), a parameter or
+    // group-address flash with every step addressed to what it writes dispositioned.
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
-    const canStructure = canAuthor && !!this.cfg && this.cfg.groupTables.comObjectSegment !== undefined && structuralFlashProven(this.cfg);
+    const canStructure = canAuthor && !!this.cfg && structuralFlashCaptured(this.cfg) && this.cfg.groupTables.comObjectSegment !== undefined && this.cfg.loadProcedures.style === "ProductProcedure";
     const refused = this.operationRefusals();
     return {
       readParams: true, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
@@ -1200,16 +1362,20 @@ export class System7Profile extends DeviceProfile {
     if (par) out.flashParams = par;
     const ga = system7GaScope(cfg, this.mask);
     if ("refusal" in ga) out.flashLinks = ga.refusal;
-    // Checked before the tunnelling entries, so the procedure is the reason given where both apply.
-    const full = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures) : null;
+    // Checked before the tunnelling entries, so the procedure is the reason given where both apply. Offered
+    // where one form can run; the unit's state picks the form at download time.
+    const declared = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures, "declared") : null;
+    const partial = declared && cfg.loadProcedures.preferPartialIfLoaded ? absoluteFullStepRefusal(cfg.loadProcedures, "partial") : declared;
+    const full = (declared && partial) ?? (this.canAuthor() ? fullDownloadSegmentRefusal(cfg, cfg.loadProcedures) : null);
     if (full) out.fullDownload = full;
     return out;
   }
 
-  // A captured application's full download runs only on a unit that holds the application (downloadFull
-  // refuses FULL_DOWNLOAD_APPLICATION_NOT_LOADED), so a unit left without it goes back to ETS.
+  // An application whose declared form cannot run is downloaded only in the partial form, on a unit that
+  // holds it (downloadFull refuses FULL_DOWNLOAD_APPLICATION_NOT_LOADED), so a unit left without it goes
+  // back to ETS.
   override fullDownloadLoadsApplication(): boolean {
-    return super.fullDownloadLoadsApplication() && !(this.cfg && capturedOnLoadedUnit(this.cfg.loadProcedures));
+    return super.fullDownloadLoadsApplication() && !(this.cfg && absoluteFullStepRefusal(this.cfg.loadProcedures, "declared"));
   }
 
   private canAuthor(): boolean {
@@ -1325,11 +1491,10 @@ export class System7Profile extends DeviceProfile {
     // com-object table but the linked bit, so an association onto an object that table does not
     // configure is a link to nothing.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    // M-0081_A-FE01 runs planDeclaredOrderSystem7GaFlash below (shown on hardware, docs/status.md
-    // "Auro M-0081_A-FE01"), the applications whose tables ETS
-    // re-declares (M-0008, the TheLuxa P300) planCapturedSystem7GaFlash; the other System 7 applications
-    // outside the captured registries run planMv0705GaFlash.
-    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia), { order: etsRegionTablesSystem7(cfg.loadProcedures) ? "ets-captured" : "object" });
+    // The group-address flash ETS's partial download runs on every System 7 application with its own
+    // procedure (planSystem7GaFlash): both tables unloaded and declared where tablePlacement puts them,
+    // the com-object table written in the application's bracket.
+    const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -1361,51 +1526,21 @@ export class System7Profile extends DeviceProfile {
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
-    // A memory-mapped device gets only the bytes that differ, as ETS writes it (planMv0705GaFlash);
-    // a property-mapped one gets whole tables, as ETS writes the MDT BE-02001.02.
-    const current = isMemoryMappedLsm(mask) ? {
-      addr: await dev.memRead(await loadedTableAddr(dev, OBJ.ADDR_TABLE, "address table"), addr.length),
-      assoc: await dev.memRead(await loadedTableAddr(dev, OBJ.ASSOC_TABLE, "association table"), assoc.length),
-      comObj: curL3 ?? undefined,
-    } : undefined;
-    // The tables of an application of ETS_REGION_TABLES_SYSTEM7_APPS move with the address table's length,
-    // so they are re-declared as ETS's partial download does, and only the bytes ETS's image holds are written
-    // (planCapturedSystem7GaFlash); planned here, so a table that does not fit is refused before
-    // anything is written.
-    // A declared-order application's tables are unloaded and declared again as ETS's partial download
-    // does it, and only the bytes the full download writes are written (planDeclaredOrderSystem7GaFlash):
-    // the address table's own individual address is left to the device, so it is not read back either.
-    const regionTables = etsRegionTablesSystem7(cfg.loadProcedures);
-    const declaredOrder = etsDeclaredOrderSystem7(cfg.loadProcedures) && !regionTables ? planDeclaredOrderSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
-    const captured = regionTables ? planCapturedSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3) : null;
-    const plan = captured ? captured.plan : declaredOrder ? declaredOrder.plan : planMv0705GaFlash({ addr, assoc, comObj: l3 ?? undefined }, current);
-    // On the declared-order path the change is counted over exactly the runs the plan writes, read where
-    // it writes them (the address table's own individual address is neither written nor counted); a
-    // table whose reference the device does not hold at the declared address counts whole, since the
-    // device does not read it from there.
-    let diffBytes = byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + (l3 && curL3 ? byteDiff(l3.bytes, curL3) : 0); // 0 iff every table matches
-    if (captured) {
-      // Likewise over exactly the runs the captured plan writes, at their re-declared addresses: a
-      // table whose reference the device does not hold there counts whole.
-      diffBytes = 0;
-      for (const [lsm, at] of [[OBJ.ADDR_TABLE, captured.addrAt], [OBJ.ASSOC_TABLE, captured.assocAt]] as const) {
-        const placed = (await dev.tableAddr(lsm)) === at;
-        for (const r of captured.writes.filter((w) => w.lsm === lsm)) diffBytes += placed ? byteDiff(r.image, await dev.memRead(r.address, r.image.length)) : r.image.length;
-      }
-      for (const r of captured.comObjWrites) diffBytes += byteDiff(r.image, await dev.memRead(r.address, r.image.length));
+    const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3);
+    // The change is counted over exactly the runs the plan writes, read where it writes them (the address
+    // table's own individual address is neither written nor counted); a table the plan moves whose
+    // reference the device does not hold at the new address counts whole, since the device does not read
+    // it from there.
+    let diffBytes = 0;
+    for (const [lsm, at] of [[OBJ.ADDR_TABLE, ga.addrAt], [OBJ.ASSOC_TABLE, ga.assocAt]] as const) {
+      const placed = (isMemoryMappedLsm(mask) && !ga.moved) || (await dev.tableAddr(lsm)) === at;
+      for (const r of ga.writes.filter((w) => w.lsm === lsm)) diffBytes += placed ? byteDiff(r.image, await dev.memRead(r.address, r.image.length)) : r.image.length;
     }
-    if (declaredOrder) {
-      diffBytes = 0;
-      for (const t of declaredOrder.tableRefs) {
-        const placed = (await dev.tableAddr(t.lsm)) === t.address;
-        for (const r of t.runs) diffBytes += placed ? byteDiff(r.image, await dev.memRead(r.address, r.image.length)) : r.image.length;
-      }
-      if (l3 && curL3) diffBytes += byteDiff(l3.bytes, curL3);
-    }
+    for (const r of ga.comObjWrites) diffBytes += byteDiff(r.image, await dev.memRead(r.address, r.image.length));
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
-      imageBytes: captured ? [...captured.writes, ...captured.comObjWrites].reduce((n, w) => n + w.image.length, 0) : addr.length + assoc.length + (l3?.bytes.length ?? 0),
+      imageBytes: [...ga.writes, ...ga.comObjWrites].reduce((n, w) => n + w.image.length, 0),
       ...(gaTablesLoaded ? {} : { loadIncomplete: "refuse" as const }),
       diffBytes,
       backup: prefix,
@@ -1416,48 +1551,31 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");
-        if (declaredOrder) {
-          // The bytes alone do not show the device reads its tables from them: each table's reference
-          // (PID 7) must be the address its load-state machine was declared at.
-          for (const t of declaredOrder.tableRefs) {
-            const { ok } = await verifySettled(() => dev.tableAddr(t.lsm), (at) => at === t.address);
-            if (!ok) return false;
-          }
-          for (const w of declaredOrder.segments) {
-            const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
-            if (!ok) return false;
-          }
-          return true;
-        }
-        if (captured) {
-          // As on the declared-order path: each table's reference at its re-declared address, then
-          // exactly the runs written, so the own individual address and the com-object segment's bytes
-          // behind its table, which are not written, are not read back either.
-          for (const [lsm, at] of [[OBJ.ADDR_TABLE, captured.addrAt], [OBJ.ASSOC_TABLE, captured.assocAt]] as const) {
+        // Each table's reference (PID 7) must be the address it was declared at, or the device does not
+        // read the bytes written (a memory-mapped mask is not asked unless the plan moved the tables); then
+        // exactly the runs written, so the own individual address and the com-object segment's bytes
+        // behind its table, which are not written, are not read back either.
+        if (ga.moved || !isMemoryMappedLsm(mask)) {
+          for (const [lsm, at] of [[OBJ.ADDR_TABLE, ga.addrAt], [OBJ.ASSOC_TABLE, ga.assocAt]] as const) {
             const { ok } = await verifySettled(() => dev.tableAddr(lsm), (got) => got === at);
             if (!ok) return false;
           }
-          for (const w of [...captured.writes, ...captured.comObjWrites]) {
-            const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
-            if (!ok) return false;
-          }
-          return true;
         }
-        const { ok } = await verifySettled(
-          async () => ({ ...(await readGroupTablesMv0705(dev)), l3: l3 ? await dev.memRead(l3.address, l3.bytes.length) : null }),
-          (back) => back.addr.equals(addr) && back.assoc.equals(assoc) && (!l3 || !!back.l3?.equals(l3.bytes)),
-        );
-        return ok;
+        for (const w of [...ga.writes, ...ga.comObjWrites]) {
+          const { ok } = await verifySettled(() => dev.memRead(w.address, w.image.length), (back) => back.equals(w.image));
+          if (!ok) return false;
+        }
+        return true;
       },
     });
   }
 
   // A parameter change that alters the com-object table, written as ETS writes it in a partial
-  // download (planAbsoluteStructuralFlash): per load-state machine only the bytes that differ, the
+  // download (planAbsoluteStructuralFlash): the group tables and the application in one bracket set, the
   // com-object table authored from its template for the new parameters and links. Everything is read
   // first, so the comparison is against the device, not against what the project believes it holds.
   override async flashStructure(dev: KnxDevice, mask: string, ctx: StructureFlashCtx): Promise<FlashResult> {
@@ -1488,7 +1606,7 @@ export class System7Profile extends DeviceProfile {
       read += r.image.length;
     }
     // The closing restart is held to what the parameter flash proves on these devices.
-    const { plan, changedBytes, concerned, segments } = planAbsoluteStructuralFlash(images, proc, current, !persistsOnLoadCompleted(cfg));
+    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg));
     const loaded = await allLoaded(dev, concerned, memMapped);
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {
@@ -1503,6 +1621,10 @@ export class System7Profile extends DeviceProfile {
         ctx.onProgress?.("verify");
         const { ok: loadedAfter } = await verifySettled(() => allLoaded(dev, concerned, memMapped), (l) => l);
         if (!loadedAfter) return false;
+        for (const t of tableRefs ?? []) {
+          const { ok } = await verifySettled(() => dev.tableAddr(t.lsm), (got) => got === t.address);
+          if (!ok) return false;
+        }
         for (const s of segments) {
           const { ok } = await verifySettled(() => dev.memRead(s.address, s.image.length), (back) => verifyMaskedBytes(back, s.image, s.verify));
           if (!ok) return false;
@@ -1526,7 +1648,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
-    refuse(absoluteFullStepRefusal(proc));
+    refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc));
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
@@ -1553,7 +1675,8 @@ export class System7Profile extends DeviceProfile {
     // re-runs the application; it is not the persistence boundary (unlike thelsing/knx). Do not
     // demand a reboot signal the BIM M112 firmware need not give; the post-restart read-back proves
     // the configuration is really there.
-    const { plan, segments, imageBytes, tableRefs } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable });
+    const form = absoluteFullForm(proc, ctx.unitHoldsApplication ?? false);
+    const { plan, segments, imageBytes, tableRefs } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable, form });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
     return { plan, segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
@@ -1581,8 +1704,6 @@ export class System7Profile extends DeviceProfile {
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
     const proc = parseLoadProcedures(ctx.appXml);
-    // A step the planner cannot execute refuses the download before the device is asked anything.
-    refuse(absoluteFullStepRefusal(proc));
     refuseTunnelingEntries(cfg);
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
@@ -1598,36 +1719,38 @@ export class System7Profile extends DeviceProfile {
           `object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but this application is ${c.expect.toString("hex")}; refusing to commission a different application onto this device`);
       }
     }
-    // Every ETS capture of a captured application's full download ran on a device that held this
-    // application with load-state machines 1, 2 and 3 all loaded, and read its program id first
-    // (etsCapturedSystem7 leaves the application's load-state machine as it is and rewrites its data;
-    // etsDeclaredOrderSystem7 unloads and reloads it). What ETS sends to any other device is not
-    // captured, so such a device is refused before anything is written.
-    if (capturedOnLoadedUnit(proc)) {
-      // ETS authorizes with the free key first and is granted level 0 (gira-m0008-ets-fulldownload.log,
-      // auro-m0081-ets-fulldownload.log); a device that grants less was not captured taking this download.
+    // Which form ETS runs (absoluteFullForm): an application declaring PreferPartialDownloadIfApplicationLoaded
+    // on a unit that holds it, loaded, takes the partial form; ETS reads the program id and the load states
+    // to tell (ABB US/U 4.2, Gira M-0008 captures). The declared form reads nothing first.
+    // A unit holding another application (a non-zero program id that is not this one) is not overwritten:
+    // which application a device runs is the user's decision, made in the project, not the download's.
+    const id = await dev.propRead(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
+    if (id.length && id.some((x) => x !== 0) && !id.equals(programIdStamp(cfg))) {
+      throw new ProductError("LOAD_PROC_CHECK_FAILED", `the device holds program id ${id.toString("hex")} where this application is ${programIdStamp(cfg).toString("hex")}; refusing to commission a different application onto it`);
+    }
+    let unitHoldsApplication = false;
+    if (proc.preferPartialIfLoaded) {
+      const states = [];
+      for (const obj of [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]) states.push(await lsmState(dev, obj, isMemoryMappedLsm(mask)));
+      unitHoldsApplication = id.equals(programIdStamp(cfg)) && states.every((st) => st === STATE.LOADED);
+    }
+    const form = absoluteFullForm(proc, unitHoldsApplication);
+    const stepRefusal = absoluteFullStepRefusal(proc, form);
+    if (stepRefusal && form === "declared" && proc.preferPartialIfLoaded && !absoluteFullStepRefusal(proc, "partial")) {
+      throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
+        `the device does not hold this application loaded (program id ${programIdStamp(cfg).toString("hex")}, load-state machines 1-3), and the procedure ETS runs on such a device cannot be executed: ${stepRefusal.message}`);
+    }
+    refuse(stepRefusal ?? fullDownloadSegmentRefusal(cfg, proc));
+    if (form === "partial") {
+      // ETS authorizes with the free key first and is granted level 0 (gira-m0008-ets-fulldownload.log); a
+      // device that grants less was not captured taking the partial form.
       const level = await dev.authorizeFreeKey();
       if (level !== 0) {
-        throw new ProductError("FULL_DOWNLOAD_ACCESS_LEVEL", `the device grants access level ${level} to the free key where the ETS capture of this application's download shows level 0; refusing to start a download it may refuse halfway`);
-      }
-      const want = programIdStamp(cfg);
-      const id = await dev.propRead(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
-      if (!id.equals(want)) {
-        throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
-          `the device holds program id ${id.toString("hex") || "(none)"} where this application is ${want.toString("hex")}; every ETS capture of this application's full download ran on a device holding it, loaded, and what ETS sends to one that does not is not captured`);
-      }
-      // Every capture ran on a unit whose address table, association table and application were all
-      // LOADED; a unit with any of them in another state was not captured taking this download.
-      for (const obj of [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]) {
-        const state = await lsmState(dev, obj, isMemoryMappedLsm(mask));
-        if (state !== STATE.LOADED) {
-          throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
-            `load-state machine ${obj} of the device is in load state ${state}, not loaded; every ETS capture of this application's full download ran on a device whose load-state machines 1, 2 and 3 were all loaded, and what ETS sends to one that is not is not captured`);
-        }
+        throw new ProductError("FULL_DOWNLOAD_ACCESS_LEVEL", `the device grants access level ${level} to the free key where the ETS capture of the partial download shows level 0; refusing to start a download it may refuse halfway`);
       }
     }
 
-    const { plan, segments, imageBytes, tableRefs } = this.planSystem7Full(mask, { ...ctx, proc });
+    const { plan, segments, imageBytes, tableRefs } = this.planSystem7Full(mask, { ...ctx, proc, unitHoldsApplication });
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
     // app's own segment declarations. OFF by default (ctx.backupBeforeUnload): the download rebuilds
@@ -1675,9 +1798,6 @@ export class System7Profile extends DeviceProfile {
   }
 }
 
-// The applications whose full download ETS is captured running only on a unit that holds them, with
-// load-state machines 1, 2 and 3 loaded.
-const capturedOnLoadedUnit = (lp: LoadProcedures): boolean => etsCapturedSystem7(lp) || etsDeclaredOrderSystem7(lp);
 
 // Every recognised-but-not-implemented memory model: System 1 (BCU1), System 2 (BCU2),
 // System 300, couplers, interfaces, IR decoders, media couplers, RF-only, unknown masks.

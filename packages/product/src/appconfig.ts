@@ -183,6 +183,9 @@ export interface AppConfig {
   maxTunnelingUserEntries: number;
   // <Options ParameterByteOrder>: the byte order of multi-byte parameter values in memory.
   parameterByteOrder: "BigEndian" | "LittleEndian";
+  // <Options DownloadInvisibleParameters>: "None" where ETS downloads no parameter the configuration
+  // does not show (deviceimage.ts buildRelativeSegmentTarget); undefined where the application does not say.
+  downloadInvisibleParameters?: string;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -330,6 +333,7 @@ export function parseAppConfig(xml: string): AppConfig {
     maxTunnelingUserEntries: appAttrs.MaxTunnelingUserEntries === undefined ? 0
       : /^\d+$/.test(appAttrs.MaxTunnelingUserEntries) ? Number(appAttrs.MaxTunnelingUserEntries) : NaN,
     parameterByteOrder,
+    ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     loadProcedures: loadProceduresOf(root),

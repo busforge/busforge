@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
-import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingPropWrites, unrunGrpSteps, imageStampReads, KNOWN_LD_VERBS, type LdStep } from "../src/loadproc.ts";
+import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingSteps, unrunGrpSteps, KNOWN_LD_VERBS, type LdStep, type LoadProcedures, type ClosingStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
 
@@ -101,68 +101,67 @@ corpusTest('the GVS AMMA\'s AppliesTo="all" steps are part of both its downloads
   }
 });
 
-// ---- closing property writes ----
-// A declared property write of unknown effect runs only where an ETS capture shows ETS sending it, for
-// that application, with that value: the GVS AMMA's PID 67 = 01 on object 4.
+// ---- the steps that close a download ----
+// A merge block 7 (MergedProcedure) or the steps behind the last LoadCompleted (ProductProcedure) close the
+// download: declared reads of PID 27 and property writes, executed as declared before the restart.
 const GVS = "M-0085_A-0072-30-69AA";
 const pid67 = (attrs: Record<string, string> = {}): LdStep => ({ verb: "LdCtrlWriteProp", attrs: { AppliesTo: "all", ObjIdx: "4", PropId: "67", Verify: "true", InlineData: "01", ...attrs } });
-const lpOf = (app: string | undefined, ...steps: LdStep[]) => ({ style: "MergedProcedure" as const, ...(app ? { app } : {}), blocks: [{ mergeId: 7, steps }], verbs: [], unknown: [] });
+const lpOf = (mergeId: number, ...steps: LdStep[]): LoadProcedures => ({ style: "MergedProcedure", app: GVS, blocks: [{ mergeId, steps }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false });
+const write67: ClosingStep = { kind: "write", obj: 4, pid: 67, start: 1, data: Buffer.from([1]), verify: true };
 
-test("the GVS AMMA's captured PID 67 write is executed, and closes every download", () => {
-  expect(assessParStep(pid67(), "relative", GVS).kind).toBe("executed");
-  for (const op of ["full", "par", "grp"] as const) {
-    expect(closingPropWrites(lpOf(GVS, pid67()), op)).toEqual([{ obj: 4, pid: 67, data: Buffer.from([1]) }]);
+test("a declared property write in merge block 7 closes every download it applies to", () => {
+  const w = pid67();
+  expect(assessParStep(w, "relative", lpOf(7, w)).kind).toBe("executed");
+  for (const op of ["full", "par", "grp"] as const) expect(closingSteps(lpOf(7, pid67()), op)).toEqual([write67]);
+  expect(closingSteps(lpOf(7, pid67({ Verify: "false" })), "full")).toEqual([{ ...write67, verify: false } as ClosingStep]);
+});
+
+test("a closing step that cannot be executed as declared refuses, and the same step elsewhere blocks", () => {
+  for (const s of [pid67({ InlineData: "0g" }), pid67({ Count: "2" }), pid67({ ObjIdx: "x" }), pid67({ StartElement: "0" })]) {
+    expect(() => closingSteps(lpOf(7, s), "full")).toThrow("cannot be executed as declared");
+    expect(assessParStep(s, "relative", lpOf(7, s)).kind).toBe("blocked");
   }
+  // outside merge block 7 a property write is no closing step: its effect inside a bracket is not modeled
+  expect(closingSteps(lpOf(2, pid67()), "full")).toEqual([]);
+  expect(assessParStep(pid67(), "relative", lpOf(2, pid67())).kind).toBe("blocked");
+  expect(assessParStep(pid67(), "relative").kind).toBe("blocked");
 });
 
-test("the same write without the capture's application, value, object or verification stays blocked", () => {
-  for (const [app, s] of [
-    ["M-0085_A-0072-31-69AB", pid67()],          // another GVS application: no carry-over
-    [undefined, pid67()],                         // application unknown
-    [GVS, pid67({ InlineData: "02" })],
-    [GVS, pid67({ ObjIdx: "3" })],
-    [GVS, pid67({ Verify: "false" })],
-    [GVS, pid67({ StartElement: "2" })],
-    [GVS, pid67({ Count: "2" })],
-  ] as [string | undefined, LdStep][]) {
-    expect(assessParStep(s, "relative", app).kind).toBe("blocked");
-    expect(closingPropWrites(lpOf(app, s), "full")).toEqual([]);
-  }
-  // on an absolute device nothing would run it
-  expect(assessParStep(pid67(), "absolute", GVS).kind).toBe("blocked");
+test("closing steps follow AppliesTo; the group-address download takes all, grp and the undeclared auto", () => {
+  expect(closingSteps(lpOf(7, pid67({ AppliesTo: "full,par" })), "grp")).toEqual([]);
+  expect(closingSteps(lpOf(7, pid67({ AppliesTo: "full" })), "par")).toEqual([]);
+  expect(closingSteps(lpOf(7, pid67({ AppliesTo: "par,grp" })), "grp")).toHaveLength(1);
+  expect(closingSteps(lpOf(7, step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" })), "grp")).toEqual([{ kind: "read", obj: 1, pid: 27, start: 1, count: 1 }]);
 });
 
-test("a group-address flash closes with a write only where the step names grp or all", () => {
-  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "full,par" })), "grp")).toEqual([]);
-  expect(closingPropWrites(lpOf(GVS, { verb: "LdCtrlWriteProp", attrs: { ObjIdx: "4", PropId: "67", Verify: "true", InlineData: "01" } }), "grp")).toEqual([]);
-  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "par,grp" })), "grp")).toHaveLength(1);
-  expect(closingPropWrites(lpOf(GVS, pid67({ AppliesTo: "full" })), "par")).toEqual([]);
-});
-
-test("the group-address flash refuses a step named for it that it does not run, the declared check aside", () => {
+test("the group-address flash refuses a step named for it that it does not run, the declared check and closing steps aside", () => {
   const check = step("LdCtrlCompareProp", { AppliesTo: "all", ObjIdx: "4", PropId: "66", InlineData: "007230" });
-  expect(unrunGrpSteps(lpOf(GVS, check, pid67()))).toEqual([]);
-  expect(unrunGrpSteps(lpOf("M-0085_A-0073-30-4A88", check, pid67())).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
-  expect(unrunGrpSteps(lpOf(GVS, pid67({ InlineData: "02" }))).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
-  expect(unrunGrpSteps(lpOf(GVS, step("LdCtrlLoadImageProp", { AppliesTo: "grp", ObjIdx: "1", PropId: "27" }))).map((b) => b.verb)).toEqual(["LdCtrlLoadImageProp"]);
+  const lp = (mergeId: number, ...steps: LdStep[]) => ({ ...lpOf(7, pid67()), blocks: [{ mergeId: 1, steps: [check] }, { mergeId, steps }] });
+  expect(unrunGrpSteps(lp(7, pid67()))).toEqual([]);
+  expect(unrunGrpSteps(lp(7, pid67({ Count: "2" }))).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
+  expect(unrunGrpSteps(lp(2, pid67())).map((b) => b.verb)).toEqual(["LdCtrlWriteProp"]);
+  expect(unrunGrpSteps(lp(2, step("LdCtrlRelSegment", { AppliesTo: "grp", LsmIdx: "1", Size: "2" }))).map((b) => b.verb)).toEqual(["LdCtrlRelSegment"]);
   // a step not named for a group-table download is not the group-address flash's
-  expect(unrunGrpSteps(lpOf("M-0085_A-0073-30-4A88", pid67({ AppliesTo: "full,par" })))).toEqual([]);
+  expect(unrunGrpSteps(lp(2, pid67({ AppliesTo: "full,par" })))).toEqual([]);
 });
 
-corpusTest("the GVS AMMA's catalogue procedure names its application and closes each download with PID 67 = 01", () => {
+corpusTest("the GVS AMMA closes each download with its stamp reads, then PID 67 = 01", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0085_A-0072-30-69AA.xml.gz"));
   expect(lp.app).toBe(GVS);
-  for (const op of ["full", "par", "grp"] as const) expect(closingPropWrites(lp, op)).toEqual([{ obj: 4, pid: 67, data: Buffer.from([1]) }]);
+  const reads = [1, 2, 3, 4].map((obj): ClosingStep => ({ kind: "read", obj, pid: 27, start: 1, count: 1 }));
+  for (const op of ["full", "par", "grp"] as const) expect(closingSteps(lp, op)).toEqual([...reads, write67]);
   expect(assessParCoverage(lp, "relative").blocked).toEqual([]);
   expect(assessParCoverage(lp, "relative").checks).toEqual([{ obj: 4, pid: 66, expect: Buffer.from("007230", "hex"), mask: undefined }]);
   expect(unrunGrpSteps(lp)).toEqual([]);
 });
 
-corpusTest("no other real catalogue application closes a download with a property write", () => {
+corpusTest("every real catalogue application's closing steps can be executed; only the GVS AMMA closes with a write", () => {
   for (const f of listRealFixtures()) {
-    if (f.startsWith(GVS)) continue;
     const lp = parseLoadProcedures(readRealFixture(f));
-    for (const op of ["full", "par", "grp"] as const) expect(closingPropWrites(lp, op)).toEqual([]);
+    for (const op of ["full", "par", "grp"] as const) {
+      const writes = closingSteps(lp, op).filter((c) => c.kind === "write");
+      expect([f, writes.length]).toEqual([f, f.startsWith(GVS) ? 1 : 0]);
+    }
   }
 });
 
@@ -198,11 +197,12 @@ test("the segment fill value is accepted (0 and 255), not blocked: the full down
 test("par policy: unknown verbs and unmodeled steps block, never silently vanish", () => {
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "absolute").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "relative").kind).toBe("blocked");
-  // load-image stamps on an absolute device: a read only where an ETS capture of the application shows it
-  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute").kind).toBe("blocked");
-  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute", "M-0081_A-FE01-11-75D9").kind).toBe("blocked");
-  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), "absolute", "M-0008_A-10D7-11-2783-O000A").kind).toBe("executed");
-  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "5" }), "absolute", "M-0008_A-10D7-11-2783-O000A").kind).toBe("blocked");
+  // load-image stamps: a closing read behind the last LoadCompleted, of PID 27 only; outside a procedure blocked
+  const stamped = (s: LdStep): LoadProcedures => ({ style: "ProductProcedure", blocks: [{ steps: [step("LdCtrlLoadCompleted", { LsmIdx: "3" }), s] }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false });
+  const read27 = step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), read5 = step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "5" });
+  expect(assessParStep(read27, "absolute").kind).toBe("blocked");
+  expect(assessParStep(read27, "absolute", stamped(read27)).kind).toBe("executed");
+  expect(assessParStep(read5, "absolute", stamped(read5)).kind).toBe("blocked");
   // arbitrary property write (side effect unknown) blocks even on relative
   expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "5", InlineData: "01" }), "relative").kind).toBe("blocked");
   // wrong-model steps block
@@ -229,9 +229,11 @@ test("par policy: documented skips and executed steps", () => {
   for (const v of ["LdCtrlUnload", "LdCtrlTaskSegment", "LdCtrlTaskCtrl1"]) {
     expect(assessParStep(step(v, { LsmIdx: "1" }), "absolute").kind).toBe("skipped");
   }
-  // relative: the declared MCB regions are written after the par allocation too (declaredMcbWrites);
-  // the image CRC is never sent by ETS
-  expect(assessParStep(step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27" }), "relative").kind).toBe("skipped");
+  // relative: the declared MCB regions are written after the par allocation too (declaredMcbWrites); the
+  // image stamp is read where it closes the download (merge block 7), and outside a procedure blocks
+  const stamp = step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27" });
+  expect(assessParStep(stamp, "relative", lpOf(7, stamp)).kind).toBe("executed");
+  expect(assessParStep(stamp, "relative").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000000" }), "relative").kind).toBe("executed");
   expect(assessParStep(step("LdCtrlWriteProp", { ObjIdx: "4", PropId: "27", InlineData: "0000066A003200000001" }), "relative").kind).toBe("blocked");
   // the surgical write supersedes the declared bulk write
@@ -287,16 +289,11 @@ corpusTest("declared MCB entries that cannot be written faithfully are refused, 
   expect(() => declaredMcbWrites(one({ Count: "2" }), 10)).toThrow("more than one");
 });
 
-corpusTest("the stamp reads of the captured M-0008: obj 1 and 2 once, obj 3 for each of its six stamped segments; none elsewhere", () => {
-  const lp = parseLoadProcedures(readRealFixture("M-0008_A-10D7-11-2783-O000A.xml.gz"));
-  expect(imageStampReads(lp).map((r) => `${r.obj}/${r.pid}#${r.start}`)).toEqual(["1/27#1", "2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `3/27#${i}`)]);
-  expect(imageStampReads({ ...lp, app: "M-0081_A-FE01-11-75D9" })).toEqual([]);
-  const odd = { ...lp, blocks: [{ steps: [step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "13" })] }] };
-  expect(() => imageStampReads(odd)).toThrow("not the PID 27 read");
-});
-
-test("the stamp reads of the captured System B application: one read per declaration, 4/27 with both elements at once", () => {
-  const lp = { app: "M-0048_A-493B-21-B471", blocks: [{ steps: [1, 2, 3].map((o) => step("LdCtrlLoadImageProp", { ObjIdx: String(o), PropId: "27" })).concat(step("LdCtrlLoadImageProp", { ObjIdx: "4", PropId: "27", Count: "2" })) }] } as unknown as Parameters<typeof imageStampReads>[0];
-  expect(imageStampReads(lp)).toEqual([{ obj: 1, pid: 27, start: 1, count: 1 }, { obj: 2, pid: 27, start: 1, count: 1 }, { obj: 3, pid: 27, start: 1, count: 1 }, { obj: 4, pid: 27, start: 1, count: 2 }]);
-  expect(imageStampReads({ ...lp, app: "M-0083_A-00A2-12-4E6E" })).toEqual([]);
+corpusTest("the closing reads of the Gira M-0008 (each declared count), the Theben MIX 2 (4/27 with both elements) and none on the Auro", () => {
+  const reads = (f: string) => closingSteps(parseLoadProcedures(readRealFixture(f)), "full").map((r) => (r.kind === "read" ? `${r.obj}/${r.pid}#${r.start}x${r.count}` : "write"));
+  expect(reads("M-0008_A-10D7-11-2783-O000A.xml.gz")).toEqual(["1/27#1x1", "2/27#1x1", "3/27#1x6"]);
+  expect(reads("M-0048_A-493B-21-B471.xml.gz")).toEqual(["1/27#1x1", "2/27#1x1", "3/27#1x1", "4/27#1x2"]);
+  expect(reads("M-0081_A-FE01-11-75D9.xml.gz")).toEqual([]);
+  const odd: LoadProcedures = { ...parseLoadProcedures(readRealFixture("M-0008_A-10D7-11-2783-O000A.xml.gz")), blocks: [{ steps: [step("LdCtrlLoadCompleted", { LsmIdx: "3" }), step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "13" })] }] };
+  expect(() => closingSteps(odd, "full")).toThrow("PID 27");
 });

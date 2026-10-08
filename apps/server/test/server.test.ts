@@ -96,7 +96,8 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     // fullDownload true: property-mapped System 7 authors its com-object table into the declared
     // <ComObjectTable CodeSegment> (buildComObjectTableMv0705), live-hardware certified on the sibling
     // MDT BE-02001.02 (1.1.56). A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
-    // structuralFlash false: claimed per application program proven on hardware, and this is not one.
+    // structuralFlash false: offered only where it is tested against ETS's capture of one (profiles.ts
+    // STRUCTURAL_FLASH_CAPTURED), and this application is not.
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false });
   });
 
@@ -104,8 +105,9 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     const cfg = realApp("M-0048_A-493B-21-B471.xml.gz"); // HMG, mask MV-07B0
     expect(cfg.mask).toBe("MV-07B0");
     const caps = classify(cfg).capabilities();
-    // structuralFlash false: the structural flash is claimed only for families proven on hardware.
-    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false });
+    // structuralFlash true: tested against ETS's revert capture of this application (profiles.ts
+    // STRUCTURAL_FLASH_CAPTURED).
+    expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true });
   });
 
   test("System 1 (MV-0012 / BCU1) device: recognised but unsupported, every aspect false", () => {

@@ -277,16 +277,16 @@ corpusDescribe("POST /flash-ga: link baseline adoption is gated on verified", ()
 });
 
 // A parameter (or link) edit that alters the device's com-object table (L3) cannot be a parameter or
-// group-address flash alone. Where the family can write it as a structural flash, both routes run that
+// group-address flash alone. Where the application is offered the structural flash, both routes run that
 // (parameters, com-object table and group tables in one bracket) and a verified result adopts both
 // baselines; where it can only commission from scratch the route points at a full download
 // (COM_OBJECT_TABLE_STALE_USE_DOWNLOAD); otherwise it refuses (COM_OBJECT_TABLE_STALE). The surgical
 // orchestrators are never reached in any of these cases.
 corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural flash (or is refused)", () => {
   const readReal = catalogueXml;
-  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: full download, no structural flash
+  const m0162 = readReal("M-0162_A-0004-11-F245.xml.gz"); // System B: full download, no capture of the structural flash
   const TABLE_CHANGING_B = "M-0162_A-0004-11-F245_P-30_R-30"; // System B: activates a com-object
-  const jung = readReal("M-0004_A-7072-21-99A7-O000A.xml.gz"); // System B, proven for the structural flash
+  const jung = readReal("M-0004_A-7072-21-99A7-O000A.xml.gz"); // System B, tested against ETS's capture of the structural flash
   const TABLE_CHANGING_JUNG = "M-0004_A-7072-21-99A7-O000A_MD-1_M-100_MI-1_P-149_R-142"; // 8 removes #253, #254
 
 
@@ -330,7 +330,7 @@ corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural
     } finally { structureImpl = realStructure; }
   });
 
-  test("param flash, System B family not proven for the structural flash -> USE_DOWNLOAD, and no flash runs", async () => {
+  test("param flash, System B application without a capture of the structural flash -> USE_DOWNLOAD, and no flash runs", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, m0162);
     setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
@@ -463,12 +463,13 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
   });
 });
 
-// An application whose declared load procedure has a step the full download cannot execute
-// (LdCtrlTaskCtrl1 on the M-0081_A-FF31-31-D6FF): the full download is refused with the planner's own
-// code, and a device of it that the surgical flash cannot safely start from is pointed at ETS instead
-// of at the download it cannot have. The M-0008 and the M-0081_A-FE01-11-75D9 declare LdCtrlTaskCtrl1
-// too, but run their writes as ETS was captured running them, so they are offered all three.
-corpusDescribe("an application whose load procedure the full download cannot run", () => {
+// An application whose full download Busforge cannot build (the M-0081_A-FF31-31-D6FF: segment AS-456A
+// declares a <Mask> shorter than the segment that marks bytes, a form no capture shows): the full
+// download is refused with the planner's own code, and a device of it that the surgical flash cannot
+// safely start from is pointed at ETS instead of at the download it cannot have. Its LdCtrlTaskCtrl1
+// (Address 0, Count 0) is the Auro M-0081_A-FE01-11-75D9's, which runs its writes as ETS was captured
+// running them, as the M-0008 does, so both are offered all three.
+corpusDescribe("an application whose full download Busforge cannot build", () => {
   const ff31Project = (state: AppState) => projectWithApp(state, catalogueXml("M-0081_A-FF31-31-D6FF.xml.gz"));
   const TABLE_CHANGING_FF31 = "M-0081_A-FF31-31-D6FF_P-242_R-242"; // 1 changes the active com-objects
   const never = (state: AppState, projectId: string, deviceId: string) =>
@@ -482,7 +483,7 @@ corpusDescribe("an application whose load procedure the full download cannot run
       for (const route of ["download", "download?dry=1"]) {
         const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
         expect(res.status).toBe(400);
-        expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+        expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_SEGMENT_UNKNOWN");
       }
     } finally { downloadImpl = realDownload; }
   });

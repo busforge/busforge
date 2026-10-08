@@ -25,9 +25,9 @@ const dev = (overrides: Partial<Record<keyof KnxDevice, unknown>> = {}) =>
   }) as unknown as KnxDevice;
 
 corpusDescribe("LoadProcedure par coverage guard", () => {
-  test("an absolute application declaring LoadImageProp without an ETS capture refuses with LOAD_STEP_UNSUPPORTED before any bus call", async () => {
-    // The M-0008 procedure under another application id: the captured stamp read is not carried over.
-    const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz").replaceAll("M-0008_A-10D7-11-2783-O000A", "M-0008_A-10D7-11-2783-O000B");
+  test("an absolute application closing with a LoadImageProp of another property than 27 refuses with LOAD_STEP_UNSUPPORTED before any bus call", async () => {
+    const xml = fixture("M-0008_A-10D7-11-2783-O000A.xml.gz").replace('<LdCtrlLoadImageProp ObjIdx="1" PropId="27"', '<LdCtrlLoadImageProp ObjIdx="1" PropId="13"');
+    expect(xml).toContain('PropId="13"');
     const profile = classify(parseAppConfig(xml));
     const err = await profile.flashParameters(dev(), "0705", ctxFor(xml)).then(() => null, (e) => e);
     expect(err).toBeInstanceOf(ProductError);
@@ -77,38 +77,33 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
   });
 });
 
-// The Auro presence detector's full download runs as ETS ran it (loadproc.ts
-// ETS_DECLARED_ORDER_SYSTEM7_APPS), and only on a unit like the one ETS was captured on: the free key
-// granted level 0, object 3 holding this application, and load-state machines 1, 2 and 3 loaded.
-// Anything else refuses before a single write; the stub fails on any bus call the refusal does not expect.
+// The Auro presence detector's full download runs its declared procedure (deviceflash.ts absoluteFullForm):
+// ETS reads no load state before it, so neither does the pre-flight; a unit holding another application is
+// refused before a single write. The stub fails on any bus call the pre-flight does not expect.
 corpusDescribe("the M-0081_A-FE01-11-75D9 full download's pre-flight", () => {
   const xml = fixture("M-0081_A-FE01-11-75D9.xml.gz");
   const ctx = { ...ctxFor(xml), ia: "1.2.18", links: [] };
   const PROGRAM_ID = Buffer.from("0081fe0111", "hex");
-  // `state`: the load state of object 3; `others`: those of objects 1 and 2.
-  const unit = (level: number, programId: Buffer, state: number, others: [number, number] = [1, 1]) => dev({
-    authorizeFreeKey: async () => level,
+  const reads: string[] = [];
+  const unit = (programId: Buffer) => dev({
     propRead: async (obj: number, pid: number) => {
+      reads.push(`${obj}/${pid}`);
       if (obj === 3 && pid === 13) return programId;
-      if (obj === 3 && pid === 5) return Buffer.from([state]);
-      if ((obj === 1 || obj === 2) && pid === 5) return Buffer.from([others[obj - 1]]);
       throw new Error(`unexpected property read ${obj}/${pid}`);
     },
   });
   const run = (d: KnxDevice) => classify(parseAppConfig(xml)).downloadFull(d, "MV-0705", ctx).then(() => null, (e) => e);
+  const pastPreflight = (e: unknown) => e instanceof Error && /unexpected bus call/.test(e.message);
 
-  test("a unit that grants the free key another level than 0 is refused with FULL_DOWNLOAD_ACCESS_LEVEL", async () => {
-    expect(await run(unit(3, PROGRAM_ID, 1))).toMatchObject({ code: "FULL_DOWNLOAD_ACCESS_LEVEL" });
+  test("a unit that holds this application, or none, passes the pre-flight, which reads only its program id", async () => {
+    reads.length = 0;
+    expect(pastPreflight(await run(unit(PROGRAM_ID)))).toBe(true);
+    expect(pastPreflight(await run(unit(Buffer.alloc(5))))).toBe(true);
+    expect(pastPreflight(await run(unit(Buffer.alloc(0))))).toBe(true);
+    expect(new Set(reads)).toEqual(new Set(["3/13"]));
   });
-  test("a unit whose application is not loaded is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED", async () => {
-    expect(await run(unit(0, PROGRAM_ID, 0))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
-    expect(await run(unit(0, PROGRAM_ID, 2))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
-  });
-  test("a unit whose address or association table is not loaded is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED, naming the machine", async () => {
-    expect(await run(unit(0, PROGRAM_ID, 1, [0, 1]))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
-    expect(await run(unit(0, PROGRAM_ID, 1, [1, 2]))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 2 ") });
-  });
-  test("a unit that holds another application is refused with FULL_DOWNLOAD_APPLICATION_NOT_LOADED", async () => {
-    expect(await run(unit(0, Buffer.from("0081ff3131", "hex"), 1))).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
+  test("a unit that holds another application is refused with LOAD_PROC_CHECK_FAILED", async () => {
+    expect(await run(unit(Buffer.from("0081ff3131", "hex")))).toMatchObject({ code: "LOAD_PROC_CHECK_FAILED" });
+    expect(await run(unit(Buffer.from("0081fe0110", "hex")))).toMatchObject({ code: "LOAD_PROC_CHECK_FAILED" });
   });
 });

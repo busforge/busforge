@@ -29,13 +29,13 @@ describe("buildGroupTables", () => {
     expect(assoc.toString("hex")).toBe("0006" + "0001000b" + "0002000d" + "0004000f" + "00030010" + "00050013" + "00060014");
   });
 
-  test("in ETS's captured order: each object's first link first, then the others by object", () => {
+  test("in ETS's order: each object's first link first, then the others by object", () => {
     // Theben MIX 2 JMG 4 T: objects 2 and 22 with two addresses each, the second shared.
     const { addr, assoc } = buildGroupTables([
       { comObjNum: 22, gaRaws: [0x0a02, 0x0a03] },
       { comObjNum: 2, gaRaws: [0x0a01, 0x0a03] },
       { comObjNum: 5, gaRaws: [0x0a04] },
-    ], { order: "ets-captured" });
+    ]);
     expect(addr.toString("hex")).toBe("00040a010a020a030a04");
     expect(assoc.toString("hex")).toBe("0005" + "00010002" + "00040005" + "00020016" + "00030002" + "00030016");
   });

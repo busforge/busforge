@@ -9,12 +9,18 @@
 // (with PROXY_TOOL=Busforge the tool side is named "Busforge" instead of "ETS").
 //
 //   PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=./capture.log \
-//     [PROXY_TOOL=ETS] [PROXY_ADVERTISE=<this host's ip>:<PROXY_PORT>] bun run tools/knxproxy.ts
+//     [PROXY_TOOL=ETS] [PROXY_ADVERTISE=<this host's ip>:<PROXY_PORT>] [PROXY_SYNC_GAP_MS=1200] bun run tools/knxproxy.ts
 //
 // ETS is pointed at this host's PROXY_PORT as a KNXnet/IP TCP interface. A KNXnet/IP server answers
 // ETS's search with its own control endpoint (SEARCH_RESPONSE, SEARCH_RESPONSE_EXTENDED), and ETS 6
 // then connects there, around the proxy: the capture holds the search and nothing after it. With
 // PROXY_ADVERTISE the proxy puts its own endpoint into that answer, and ETS connects through it.
+//
+// The Jung 400021SE drops a Data Secure Sync request that arrives within about a second of the
+// previous one, and ETS 6 sends its second one about 0.8 s after the first, so ETS cannot download that
+// device (docs/findings.md §21). With PROXY_SYNC_GAP_MS the proxy holds a tunnelled Sync request from
+// the tool until that long after the previous one it passed, and every tool frame behind it with it,
+// so the order on the wire stays the tool's. The log shows each frame when it is passed on.
 //
 // Only whole KNXnet/IP frames travel, so the endpoint can be rewritten in the frame it belongs to. A
 // stream that stops being KNXnet/IP (a header that is not 06 10, a length below the header's) is cut
@@ -99,7 +105,17 @@ export function rewriteSearchEndpoint(frame: Buffer, to: { ip: number[]; port: n
   return out;
 }
 
-export interface ProxyOptions { port: number; bridgeHost: string; bridgePort: number; log: string; tool: string; advertise?: { ip: number[]; port: number } }
+// A TUNNELLING_REQ carrying an S-A_Sync_Req: A_SecureService (APCI 0x3F1) whose security control
+// field names service 2 (KNX Data Secure, AN158).
+export function isSyncRequest(frame: Buffer): boolean {
+  if (frame.length < 10 || frame.readUInt16BE(2) !== 0x0420) return false;
+  const cemi = frame.subarray(6 + frame[6]);
+  if (cemi.length < 2) return false;
+  const tpdu = cemi.subarray(2 + cemi[1] + 7);
+  return tpdu.length >= 3 && ((tpdu[0] & 0x03) << 8 | tpdu[1]) === 0x3f1 && (tpdu[2] & 0x07) === 2;
+}
+
+export interface ProxyOptions { port: number; bridgeHost: string; bridgePort: number; log: string; tool: string; advertise?: { ip: number[]; port: number }; syncGapMs?: number }
 
 export function startProxy(o: ProxyOptions): net.Server {
   const note = (s: string) => appendFileSync(o.log, `${new Date().toISOString()} --- ${s} ---\n`);
@@ -107,7 +123,20 @@ export function startProxy(o: ProxyOptions): net.Server {
     const server = net.connect(o.bridgePort, o.bridgeHost, () => note(`${o.tool} connected, bridge up`));
     const close = () => { tool.destroy(); server.destroy(); };
     const cut = (from: string) => (rest: Buffer) => { note(`${from} sent bytes that are not KNXnet/IP (${rest.subarray(0, 16).toString("hex")}...), connection cut`); close(); };
-    const fromTool = makeSplitter((f) => { appendFileSync(o.log, logLine(`${o.tool}->BRIDGE`, f) + "\n"); server.write(f); }, cut(o.tool));
+    const pass = (f: Buffer) => { appendFileSync(o.log, logLine(`${o.tool}->BRIDGE`, f) + "\n"); server.write(f); };
+    // Tool frames pass in order through one chain; a Sync request waits for the gap first.
+    let chain = Promise.resolve();
+    let lastSync = 0;
+    const fromTool = makeSplitter((f) => {
+      chain = chain.then(async () => {
+        if (o.syncGapMs && isSyncRequest(f)) {
+          const wait = lastSync + o.syncGapMs - Date.now();
+          if (wait > 0) { note(`held a Sync request ${wait} ms`); await Bun.sleep(wait); }
+          lastSync = Date.now();
+        }
+        pass(f);
+      });
+    }, cut(o.tool));
     const fromServer = makeSplitter((f) => {
       appendFileSync(o.log, logLine(`BRIDGE->${o.tool}`, f) + "\n");
       const out = o.advertise ? rewriteSearchEndpoint(f, o.advertise) : f;
@@ -126,6 +155,8 @@ if (import.meta.main) {
   const o: ProxyOptions = {
     port: Number(env.PROXY_PORT ?? 3672), bridgeHost: env.BRIDGE_HOST ?? "127.0.0.1", bridgePort: Number(env.BRIDGE_PORT ?? 3671),
     log: env.PROXY_LOG ?? "./capture.log", tool: env.PROXY_TOOL ?? "ETS", advertise: env.PROXY_ADVERTISE ? parseEndpoint(env.PROXY_ADVERTISE) : undefined,
+    syncGapMs: env.PROXY_SYNC_GAP_MS ? Number(env.PROXY_SYNC_GAP_MS) : undefined,
   };
-  startProxy(o).listen(o.port, "0.0.0.0", () => console.log(`knxproxy: listen :${o.port} -> ${o.bridgeHost}:${o.bridgePort}, log ${o.log}${o.advertise ? `, advertising ${env.PROXY_ADVERTISE}` : ""}`));
+  if (o.syncGapMs !== undefined && !(o.syncGapMs > 0)) throw new Error(`PROXY_SYNC_GAP_MS must be a positive number of milliseconds, not ${env.PROXY_SYNC_GAP_MS}`);
+  startProxy(o).listen(o.port, "0.0.0.0", () => console.log(`knxproxy: listen :${o.port} -> ${o.bridgeHost}:${o.bridgePort}, log ${o.log}${o.advertise ? `, advertising ${env.PROXY_ADVERTISE}` : ""}${o.syncGapMs ? `, Sync requests ${o.syncGapMs} ms apart` : ""}`));
 }

@@ -464,6 +464,9 @@ export class KnxDevice {
     this.maxApdu = n;
     return n;
   }
+  // The element data one A_PropertyValue_Response carries: the maximum APDU length less the response's
+  // APCI, object, property, count and start (5 octets); 15 where the device declares none (standard frame).
+  async propValueDataMax(): Promise<number> { return ((await this.maxApduLength()) ?? 15) - 5; }
   // An optional property: the device answers a property it does not implement with element count 0
   // (and possibly an error byte), which propRead would return as if it were a value. Null here.
   async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {

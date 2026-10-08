@@ -126,7 +126,7 @@ export async function declareTaskSegmentProp(dev: KnxDevice, lsm: number, addres
 // and to the Theben TheLuxa P300 (Address 17875 Count 1: 03 04 45 D3 01 00 00 00 00 00,
 // captures/theluxa-p300-ets-fulldownload.log), both answered LOADING. The field widths are read from
 // that one non-zero example (01 00 would also fit a 2-byte little-endian count), so the planner sends
-// only the forms those captures show (product loadproc.ts ETS_DECLARED_ORDER_TASK_CTRL1), and a count
+// only the forms those captures show (product loadproc.ts taskCtrl1Of), and a count
 // beyond one byte is refused here.
 export async function taskCtrl1Prop(dev: KnxDevice, lsm: number, address: number, count: number) {
   await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x04, ...taskCtrl1Fields(lsm, address, count)]));
@@ -213,52 +213,6 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
     // stays strict so an unproven device that ignores the restart still fails loud.
     { op: "restart", requireReboot },
   ];
-}
-
-// MV-0705 (System 7) group-address download: the address (LSM 1) and association (LSM 2)
-// tables live at fixed absolute addresses, so unlike System B there is no relative-segment
-// alloc and no unload. Per LSM: LOAD -> write the table at its fixed address (read-back
-// verified) -> LOAD_COMPLETED, each state-asserted (the engine default), then restart. Maps to the
-// asserting engine bracket with NO behavior delta (the retired flashGroupTablesMv0705 already
-// asserted LOADING/LOADED and wrote verified); hardware-verified on TP (M-0081). The
-// caller must already be connected (a second T_Connect resets the sequence counter).
-// `comObj`: the com-object table, rewritten with the links in the same flash so a newly linked
-// object gets its linked bit. ETS writes it inside an LSM 3 load/completed bracket with no unload
-// (ABB US/U 4.2 capture 2026-09-25, MDT BE-02001.02 capture 2026-09-26).
-// `current`: what the device holds at each table's address, at the new table's length. Given, only
-// the bytes that differ are written, as ETS does on a memory-mapped device (ABB US/U 4.2 partial
-// download, 2026-09-26: it reads the tables and writes the two, one and two bytes that changed).
-export function planMv0705GaFlash(
-  tables: { addr: Buffer; assoc: Buffer; comObj?: { address: number; bytes: Buffer } },
-  current?: { addr: Buffer; assoc: Buffer; comObj?: Buffer },
-): LoadPlan {
-  const D = OBJ.ADDR_TABLE, A = OBJ.ASSOC_TABLE, C = OBJ.COMOBJ_TABLE;
-  // A table the device already holds is left out, bracket and all: nothing in it is touched.
-  const bracket = (lsm: number, writes: LoadStep[]): LoadStep[] => (writes.length ? [{ op: "load", lsm }, ...writes, { op: "loadCompleted", lsm }] : []);
-  const table = (lsm: number, bytes: Buffer, cur?: Buffer): LoadStep[] =>
-    bracket(lsm, cur ? differingRuns(bytes, cur).map((r): LoadStep => ({ op: "writeSegment", lsm, offset: r.offset, bytes: r.bytes })) : [{ op: "writeSegment", lsm, bytes }]);
-  const comObj = tables.comObj;
-  return [
-    ...table(D, tables.addr, current?.addr),
-    ...table(A, tables.assoc, current?.assoc),
-    ...(comObj ? bracket(C, current?.comObj
-      ? differingRuns(comObj.bytes, current.comObj).map((r): LoadStep => ({ op: "writeMem", address: comObj.address + r.offset, bytes: r.bytes }))
-      : [{ op: "writeMem", address: comObj.address, bytes: comObj.bytes }]) : []),
-    { op: "restart" },
-  ];
-}
-
-// The runs of consecutive bytes where `want` differs from `have` (same length).
-function differingRuns(want: Buffer, have: Buffer): { offset: number; bytes: Buffer }[] {
-  if (have.length !== want.length) throw new KnxError("TABLE_READ_SHORT", `compared ${want.length} B with ${have.length} B read from the device; refusing to write a partial table blind`);
-  const runs: { offset: number; bytes: Buffer }[] = [];
-  for (let i = 0; i < want.length; ) {
-    if (want[i] === have[i]) { i++; continue; }
-    const start = i;
-    while (i < want.length && want[i] !== have[i]) i++;
-    runs.push({ offset: start, bytes: Buffer.from(want.subarray(start, i)) });
-  }
-  return runs;
 }
 
 // Parameter ("par") downloads for BOTH memory models are driven by the generic executor:

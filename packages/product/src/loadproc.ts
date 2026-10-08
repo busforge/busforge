@@ -35,6 +35,18 @@ export interface LoadProcedures {
   blocks: LoadProcedureBlock[];
   verbs: string[];   // distinct verbs across all blocks, sorted
   unknown: string[]; // verbs not in KNOWN_LD_VERBS (the coverage gap signal), sorted
+  // The application attributes that decide which form of its procedure ETS runs (docs/load-procedures.md,
+  // "The rules, by level"):
+  //  - preferPartialIfLoaded: <Options PreferPartialDownloadIfApplicationLoaded="true">. On a unit that
+  //    holds this application loaded, ETS's full download leaves the application loaded and reloads the
+  //    group tables only (Gira M-0008, ABB US/U 4.2, Theben DALI-Gateway captures).
+  //  - dynamicTables: DynamicTableManagement="true". ETS takes the two group-table segments as one region,
+  //    the address table's segment as long as the table (Gira M-0008, TheLuxa P300, Meteodata 140 S).
+  //  - secureEnabled: IsSecureEnabled="true". ETS runs the mask's secure procedure, which closes a System B
+  //    download with the confirmed restart (Theben MIX 2, Jung 400021SE, GVS AMMA against the DALI-Gateway).
+  preferPartialIfLoaded: boolean;
+  dynamicTables: boolean;
+  secureEnabled: boolean;
 }
 
 // The LdCtrl vocabulary the executor models. Sourced from the full inventory of the
@@ -71,6 +83,10 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
   const app = deepFirst(root, "ApplicationProgram");
   const styleAttr = app ? attrsOf(app).LoadProcedureStyle : undefined;
   const appId = app ? attrsOf(app).Id : undefined;
+  const appAttrs = app ? attrsOf(app) : {};
+  const appKids = app ? kidsOf(app) : [];
+  const staticNode = appKids.find((n) => tagOf(n) === "Static");
+  const options = [...(staticNode ? kidsOf(staticNode) : []), ...appKids].find((n) => tagOf(n) === "Options");
   const style: LoadProcedureStyle =
     styleAttr === "ProductProcedure" || styleAttr === "MergedProcedure" || styleAttr === "DefaultProcedure" ? styleAttr : "Unknown";
 
@@ -90,7 +106,12 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
     }
     blocks.push({ mergeId: mergeId !== undefined ? Number(mergeId) : undefined, steps });
   }
-  return { style, ...(appId !== undefined ? { app: appId } : {}), blocks, verbs: [...verbs].sort(), unknown: [...unknown].sort() };
+  return {
+    style, ...(appId !== undefined ? { app: appId } : {}), blocks, verbs: [...verbs].sort(), unknown: [...unknown].sort(),
+    preferPartialIfLoaded: (options ? attrsOf(options).PreferPartialDownloadIfApplicationLoaded : undefined) === "true",
+    dynamicTables: appAttrs.DynamicTableManagement === "true",
+    secureEnabled: appAttrs.IsSecureEnabled === "true",
+  };
 }
 
 // ---- operation selection ----
@@ -166,11 +187,9 @@ export type ParDisposition =
 // restart in ERROR. The allocation of a par download resets the regions just the same (hardware-
 // measured on the Jung: two regions after a full download and a GA flash, one after a parameter
 // flash). So both the full and the par download write the declared entries after the allocation,
-// as ETS writes them (declaredMcbWrites). ETS 6 sends no
-// property write for the declared LdCtrlLoadImageProp to PID 27 (Jung capture, 2026-09-25): the
-// device computes the CRC itself. On an absolute device a declared write to PID 27 blocks, and a
-// declared LdCtrlLoadImageProp is a read of it where an ETS capture of the application shows that
-// (ETS_CAPTURED_SYSTEM7_APPS below); elsewhere it blocks.
+// as ETS writes them (declaredMcbWrites). A declared LdCtrlLoadImageProp to PID 27 is a read of
+// it that closes the download (closingSteps): the device computes the CRC itself. On an absolute
+// device a declared write to PID 27 blocks.
 const MCB_PID = 27;
 // An MCB entry is 8 bytes: region size (4), control (2), CRC (2). The InlineData of the known
 // applications is 10 bytes with two trailing zero bytes, and ETS sends the first 8.
@@ -214,182 +233,102 @@ export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number, op: L
   return writes;
 }
 
-// Declared property writes whose effect is not known, run only because an ETS capture shows ETS 6
-// sending exactly this write to a device of exactly this application, after every LoadCompleted and
-// right before the restart, and the device echoing it. The verb class stays blocked: a manufacturer
-// property means whatever that firmware makes of it, so one application's capture says nothing about
-// another's, nor about a different value or object.
-interface CapturedClosingWrite { app: string; obj: number; pid: number; data: string; ops: readonly ClosingOp[] }
-const ETS_CAPTURED_CLOSING_WRITES: readonly CapturedClosingWrite[] = [
-  // GVS AMMA-04/06.S, declared AppliesTo="all" Verify="true". Private corpus:
-  // captures/gvs-amma-ets-fulldownload-defaults.log (full download) and
-  // captures/gvs-amma-ets-partial-links.log (partial download of parameters and links, which also
-  // reloads object 4). No capture of a links-only download exists; "grp" rests on the declared "all"
-  // and on that partial download ending with the write.
-  { app: "M-0085_A-0072-30-69AA", obj: 4, pid: 67, data: "01", ops: ["full", "par", "grp"] },
-];
-
-// The downloads a closing write is run in. "grp" is the group-address flash; a step reaches it only by
-// naming "grp" or "all", since what ETS's "auto" means for a group-table download is not shown.
+// ---- the steps that close a download ----
+// After its last LoadCompleted a procedure may declare reads of objects' memory-control blocks
+// (LdCtrlLoadImageProp, PID 27) and property writes to other properties (LdCtrlWriteProp): the merge
+// block 7 of a MergedProcedure, the steps behind the last LdCtrlLoadCompleted of a ProductProcedure.
+// ETS executes them in declared order right before the restart, in the full, the parameter and the
+// group-address download alike, every declared read whatever the download reloaded: the Gira M-0008
+// (System 7), the Theben MIX 2, Jung 400021SE, GVS AMMA and Theben DALI-Gateway (System B) captures,
+// the GVS's declared PID 67 write after its reads in each of its downloads. A write is echo-checked
+// where it declares Verify="true". ETS keeps the stamps it reads to skip identical bytes in its next
+// download, which Busforge does not do (it reads the device instead), so they are only required to arrive.
 export type ClosingOp = LoadOp | "grp";
+export type ClosingStep =
+  | { kind: "read"; obj: number; pid: number; start: number; count: number }
+  | { kind: "write"; obj: number; pid: number; start: number; data: Buffer; verify: boolean };
 
-function capturedClosingWrite(step: LdStep, app: string | undefined): CapturedClosingWrite | undefined {
-  if (step.verb !== "LdCtrlWriteProp" || app === undefined) return undefined;
-  const a = step.attrs;
-  return ETS_CAPTURED_CLOSING_WRITES.find((w) => w.app === app && a.ObjIdx === String(w.obj) && a.PropId === String(w.pid)
-    && a.InlineData?.toLowerCase() === w.data && a.Verify === "true" && (a.StartElement ?? "1") === "1" && (a.Count ?? "1") === "1");
+const CLOSING_MERGE_ID = 7;
+const isClosingVerb = (s: LdStep) => s.verb === "LdCtrlLoadImageProp" || (s.verb === "LdCtrlWriteProp" && Number(s.attrs.PropId) !== MCB_PID);
+
+function closingCandidates(lp: LoadProcedures): LdStep[] {
+  if (lp.style === "MergedProcedure") return [...lp.blocks].filter((b) => b.mergeId === CLOSING_MERGE_ID).flatMap((b) => b.steps);
+  const steps = orderedSteps(lp);
+  const last = steps.findLastIndex((s) => s.verb === "LdCtrlLoadCompleted");
+  return last < 0 ? [] : steps.slice(last + 1).filter(isClosingVerb);
 }
 
-// A property write a download ends with: written after every LoadCompleted, right before the restart,
-// and the device's echo must equal the data (the step's Verify="true").
-export interface ClosingPropWrite { obj: number; pid: number; data: Buffer }
+// A step's AppliesTo for a closing step: the group-address download takes what applies to "all", "grp"
+// or "auto" (every capture of one shows the undeclared reads, the GVS's write declared "all").
+const closingApplies = (s: LdStep, op: ClosingOp): boolean => {
+  const ops = (s.attrs.AppliesTo ?? "auto").split(",").map((x) => x.trim());
+  return ops.includes("all") || ops.includes("auto") || ops.includes(op);
+};
 
-// The captured closing writes a procedure declares for one download, in declaration order.
-export function closingPropWrites(lp: LoadProcedures, op: ClosingOp): ClosingPropWrite[] {
-  const steps = op === "grp" ? grpSteps(lp) : flattenSteps(lp, op);
-  return steps.flatMap((s) => {
-    const w = capturedClosingWrite(s, lp.app);
-    return w && w.ops.includes(op) ? [{ obj: w.obj, pid: w.pid, data: Buffer.from(w.data, "hex") }] : [];
+export function closingSteps(lp: LoadProcedures, op: ClosingOp): ClosingStep[] {
+  return closingCandidates(lp).filter((s) => isClosingVerb(s) && closingApplies(s, op)).map((s) => {
+    const r = closingStep(s);
+    if (typeof r === "string") throw new ProductError("LOAD_STEP_UNSUPPORTED", `the load procedure closes with ${s.verb} ${JSON.stringify(s.attrs)}, which cannot be executed as declared: ${r}`);
+    return r;
   });
 }
+
+function closingStep(s: LdStep): ClosingStep | string {
+  const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), start = Number(s.attrs.StartElement ?? 1), count = Number(s.attrs.Count ?? 1);
+  if (s.attrs.ObjIdx === undefined || !Number.isInteger(obj) || obj < 0 || obj > 255) return "it names no object index";
+  if (s.attrs.PropId === undefined || !Number.isInteger(pid) || pid < 1 || pid > 255) return "it names no property";
+  if (!Number.isInteger(start) || start < 1 || start > 4095) return `StartElement "${s.attrs.StartElement}" is not an element index`;
+  if (s.verb === "LdCtrlLoadImageProp") {
+    if (pid !== MCB_PID) return "only the memory-control block (PID 27) is known as the image a closing read takes";
+    if (!Number.isInteger(count) || count < 1 || count > 15) return `Count "${s.attrs.Count}" is not a number of elements`;
+    return { kind: "read", obj, pid, start, count };
+  }
+  const hex = s.attrs.InlineData ?? "";
+  if (!/^([0-9A-Fa-f]{2})+$/.test(hex)) return "its InlineData is not hex";
+  if (s.attrs.Count !== undefined && s.attrs.Count !== "1") return `Count="${s.attrs.Count}" writes more than one element`;
+  return { kind: "write", obj, pid, start, data: Buffer.from(hex, "hex"), verify: s.attrs.Verify === "true" };
+}
+
+const isClosingStep = (lp: LoadProcedures, s: LdStep): boolean => closingCandidates(lp).includes(s);
 
 const grpSteps = (lp: LoadProcedures): LdStep[] =>
   orderedSteps(lp).filter((s) => (s.attrs.AppliesTo ?? "").split(",").map((x) => x.trim()).some((x) => x === "grp" || x === "all"));
 
-// The steps a procedure names for a group-table download ("grp" or "all") that the System B
-// group-address flash does not run. A CompareProp is not among them: the group-address flash runs no
-// declared check, an open question kept in docs/roadmap.md. Every other such step, a property
-// write without a capture above included, refuses the flash rather than be skipped.
+// The steps a procedure names for a group-table download ("grp" or "all") that the group-address flash
+// does not run. A CompareProp is not among them: the group-address flash runs no declared check, an open
+// question kept in docs/roadmap.md. A closing step is run (closingSteps); every other such step refuses
+// the flash rather than be skipped.
 export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: string }[] {
   return grpSteps(lp).flatMap((s) => {
     if (s.verb === "LdCtrlCompareProp") return [];
-    if (capturedClosingWrite(s, lp.app)?.ops.includes("grp")) return [];
+    if (isClosingStep(lp, s) && typeof closingStep(s) !== "string") return [];
     return [{ verb: s.verb, detail: `${s.verb} declared AppliesTo="${s.attrs.AppliesTo}"${s.attrs.PropId !== undefined ? ` to PID ${s.attrs.PropId}` : ""} (not modeled for a group-address flash)` }];
   });
 }
 
-// ---- System 7 applications whose downloads ETS 6 is captured running ----
-// For these, what ETS sends is not the declared procedure step by step, and Busforge sends what the
-// captures show instead (load-procedures.md, "ETS-captured System 7 downloads"). The Gira Tastsensor 3
-// Komfort (DynamicTableManagement="true"), 2026-10-06, private corpus
-// captures/gira-m0008-ets-{fulldownload,partial-params,partial-links,partial-revert,fulldownload-restore}.log
-// with ETS's own log of each step beside them:
-//   - the address and association tables are re-declared at their built size: the address table's
-//     segment as long as the table, the association table's directly behind it with the rest of the
-//     two declared segments (LdCtrlAbsSegment 16384+17 and 16401+467 for declared 16384+243 and
-//     16627+241), each unloaded first;
-//   - the application (LSM 3) is not unloaded and its segments are not declared again: it is loaded,
-//     its data segments written, and completed (no LdCtrlTaskSegment, LdCtrlTaskCtrl1 or RAM segment);
-//   - LdCtrlLoadImageProp is a property READ of PID 27 (one element, or Count of them) after the last
-//     LoadCompleted; nothing is written for it;
-//   - the declared LdCtrlTaskSegment LsmIdx 5 after the restart is not sent.
-// Every one of the five downloads did so on a device that held this application. What ETS sends to a
-// device that does not is not shown, so that full download is refused (System7Profile.downloadFull).
-export const ETS_CAPTURED_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A"];
-export const etsCapturedSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_CAPTURED_SYSTEM7_APPS.includes(lp.app);
-
-// ---- System 7 applications ETS 6 is captured downloading in their declared order ----
-// For these, ETS runs the full download's declared steps one by one, in the order the procedure
-// declares them (load-procedures.md, "Declared-order System 7 downloads"). The Auro presence detector
-// (M-0081_A-FE01-11-75D9, house unit), private corpus
-// captures/auro-m0081-ets-fulldownload.log and captures/auro-m0081-ets-partial-params.log, and the
-// Theben TheLuxa P300 (M-0048_A-107E-12-5B58, house unit),
-// captures/theluxa-p300-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, and the
-// Theben Meteodata 140 S (M-0048_A-140C-14-EB70, MV-0701, house unit),
-// captures/meteodata-140s-ets-{fulldownload,partial-params,partial-links,partial-revert}.log, with ETS's
-// own log of each step beside them (*-ets6log-*.txt):
-//   - every LdCtrlAbsSegment and LdCtrlTaskSegment is the load-state machine's PID 5 write (the 0x0104
-//     memory write on the memory-mapped MV-0701), and a segment's memory writes follow its declaration;
-//   - LdCtrlTaskCtrl1 is the PID 5 write 03 04, the declared Address (2 bytes) and Count (1 byte), and
-//     zero bytes to 10 (on MV-0701 the same fields in the 0x0104 control), which the device answers
-//     LOADING; only the form each capture shows is run (ETS_DECLARED_ORDER_TASK_CTRL1);
-//   - of a segment that declares a <Mask>, ETS writes the bytes the mask marks and the bytes a
-//     parameter's memory covers, of a table only those inside its built length; a segment without a
-//     <Mask> it writes whole, one without <Data>, or whose <Mask> marks nothing, not at all.
-// The TheLuxa's and the Meteodata's tables are re-declared as the Gira's are (ETS_REGION_TABLES_SYSTEM7_APPS).
-// Each full download ran on a device that held the application, loaded; what ETS sends to one that
-// does not is not shown, so that full download is refused (System7Profile.downloadFull).
-export const ETS_DECLARED_ORDER_SYSTEM7_APPS: readonly string[] = ["M-0081_A-FE01-11-75D9", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
-export const etsDeclaredOrderSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(lp.app);
-
-// The LdCtrlTaskCtrl1 each declared-order application's capture shows ETS sending, as declared:
-// auro-m0081-ets-fulldownload.log (PID 5 03 04 00 00 00 ...) and theluxa-p300-ets-fulldownload.log
-// (PID 5 03 04 45 D3 01 00 ..., the TheLuxa's task-control block at 0x45D3 in its com-object table's
-// segment) and meteodata-140s-ets-fulldownload.log (0x0104 33 04 00 46 EB 01 00 ..., the Meteodata's at
-// 0x46EB behind its com-object table). Any other declaration refuses the full download.
-export const ETS_DECLARED_ORDER_TASK_CTRL1: Readonly<Record<string, { LsmIdx: string; Address: string; Count: string }>> = {
-  "M-0081_A-FE01-11-75D9": { LsmIdx: "3", Address: "0", Count: "0" },
-  "M-0048_A-107E-12-5B58": { LsmIdx: "3", Address: "17875", Count: "1" },
-  "M-0048_A-140C-14-EB70": { LsmIdx: "3", Address: "18155", Count: "1" },
-};
-
-// ---- System 7 applications whose group tables ETS re-declares as one region ----
-// For these, ETS does not declare the address and association tables' segments as the procedure does:
-// it takes the two declared segments as one region, declares the address table's segment exactly as
-// long as the table and the association table's directly behind it with the rest, in the full and in
-// every group-address download, and writes the associations in its own order (grouptables.ts,
-// "ets-captured"). Gira M-0008 (gira-m0008-ets-*.log: 16384+17 and 16401+467 for declared 16384+243
-// and 16627+241), Theben TheLuxa P300 (theluxa-p300-ets-*.log: 16384+9 and 16393+1011 for declared
-// 16384+511 and 16895+509) and Theben Meteodata 140 S (meteodata-140s-ets-*.log: 16384+41 and 16425+983
-// for declared 16384+513 and 16897+511). All three declare DynamicTableManagement="true"; the Auro, which
-// ETS declares as the procedure does, declares it "false".
-export const ETS_REGION_TABLES_SYSTEM7_APPS: readonly string[] = ["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
-export const etsRegionTablesSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_REGION_TABLES_SYSTEM7_APPS.includes(lp.app);
-
-// ---- System B applications whose associations ETS writes in its own order ----
-// For these, ETS writes each object's first link before every further link (grouptables.ts,
-// "ets-captured"), as on the System 7 applications of ETS_REGION_TABLES_SYSTEM7_APPS. The Theben MIX 2
-// (M-0048_A-493B-21-B471, HMG 6 T and JMG 4 T): objects with two and three
-// addresses (captures/mix2-hmg6t-ets6log-fulldownload.txt, mix2-jmg4t-ets6log-fulldownload.txt). The
-// System B bench captures (Jung 400021SE, GVS AMMA, ABB US/U 4.2, MDT BE-02001.02) link no object to
-// more than one address, so they show neither order.
-export const ETS_ASSOC_ORDER_SYSTEMB_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
-export const etsAssocOrderSystemB = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_ASSOC_ORDER_SYSTEMB_APPS.includes(lp.app);
-
-// ---- System B applications whose download Busforge brackets as ETS's captures show ----
-// Two steps of the MV-07B0 master data's load procedures (knx_master.xml, Procedure Load ap1, par, grp)
-// that ETS sends and Busforge sends on these applications only:
-//   - the full download's first unload, LdCtrlUnload LsmIdx="5" (the PEI program), its error mapped
-//     to none (LdCtrlMapError): PID 5 of object 5 = 04, the device answering Unloaded;
-//   - the closing LdCtrlRestart as the confirmed restart, A_Restart type 1 with erase code 1 and
-//     channel 0 (ETS6.log "ConfirmedRestart_req"), which the device answers before it reboots.
-// The Theben MIX 2 (M-0048_A-493B-21-B471, HMG 6 T, JMG 4 T, RMG 8 T): every
-// full, parameter and group-address download (captures/mix2-*-ets-*.log). The Jung 400021SE and GVS
-// AMMA bench captures show both too; their Busforge downloads were shown on hardware without them
-// (docs/roadmap.md).
-export const ETS_BRACKET_SYSTEMB_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
-export const etsBracketSystemB = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_BRACKET_SYSTEMB_APPS.includes(lp.app);
-
-// Applications of ETS_REGION_TABLES_SYSTEM7_APPS whose table segments carry <Data> bytes behind the tables
-// that ETS's full download writes, in the association table's bracket. Only the Theben Meteodata 140 S
-// shows it: AS-4000 offsets 511-512 = 00 00, not FF and marked by the <Mask> (meteodata-140s-ets6log-
-// fulldownload.txt, "Execute image" rows 01F0/0200; the capture reads them after the association table);
-// its group-address downloads leave them out. That is not a rule: the Gira's AS-40F3 offset 0 (78, marked)
-// and the TheLuxa's AS-41FF offset 0 (00, no <Mask>) are non-FF <Data> behind their tables too, and ETS
-// writes neither. The Meteodata's bytes lie past what its address table can hold (3 + 2 x 254 = 511 bytes),
-// theirs at the association segment's first byte; which of these ETS keys on is not shown (docs/roadmap.md).
-export const ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS: readonly string[] = ["M-0048_A-140C-14-EB70"];
-export const etsTableSegmentDataSystem7 = (lp: Pick<LoadProcedures, "app">): boolean => lp.app !== undefined && ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS.includes(lp.app);
-
-// The PID 27 reads the declared LdCtrlLoadImageProp steps become on a captured application, in
-// declaration order; none elsewhere. ETS keeps the answers to skip identical bytes in its next
-// download, which Busforge does not do (it reads the device instead), so they are only required to
-// arrive. A declared Count is one read per element on the System 7 application (Gira capture) and
-// one read of all of them on the System B one (Theben MIX 2 captures: 4/27 with two elements).
-export interface StampRead { obj: number; pid: number; start: number; count?: number }
-export function imageStampReads(lp: LoadProcedures): StampRead[] {
-  const system7 = etsCapturedSystem7(lp);
-  if (!system7 && !etsBracketSystemB(lp)) return [];
-  return flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlLoadImageProp").flatMap((s) => {
-    const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), count = Number(s.attrs.Count ?? 1);
-    if (!Number.isInteger(obj) || pid !== MCB_PID || !Number.isInteger(count) || count < 1 || count > 15) {
-      throw new ProductError("LOAD_STEP_UNSUPPORTED", `${s.verb} ${JSON.stringify(s.attrs)} is not the PID 27 read the ETS captures show; refusing to guess what it reads`);
-    }
-    return system7 ? Array.from({ length: count }, (_, i) => ({ obj, pid, start: i + 1 })) : [{ obj, pid, start: 1, count }];
-  });
+// ---- LdCtrlTaskCtrl1 ----
+// The task-control declaration, encoded from its declared attributes as ETS sends it: PID 5 03 04, the
+// Address (2 bytes) and the Count (1 byte), zero bytes to 10; the same fields in the 0x0104 control on a
+// memory-mapped mask. Auro M-0081 (0/0), Theben TheLuxa P300 (17875/1) and Meteodata 140 S (18155/1,
+// over 0x0104) captures. A form outside what one byte of Count and two of Address carry is refused.
+export interface TaskCtrl1 { lsm: number; address: number; count: number }
+export function taskCtrl1Of(s: LdStep): TaskCtrl1 | string {
+  const lsm = Number(s.attrs.LsmIdx), address = Number(s.attrs.Address), count = Number(s.attrs.Count);
+  const extra = Object.keys(s.attrs).filter((k) => !["LsmIdx", "Address", "Count"].includes(k));
+  if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows encoded`;
+  if (s.attrs.LsmIdx === undefined || !Number.isInteger(lsm) || lsm < 1 || lsm > 15) return "it names no load-state machine";
+  if (s.attrs.Address === undefined || !Number.isInteger(address) || address < 0 || address > 0xffff) return `Address "${s.attrs.Address}" is not a 16-bit address`;
+  if (s.attrs.Count === undefined || !Number.isInteger(count) || count < 0 || count > 0xff) return `Count "${s.attrs.Count}" does not fit the one byte the control carries`;
+  return { lsm, address, count };
 }
 
-export function assessParStep(step: LdStep, model: "absolute" | "relative", app?: string): ParDisposition {
+export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?: LoadProcedures): ParDisposition {
+  // A closing read or write is executed after the last LoadCompleted (closingSteps), on both families.
+  const closing = lp !== undefined && isClosingStep(lp, step);
+  if (closing) {
+    const c = closingStep(step);
+    return typeof c === "string" ? { kind: "blocked", detail: `${step.verb}: ${c}` } : { kind: "executed" };
+  }
   switch (step.verb) {
     case "LdCtrlConnect":
     case "LdCtrlDisconnect":
@@ -420,10 +359,6 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", app?
       case "LdCtrlTaskSegment":
       case "LdCtrlTaskCtrl1":
         return { kind: "skipped", reason: "full-download task/segment allocation; a par write rewrites no app code (hw-evidenced, M-0081)" };
-      case "LdCtrlLoadImageProp":
-        // The stamp read after the last LoadCompleted (imageStampReads), where an ETS capture shows it.
-        if (app !== undefined && etsCapturedSystem7({ app }) && Number(step.attrs.PropId) === MCB_PID) return { kind: "executed" };
-        break;
     }
   } else {
     // The System B base bracket drives exactly ONE segment object: LSM/object 4 (the
@@ -463,16 +398,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", app?
           const w = mcbWrite(step);
           return typeof w === "string" ? { kind: "blocked", detail: `${step.verb} to PID 27: ${w}` } : { kind: "executed" };
         }
-        // Run at the end of the bracket (closingPropWrites), as the ETS capture shows it.
-        if (capturedClosingWrite(step, app)?.ops.includes("par")) return { kind: "executed" };
-        return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
-      case "LdCtrlLoadImageProp":
-        // The stamp read after the last LoadCompleted (imageStampReads), where an ETS capture shows it.
-        if (app !== undefined && etsBracketSystemB({ app }) && Number(step.attrs.PropId) === MCB_PID) return { kind: "executed" };
-        if (Number(step.attrs.PropId) === MCB_PID) {
-          return { kind: "skipped", reason: "MCB CRC from the image (PID 27): ETS 6 sends no property write for it, the device computes the CRC" };
-        }
-        return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} (side effect unknown)` };
+        return { kind: "blocked", detail: `${step.verb} to PID ${step.attrs.PropId} outside the steps that close the download (not modeled)` };
     }
   }
   return {
@@ -510,7 +436,7 @@ export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relat
       const o = stepObject(step);
       if (o === undefined || !objects.has(o)) continue;
     }
-    const d = assessParStep(step, model, lp.app);
+    const d = assessParStep(step, model, lp);
     if (d.kind === "blocked") blocked.push({ verb: step.verb, detail: d.detail });
     else if (d.kind === "skipped") skipped.push({ verb: step.verb, reason: d.reason });
     else if (step.verb === "LdCtrlCompareProp") checks.push(comparePropCheck(step));

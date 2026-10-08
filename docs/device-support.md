@@ -47,6 +47,16 @@ Busforge implements two memory models:
 Everything else resolves to `UnsupportedProfile`: the family is recognised (so we can name it
 and say "not yet"), but every operation throws.
 
+Within a family, how each download is sent follows rules, never a list of applications: what the
+application's catalogue entry declares (for example `PreferPartialDownloadIfApplicationLoaded`,
+`DynamicTableManagement`, `IsSecureEnabled`, `DownloadInvisibleParameters`, the declared load
+procedure), then a rule of the family (System 7 property-mapped or memory-mapped, System B), then a
+rule for every KNX device. Each rule, its level and the ETS captures that confirm it are in
+[load-procedures.md](load-procedures.md#the-rules-by-level). Firmware behaviour that no catalogue
+declares (when a stack persists, whether it needs a pause before the restart) is keyed on the
+manufacturer and named as firmware there. The structural flash is the one operation still offered
+per application: only where its plan is tested against an ETS capture of such a download.
+
 A ✅ means the memory model is implemented, and nothing more. The PL (`MV-17B0`), RF (`MV-2705`,
 `MV-27B0`) and IP (`MV-5705`, `MV-57B0`) rows read ✅ because they share the exact same codec and
 load procedure as their TP siblings, not because a device on that medium was ever driven. Which
@@ -124,7 +134,7 @@ trusting a row that does not.
   com-objects (e.g. enabling a channel that adds objects) therefore cannot be expressed by
   re-pointing alone. **Both** the parameter flash and the group-address flash **refuse** such a
   change in the profile layer with `COM_OBJECT_TABLE_STALE`, naming the objects that would have gone
-  stale. The route sees it first: where the family claims `structuralFlash` it runs the structural
+  stale. The route sees it first: where the profile offers `structuralFlash` it runs the structural
   flash instead, which authors the table with the parameters and group tables in one bracket
   ([load-procedures.md](load-procedures.md#structural-flash)); otherwise it refuses
   (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD` where a full download can rewrite the table,

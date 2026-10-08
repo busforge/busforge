@@ -208,12 +208,14 @@ that preserves a working device and one that corrupts a channel.
   fill the type from bit 0, is refused (`PARAM_BINARY_VALUE_UNDECLARED`).
 - **An integer parameter wider than 6 bytes is never owned.** The integer codec caps there
   (`MAX_INT_BYTES`).
-- **On the Theben MIX 2, an inactive plain parameter in a branch the configuration rejects is not
-  owned**: one every placement of which lies in a `<when>` of a `choose` that was evaluated and not
-  taken (a module slot left empty, a channel function not chosen). ETS leaves its bytes at the
-  allocation fill and out of its parameter download. A `choose` on a Merker no active branch
-  places rejects nothing; what it gates is written at its default. Other applications are not
-  covered: the GVS AMMA's ETS downloads write such defaults (`ETS_REJECTED_BRANCH_UNWRITTEN_APPS`).
+- **Where the application declares `<Options DownloadInvisibleParameters="None">`, an inactive plain
+  parameter in a branch the configuration rejects is not owned**: one every placement of which lies
+  in a `<when>` of a `choose` that was evaluated and not taken (a module slot left empty, a channel
+  function not chosen). ETS leaves its bytes at the allocation fill and out of its parameter download
+  (Theben MIX 2; the Jung 400021SE declares it too). A `choose` on a Merker no active branch places
+  rejects nothing; what it gates is written at its default. An application that does not declare it
+  gets such parameters written at their defaults, as the GVS AMMA's ETS downloads show
+  ([load-procedures.md](load-procedures.md#the-rules-by-level), R14).
 - **A displaced channel variant is not owned.** A channel configured as a module occupies the
   memory of the simple-channel variant. The top-level variant's parameters still parse and
   still carry an offset there, but the memory belongs to the module instance, so an inactive
@@ -388,34 +390,31 @@ Property-mapped System 7 uses a different layout, and it is **not** rebuilt from
 ```
 [count: u8][ramEnd: u16 BE]  then one 4-byte entry per com-object, entry i is com-object i (0-based)
 entry = [dataPtr: u16 BE][config: u8][type: u8]
-config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 (see below)
+config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 update
 ```
 
-There is no read-on-init bit. `0x80` is set in the manufacturer's template of many entries, and
-Busforge clears it on every configured object, except on the Theben TheLuxa P300
-(`M-0048_A-107E-12-5B58`) and the Theben Meteodata 140 S (`M-0048_A-140C-14-EB70`, MV-0701, the same
-table layout): there ETS writes it as the object's update flag (TheLuxa object 116,
-`UpdateFlag="Enabled"`, written `0xCB` over the template's `0xDF` in ETS's captured full download;
-on the Meteodata, on twelve configured objects in its captured full download), and
-Busforge with it (`ETS_UPDATE_BIT_MV0705_APPS`, `packages/product/src/comobjbuild.ts`). Two
-applications of one manufacturer are not taken as the meaning of `0x80` on MV-0705: on every other
-application a configured object's update flag leaves the bit cleared. A capture of another
-manufacturer's configured object with the update flag decides ([roadmap.md](roadmap.md)). `dataPtr` points into the `0x07xx` RAM value
+There is no read-on-init bit. `0x80` is set in the manufacturer's template of many entries; on a
+configured object it is the object's update flag, set where the resolved flags say `UpdateFlag` and
+cleared otherwise, on every System 7 application that names this table's segment (a family rule,
+[load-procedures.md](load-procedures.md#the-rules-by-level), R13). The captures that show it are of
+three applications of two manufacturers: the Theben TheLuxa P300 (object 116, `UpdateFlag="Enabled"`,
+written `0xCB` over the template's `0xDF`), the Theben Meteodata 140 S (MV-0701, the same table
+layout, twelve configured objects) and the MDT BE-06001.02 (objects 36 and 39 written `0xD3`); every
+other System 7 capture compared (Gira, Auro, MDT BE-02001.02, ABB) agrees with it. `dataPtr` points into the `0x07xx` RAM value
 segment. L3 lives at the application's `<ComObjectTable CodeSegment>` fixed absolute address
 and is **not** behind the object-3 table pointer (`tableAddr(3)` returns 0 on MV-0705,
 unlike System B).
 
 The decisive finding is that this segment ships a base64 `<Data>` blob which is the
 manufacturer's complete static image of L3 (header, every entry's data pointer, type, and a
-template config byte with the `0x80` "not yet configured" bit set). ETS writes that image and
+template config byte, often with `0x80` set). ETS writes that image and
 then overlays only the dynamic state. So the build is:
 
 1. Start from the segment `<Data>` (authoritative for the header, data pointers, sizes and
    every inactive entry).
 2. **Configured objects** (those the active configuration reaches):
-   `config = priority | linked | read | write | transmit` from the resolved flags, `0x80`
-   dropped (on the TheLuxa P300: `0x80` = the update flag, above), `type` rewritten from the
-   resolved size.
+   `config = priority | linked | read | write | transmit | update` from the resolved flags,
+   `type` rewritten from the resolved size.
 3. **Unconfigured objects**: keep the template entry verbatim, clearing only a stale linked
    bit.
 
@@ -448,10 +447,9 @@ residuals decompose into named, bounded cases, none of them a missed general rul
   objects are unaffected (the device configures a reached top-level object even when
   unlinked).
 - **Large or special objects.** A 14-byte "software version" object (object 116 of the Theben
-  TheLuxa P300) kept `0x80` while 3-, 6- and 8-byte siblings had it cleared, which read as "left
-  unconfigured". ETS's full download of that application explains it: the object is
+  TheLuxa P300) keeps `0x80` where 3-, 6- and 8-byte siblings have it cleared: the object is
   configured and declares `UpdateFlag="Enabled"`, and ETS writes `0xCB`, the update flag in `0x80`
-  (above). Busforge writes it so for that application only.
+  (above).
 - **Device drift**, settled by a clean ETS re-flash rather than by code.
 
 None of these shows in the configurations driven on hardware, so a full download of a device

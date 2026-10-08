@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, absoluteStructuralImages, etsUpdateBitMv0705, buildGroupTablesMv0705, System7Profile, ETS_CAPTURED_SYSTEM7_APPS, ETS_DECLARED_ORDER_SYSTEM7_APPS, absoluteFullStepRefusal, fullDownloadImageDigest, planDeclaredOrderSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -48,10 +48,12 @@ class GiraDevice {
     }
     return Buffer.from([this.state.get(obj)!]);
   }
-  async propReadCounted(obj: number, pid: number, start: number) {
-    this.ops.push(`read ${obj}/${pid}#${start}`);
-    return { objectIndex: obj, pid, count: 1, start, value: Buffer.from("000001d300f2d021", "hex") };
+  async propReadCounted(obj: number, pid: number, start: number, count = 1) {
+    this.ops.push(`read ${obj}/${pid}#${start}${count > 1 ? `x${count}` : ""}`);
+    return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) };
   }
+  // A standard-frame device: one 8-byte stamp per property response.
+  async propValueDataMax() { return 10; }
 }
 const asDev = (d: GiraDevice) => d as unknown as KnxDevice;
 const STAMPS = ["read 1/27#1", "read 2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `read 3/27#${i}`)];
@@ -104,7 +106,8 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   test("the dry run reports the digest of the image the offline plan builds", async () => {
     const dev = new GiraDevice(cfg);
     const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects, dryRun: true });
-    const offline = classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links: twoObjects, proc: parseLoadProcedures(xml) });
+    // The emulated unit holds the application loaded, so the dry run plans ETS's partial form.
+    const offline = classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links: twoObjects, proc: parseLoadProcedures(xml), unitHoldsApplication: true });
     expect(r).toMatchObject({ kind: "dryRun", imageDigest: fullDownloadImageDigest(offline.segments) });
     expect(dev.ops).toEqual([]);
   });
@@ -113,7 +116,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const dev = new GiraDevice(cfg);
     dev.state.set(1, STATE.UNLOADED);
     expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects }).catch((e: unknown) => e))
-      .toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
+      .toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("does not hold this application loaded") });
     expect(dev.ops).toEqual([]);
   });
 
@@ -209,46 +212,48 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   }, 20_000);
 });
 
-// Everything outside ETS_CAPTURED_SYSTEM7_APPS and ETS_DECLARED_ORDER_SYSTEM7_APPS keeps the System 7
-// download it had before the captured applications: segment and task declarations to the memory control
-// 0x0104 (no `viaProperty`), no LdCtrlTaskCtrl1, every written segment whole from its start (no <Mask>
-// read), and the associations by object then group index. The MDT BE-02001.02 full download is
-// hardware-proven so.
-corpusDescribe("System 7 applications ETS is not captured on keep their download", () => {
-  const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
-  const captured = (id: string) => ETS_CAPTURED_SYSTEM7_APPS.includes(id) || ETS_DECLARED_ORDER_SYSTEM7_APPS.includes(id);
-  test("no declaration in their full-download plans is a property write, none is a TaskCtrl1, every segment is written whole", () => {
+// The rules every System 7 application's declared full download follows (docs/load-procedures.md, "The
+// rules, by level"): declarations as PID 5 writes on a property-mapped mask, to the 0x0104 control on a
+// memory-mapped one; the address table's own individual address never written; a declared LdCtrlTaskCtrl1
+// encoded from its attributes; the associations in ETS's order.
+corpusDescribe("the System 7 rules hold for every catalogue application", () => {
+  test("declarations travel by the mask, the own individual address is never written", () => {
     let planned = 0;
     for (const f of listCatalogue()) {
       const xml = catalogueXml(f);
       const cfg = parseAppConfig(xml);
-      if (!(classify(cfg) instanceof System7Profile) || captured(cfg.id)) continue;
+      if (!(classify(cfg) instanceof System7Profile)) continue;
       let plan;
       try { plan = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml) }).plan; } catch { continue; }
       planned++;
-      expect(plan.filter((s) => (s.op === "absSegment" || s.op === "taskSegment") && "viaProperty" in s)).toEqual([]);
-      expect(plan.filter((s) => s.op === "taskCtrl1")).toEqual([]);
-      const starts = new Set(cfg.absoluteSegments.map((s) => s.address));
-      expect(plan.flatMap((s) => (s.op === "writeMem" && !starts.has(s.address) ? [s.address] : []))).toEqual([]);
+      const declared = plan.filter((st) => st.op === "absSegment" || st.op === "taskSegment");
+      const viaProperty = cfg.mask !== "MV-0701" && cfg.mask !== "MV-0700";
+      expect([f, declared.filter((st) => ("viaProperty" in st) !== viaProperty)]).toEqual([f, []]);
+      const addrAt = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.addressSegment)!.address;
+      const own = plan.flatMap((st) => (st.op === "writeMem" ? Array.from(st.bytes, (_, i) => st.address + i) : [])).filter((a) => a === addrAt + 1 || a === addrAt + 2);
+      expect([f, own]).toEqual([f, []]);
     }
-    expect(planned).toBeGreaterThanOrEqual(2); // the MDT BE-02001.02 and the ABB US/U 4.2 at least
+    expect(planned).toBeGreaterThanOrEqual(6); // ABB, TheLuxa, Meteodata, Auro FE01, both MDT
   });
-  test("an LdCtrlTaskCtrl1 is refused on every application outside the declared-order registry, in any form", () => {
+  test("every declared LdCtrlTaskCtrl1 is encoded from its Address and Count", () => {
     const seen: string[] = [];
     for (const f of listCatalogue()) {
       const xml = catalogueXml(f);
       const proc = parseLoadProcedures(xml);
-      if (captured(proc.app ?? "") || !proc.verbs.includes("LdCtrlTaskCtrl1")) continue;
+      const tc = proc.blocks.flatMap((b) => b.steps).find((st) => st.verb === "LdCtrlTaskCtrl1");
+      if (!tc) continue;
       seen.push(proc.app ?? f);
-      expect(absoluteFullStepRefusal(proc)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" });
+      const cfg = parseAppConfig(xml);
+      let plan;
+      try { plan = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc }).plan; } catch (e) { expect([f, String((e as Error).message)]).not.toEqual([f, expect.stringContaining("TaskCtrl1")]); continue; }
+      expect(plan.filter((st) => st.op === "taskCtrl1")).toEqual([{ op: "taskCtrl1", lsm: Number(tc.attrs.LsmIdx), address: Number(tc.attrs.Address), count: Number(tc.attrs.Count) }]);
     }
-    expect(seen.sort()).toEqual(["M-0081_A-FF31-31-D6FF", "M-008E_A-7079-10-9C41"]);
+    expect(seen.sort()).toEqual(["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0081_A-FE01-11-75D9", "M-0081_A-FF31-31-D6FF", "M-008E_A-7079-10-9C41"]);
   });
-  test("their associations are ordered by object, then group index", () => {
-    const { assoc } = buildGroupTablesMv0705(multi, 0x11fa);
+  test("the associations: each object's first link, then the others by object and group index", () => {
+    const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
     // group indices: 0x0900=1 0x0901=2 0x0902=3 0x0903=4 0x0904=5 0x0905=6
-    expect(assoc.toString("hex")).toEqual("06" + "0300" + "0500" + "0600" + "0101" + "0202" + "0402");
-    expect(buildGroupTablesMv0705(multi, 0x11fa, { order: "ets-captured" }).assoc.toString("hex")).toEqual("06" + "0600" + "0101" + "0402" + "0300" + "0500" + "0202");
+    expect(buildGroupTablesMv0705(multi, 0x11fa).assoc.toString("hex")).toEqual("06" + "0600" + "0101" + "0402" + "0300" + "0500" + "0202");
   });
 });
 
@@ -263,7 +268,7 @@ corpusDescribe("the way back for a captured application's unit without its appli
 });
 
 // The Auro presence detector (M-0081_A-FE01-11-75D9), whose full download ETS runs in its declared order
-// (loadproc.ts ETS_DECLARED_ORDER_SYSTEM7_APPS), run against the same emulation.
+// (its ProductProcedure, no PreferPartialDownloadIfApplicationLoaded), run against the same emulation.
 corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against an emulated device", () => {
   const xml = catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
   const cfg = parseAppConfig(xml);
@@ -295,13 +300,12 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     expect((await dev.memRead(0x402f, 5)).toString("hex")).toBe("0201000200");
   }, 20_000);
 
-  test("a unit whose address table is not loaded is refused, untouched, though it holds the application", async () => {
+  test("a unit whose address table is not loaded takes the same download: ETS reads no load state before the declared procedure", async () => {
     const dev = auro();
     dev.state.set(1, STATE.UNLOADED);
-    expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links }).catch((e: unknown) => e))
-      .toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED", message: expect.stringContaining("load-state machine 1 ") });
-    expect(dev.ops).toEqual([]);
-  });
+    expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links })).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.ops[0]).toBe("unload:1");
+  }, 20_000);
 
   test("the dry run reports the digest of the image the offline plan builds", async () => {
     const dev = auro();
@@ -376,13 +380,13 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     expect(dev.mem.get(0x4207)).toBe(0);
   }, 20_000);
 
-  // Only LdCtrlTaskCtrl1 LsmIdx 3 Address 0 Count 0 is captured; any other form of it is refused, by the
-  // offer and by the planner.
-  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "1", Count: "0" }, { LsmIdx: "3", Address: "0", Count: "2" }, { LsmIdx: "2", Address: "0", Count: "0" }, { LsmIdx: "3" }];
+  // An LdCtrlTaskCtrl1 that one byte of Count and two of Address cannot carry, or one with attributes no
+  // capture shows encoded, is refused, by the offer and by the planner.
+  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "70000", Count: "0" }, { LsmIdx: "3", Address: "0", Count: "256" }, { LsmIdx: "3", Address: "0", Count: "0", Extra: "1" }, { LsmIdx: "3" }];
   for (const attrs of forms) {
     test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
       const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
-      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("only LsmIdx 3 with Address 0 and Count 0") });
+      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
       expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links, proc: changed })).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     });
   }
@@ -397,7 +401,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     const ADDR = "M-0081_A-FE01-11-75D9_AS-4000";
     const tables = { addr: Buffer.from("031212050a1807", "hex"), assoc: Buffer.from("0201000200", "hex") };
     const withMask = (mask: (m: Buffer) => Buffer): AppConfig => ({ ...cfg, absoluteSegments: cfg.absoluteSegments.map((s) => (s.id === ADDR ? { ...s, mask: mask(s.mask!) } : s)) });
-    const plan = (app: AppConfig) => () => planDeclaredOrderSystem7GaFlash(app, proc, tables, null);
+    const plan = (app: AppConfig) => () => planSystem7GaFlash(app, proc, tables, null);
     test("the unmodified address table segment plans", () => {
       expect(cfg.absoluteSegments.find((s) => s.id === ADDR)?.mask?.length).toBe(47);
       expect(plan(cfg)).not.toThrow();
@@ -476,44 +480,41 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
     const app: AppConfig = { ...cfg, absoluteSegments: cfg.absoluteSegments.map((s) => (s.id === COM ? { ...s, mask: Buffer.alloc(s.size, 0xff).fill(0, 10, 11) } : s)) };
     expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("leaves out byte 10") }));
   });
-  // Only LdCtrlTaskCtrl1 LsmIdx 3 Address 17875 Count 1 is captured on this application.
-  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "0", Count: "0" }, { LsmIdx: "3", Address: "17875", Count: "2" }, { LsmIdx: "2", Address: "17875", Count: "1" }, { LsmIdx: "3", Address: "17876", Count: "1" }];
+  // An LdCtrlTaskCtrl1 the control cannot carry is refused on this application as on every other.
+  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "17875", Count: "300" }, { LsmIdx: "0", Address: "17875", Count: "1" }, { LsmIdx: "3", Address: "-1", Count: "1" }];
   for (const attrs of forms) {
     test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
       const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
-      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("only LsmIdx 3 with Address 17875 and Count 1") });
+      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
       expect(plan(cfg, changed)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     });
   }
 });
 
-// The update bit (config 0x80) of the MV-0705 com-object table is taken from one capture, the TheLuxa
-// P300's object 116 (comobjbuild.ts ETS_UPDATE_BIT_MV0705_APPS). Every other MV-0705 application keeps
-// the table it got before: a configured object's config byte without 0x80 whatever its update flag,
-// an unconfigured entry the template's minus the linked bit. Built through the structural flash's
-// path, with each application's default configuration.
-corpusDescribe("the update bit of the MV-0705 com-object table is set for the TheLuxa P300 only", () => {
-  let otherUpdating = 0;
+// The update bit (config 0x80) of the MV-0705 com-object table follows each configured object's update
+// flag, as ETS writes it (TheLuxa P300, Meteodata 140 S and MDT BE-06001.02 captures); an unconfigured
+// entry is the template's minus the linked bit. Built through the structural flash's path, with each
+// application's default configuration.
+corpusDescribe("the update bit of the MV-0705 com-object table is the configured object's update flag", () => {
+  let updating = 0;
   for (const file of listCatalogue()) {
     const cfg = parseAppConfig(catalogueXml(file));
     if (cfg.mask !== "MV-0705" || cfg.groupTables.comObjectSegment === undefined) continue;
-    test(`${file}: 0x80 on a configured object only where ETS is captured writing it`, () => {
+    test(`${file}: 0x80 on a configured object exactly where it declares the update flag`, () => {
       const active = buildDeviceConfig(cfg, new Map()).imageComObjects;
       const seg = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
       const table = absoluteStructuralImages(cfg, new Map(), [], 0x120a, { baseValues: new Map(), comObjectTable: { active, linked: new Set() } })
         .find((i) => i.id === seg.id)!.image;
-      const theLuxa = cfg.id === "M-0048_A-107E-12-5B58";
-      expect(etsUpdateBitMv0705(cfg.id)).toBe(theLuxa);
       for (let n = 0; n < seg.data[0]; n++) {
         const at = 3 + n * 4 + 2, o = active.get(n);
         if (!o) expect(table[at]).toBe(seg.data[at] & ~0x04);
-        else expect(table[at] & 0x80).toBe(theLuxa && o.flags.update ? 0x80 : 0);
-        if (o?.flags.update && !theLuxa) otherUpdating++;
+        else expect(table[at] & 0x80).toBe(o.flags.update ? 0x80 : 0);
+        if (o?.flags.update) updating++;
       }
-      if (theLuxa) expect(table[3 + 116 * 4 + 2]).toBe(0xcb);
+      if (cfg.id === "M-0048_A-107E-12-5B58") expect(table[3 + 116 * 4 + 2]).toBe(0xcb);
     });
   }
-  test("another application has configured objects with the update flag, so the rule is exercised", () => {
-    expect(otherUpdating).toBeGreaterThan(0);
+  test("configured objects with the update flag exist, so the rule is exercised", () => {
+    expect(updating).toBeGreaterThan(0);
   });
 });

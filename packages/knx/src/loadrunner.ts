@@ -33,22 +33,21 @@ export type LoadStep =
   | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
   // Declare an absolute segment to an LSM (LdCtrlAbsSegment): the segment must be declared to the LSM
   // before its data is written. Written to the memory-mapped control 0x0104, or with `viaProperty` as
-  // the LSM's PID 5 write (set only by the planners of applications ETS is captured downloading that
-  // way); asserts the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
+  // the LSM's PID 5 write (a property-mapped mask); asserts the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
   | { op: "absSegment"; lsm: number; segType: number; address: number; size: number; access: number; memType: number; segFlags: number; viaProperty?: true }
   // Declare the task segment (LdCtrlTaskSegment) with the application identity the device checks
   // at LoadCompleted, over the same transport as absSegment.
   | { op: "taskSegment"; lsm: number; address: number; peiType: number; manufacturer: number; appNumber: number; version: number; viaProperty?: true }
   // LdCtrlTaskCtrl1: the LSM's PID 5 write of 03 04, the address, the count and zero bytes
   // (taskCtrl1Prop), or the same fields in the 0x0104 control of a memory-mapped LSM (taskCtrl1MM).
-  // Asserts the LSM stays LOADING, as after a segment declaration. The planner emits only the forms an
-  // ETS capture shows.
+  // Asserts the LSM stays LOADING, as after a segment declaration.
   | { op: "taskCtrl1"; lsm: number; address: number; count: number }
-  // Read elements of a property and require an answer (LdCtrlLoadImageProp on the absolute
-  // applications ETS is captured downloading: it reads the segment stamps, PID 27, after the last
-  // LoadCompleted and writes nothing). The values are handed to RunOpts.onRead. `count` elements from
-  // `start` in one request (default 1), all of them required.
-  | { op: "readProp"; obj: number; pid: number; start: number; count?: number }
+  // Read elements of a property and require an answer (a declared LdCtrlLoadImageProp: the segment
+  // stamps, PID 27, after the last LoadCompleted). The values are handed to RunOpts.onRead. `count`
+  // elements from `start` (default 1), all of them required; with `elementSize`, as many per request as
+  // one response carries on this device, as ETS reads them (one per request on a standard-frame device,
+  // Gira M-0008; two in one on the Theben MIX 2 and Jung 400021SE).
+  | { op: "readProp"; obj: number; pid: number; start: number; count?: number; elementSize?: number }
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
@@ -177,9 +176,13 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       case "readProp": {
         try {
           const count = step.count ?? 1;
-          const v = await dev.propReadCounted(step.obj, step.pid, step.start, count);
-          if (v.count !== count) throw new KnxError("PROPERTY_READ_EMPTY", `object ${step.obj} PID ${step.pid} element ${step.start}: the device answered with ${v.count} element(s), where the load procedure reads ${count}`);
-          opts.onRead?.(step.obj, step.pid, step.start, v.value);
+          const per = step.elementSize ? Math.max(1, Math.floor((await dev.propValueDataMax()) / step.elementSize)) : count;
+          for (let at = step.start; at < step.start + count; at += per) {
+            const n = Math.min(per, step.start + count - at);
+            const v = await dev.propReadCounted(step.obj, step.pid, at, n);
+            if (v.count !== n) throw new KnxError("PROPERTY_READ_EMPTY", `object ${step.obj} PID ${step.pid} element ${at}: the device answered with ${v.count} element(s), where the load procedure reads ${n}`);
+            opts.onRead?.(step.obj, step.pid, at, v.value);
+          }
         } catch (e) { unread ??= e instanceof Error ? e : new KnxError("PROPERTY_READ_EMPTY", String(e)); }
         break;
       }

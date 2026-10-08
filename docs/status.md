@@ -43,11 +43,11 @@ All hardware verification is on **twisted pair**.
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical, owned bytes only) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. |
-| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer shown to need it also holds the application object in its own load bracket. System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see [Known unproven](#known-unproven)). The Auro M-0081_A-FE01 unloads and re-declares the tables as ETS does; the Gira M-0008, the Theben TheLuxa P300 and the Theben Meteodata 140 S (memory-mapped, over `0x0104`) re-declare them and write the bytes of ETS's image, as ETS does (device notes below). |
-| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. A procedure declaring `LdCtrlTaskCtrl1` is refused and not offered, except on the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S, which follow the sequence ETS was captured running, and only onto a unit already holding their application, so not as first-time commissioning. On each, the full download's hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
+| Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer shown to need it also holds the application object in its own load bracket. System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see [Known unproven](#known-unproven)). On System 7 both tables are unloaded and declared where ETS puts them, by rule ([load-procedures.md](load-procedures.md#the-rules-by-level)); shown on hardware on the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300 and the Theben Meteodata 140 S, not yet on the ABB and MDT units (device notes below). |
+| Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. The form follows the catalogue: the declared procedure in its order (`LdCtrlTaskCtrl1` encoded from its attributes), or ETS's partial form on a unit holding an application that declares `PreferPartialDownloadIfApplicationLoaded` ([load-procedures.md](load-procedures.md#the-rules-by-level)). On the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S it ran only onto a unit already holding the application, so not as first-time commissioning, and the hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. |
-| Structural change (a parameter that changes the set of com-objects) | yes (Jung 400021SE, MDT BE-02001.02) | hardware | Written as a structural flash: parameters, the com-object table authored for the new configuration and links, and the group tables, in one load bracket on System B (one per load-state machine on System 7), as ETS's partial download writes such a change ([load-procedures.md](load-procedures.md#structural-flash), [findings.md](findings.md) §28: every byte ETS wrote matches Busforge's image). Claimed only for these two application programs (`STRUCTURAL_FLASH`); every other device gets the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` without a full-download path), and the System 7 applications whose full download is refused get `COM_OBJECT_TABLE_STALE_USE_ETS` ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). On both devices the smoke spec's structural change and its revert pass in both channels, each verified after the restart and read back without drift; the Jung in Data Secure mode. |
+| Structural change (a parameter that changes the set of com-objects) | yes (seven applications) | hardware (Jung 400021SE, MDT BE-02001.02, see the note); reference only elsewhere | Written as a structural flash: parameters, the com-object table authored for the new configuration and links, and the group tables, in one bracket set and one restart, as ETS's partial download writes such a change ([load-procedures.md](load-procedures.md#structural-flash), [findings.md](findings.md) §28). Offered only where the plan is tested against an ETS capture of such a download (`STRUCTURAL_FLASH_CAPTURED`): the Jung 400021SE and the MDT BE-02001.02 (a change that reshapes the com-object set), and the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S and the Theben MIX 2 (the revert of a parameter and a link change). On the Jung and the MDT the smoke spec's structural change and its revert passed in both channels, verified after the restart and read back without drift, the Jung in Data Secure mode, with a bracket that lacked ETS's closing steps and confirmed restart (Jung) and ETS's table unload and declarations (MDT); the bracket with them is capture-tested only. On the other five: capture-tested only, never run. Every other device gets the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` without a full-download path), and the System 7 applications whose full download is refused get `COM_OBJECT_TABLE_STALE_USE_ETS` ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). |
 | Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Reads auto-select it when a range exceeds `0xFFFF`. Writes use it, confirmed chunk by chunk, on every device that declares `PID_MAX_APDU_LENGTH`, as ETS does ([device-memory-model.md](device-memory-model.md)). An address past 24 bits is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
 | KNX Data Secure: read (descriptor, property, serial, security mode) | yes | hardware | Own AES-128-CCM; tool keys come from the project file. The Jung 400021SE, secure-commissioned by ETS, reads back in full (parameters and links equal to the ETS project) and reports its security mode as on. Without a key on file `secure-identify` reads plainly: a device whose Secure was never activated states its security mode off (shown on the GVS AMMA before its activation); devices that stay silent or close the connection are reported as unreadable, not as off. The Jung in secure mode refuses a plain read with access denied (`0xFC`, shown with a raw probe); Busforge's handling of that refusal and the not-activated verdict on a device whose stored key gets no Sync answer (`SECURE_MODE_OFF`) are tested against a simulated device only. Every secured frame of ETS's captured commissioning of the Jung decrypts with Busforge's CCM ([knx-secure.md](knx-secure.md#the-ets-reference-capture)). |
 | KNX Data Secure: tool key deposited by hand | yes | hardware | Stored (source `manual`) only after the device answered a secure Sync under it ([knx-secure.md](knx-secure.md#the-key-store)). On the Jung 400021SE through the API: a random key refused (`SECURE_SYNC_NO_RESPONSE`, the entry on file unchanged), a missing serial refused before the bus (`TOOL_KEY_SERIAL_MISSING`), a wrong serial refused by the device's silence, the right key stored and a session opened under it. Through the device menu's dialog: a random key shown as refused, then the right key stored. The refusal of a factory key (security mode off) and of a serial the device reports differently are tested against a stubbed identification only. |
@@ -95,7 +95,7 @@ value.
 | Theben RMG 8 T switch actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben DALI gateway (M-0048) | MV-07B0 | relative | not proven | not proven | not proven | not proven | not proven |
 | Auro presence detector (M-0081_A-FE01) | MV-0705 | absolute | hardware | hardware, bracket and changed byte equal to ETS's partial download, the segment stamp equal to the one after ETS's download | hardware, add and remove with the tables unloaded and re-declared, wire and stamps equal to ETS's; unlinking and relinking a transmit-only object clears and sets its linked bit, written bytes and reads equal to ETS's (see below) | hardware, sequence only: on a unit already holding the application, every planned byte already equal, no changed byte transferred (see below) | hardware: answers group reads after each write, a removed address stops answering; a transmit-only object relinked by a GA flash sends on its address (see below) |
-| Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (`LdCtrlTaskCtrl1`, see below) | not proven |
+| Steinel presence detector (M-008E) | MV-0705 | absolute, data-less segment | hardware | hardware | not proven | refused (parameter segment without `<Data>`, see below) | not proven |
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket and the changed byte, the segment stamp equal to the one after ETS's download (see below) | hardware, add and remove with the tables re-declared, exactly the bytes of ETS's image, wire and stamps equal to ETS's (see below) | hardware, exactly the bytes of ETS's image, shown on the wire; on a unit already holding the application, every planned byte already equal (see below) | hardware: answers a group read after the download and after each flash; the GA flash's new association not observed (the object has no read flag) |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket, the changed byte and the download marker (see below) | hardware, add and remove with the tables re-declared as one region, wire equal to ETS's (see below) | hardware, declared order with `LdCtrlTaskCtrl1`, exactly the bytes of ETS's image, wire equal to ETS's; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
 | Theben Meteodata 140 S (M-0048, MV-0701 product) | MV-0701 | absolute, dynamic tables, memory-mapped LSM | hardware | hardware, ETS's bracket over `0x0104`, the changed byte and the download marker, wire equal to ETS's (see below) | hardware, add and remove with the tables re-declared as one region, every byte ETS wrote equal (see below) | hardware, declared order with `LdCtrlTaskCtrl1` over `0x0104`, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
@@ -104,6 +104,30 @@ value.
 
 What each row does not show:
 
+- **Plans that differ from the ones run on hardware.** The plans follow the catalogue, family and
+  KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)). Where a plan differs
+  from the one the hardware cells above were shown with, it is capture-tested only (its steps and
+  bytes equal ETS's capture, where one exists) and has not run on the device:
+  - **ABB US/U 4.2**: the full download leaves out the device's own address; onto a unit holding the
+    application it takes ETS's partial form (equal to ETS's capture of it); the group-address flash
+    unloads and declares both tables and writes them to their length.
+  - **MDT BE-02001.02**: the full download declares its segments as PID 5 writes and leaves out the
+    own address (equal to ETS's capture); the group-address flash unloads and declares both tables;
+    the structural flash takes ETS's table brackets.
+  - **Jung 400021SE, GVS AMMA**: every download closes with the declared PID 27 reads, the confirmed
+    restart and the restart at once on the same connection; the full download unloads the PEI program
+    (LSM 5) first. On a Jung holding the application the full download takes ETS's partial form, equal
+    to ETS's four captures of it (no change, a parameter change, a parameter and a link change, the
+    revert).
+  - **Auro M-0081_A-FE01, Theben TheLuxa P300, Theben Meteodata 140 S**: the full download runs the
+    declared form onto a unit that does not hold the application too; no capture or run shows that case.
+  - **Auro, Gira, TheLuxa, Meteodata, Theben MIX 2**: the structural flash is offered.
+  - **OpenKNX RaumController**: the full download unloads the PEI program first, as ETS's full
+    download on this firmware does.
+  - **MEAN WELL power supply, Theben DALI gateway**: the System B rules (PEI unload, closing reads,
+    restart at once, ETS's association order) apply; neither has run a write under them. On a DALI
+    gateway holding the application the full download takes ETS's partial form, equal to ETS's capture
+    of it.
 - **Jung 400021SE** runs in Data Secure mode, secure-commissioned by ETS. Its plain claims were shown
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and
@@ -170,7 +194,7 @@ What each row does not show:
   flashes. A group read was answered after each write, and an added address answered until the link
   was removed. The final read equals the reference, the bytes ETS's revert leaves behind the shrunk
   association table included. The com-object table carries one object's update flag in config bit
-  `0x80`, as ETS writes it, on this application and the Meteodata 140 S only
+  `0x80`, as ETS writes it
   ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)). Persistence is the
   restart each write ends with; no bus power cycle.
 - **Theben Meteodata 140 S `M-0048_A-140C-14-EB70`** (MV-0701, memory-mapped). ETS 6 was captured
@@ -186,9 +210,9 @@ What each row does not show:
   the transfer of changed bytes is shown by the two flashes. Group reads were answered after each
   write, and an added address answered until the link was removed. The final read equals the
   reference, the table residue included (the manufacturer object's runtime values differ, as after
-  every restart). It writes its table segment's `<Data>` behind the tables (this application only)
-  and the update flag in config bit `0x80` (here and on the TheLuxa P300 only), both as ETS does. Persistence is the restart each
-  write ends with; no bus power cycle.
+  every restart). It writes its table segment's `<Data>` past what the tables can hold and the update
+  flag in config bit `0x80`, both as ETS does. Persistence is the restart each write ends with; no bus
+  power cycle.
 - **Theben MIX 2 `M-0048_A-493B-21-B471`** (System B, module slots, two memory-control-block
   regions), three products, each with its own captures and runs: HMG 6 T, JMG 4 T, RMG 8 T. ETS 6 was
   captured running a full, a parameter and a group-address download and their revert on one unit of
@@ -206,14 +230,14 @@ What each row does not show:
   answered a group read after each write, an added address answered, and the final read equals the
   reference, both memory-control-block regions included. The unit's download counter (device object
   PID 30) moves alike under both tools. Persistence is the restart each write ends with; no bus power
-  cycle. The structural flash is not claimed for this application.
-- **Auro, Gira, TheLuxa and Meteodata full download** are refused onto a unit that does not hold the
-  application with load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): no
-  capture shows that case. None of their runs is a smoke run, so the compatibility matrix does not
-  count them.
-- **Full download on the other System 7 applications declaring `LdCtrlTaskCtrl1`** (Steinel M-008E,
-  the second Auro application `M-0081_A-FF31`) is refused before any write and not offered: the full
-  download executes `LdCtrlTaskCtrl1` only in the form each captured application's own capture shows
+  cycle. The structural flash of the revert equals ETS's in steps and bytes; it has not run.
+- **Gira M-0008 full download** is refused onto a unit that does not hold the application with
+  load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): its declared form
+  sends a step after the restart that no capture shows. None of the Auro, Gira, TheLuxa and
+  Meteodata runs is a smoke run, so the compatibility matrix does not count them.
+- **Full download of the Steinel M-008E and the second Auro application `M-0081_A-FF31`** is refused
+  before any write and not offered (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`): a parameter segment without
+  `<Data>`, and a `<Mask>` of a form no capture shows
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
   A unit never verified since it was placed or replaced is refused the surgical flashes too, naming
   ETS (`NEVER_PROGRAMMED_USE_ETS`).
@@ -232,8 +256,9 @@ What each row does not show:
   round-trip.
 - **Offered, never driven.** Some applications are offered writes because their declared procedure
   is covered, and those writes have no hardware evidence on the product: the MDT Universal Interface 6-fold
-  (`M-0083_A-00B4-32-3919`, MV-0705) for all three, the Theben DALI gateway (`M-0048_A-9071-20-F258-O00EF`)
-  for all three, and the MEAN WELL power supply (`M-0162_A-0004-11-F245`) for its group-address flash and
+  BE-06001.02 (`M-0083_A-00B4-32-3919`, MV-0705) for all three (ETS captures of it exist, and no test
+  compares Busforge's plans with them yet), the Theben DALI gateway (`M-0048_A-9071-20-F258-O00EF`) for
+  all three, and the MEAN WELL power supply (`M-0162_A-0004-11-F245`) for its group-address flash and
   full download.
 - **Sibling products on a proven mask are individually unproven.** A mask proven on one product
   means the memory model and load procedure are right, not that another product on that mask has
@@ -297,7 +322,9 @@ report a device family as working on the strength of a passing test suite.
   byte for byte. Parameter flash: one ETS partial download of the Jung. Group-address flash: one ETS
   partial download each of the MDT, the ABB, the GVS and the Jung, every byte ETS wrote equal to Busforge's image. Plus the Auro
   M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S and the three
-  Theben MIX 2 products (device notes above). Everywhere else the read-back proves
+  Theben MIX 2 products (device notes above), and the ABB's full download onto a unit holding the
+  application (ETS's partial form). Structural flash: the Jung, the MDT BE-02001.02 and the reverts of
+  the Auro, Gira, TheLuxa, Meteodata and MIX 2. Everywhere else the read-back proves
   `device == our image` and can never prove `our image == ETS`.
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
   and changes only each object's linked bit, as ETS does on both LSM styles. On a device whose table
@@ -318,17 +345,17 @@ report a device family as working on the strength of a passing test suite.
 - **The GVS AMMA's closing PID 67 write.** Its application declares a write of `01` to object 4
   PID 67 for every download (`AppliesTo="all"`), which ETS sends after the last LoadCompleted; the
   full download, parameter flash and group-address flash end with it in ETS's place and refuse on a
-  wrong echo ([load-procedures.md](load-procedures.md#closing-property-writes-run-because-ets-was-captured-sending-them)).
+  wrong echo ([load-procedures.md](load-procedures.md#the-closing-steps-run-as-declared)).
   Shown on hardware in the api channel. Not shown: what the property does in the device, the ui
   channel with the write, and the group-address flash's write against a links-only ETS capture (none
-  exists). Other applications declaring the same write without a capture of their own are refused
-  every write.
-- **Config bit `0x80` of the MV-0705 com-object table as the update flag** is written only on the
-  TheLuxa P300 and the Meteodata 140 S, where ETS writes it so; both are Theben applications, so it
-  is not taken as the rule for other manufacturers
-  ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)). Likewise the table
-  segment's `<Data>` behind the tables is written on the Meteodata only, the one capture showing ETS
-  write it ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)).
+  exists). A closing write another application declares is run as declared; no other catalogue
+  fixture declares one.
+- **Config bit `0x80` of the System 7 com-object table as the update flag** is a family rule shown
+  by the captures of the TheLuxa P300, the Meteodata 140 S and the MDT BE-06001.02; on hardware a set
+  update bit is shown only on the two Theben units
+  ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)). The table
+  segment's `<Data>` past what the tables can hold is written by rule; the Meteodata is the one
+  capture showing ETS write such bytes ([load-procedures.md](load-procedures.md#the-rules-by-level), R6).
 - **Non-TP media** (powerline, RF, IP masks) have never been exercised on the wire.
 - **MV-0700, MV-2705, MV-5705, MV-17B0, MV-27B0, MV-57B0** share a proven code path but no device
   on those masks has been driven.

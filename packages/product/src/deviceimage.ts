@@ -173,20 +173,16 @@ export function buildAbsoluteSegmentTargets(
 // text/time/malformed value claims no bytes.
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
-// Applications on which ETS leaves out a parameter that no active branch places when every one of its
-// placements lies in a branch of a choose ETS evaluated and did not take: its bytes keep the
-// allocation fill in a full download and are not in the image of a parameter download. A parameter
-// gated only by a choose on an unset Merker it writes at its default, as on every other application.
-// The Theben MIX 2 (M-0048_A-493B-21-B471), a JMG 4 T with its second extension slot empty
-// (P-201 = 0): ETS's full download leaves offset 1129 at 00, where P-63 "Zeit für zyklisches Senden
-// der Sammelrückmeldung" (default 2, channel CH-3 behind P-201 > 0) lies, and its parameter download
-// leaves out offset 1201 (P-36 "Kanal C2 verstärkt Kanal C1", behind P-201 = 4); both write the default
-// 15 of P-202 at offset 37, gated by the Merker P-21, which this configuration never places (private
-// corpus captures/mix2-jmg4t-ets6log-fulldownload.txt and -partial-params.txt, "Execute image"
-// RelMemory(4)). Not a rule of ETS: its GVS AMMA downloads (gvs-amma-ets-*.log) write such parameters'
-// defaults, and the MEAN WELL PSU's (M-0162) read-back matched only with them (the ownership rule
-// below, "PSU byte-match").
-export const ETS_REJECTED_BRANCH_UNWRITTEN_APPS: readonly string[] = ["M-0048_A-493B-21-B471"];
+// An application that declares <Options DownloadInvisibleParameters="None">: ETS leaves out a parameter that
+// no active branch places when every one of its placements lies in a branch of a choose ETS evaluated and
+// did not take: its bytes keep the allocation fill in a full download and are not in the image of a
+// parameter download. A parameter gated only by a choose on an unset Merker it writes at its default.
+// Theben MIX 2 (a JMG 4 T with its second extension slot empty: offset 1129, P-63, left at 00 in the full
+// download; offset 1201, P-36, absent from its parameter download; private corpus
+// captures/mix2-jmg4t-ets6log-fulldownload.txt and -partial-params.txt) and Jung 400021SE (also "None",
+// whose captures it leaves byte-identical). Where the application does not declare it (GVS AMMA, MEAN WELL
+// PSU), ETS writes such parameters' defaults (gvs-amma-ets-*.log; the PSU's read-back).
+const leavesOutInvisible = (app: AppConfig): boolean => app.downloadInvisibleParameters === "None";
 
 // `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
 // set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
@@ -208,7 +204,7 @@ export function buildRelativeSegmentTarget(
   if (!seg) return null;
   const built = buildDeviceConfig(app, values, opts.lang, instances);
   const active = built.imageValues;
-  const rejected = ETS_REJECTED_BRANCH_UNWRITTEN_APPS.includes(app.id) ? built.rejectedRefs : new Set<string>();
+  const rejected = leavesOutInvisible(app) ? built.rejectedRefs : new Set<string>();
   // The unions with at least one active member (only those write an active member, not the default).
   const activeUnions = new Set<string>();
   for (const refId of active.keys()) {
@@ -262,7 +258,7 @@ export function buildRelativeSegmentTarget(
     //  - inactive plain param that is user-facing (Access != None): own at its default;
     //    System B writes every such default and the device holds it (PSU byte-match).
     //  - inactive Access="None" param: NOT owned; the device byte stays.
-    //  - on ETS_REJECTED_BRANCH_UNWRITTEN_APPS, an inactive plain param every placement of which
+    //  - where the application leaves out invisible parameters, an inactive plain param every placement of which
     //    lies in a branch the configuration rejects: NOT owned (below).
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;

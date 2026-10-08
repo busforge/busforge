@@ -3,7 +3,7 @@ import net from "node:net";
 import { readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy } from "./knxproxy.ts";
+import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy, isSyncRequest } from "./knxproxy.ts";
 import { parseCapture, memoryImage } from "./etsdiff.ts";
 
 // A KNXnet/IP frame: header (06 10, service, total length) and body.
@@ -13,7 +13,16 @@ const searchResExt = frame(0x020c, [0x08, 0x01, 192, 0, 2, 9, 0x0e, 0x57, 0x02, 
 // A tunnelled A_Memory_Write of 2 bytes to 0x4000, from the tool to 1.1.1.
 const memWrite = frame(0x0420, [0x04, 0x11, 0x00, 0x00, 0x11, 0x00, 0xb0, 0x60, 0x00, 0x00, 0x11, 0x01, 0x05, 0x42, 0x82, 0x40, 0x00, 0xaa, 0xbb]);
 
+// ETS 6's tunnelled A_SecureService frames to the Jung 400021SE: an S-A_Sync_Req (SCF 0x92) and a
+// secured data request (SCF 0x90).
+const syncReq = Buffer.from("06100420002c0401000011003060116411cc1803f192004053570a210000000000004a48f6d0b0b0a8863312", "hex");
+const securedData = Buffer.from("061004200022040100001100b060116411cc0e03f1900040579904c6de3d6fedbccf", "hex");
+
 describe("frames", () => {
+  test("a Sync request is told from the other secured services and from plain frames", () => {
+    expect([isSyncRequest(syncReq), isSyncRequest(securedData), isSyncRequest(memWrite), isSyncRequest(searchResExt)]).toEqual([true, false, false, false]);
+  });
+
   test("the splitter frames a stream cut anywhere, and reports where it stops being KNXnet/IP", () => {
     const got: string[] = [];
     const broken: string[] = [];
@@ -76,6 +85,22 @@ describe("the proxy on the wire", () => {
     expect(lines.some((l) => l.includes("ETS->BRIDGE TUNNELLING_REQ") && l.endsWith(memWrite.toString("hex")))).toBe(true);
     expect(lines.some((l) => l.includes("BRIDGE->ETS SEARCH_RES_EXT") && l.endsWith(searchResExt.toString("hex")))).toBe(true);
     expect(lines.some((l) => l.includes("--- rewrote control HPAI 08010a0000090e57 -> 0801c00002070e58 ---"))).toBe(true);
+  });
+
+  test("with a Sync gap, a second Sync request is held that long after the first, and the frames behind it keep their order", async () => {
+    const seen: { at: number; f: string }[] = [];
+    const server = net.createServer((c) => c.on("data", makeSplitter((f) => seen.push({ at: Date.now(), f: f.toString("hex") }), () => {})));
+    const serverPort = await listen(server);
+    const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: serverPort, log, tool: "ETS", syncGapMs: 300 });
+    const proxyPort = await listen(proxy);
+    closers.push(() => server.close(), () => proxy.close());
+    const c = net.connect(proxyPort, "127.0.0.1", () => c.write(Buffer.concat([syncReq, securedData, syncReq, memWrite])));
+    while (seen.length < 4) await Bun.sleep(20);
+    c.destroy();
+    expect(seen.map((x) => x.f)).toEqual([syncReq, securedData, syncReq, memWrite].map((f) => f.toString("hex")));
+    expect(seen[2].at - seen[0].at).toBeGreaterThanOrEqual(290);
+    expect(seen[1].at - seen[0].at).toBeLessThan(200);
+    expect(readFileSync(log, "utf8")).toMatch(/--- held a Sync request \d+ ms ---/);
   });
 
   test("a tool that sends something else is cut, and the log says so", async () => {

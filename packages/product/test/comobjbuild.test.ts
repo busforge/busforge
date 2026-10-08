@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import {
-  buildComObjectTable, buildComObjectTableMv0705, ETS_UPDATE_BIT_MV0705_APPS, etsUpdateBitMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
+  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
   parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
@@ -181,19 +181,10 @@ describe("the property-mapped (MV-0705) com-object table", () => {
 
   const updating = () => new Map([[1, obj({ number: 1, objectSize: "14 Bytes", priority: "Low",
     flags: { read: true, write: false, comm: true, transmit: true, update: true, readOnInit: false } })]]);
-  test("a configured object with the update flag gets 0x80 where updateBit is set, as ETS writes the TheLuxa P300's object 116", () => {
-    const out = buildComObjectTableMv0705(template, updating(), new Set(), { updateBit: true });
+  test("a configured object with the update flag gets 0x80, as ETS writes the TheLuxa P300's object 116", () => {
+    const out = buildComObjectTableMv0705(template, updating(), new Set());
     expect(out[9]).toBe(0xcb);
     expect(out[10]).toBe(0x0e);
-  });
-  test("without updateBit a configured object's update flag leaves 0x80 cleared", () => {
-    expect(buildComObjectTableMv0705(template, updating(), new Set())[9]).toBe(0x4b);
-  });
-  test("only the TheLuxa P300's and the Meteodata 140 S's applications set the update bit", () => {
-    expect([...ETS_UPDATE_BIT_MV0705_APPS]).toEqual(["M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"]);
-    expect(etsUpdateBitMv0705("M-0048_A-107E-12-5B58")).toBe(true);
-    expect(etsUpdateBitMv0705("M-0048_A-140C-14-EB70")).toBe(true);
-    expect(etsUpdateBitMv0705("M-0081_A-FF31-31-D6FF")).toBe(false);
   });
 
   test("an unconfigured object keeps its template entry verbatim, minus any stale linked bit", () => {

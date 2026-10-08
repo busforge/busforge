@@ -117,8 +117,8 @@ export function parseCapture(text: string, deviceIa: number): Capture {
 }
 
 function memWriteOf(t: Buffer, apci: number): MemWrite | null {
-  if ((apci & 0x3f0) === 0x280) { // A_Memory_Write: count in the APCI's low 4 bits, 16-bit address
-    const n = t[1] & 0x0f, data = t.subarray(4, 4 + n);
+  if ((apci & 0x3c0) === 0x280) { // A_Memory_Write: count in the APCI's low 6 bits (1-63), 16-bit address
+    const n = t[1] & 0x3f, data = t.subarray(4, 4 + n);
     return t.length >= 4 && data.length === n ? { addr: t.readUInt16BE(2), data: Buffer.from(data), service: "A_Memory_Write" } : null;
   }
   if (apci === 0x1fb) { // A_MemoryExtended_Write: count byte, 24-bit address
@@ -127,6 +127,16 @@ function memWriteOf(t: Buffer, apci: number): MemWrite | null {
     return data.length === n ? { addr: t.readUIntBE(3, 3), data: Buffer.from(data), service: "A_MemoryExtended_Write" } : null;
   }
   return null;
+}
+
+// Whether ETS ran the partial form of a full download, which it runs on a unit holding the application
+// (deviceflash.ts absoluteFullForm): it unloads group tables and never the application's load-state
+// machine 3, by PID 5 or by the 0x0104 control.
+export function capturedOnLoadedUnit(cap: Capture): boolean {
+  const unloads = new Set<number>();
+  for (const w of cap.propWrites) if (w.pid === PID_LOAD_STATE_CONTROL && w.data[0] === 0x04) unloads.add(w.obj);
+  for (const w of cap.writes) if (w.addr === MM_CTRL_ADDR && (w.data[0] & 0x0f) === 0x04) unloads.add(w.data[0] >> 4);
+  return unloads.has(1) && !unloads.has(3);
 }
 
 // Replay the writes in order: a later write to a byte replaces an earlier one.
@@ -324,13 +334,14 @@ async function main(): Promise<number> {
   const subject = await loadSubject(opt, many);
   const cfg = parseAppConfig(subject.appXml);
   const profile = classify(cfg);
+  const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());
+  const cap = parseCapture(new TextDecoder().decode(captureBytes), iaToNum(subject.ia));
   // The planner the server's full download runs; it refuses what the server would refuse.
   const build = profile.planFullDownload(cfg.mask, {
     ia: subject.ia, params: subject.params, links: subject.links, moduleInstances: subject.instances, proc: parseLoadProcedures(subject.appXml), comObjectOverrides: subject.comObjectOverrides,
+    // The unit's state, as the capture shows ETS found it.
+    unitHoldsApplication: capturedOnLoadedUnit(cap),
   });
-
-  const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());
-  const cap = parseCapture(new TextDecoder().decode(captureBytes), iaToNum(subject.ia));
   if (cap.writes.length === 0) throw new Error(`no memory write to ${subject.ia} in ${capturePath}; is it an ETS download of that device through the logging proxy?`);
   const mem = memoryImage(cap.writes);
   const alloc = etsAllocations(cap);

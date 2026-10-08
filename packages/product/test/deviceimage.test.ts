@@ -573,7 +573,7 @@ corpusTest("the relative images of the full download and the parameter flash sta
   const pinned: [string, string, string][] = [
     ["M-0004_A-7072-21-99A7-O000A.xml.gz", "ac1f3be247fc3306/55d68d3167e051f6/186", "ac1f3be247fc3306/55d68d3167e051f6/186"],
     // At defaults every module slot is empty: the parameters only its channels place are left out
-    // (ETS_REJECTED_BRANCH_UNWRITTEN_APPS).
+    // (DownloadInvisibleParameters="None").
     ["M-0048_A-493B-21-B471.xml.gz", "618de79d42321646/3c3dbc7ebbd077d1/18", "618de79d42321646/3c3dbc7ebbd077d1/18"],
     ["M-0048_A-9071-20-F258-O00EF.xml.gz", "46cbaee9e105624c/92067062ffcf6d7e/2993", "46cbaee9e105624c/92067062ffcf6d7e/2993"],
     ["M-0083_A-0137-20-7EB2.xml.gz", "1e314970f1fcd316/ec139466568e418e/249", "1e314970f1fcd316/ec139466568e418e/249"],

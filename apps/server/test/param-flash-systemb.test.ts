@@ -31,6 +31,9 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
     async propRead(obj: number, pid: number) { if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     async propReadIfPresent() { return null; }
+    // The stamps the download's closing reads take (PID 27), on a standard-frame device.
+    async propValueDataMax() { return 10; }
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async propWrite(obj: number, pid: number, data: Buffer) {
       if (pid === 5) { const ev = data[0]; if (ev === LSM.LOAD) this.state.set(obj, STATE.LOADING); else if (ev === LSM.LOAD_COMPLETED) this.state.set(obj, STATE.LOADED); else if (ev === LSM.UNLOAD) this.state.set(obj, STATE.UNLOADED); }
       return Buffer.alloc(0);

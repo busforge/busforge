@@ -38,6 +38,9 @@ corpusDescribe("the structural flash against real applications", () => {
       return this.props.get(`${obj}/${pid}`) ?? Buffer.alloc(0);
     }
     async propReadIfPresent() { return null; }
+    // The stamps the download's closing reads take (PID 27), on a standard-frame device.
+    async propValueDataMax() { return 10; }
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async propWrite(obj: number, pid: number, data: Buffer) {
       if (pid === 5) {
         const ev = data[0];
@@ -99,8 +102,8 @@ corpusDescribe("the structural flash against real applications", () => {
       expect(kept).toBe(0);
     });
 
-    test("a family not proven for it is refused before the bus", async () => {
-      const other = parseAppConfig(real("M-0162_A-0004-11-F245.xml.gz"));
+    test("an application without a capture of it is refused before the bus", async () => {
+      const other = parseAppConfig(real("M-0162_A-0004-11-F245.xml.gz")); // not in profiles.ts STRUCTURAL_FLASH_CAPTURED
       expect(classify(other).capabilities().structuralFlash).toBe(false);
       const dev = new MockDevice();
       const err = await classify(other).flashStructure(asDev(dev), "MV-07B0", { ...ctx(changed), appXml: real("M-0162_A-0004-11-F245.xml.gz") }).catch((e: unknown) => e);
@@ -118,6 +121,9 @@ corpusDescribe("the structural flash against real applications", () => {
     const seeded = (params: Map<string, string>) => {
       const dev = new MockDevice();
       dev.props.set("0/78", Buffer.from("0000000002ac", "hex"));
+      // The table references (PID 7) a System 7 unit reports: the segments its procedure declares.
+      const declared = (id: string | undefined) => cfg.absoluteSegments.find((s) => s.id === id)!.address;
+      dev.addr.set(1, declared(cfg.groupTables.addressSegment)).set(2, declared(cfg.groupTables.associationSegment));
       const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.56", params, links: [], proc: parseLoadProcedures(xml) });
       for (const s of build.segments) if (s.address !== null) dev.load(s.address, s.image);
       return dev;

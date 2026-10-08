@@ -6,40 +6,27 @@ depends on is hardware-proven.
 
 ## Programming paths
 
-- **Structural flash for more families.** Today only the Jung 400021SE and the MDT BE-02001.02 get a
-  parameter change that alters the com-object table as a structural flash
-  ([load-procedures.md](load-procedures.md#structural-flash)); every other device gets the full
-  download. Each further application needs an ETS capture of such a partial download and a smoke run
-  of its `structuralTrigger`: the GVS AMMA (persists at every `LoadCompleted`), the ABB US/U 4.2
-  (memory-mapped System 7), and OpenKNX/thelsing, whose full download has to write the tables before
-  the parameter image, which the structural bracket does not.
+- **Hardware runs of the operations the rules changed.** The plans follow the catalogue, family and
+  KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)); where that changed a
+  plan, the new one is capture-tested only ([status.md](status.md#devices-driven-on-real-hardware)):
+  the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
+  flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
+  System B partial form of the full download (Jung 400021SE, Theben DALI-Gateway), and the structural
+  flash newly offered on the Auro, Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2. Each needs its
+  run on the device.
+- **Structural flash on more applications.** It is offered only where its plan is tested against an
+  ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The
+  Theben DALI-Gateway and the MDT BE-06001.02 have such captures and wait for their tests. The GVS
+  AMMA (persists at every `LoadCompleted`) and OpenKNX/thelsing (whose full download has to write the
+  tables before the parameter image, which the structural bracket does not) stay off for their
+  firmware.
 - **Deactivated parameters in the System 7 parameter flash.** ETS writes where its whole image
   changes, so a parameter a change deactivates goes back to its `<Data>` template value
   ([findings.md](findings.md) §28). The structural flash does that; the plain parameter flash still
   writes only active parameters' bytes, leaving old values in bytes nothing reads.
-- **The Jung 400021SE clears the last byte of its parameter segment by itself** (offset `0x1E14`,
-  [findings.md](findings.md) §27), so a parameter-flash dry run always reports one differing byte.
-  Whether the byte is a one-shot marker to leave out of the comparison is not established.
 - **Idle unions in module instances.** The full download and the System B parameter flash write an
   idle union's `DefaultUnionParameter` as ETS does, except in module instances, which no capture covers; there
   those bytes stay unowned.
-- **The System B bracket ETS sends, on the bench devices too.** ETS's System B downloads unload the PEI
-  program (LSM 5) first in a full download, end every download with the PID 27 reads the application
-  declares and the confirmed restart (A_Restart type 1, erase code 1) on the same connection at once, as
-  the MV-07B0 master data's load procedures declare and the Jung 400021SE and GVS AMMA captures show.
-  Busforge sends that bracket on the Theben MIX 2 only (`ETS_BRACKET_SYSTEMB_APPS`,
-  [load-procedures.md](load-procedures.md#system-b-as-the-theben-mix-2s-captures-show-it)); on the other
-  System B devices its full download settles 8 s on a fresh connection before a basic restart, the
-  bracket their done bar was met with. Listing them needs their smoke specs run with ETS's bracket.
-- **ETS's association order on other System B applications.** On the Theben MIX 2 ETS writes each
-  object's first link before the further ones (`ETS_ASSOC_ORDER_SYSTEMB_APPS`), as on the System 7
-  applications with dynamic tables. No capture of another System B application has an object with two
-  addresses, so the order there is not shown.
-- **Which parameters ETS leaves out of an image.** On the Theben MIX 2 ETS writes no inactive parameter
-  that only branches its configuration rejects place (`ETS_REJECTED_BRANCH_UNWRITTEN_APPS`); on the GVS
-  AMMA it writes their defaults, and the MEAN WELL power supply's read-back matches only with them. The
-  feature of the application that decides it is not found (both reject by an evaluated `choose`; the
-  MIX 2's deciding parameters, the module types, have no memory).
 - **Merged parameter load procedures.** Only a minimal single-segment subset of the declared
   procedures is executed; a procedure with image-property stamps the engine cannot compute is
   refused (`LOAD_STEP_UNSUPPORTED`).
@@ -78,30 +65,10 @@ depends on is hardware-proven.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
-- **`LdCtrlTaskCtrl1` beyond the captured applications.** The Auro M-0081_A-FE01, the Theben TheLuxa
-  P300 and the Theben Meteodata 140 S run it in the form each one's ETS capture shows
-  ([load-procedures.md](load-procedures.md#declared-order-system-7-downloads)). The catalogue's other
-  applications declaring it (Steinel M-008E, Auro `M-0081_A-FF31`) need an ETS full-download capture
-  each before their full download is lifted.
-- **What config bit `0x80` of the MV-0705 com-object table means.** ETS writes it as a configured
-  object's update flag on the TheLuxa P300 and the Meteodata 140 S, and Busforge writes it so on those
-  two applications only (`ETS_UPDATE_BIT_MV0705_APPS`,
-  [device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay));
-  every other application keeps the bit cleared on its configured objects, though some declare
-  objects with the update flag. The Meteodata's objects of several sizes rule out size as the reason,
-  but both applications are Theben's. An ETS capture of a configured object with the update flag on
-  another manufacturer's application decides whether it becomes the rule.
-- **Table-segment `<Data>` behind the tables.** ETS's full download of the Meteodata 140 S writes
-  non-FF `<Data>` behind its tables; the Gira M-0008 and the TheLuxa P300 have such bytes too, and
-  ETS writes neither. Busforge writes them for the Meteodata only
-  (`ETS_TABLE_SEGMENT_DATA_SYSTEM7_APPS`). A capture of another application with such bytes decides
-  the rule; what ETS does when the Meteodata's tables grow into those bytes is not shown either
-  ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)).
-- **System 7 segment declarations as ETS sends them.** ETS writes `LdCtrlAbsSegment` and
-  `LdCtrlTaskSegment` to PID 5 on every property-mapped MV-0705 application seen; Busforge does so on
-  the Gira M-0008, the Auro M-0081_A-FE01 and the Theben TheLuxa P300 only, and writes memory `0x0104`
-  elsewhere. Switching the
-  MDT BE-02001.02 and the others needs a smoke run of its full download.
+- **The full download of the Steinel M-008E and the Auro `M-0081_A-FF31`.** Both are refused for
+  their segments (a parameter segment without `<Data>`, a `<Mask>` of a form no capture shows); each
+  needs an ETS full-download capture before it is lifted
+  ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
 
 ## Raw acquisition
 

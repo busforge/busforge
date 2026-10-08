@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice, planMv0705GaFlash, runLoadPlan, readGroupTablesMv0705, LSM, STATE } from "@busforge/knx";
-import { buildGroupTablesMv0705, decodeGroupTablesMv0705, parseAppConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
+import { KnxDevice, LSM, STATE } from "@busforge/knx";
+import { buildGroupTablesMv0705, parseAppConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { System7Profile } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -9,9 +9,9 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // com-object table the device was last programmed with (an association onto an object the device's
 // kept-from-device table does not configure is a link to nothing). Params and baseline are both
 // empty in these tests, so that gate is a no-op and they exercise the write path as before.
-// The second Auro application, M-0081_A-FF31: its group-address flash is the generic MV-0705 plan
-// (planMv0705GaFlash). M-0081_A-FE01 runs the declared-order plan ETS was captured running instead
-// (packages/product/test/captured-system7.test.ts, tools/etsdiff.test.ts).
+// The second Auro application, M-0081_A-FF31: its group-address flash is the System 7 one every
+// application with its own procedure runs (planSystem7GaFlash; the ETS comparisons are in
+// packages/product/test/captured-system7.test.ts and tools/etsdiff.test.ts).
 corpusDescribe("the GA flash against the real M-0081 application", () => {
   const realCfg = parseAppConfig(catalogueXml("M-0081_A-FF31-31-D6FF.xml.gz"));
   // Same application, with the device's declared table capacity overridden (the capacity cases).
@@ -22,12 +22,14 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
   const comObjSeg = realCfg.absoluteSegments.find((s) => s.id === realCfg.groupTables.comObjectSegment)!;
 
   // Byte-addressed mock of the bus device, enough to drive the MV-0705 GA flash orchestration
-  // (LSM bracket via property 5, table addresses via property 7, memory read/write, restart).
-  // This covers the endpoint write path that was previously only exercised by a scratchpad.
+  // (LSM bracket and segment declarations via property 5, table addresses via property 7, memory
+  // read/write, restart). The tables sit in the segments the application declares for them.
+  const segAddr = (id: string | undefined) => realCfg.absoluteSegments.find((s) => s.id === id)!.address;
+  const ADDR = segAddr(realCfg.groupTables.addressSegment), ASSOC = segAddr(realCfg.groupTables.associationSegment);
   class MockDevice {
     mem = new Map<number, number>();
     state = new Map<number, number>(); // LSM object -> STATE
-    addrOf: Record<number, number> = { 1: 0x1000, 2: 0x2000, 3: 0x3000 };
+    addrOf: Record<number, number> = { 1: ADDR, 2: ASSOC, 3: comObjSeg.address };
     async connect() {}
     async disconnect() {}
     async deviceDescriptor() { return "MV-0705"; } // post-restart liveness probe (reconnectAfterRestart)
@@ -41,10 +43,11 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
     }
     async propRead(obj: number, pid: number) { if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.LOADED]); return Buffer.alloc(0); }
     async propWrite(obj: number, pid: number, data: Buffer) {
+      if (pid === 5 && data[0] === 3) { if (data[1] === 0) this.addrOf[obj] = data.readUInt16BE(2); return Buffer.alloc(0); } // a declaration: the machine stays LOADING
       if (pid === 5) { const ev = data[0]; this.state.set(obj, ev === LSM.LOAD ? STATE.LOADING : ev === LSM.LOAD_COMPLETED ? STATE.LOADED : STATE.UNLOADED); }
       return Buffer.alloc(0);
     }
-    seedTables(addr: Buffer, assoc: Buffer) { addr.forEach((b, i) => this.mem.set(0x1000 + i, b)); assoc.forEach((b, i) => this.mem.set(0x2000 + i, b)); }
+    seedTables(addr: Buffer, assoc: Buffer) { addr.forEach((b, i) => this.mem.set(ADDR + i, b)); assoc.forEach((b, i) => this.mem.set(ASSOC + i, b)); }
     seedComObjTable(table: Buffer) { table.forEach((b, i) => this.mem.set(comObjSeg.address + i, b)); }
     constructor() { this.seedComObjTable(comObjSeg.data); } // the device holds a com-object table
   }
@@ -52,23 +55,6 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
   const ia = (1 << 12) | (2 << 8) | 17; // 1.2.17
 
   describe("MV-0705 GA flash orchestration (mock device)", () => {
-    test("planMv0705GaFlash writes the built tables through the LSM bracket and round-trips", async () => {
-      const links: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x180a] }];
-      const { addr, assoc } = buildGroupTablesMv0705(links, ia);
-      const dev = new MockDevice();
-      dev.seedTables(Buffer.from("0312110000", "hex"), Buffer.from("00", "hex")); // some prior table
-      await runLoadPlan(asDev(dev), planMv0705GaFlash({ addr, assoc }));
-      // exact bytes landed at the fixed table addresses
-      expect((await dev.memRead(0x1000, addr.length)).equals(addr)).toBe(true);
-      expect((await dev.memRead(0x2000, assoc.length)).equals(assoc)).toBe(true);
-      // LSM 1 and 2 ended LOADED (bracket completed)
-      expect(dev.state.get(1)).toBe(STATE.LOADED);
-      expect(dev.state.get(2)).toBe(STATE.LOADED);
-      // and the device reads back to the same links
-      const back = await readGroupTablesMv0705(asDev(dev));
-      expect(decodeGroupTablesMv0705(back.addr, back.assoc).sort((a, b) => a.comObjNum - b.comObjNum)).toEqual(links);
-    });
-
     test("System7Profile.flashGroupTables programs a same-size re-point and reports verified", async () => {
       const orig: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x180a] }];
       const dev = new MockDevice();
@@ -81,7 +67,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       expect(res.kind).toBe("flashed");
       expect(res.kind === "flashed" && res.verified).toBe(true);
       const built = buildGroupTablesMv0705(repointed, ia);
-      expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true);
+      expect((await dev.memRead(ADDR, built.addr.length)).equals(built.addr)).toBe(true);
     });
 
     const grownLinks: ComObjectLink[] = [ // 4 GAs / 4 associations
@@ -98,7 +84,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       });
       expect(res.kind).toBe("flashed");
       const built = buildGroupTablesMv0705(grownLinks, ia);
-      expect((await dev.memRead(0x1000, built.addr.length)).equals(built.addr)).toBe(true); // the larger table was written
+      expect((await dev.memRead(ADDR, built.addr.length)).equals(built.addr)).toBe(true); // the larger table was written
     });
 
     test("REFUSES growth BEYOND MaxEntries instead of overrunning the reserved segment", async () => {
@@ -108,7 +94,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       expect(new System7Profile("system-7", "MV-0705", withCapacity(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
         deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // 4 GAs > capacity 3
       })).rejects.toThrow(/GA_TABLE_TOO_LARGE|reserves only/);
-      expect((await dev.memRead(0x1000, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
+      expect((await dev.memRead(ADDR, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
     });
 
     test("without a declared capacity, falls back to refusing any growth (conservative)", async () => {

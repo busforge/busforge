@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { planSystemBGaFlash, planSystemBFullDownload, planMv0705GaFlash, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, sparseRuns, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, sparseRuns, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
 import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
@@ -223,16 +223,13 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
   });
 });
 
-describe("the System 7 GA bracket, engine-driven (planMv0705GaFlash + runLoadPlan)", () => {
+describe("an absolute table bracket, engine-driven (runLoadPlan)", () => {
   const tables = { addr: Buffer.from("1112131415", "hex"), assoc: Buffer.from("212223242526", "hex") };
-
-  test("planMv0705GaFlash emits the asserting absolute bracket: no unload, no alloc, verified writes", () => {
-    expect(planMv0705GaFlash(tables)).toEqual([
-      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, bytes: tables.addr }, { op: "loadCompleted", lsm: 1 },
-      { op: "load", lsm: 2 }, { op: "writeSegment", lsm: 2, bytes: tables.assoc }, { op: "loadCompleted", lsm: 2 },
-      { op: "restart" },
-    ]);
-  });
+  const planMv0705GaFlash = (t: typeof tables): LoadPlan => [
+    { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, bytes: t.addr }, { op: "loadCompleted", lsm: 1 },
+    { op: "load", lsm: 2 }, { op: "writeSegment", lsm: 2, bytes: t.assoc }, { op: "loadCompleted", lsm: 2 },
+    { op: "restart" },
+  ];
 
   test("exact order: per LSM load -> LOADING check -> verified write -> completed -> LOADED check; addr(1) before assoc(2); no unload, no alloc", async () => {
     const dev = new RecDev();
@@ -774,26 +771,6 @@ describe("runLoadPlan: a property write must be taken as written", () => {
   });
 });
 
-describe("planMv0705GaFlash: the memory-mapped com-object table", () => {
-  test("without a com-object table the plan is the proven two-table bracket", () => {
-    const addr = Buffer.from([1, 0x11, 0xc9]), assoc = Buffer.from([0]);
-    expect(planMv0705GaFlash({ addr, assoc })).toEqual([
-      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, bytes: addr }, { op: "loadCompleted", lsm: 1 },
-      { op: "load", lsm: 2 }, { op: "writeSegment", lsm: 2, bytes: assoc }, { op: "loadCompleted", lsm: 2 },
-      { op: "restart" },
-    ]);
-  });
-
-  test("with one, it is written in its own LSM 3 bracket (load, write, completed; no unload), as ETS does", () => {
-    const addr = Buffer.from([1, 0x11, 0xc9]), assoc = Buffer.from([0]), table = Buffer.from([1, 0, 0, 0, 0, 0xdb, 0]);
-    const plan = planMv0705GaFlash({ addr, assoc, comObj: { address: 0x43fe, bytes: table } });
-    expect(plan.slice(6)).toEqual([
-      { op: "load", lsm: 3 }, { op: "writeMem", address: 0x43fe, bytes: table }, { op: "loadCompleted", lsm: 3 },
-      { op: "restart" },
-    ]);
-  });
-});
-
 describe("the write service, settled before the bracket", () => {
   const plan: LoadPlan = [
     { op: "connect" }, { op: "verifyMode", on: true }, { op: "unload", lsm: 4 },
@@ -810,21 +787,6 @@ describe("the write service, settled before the bracket", () => {
     dev.confirmed = true;
     await runLoadPlan(dev as unknown as KnxDevice, plan);
     expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
-  });
-});
-
-describe("the System 7 GA flash against what the device holds", () => {
-  test("given the device's tables, only the bytes that differ are written, each inside its LSM bracket; an unchanged table is not touched", () => {
-    const addr = Buffer.from("0211c91b04", "hex"), assoc = Buffer.from("010001", "hex"), comObj = { address: 0x43fe, bytes: Buffer.from("0a0b0c0d", "hex") };
-    const plan = planMv0705GaFlash({ addr, assoc, comObj }, { addr: Buffer.from("0111c90000", "hex"), assoc: Buffer.from("010001", "hex"), comObj: Buffer.from("0a0b0f0d", "hex") });
-    expect(plan).toEqual([
-      { op: "load", lsm: 1 }, { op: "writeSegment", lsm: 1, offset: 0, bytes: Buffer.from([0x02]) }, { op: "writeSegment", lsm: 1, offset: 3, bytes: Buffer.from([0x1b, 0x04]) }, { op: "loadCompleted", lsm: 1 },
-      { op: "load", lsm: 3 }, { op: "writeMem", address: 0x4400, bytes: Buffer.from([0x0c]) }, { op: "loadCompleted", lsm: 3 },
-      { op: "restart" },
-    ]);
-  });
-  test("a device read shorter than the table is refused, not written around", () => {
-    expect(() => planMv0705GaFlash({ addr: Buffer.from("0211c9", "hex"), assoc: Buffer.from("00", "hex") }, { addr: Buffer.from("01", "hex"), assoc: Buffer.from("00", "hex") })).toThrow(/partial table/);
   });
 });
 

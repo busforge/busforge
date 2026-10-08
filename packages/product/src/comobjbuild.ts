@@ -149,18 +149,6 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
   return buf;
 }
 
-// The MV-0705 applications whose configured objects carry their update flag in config bit 0x80 of the
-// com-object table, as ETS writes it: the Theben TheLuxa P300 (M-0048_A-107E-12-5B58), whose object 116
-// (UpdateFlag="Enabled") ETS writes as 0xCB over the template's 0xDF (private corpus
-// captures/theluxa-p300-ets6log-fulldownload.txt, "Execute image" row 05D0). That is one object of one
-// application, and the only 14-byte object among them, so it is not taken as a rule for MV-0705: every
-// other application's configured objects get 0x80 cleared (docs/roadmap.md, the open question). The
-// Theben Meteodata 140 S (M-0048_A-140C-14-EB70, MV-0701, the same table layout) shows the same on its
-// configured objects with UpdateFlag="Enabled" (captures/meteodata-140s-ets6log-fulldownload.txt,
-// "Execute image" rows 0420-0650, e.g. object 9 0x97, object 13 0xCF).
-export const ETS_UPDATE_BIT_MV0705_APPS: readonly string[] = ["M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70"];
-export const etsUpdateBitMv0705 = (appId: string): boolean => ETS_UPDATE_BIT_MV0705_APPS.includes(appId);
-
 // Author the com-object table (L3) for a property-mapped System 7 device (mask MV-0705).
 //
 // UNLIKE System B, MV-0705 does not rebuild L3 from scratch. The app program's <ComObjectTable>
@@ -173,17 +161,18 @@ export const etsUpdateBitMv0705 = (appId: string): boolean => ETS_UPDATE_BIT_MV0
 //
 // LAYOUT (mask MV-0705): [count: u8][ramEnd: u16 BE] then one 4-byte entry per com-object, entry i is
 // com-object i (0-based, so entry 0 is a real object, not the count): [dataPtr: u16 BE][config: u8][type: u8].
-//   config byte: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 (see
-//   below). (No readOnInit bit, unlike the System B flags byte.) type is the same KNX size code as the
+//   config byte: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 update.
+//   (No readOnInit bit, unlike the System B flags byte.) type is the same KNX size code as the
 //   System B entry (sizeCodeForBits): 1 bit -> 0x00, 4 bit -> 0x03, 1 byte -> 0x07, 2 bytes -> 0x08.
 //
 //   - Configured objects (the ones the active configuration reaches, `active` = imageComObjects):
-//     config = priority | linked | read | write | transmit from the resolved flags, and 0x80 = the
-//     update flag where `updateBit` is set (ETS_UPDATE_BIT_MV0705_APPS), cleared everywhere else;
-//     type rewritten from the resolved object size. `linked` = the object carries a group-address link.
+//     config = priority | linked | read | write | transmit | update (0x80) from the resolved flags, as
+//     ETS writes them (TheLuxa P300 object 116 0xCB, Meteodata 140 S objects 9 0x97 and 13 0xCF, MDT
+//     BE-06001.02 objects 36/39 0xD3 for UpdateFlag="Enabled"); type rewritten from the resolved object
+//     size. `linked` = the object carries a group-address link.
 //   - Unconfigured objects (every other entry): keep the template entry verbatim, only clear the
 //     linked bit (a stale linked bit in the manufacturer template must not survive).
-export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>, opts: { updateBit?: boolean } = {}): Buffer {
+export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>): Buffer {
   if (template.length < 3) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
       `the MV-0705 com-object table template is ${template.length} B; too short to hold even the 3-byte header, refusing to author L3 from it`);
@@ -220,7 +209,7 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
     const f = obj.flags;
     out[cfgOff] =
       PRIORITY_BITS[obj.priority] | (linked.has(n) ? 0x04 : 0) |
-      (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (opts.updateBit && f.update ? 0x80 : 0);
+      (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (f.update ? 0x80 : 0);
     out[cfgOff + 1] = code;
   }
   return out;

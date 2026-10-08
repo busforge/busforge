@@ -94,6 +94,9 @@ corpusDescribe("full download against the real M-0162 application", () => {
       return b;
     }
     async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
+    // The stamps the download's closing reads take (PID 27), on a standard-frame device.
+    async propValueDataMax() { return 10; }
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
       this.events.push("write");
       for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);

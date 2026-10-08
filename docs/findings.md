@@ -794,9 +794,12 @@ of the parameter segment:
   now carrying the device's CRC.
 
 Read back through Busforge afterwards, the segment equals what ETS wrote in every byte but `0x1E14`,
-which holds `00`. The device clears that byte itself. So a Busforge parameter-flash dry run after a
-verified full download reports one differing byte: not a builder fault, the device's own state. What
-the byte means to the firmware is not known.
+which holds `00`. The device clears that byte itself. P-1 is the application's `_Allg_Download`
+(`Access="None"`, value 1), a download marker by its name, and it sits alone in a region whose
+CRC-control byte is 1, so ETS sends it in every download, its partial form included, although its own
+record of the last download already holds `01` ([load-procedures.md](load-procedures.md#the-rules-by-level),
+R16). A Busforge parameter-flash dry run after a download therefore reports that one byte as differing,
+and writes it, as ETS does.
 
 ## 28. What ETS writes when a parameter change alters the com-object table
 
@@ -840,8 +843,8 @@ a conversion of the decrypted capture that leaves out the security object's writ
 none divergent (`tools/etsdiff.ts --partial`, `tools/etsdiff.test.ts`). The structural flash is built
 on these brackets (see [load-procedures.md](load-procedures.md#structural-flash)). Where it differs
 from ETS: on System B it writes every byte its parameter model owns, as the parameter flash does; on
-System 7 only the bytes that differ from the device, and it brackets the group tables without ETS's
-unload and segment declaration. Against the MDT capture the writes are exact: Busforge's are the bytes
+System 7 of the parameter segments only the bytes that differ from the device, and it brackets the
+group tables as ETS does, unload and segment declaration included. Against the MDT capture the writes are exact: Busforge's are the bytes
 ETS changed, with ETS's values, given the configuration ETS had downloaded before as the baseline.
 
 ## 29. ETS imports only the certificates from a keyring
