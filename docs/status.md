@@ -47,7 +47,7 @@ All hardware verification is on **twisted pair**.
 | Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. The form follows the catalogue: the declared procedure in its order (`LdCtrlTaskCtrl1` encoded from its attributes), or ETS's partial form on a unit holding an application that declares `PreferPartialDownloadIfApplicationLoaded` ([load-procedures.md](load-procedures.md#the-rules-by-level)). On the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S it ran only onto a unit already holding the application, so not as first-time commissioning, and the hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. |
-| Structural change (a parameter that changes the set of com-objects) | yes (seven applications) | hardware (Jung 400021SE, MDT BE-02001.02, see the note); reference only elsewhere | Written as a structural flash: parameters, the com-object table authored for the new configuration and links, and the group tables, in one bracket set and one restart, as ETS's partial download writes such a change ([load-procedures.md](load-procedures.md#structural-flash), [findings.md](findings.md) §28). Offered only where the plan is tested against an ETS capture of such a download (`STRUCTURAL_FLASH_CAPTURED`): the Jung 400021SE and the MDT BE-02001.02 (a change that reshapes the com-object set), and the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S and the Theben MIX 2 (the revert of a parameter and a link change). On the Jung and the MDT the smoke spec's structural change and its revert passed in both channels, verified after the restart and read back without drift, the Jung in Data Secure mode, with a bracket that lacked ETS's closing steps and confirmed restart (Jung) and ETS's table unload and declarations (MDT); the bracket with them is capture-tested only. On the other five: capture-tested only, never run. Every other device gets the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` without a full-download path), and the System 7 applications whose full download is refused get `COM_OBJECT_TABLE_STALE_USE_ETS` ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). |
+| Structural change (a parameter that changes the set of com-objects) | yes (seven applications) | hardware (Jung 400021SE, MDT BE-02001.02, Theben TheLuxa P300, Theben JMG 4 T, see the note); reference only elsewhere | Written as a structural flash: parameters, the com-object table authored for the new configuration and links, and the group tables, in one bracket set and one restart, as ETS's partial download writes such a change ([load-procedures.md](load-procedures.md#structural-flash), [findings.md](findings.md) §28). Offered only where the plan is tested against an ETS capture of such a download (`STRUCTURAL_FLASH_CAPTURED`): the Jung 400021SE and the MDT BE-02001.02 (a change that reshapes the com-object set), and the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S and the Theben MIX 2 (the revert of a parameter and a link change). On the Jung and the MDT the smoke spec's structural change and its revert passed in both channels, verified after the restart and read back without drift: the Jung in Data Secure mode with ETS's closing steps and confirmed restart; the MDT with a bracket that lacked ETS's table unload and declarations, which are capture-tested only there. On the Theben TheLuxa P300 and the Theben JMG 4 T (MIX 2) a structural change (a parameter that adds an object, and a link of that object) and its revert ran on a unit, each verified, ETS's step sequence on the wire (device notes below). On the Auro, the Gira, the Meteodata and the other two MIX 2 products: capture-tested only, never run. Every other device gets the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, or `COM_OBJECT_TABLE_STALE` without a full-download path), and the System 7 applications whose full download is refused get `COM_OBJECT_TABLE_STALE_USE_ETS` ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)). |
 | Reach a segment above 64 KB (`A_MemoryExtended`) | yes | hardware | Reads auto-select it when a range exceeds `0xFFFF`. Writes use it, confirmed chunk by chunk, on every device that declares `PID_MAX_APDU_LENGTH`, as ETS does ([device-memory-model.md](device-memory-model.md)). An address past 24 bits is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather than truncated. |
 | KNX Data Secure: read (descriptor, property, serial, security mode) | yes | hardware | Own AES-128-CCM; tool keys come from the project file. The Jung 400021SE, secure-commissioned by ETS, reads back in full (parameters and links equal to the ETS project) and reports its security mode as on. Without a key on file `secure-identify` reads plainly: a device whose Secure was never activated states its security mode off (shown on the GVS AMMA before its activation); devices that stay silent or close the connection are reported as unreadable, not as off. The Jung in secure mode refuses a plain read with access denied (`0xFC`, shown with a raw probe); Busforge's handling of that refusal and the not-activated verdict on a device whose stored key gets no Sync answer (`SECURE_MODE_OFF`) are tested against a simulated device only. Every secured frame of ETS's captured commissioning of the Jung decrypts with Busforge's CCM ([knx-secure.md](knx-secure.md#the-ets-reference-capture)). |
 | KNX Data Secure: tool key deposited by hand | yes | hardware | Stored (source `manual`) only after the device answered a secure Sync under it ([knx-secure.md](knx-secure.md#the-key-store)). On the Jung 400021SE through the API: a random key refused (`SECURE_SYNC_NO_RESPONSE`, the entry on file unchanged), a missing serial refused before the bus (`TOOL_KEY_SERIAL_MISSING`), a wrong serial refused by the device's silence, the right key stored and a session opened under it. Through the device menu's dialog: a random key shown as refused, then the right key stored. The refusal of a factory key (security mode off) and of a serial the device reports differently are tested against a stubbed identification only. |
@@ -88,7 +88,7 @@ value.
 | MDT BE-02001.02 universal interface 2-fold | MV-0705 | absolute, property-mapped LSM, module device | hardware | hardware | hardware | hardware, byte-equal to two ETS downloads | hardware: a flashed link answers a read |
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, survives a restart | hardware: a surgically flashed link answers a read |
-| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, one parameter, `verified` after the restart (see below) | hardware, one link added and removed, each `verified` after the restart, the added link answered a group read (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle | hardware: in service in a real installation, driving light, fan and temperature |
+| OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, ETS's bracket, one parameter changed and reverted (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle; ETS's bracket (see below) | hardware: in service in a real installation, driving light, fan and temperature |
 | MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
 | Theben HMG 6 T heating actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben JMG 4 T blind actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
@@ -114,16 +114,9 @@ What each row does not show:
   - **MDT BE-02001.02**: the full download declares its segments as PID 5 writes and leaves out the
     own address (equal to ETS's capture); the group-address flash unloads and declares both tables;
     the structural flash takes ETS's table brackets.
-  - **Jung 400021SE, GVS AMMA**: every download closes with the declared PID 27 reads, the confirmed
-    restart and the restart at once on the same connection; the full download unloads the PEI program
-    (LSM 5) first. On a Jung holding the application the full download takes ETS's partial form, equal
-    to ETS's four captures of it (no change, a parameter change, a parameter and a link change, the
-    revert).
   - **Auro M-0081_A-FE01, Theben TheLuxa P300, Theben Meteodata 140 S**: the full download runs the
     declared form onto a unit that does not hold the application too; no capture or run shows that case.
-  - **Auro, Gira, TheLuxa, Meteodata, Theben MIX 2**: the structural flash is offered.
-  - **OpenKNX RaumController**: the full download unloads the PEI program first, as ETS's full
-    download on this firmware does.
+  - **Auro, Gira, Meteodata, Theben HMG 6 T and RMG 8 T (MIX 2)**: the structural flash is offered.
   - **MEAN WELL power supply, Theben DALI gateway**: the System B rules (PEI unload, closing reads,
     restart at once, ETS's association order) apply; neither has run a write under them. On a DALI
     gateway holding the application the full download takes ETS's partial form, equal to ETS's capture
@@ -134,13 +127,22 @@ What each row does not show:
   the parameter flash write them after the allocation ([load-procedures.md](load-procedures.md)).
   The Theben MIX 2 application declares the same regions and is written the same way (device notes
   below).
-- **OpenKNX RaumController.** The surgical parameter and group-address flash are operator
-  observations on one unit in service (one parameter, one link), with no evidence record and no ETS
-  reference (no ETS project matches the unit). In this firmware (thelsing/knx with OpenKNX Common) a
-  surgical flash and a full download take the same path, and the flash reads back only after the
-  restart, because the firmware returns the old flash contents until then
-  ([findings.md](findings.md) §16). The smoke spec keeps both surgical capabilities out of automated
-  runs, because recovering a failed run needs the device's serial console.
+- **OpenKNX RaumController.** ETS 6 was captured running a full, a parameter and a group-address
+  download and their revert on one unit. Busforge's full download, parameter flash (one parameter,
+  changed and reverted) and group-address flash (one link added and removed) ran on that unit through
+  a logging proxy, each `verified`: ETS's load controls on the wire, the group-address flash's bytes
+  equal to ETS's, and the read after each restart equal to the reference (after the added link, equal
+  to the unit after ETS's group-address download). Where Busforge still differs from ETS: the full
+  download writes some zero bytes the allocation's fill already holds and leaves out one that ETS
+  writes; the parameter flash writes every owned byte, where ETS writes only the changed one; the
+  device gets a settle and a reconnect before the restart, where ETS restarts at once. In this
+  firmware (thelsing/knx with OpenKNX Common) a surgical flash and a full download take the same path,
+  and the flash reads back only after the restart, because the firmware returns the old flash
+  contents until then ([findings.md](findings.md) §16). It answers a group read on an object only once
+  that object has had a value since the restart: a read before the object first sends goes
+  unanswered. Persistence is the restart each write ends with. The smoke spec keeps both surgical
+  capabilities out of automated runs, because recovering a failed run needs the device's serial
+  console.
 - **Theben DALI gateway.** No read-back of its tables is on record. The DCA-replacement plugin for
   it renders committed fixtures and proves nothing about the device on a bus.
 - **Auro M-0081_A-FE01.** ETS 6 was captured running its full, parameter and group-address download
@@ -195,8 +197,11 @@ What each row does not show:
   was removed. The final read equals the reference, the bytes ETS's revert leaves behind the shrunk
   association table included. The com-object table carries one object's update flag in config bit
   `0x80`, as ETS writes it
-  ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)). Persistence is the
-  restart each write ends with; no bus power cycle.
+  ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)). A structural
+  flash (a parameter that adds an object, and a link of that object) and its revert ran on the unit
+  through a logging proxy, each `verified`, ETS's revert step sequence on the wire, every byte both
+  wrote with ETS's value; the added object answered on its new address, and the read after the revert
+  equals the reference. Persistence is the restart each write ends with; no bus power cycle.
 - **Theben Meteodata 140 S `M-0048_A-140C-14-EB70`** (MV-0701, memory-mapped). ETS 6 was captured
   running the same downloads: the TheLuxa's procedure, every load control a memory write to `0x0104`,
   its `LdCtrlTaskCtrl1` (Address 18155, Count 1) as `33 04 00 46 EB 01` and zeros, the tables
@@ -230,7 +235,13 @@ What each row does not show:
   answered a group read after each write, an added address answered, and the final read equals the
   reference, both memory-control-block regions included. The unit's download counter (device object
   PID 30) moves alike under both tools. Persistence is the restart each write ends with; no bus power
-  cycle. The structural flash of the revert equals ETS's in steps and bytes; it has not run.
+  cycle. The structural flash of the revert equals ETS's in steps and bytes. On the JMG 4 T a
+  structural flash (a parameter of an unused channel that adds an object, and a link of that object)
+  and its revert ran through a logging proxy, each `verified`, ETS's step sequence on the wire, every
+  byte both wrote with ETS's value. The read after the revert equals the reference except one byte
+  holding two parameters the change had activated: once inactive again, neither ETS nor Busforge
+  writes them (`DownloadInvisibleParameters="None"`), so their defaults stay. Not run on the HMG 6 T
+  and the RMG 8 T.
 - **Gira M-0008 full download** is refused onto a unit that does not hold the application with
   load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): its declared form
   sends a step after the restart that no capture shows. None of the Auro, Gira, TheLuxa and
@@ -281,7 +292,7 @@ spec states why no behaviour is observable.
 
 | Spec | Product | Mask | `api` | `ui` | Persistence (restart) | Done bar |
 |---|---|---|---|---|---|---|
-| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, secured; its behaviour checked plain; the ui channel not run with the closing PID 67 write |
+| `gvs-amma` | GVS K-BUS AMMA-04/06.S multifunction actuator, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, secured; its behaviour checked plain |
 | `mdt-be02001` | MDT BE-02001.02 universal interface 2-fold | MV-0705 | hardware | hardware | hardware, both channels | **met** |
 | `abb-usu-4.2` | ABB US/U 4.2 universal interface | MV-0701 | hardware | hardware | hardware, both channels | **met**, to the byte only |
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure, plain | MV-07B0 | hardware | hardware | hardware, both channels | **met** in plain mode; not rerun since the device went secure (the plain spec needs a master reset first) |
@@ -292,7 +303,7 @@ spec states why no behaviour is observable.
   capability plus the click-through is green in both channels, which clears the bar, but the proof
   stops at the bytes.
 - **GVS AMMA**: its application declares a closing write of object 4 PID 67 for every download; the
-  api channel passes with it, the ui channel has not run with it (see below). On this device the
+  spec passes with it in both channels. On this device the
   right tool key straight after a wrong one goes unanswered once and is answered on the next Sync
   ([findings.md](findings.md) §30); the spec declares that (`secondSyncAfterWrongKey`).
 - **OpenKNX RaumController**: the spec exists but has never run. The device's commissioning is
@@ -346,9 +357,8 @@ report a device family as working on the strength of a passing test suite.
   PID 67 for every download (`AppliesTo="all"`), which ETS sends after the last LoadCompleted; the
   full download, parameter flash and group-address flash end with it in ETS's place and refuse on a
   wrong echo ([load-procedures.md](load-procedures.md#the-closing-steps-run-as-declared)).
-  Shown on hardware in the api channel. Not shown: what the property does in the device, the ui
-  channel with the write, and the group-address flash's write against a links-only ETS capture (none
-  exists). A closing write another application declares is run as declared; no other catalogue
+  Shown on hardware in both channels. Not shown: what the property does in the device, and the
+  group-address flash's write against a links-only ETS capture (none exists). A closing write another application declares is run as declared; no other catalogue
   fixture declares one.
 - **Config bit `0x80` of the System 7 com-object table as the update flag** is a family rule shown
   by the captures of the TheLuxa P300, the Meteodata 140 S and the MDT BE-06001.02; on hardware a set
