@@ -234,7 +234,7 @@ corpusDescribe("the System 7 rules hold for every catalogue application", () => 
       expect([f, own]).toEqual([f, []]);
     }
     expect(planned).toBeGreaterThanOrEqual(6); // ABB, TheLuxa, Meteodata, Auro FE01, both MDT
-  });
+  }, 30_000); // parses every catalogue application, the 26.9 MB Jung among them: about 3 s on a busy machine, over 8 s while the check runs every workspace at once
   test("every declared LdCtrlTaskCtrl1 is encoded from its Address and Count", () => {
     const seen: string[] = [];
     for (const f of listCatalogue()) {
@@ -249,7 +249,7 @@ corpusDescribe("the System 7 rules hold for every catalogue application", () => 
       expect(plan.filter((st) => st.op === "taskCtrl1")).toEqual([{ op: "taskCtrl1", lsm: Number(tc.attrs.LsmIdx), address: Number(tc.attrs.Address), count: Number(tc.attrs.Count) }]);
     }
     expect(seen.sort()).toEqual(["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0081_A-FE01-11-75D9", "M-0081_A-FF31-31-D6FF", "M-008E_A-7079-10-9C41"]);
-  });
+  }, 30_000); // reads every catalogue application's load procedure, the 26.9 MB Jung among them: about 1 s on a quiet machine, several times that while the check runs every workspace at once
   test("the associations: each object's first link, then the others by object and group index", () => {
     const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
     // group indices: 0x0900=1 0x0901=2 0x0902=3 0x0903=4 0x0904=5 0x0905=6

@@ -164,6 +164,10 @@ async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: str
       } else out.push({ name: "right tool key afterwards", state: "fail", detail: message(first) });
     }
   } finally { await tun.disconnect(); }
+  // The server's first Sync below comes from another process than the Sync above, so neither side's
+  // Sync spacing holds it back; a device that ignores a Sync within ~1 s of the previous one
+  // (findings §21) would leave it unanswered, and the fault-proxy check would get no answer to tamper with.
+  await new Promise((r) => setTimeout(r, 3000));
 
   const proxy = new FaultProxy(o.host, port, iaToNum(o.spec.device.ia));
   const local = await proxy.start();
@@ -424,6 +428,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     }
 
     // ── firmware: recorded when the device reports it, unknown otherwise ────────
+    // Its secure Sync comes from this process right after the server's last session (§21 spacing).
+    if (creds) await settle(2000);
     firmware = await readBenchFirmware(host, spec.device.ia, creds).catch((e): Firmware => { log(`firmware revision not read: ${e instanceof Error ? e.message : String(e)}`); return { state: "unknown" }; });
     process.stdout.write(`  · firmware revision: ${firmware.state === "observed" ? firmware.value : "unknown"}\n`);
 

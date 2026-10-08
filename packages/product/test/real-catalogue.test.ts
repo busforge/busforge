@@ -40,7 +40,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         expect(() => parseAppConfig(xml)).not.toThrow();
         expect(() => parseApplication(xml)).not.toThrow();
         expect(snapshot(xml)).toEqual(golden[name]);
-      });
+      }, 30_000); // sized by the largest fixture, the 26.9 MB Jung, parsed three times here: 5-7 s on a busy machine, over 10 s while the check runs every workspace at once
 
       test("absolute-segment build + flash plan stay pinned (sections present iff the app declares absolute segments)", () => {
         // Stability lock, not a correctness proof: the golden hashes prove the default
@@ -64,7 +64,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         // flash plan can never drift apart on which segments they cover).
         expect(Object.keys(snap.flashPlan!.perSegment).sort()).toEqual(Object.keys(snap.absolute!).sort());
         expect(snap.flashPlan!.segments).toBe(Object.keys(snap.flashPlan!.perSegment).length);
-      });
+      }, 30_000); // sized by the largest fixture, the 26.9 MB Jung, parsed twice here: about 1.4 s on a quiet machine, several times that while the check runs every workspace at once
 
       test("every type base is a known enum value (no parser leak)", () => {
         const app = parseAppConfig(xml);
