@@ -95,10 +95,12 @@ describe("types not represented in the image are neither written nor decoded", (
   });
 });
 
-// A text parameter's field holds its ASCII characters and zero bytes to the end. Evidence: ETS's image of
-// the Theben DALI-Gateway KNX plus's full download, admin password "dali" in 8 bytes = 64 61 6c 69 00 00 00 00
-// (private corpus captures/dali-ets6log-fulldownload-real.txt l. 581; on the wire dali-ets-fulldownload-real.log
-// writes 64 61 6c 69 at 0x5C48). Every other expectation here is a refusal of what no capture shows.
+// A text parameter's field holds its ASCII characters and zero bytes to the end; a value as long as the field
+// fills it without a closing zero; the segment's <Data> is overwritten. Evidence (private corpus captures/):
+// ETS's image of the Theben DALI-Gateway KNX plus's full download, admin password "dali" in 8 bytes =
+// 64 61 6c 69 00 00 00 00 (dali-ets6log-fulldownload-real.txt l. 581; on the wire dali-ets-fulldownload-real.log
+// writes 64 61 6c 69 at 0x5C48); ETS's images of the MDT IP Interface/Router M-0083_A-0137 (mdt-router-ets6log-*.txt,
+// RelMemory(4)). Every other expectation here is a refusal of what no capture shows.
 describe("text parameters", () => {
   const m = () => mk(
     { Ttext: { base: "Text", sizeInBit: 64 }, Ttext240: { base: "Text", sizeInBit: 240 } },
@@ -122,42 +124,43 @@ describe("text parameters", () => {
   test("decode returns what encode wrote", () => {
     expect(roundtrip(m(), { "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" })).toMatchObject({ "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" });
   });
-  test("a field without a closing zero, with a byte beyond ASCII, or with bytes behind the zero, decodes to nothing", () => {
+  test("a field with a byte beyond ASCII, or with bytes behind the zero, decodes to nothing", () => {
     const img = Buffer.alloc(68);
-    img.write("12345678", 0, "latin1");
     img.write("ab\0xyz", 38, "latin1");
     img.write("K\xfcche", 8, "latin1");
     const out = decodeParameterImage(m(), 4, img);
-    expect(out.has("R-Ptext")).toBe(false);
     expect(out.has("R-Pempty")).toBe(false);
     expect(out.has("R-Pnum")).toBe(false);
   });
-  test("a value that leaves no closing zero byte is refused", () => {
-    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "1234567"]]))).not.toThrow();
-    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "12345678"]]))).toThrow(/at most 7/);
+  // MDT A-0137, P-162: "MDT IP Interface mit IPRouting" (30 characters) in its 30-byte field without a closing
+  // zero, in the full download's image (mdt-router-ets6log-fulldownload.txt, RelMemory(4) +71..+100) and in the parameter
+  // download that sets it back (mdt-router-ets6log-partial-name-revert.txt: MemoryExtended_Write 0x1535, 26 bytes
+  // ending in "Routing", no zero).
+  test("a value as long as its field fills it without a closing zero, and decodes back", () => {
+    expect(buildParameterImage(m(), 4, new Map([["R-Ptext", "12345678"]])).subarray(0, 8).toString("latin1")).toBe("12345678");
+    expect(roundtrip(m(), { "R-Ptext": "12345678" })["R-Ptext"]).toBe("12345678");
+    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "123456789"]]))).toThrow(/field holds 8/);
+  });
+  // An application declaring <Options TextParameterZeroTerminate="true"> (GVS AMMA): no capture shows its
+  // field-length value, so it is refused, and such a field without a zero decodes to nothing.
+  test("where the application terminates its texts, a value as long as its field is refused", () => {
+    const z = mk({ T: { base: "Text", sizeInBit: 64, zeroTerminate: true } }, { P: { type: "T", offset: 0, value: "" } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]);
+    expect(() => buildParameterImage(z, 4, new Map([["R-P", "1234567"]]))).not.toThrow();
+    expect(() => buildParameterImage(z, 4, new Map([["R-P", "12345678"]]))).toThrow(/at most 7/);
+    expect(decodeParameterImage(z, 4, Buffer.from("12345678", "latin1")).has("R-P")).toBe(false);
   });
   test("a character beyond ASCII, or a zero character, is refused", () => {
     expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "Küche"]]))).toThrow(/beyond ASCII/);
     expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "a\0b"]]))).toThrow(/zero character/);
   });
-  // MDT A-0137's <Data> holds "Statuselement00" where the parameter's default is "": no capture shows which
-  // ETS writes. A <Data> that holds the default's own bytes is no conflict, whatever value is written.
-  test("a field whose <Data> disagrees with the parameter's default is refused, whatever the value", () => {
-    const filled = (data: string) => mk({ T: { base: "Text", sizeInBit: 64 } }, { P: { type: "T", offset: 0, value: "dali" } },
+  // MDT A-0137's <Data> holds "Statuselement00" where P-249's value is "", and "Bit Alarm 2" where P-82's is
+  // "Bit Alarm 1"; ETS's image holds the values: 30 zero bytes at +1194, "Bit Alarm 1" and zeros at +338
+  // (mdt-router-ets6log-fulldownload.txt, RelMemory(4)).
+  test("the value is written over whatever the segment's <Data> holds in its field", () => {
+    const filled = (data: string) => mk({ T: { base: "Text", sizeInBit: 64 } }, { P: { type: "T", offset: 0, value: "" } },
       [{ id: "S", lsm: 4, size: 8, data: Buffer.from(data, "hex") }]);
-    expect(() => buildParameterImage(filled("5374617475730000"), 4, new Map())).toThrow(/holds 5374617475730000 in its field/);
-    expect(() => buildParameterImage(filled("5374617475730000"), 4, new Map([["R-P", "Status"]]))).toThrow(/holds 5374617475730000/);
-    expect(buildParameterImage(filled("64616c6900000000"), 4, new Map()).toString("hex")).toBe("64616c6900000000");
-    expect(buildParameterImage(filled("64616c6900000000"), 4, new Map([["R-P", "admin"]])).toString("hex")).toBe("61646d696e000000");
-  });
-  // The check reads the segment's <Data>, not the image being built: two refs of one parameter, one at a new value,
-  // pass in either order.
-  test("the <Data> check does not depend on the order the parameters are encoded in", () => {
-    for (const order of [["R1", "R2"], ["R2", "R1"]]) {
-      const m = mk({ T: { base: "Text", sizeInBit: 64 } }, { P: { type: "T", offset: 0, value: "dali" } });
-      m.refs = new Map(order.map((id) => [id, { id, paramId: "P" }]));
-      expect(() => buildParameterImage(m, 4, new Map([["R1", "admin"]]))).not.toThrow();
-    }
+    expect(buildParameterImage(filled("5374617475730000"), 4, new Map()).toString("hex")).toBe("0000000000000000");
+    expect(buildParameterImage(filled("5374617475730000"), 4, new Map([["R-P", "dali"]])).toString("hex")).toBe("64616c6900000000");
   });
   test("a field that is not whole bytes from bit 0 is refused", () => {
     const odd = mk({ T: { base: "Text", sizeInBit: 12 } }, { P: { type: "T", offset: 0, value: "a" } });

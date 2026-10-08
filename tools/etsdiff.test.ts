@@ -1932,3 +1932,108 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     for (const lsm of [2, 1]) expect([lsm, whole(lsm).map(sorted)]).toEqual([lsm, [sorted(ets.get(lsm)!)]]);
   });
 });
+
+// ETS 6 downloads of the MDT IP Interface/Router with e-mail and time server (M-0083_A-0137, System B, Data Secure) on
+// the house unit, private corpus captures/mdt-router-*: a full download of the application (the project had never
+// loaded it into the unit), a partial download without a change, one after the device name P-162 went from its
+// 30-character default to "MDT hc10", and one that set it back. The tunnel's frames are encrypted; ETS's own log holds
+// its image of each download and every telegram it sent inside the secured ones. The configuration is the project's
+// (captures/mdt-router-unit-config.json).
+corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", () => {
+  const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const fx = JSON.parse(captureText("mdt-router-unit-config.json")) as { params: [string, string][] };
+  const A = "M-0083_A-0137-20-7EB2";
+  const NAME = { ref: `${A}_P-162_R-162`, offset: 71, size: 30, ets: "MDT IP Interface mit IPRouting", to: "MDT hc10" };
+  const params = new Map(fx.params);
+  const target = (values: Map<string, string>) => buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
+  const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+  const full = target(params);
+  // The memory writes ETS sent inside its secured telegrams, one per telegram.
+  const innerWriteList = (file: string) => captureText(file).split(/\r?\n/).flatMap((l) => {
+    const m = l.match(/Sending Sec_req .*InnerTelegram=MemoryExtended_Write_req -> [\d.]+ \([^)]*\) Address=\$([0-9A-F]+) Count=\d+ Data=([0-9A-F]+)/);
+    return m ? [{ addr: Number.parseInt(m[1], 16), data: Buffer.from(m[2], "hex"), service: "A_MemoryExtended_Write" as const }] : [];
+  });
+  const innerWrites = (file: string) => memoryImage(innerWriteList(file));
+  // ETS's load controls as the bracket strings of systemBPlanBracket. The reads ETS adds to a parameter download
+  // (object 4 PID 7 before the allocation and its compare after it) are reads, as in the Theben captures, and
+  // Busforge leaves them out; the PID 27 reads after the last LoadCompleted are in both.
+  const logBracket = (file: string) => etsLog(file).steps.flatMap((s): string[] => {
+    const a = s.attrs;
+    if (a.ObjType !== undefined) return [];
+    if (s.verb === "LdCtrlUnload") return [`unload:${a.LsmIdx}`];
+    if (s.verb === "LdCtrlLoad") return [`load:${a.LsmIdx}`];
+    if (s.verb === "LdCtrlLoadCompleted") return [`loadCompleted:${a.LsmIdx}`];
+    if (s.verb === "LdCtrlRelSegment") return [`alloc:${a.LsmIdx}:${a.Size}:${a.Mode}:${a.Mode === "1" ? a.Fill : 0}`];
+    if (s.verb === "LdCtrlWriteProp" && a.ObjIdx === "4" && a.PropId === "13") return [`stamp:${a.InlineData.toLowerCase()}`];
+    if (s.verb === "LdCtrlLoadImageProp" && a.PropId === "27") return [`read:${a.ObjIdx}/27:1:1`];
+    if (s.verb === "LdCtrlMasterReset") return [`restart:${a.EraseCode === "1" ? "810100" : "80"}`];
+    return [];
+  });
+  const parFlash = (values: Map<string, string>, current: Buffer) => {
+    const t = target(values);
+    const { image } = mergeRelativeTarget(current, t);
+    const plan = withClosing(withConfirmedRestart(planRelativeParFlash(4, image, t.owned, 0, Buffer.from("0083013720", "hex"), true, declaredMcbWrites(proc, t.size, "par")), proc.secureEnabled), proc, "par");
+    return { image, plan };
+  };
+  const changed = (image: Buffer, held: Buffer) => new Map([...image].map((b, i) => [i, b] as [number, number]).filter(([i, b]) => held[i] !== b));
+
+  test("the configuration is the project's: the device name at its default, four inactive parameters holding other values", () => {
+    const active = buildDeviceConfig(cfg, params).imageValues;
+    expect(active.get(NAME.ref)).toBe(NAME.ets);
+    for (const p of ["P-315_R-315", "P-15_R-36", "P-2_R-2", "P-205_R-205"]) expect([p, active.has(`${A}_${p}`), params.has(`${A}_${p}`)]).toEqual([p, false, true]);
+  });
+
+  // ETS's image (mdt-router-ets6log-fulldownload.txt, RelMemory(4)) lists all 3972 bytes of the application segment.
+  // Every text field holds its value and zero bytes over whatever <Data> holds there, the 30-character device name
+  // without a closing zero; inactive parameters hold their parameter default, not the value the project still stores.
+  test("full download: Busforge's application segment is ETS's image, byte for byte", () => {
+    const ets = relImage("mdt-router-ets6log-fulldownload.txt").get(4)!;
+    expect(ets.size).toBe(full.size);
+    expect(sorted(new Map([...full.bytes].map((b, i) => [i, b] as [number, number])))).toEqual(sorted(ets));
+    expect(Buffer.from(full.bytes.subarray(NAME.offset, NAME.offset + NAME.size)).toString("latin1")).toBe(NAME.ets);
+    expect(cfg.segments[0].data.subarray(1194, 1209).toString("latin1")).toBe("Statuselement00");
+    expect(full.bytes.subarray(1194, 1224).every((b) => b === 0)).toBe(true);
+    expect([full.bytes[122] & 0x80, full.bytes[2692] & 0x80, Buffer.from(full.bytes.subarray(124, 135)).toString("latin1")]).toEqual([0, 0, "Bit Alarm 1"]);
+  });
+
+  // ETS writes the non-zero bytes of its image and leaves the zeros it can to the allocation's fill (Mode 1, fill 0).
+  test("full download: every byte ETS sent into the segment is Busforge's, the rest of Busforge's image is the fill", () => {
+    const wire = innerWrites("mdt-router-ets6log-fulldownload.txt");
+    const at = inferBase(full.bytes, innerWriteList("mdt-router-ets6log-fulldownload.txt"))!;
+    expect(at).toBe(0x14ea);
+    const seg = new Map([...wire].filter(([a]) => a >= at && a < at + full.size).map(([a, b]) => [a - at, b] as [number, number]));
+    expect([...seg].filter(([o, b]) => full.bytes[o] !== b)).toEqual([]);
+    expect([...full.bytes].map((b, o) => [o, b]).filter(([o, b]) => !seg.has(o) && b !== 0)).toEqual([]);
+    expect(logBracket("mdt-router-ets6log-fulldownload.txt")).toContain("alloc:4:3972:1:0");
+  });
+
+  test("a partial download without a change sends nothing; Busforge's flash of the same configuration changes no byte", () => {
+    expect(etsLog("mdt-router-ets6log-partial-nochange.txt").steps).toEqual([]);
+    expect(innerWrites("mdt-router-ets6log-partial-nochange.txt").size).toBe(0);
+    expect(changed(parFlash(params, full.bytes).image, full.bytes).size).toBe(0);
+  });
+
+  // ETS's parameter download is differential (PreferPartialDownloadIfApplicationLoaded; "removed 2593 identical bytes"):
+  // it writes the bytes that differ from its record of the unit, here one telegram at the field's fifth byte. Busforge's
+  // parameter flash writes every owned byte; all but those carry the unit's value (docs/roadmap.md, the System B write set).
+  for (const [file, from, to, written] of [
+    ["mdt-router-ets6log-partial-name.txt", NAME.ets, NAME.to, "hc10" + "\0".repeat(22)],
+    ["mdt-router-ets6log-partial-name-revert.txt", NAME.to, NAME.ets, "IP Interface mit IPRouting"],
+  ] as const) {
+    test(`parameter flash, device name "${from}" -> "${to}": the bytes ETS writes, with its values, in ETS's bracket`, () => {
+      const held = target(new Map(params).set(NAME.ref, from)).bytes;
+      const { image, plan } = parFlash(new Map(params).set(NAME.ref, to), held);
+      const log = etsLog(file);
+      const ets = relImage(file).get(4)!;
+      expect(log.removed).toBe(2593);
+      expect(sorted(changed(image, held))).toEqual(sorted(ets));
+      expect(Buffer.from(sorted(ets).map(([, b]) => b)).toString("latin1")).toBe(written);
+      expect(sorted(ets)[0][0]).toBe(NAME.offset + 4);
+      const wire = innerWrites(file);
+      expect([...wire.values()]).toEqual(sorted(ets).map(([, b]) => b));
+      expect(systemBPlanBracket(plan)).toEqual(logBracket(file));
+    });
+  }
+});

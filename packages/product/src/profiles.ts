@@ -94,17 +94,20 @@ export async function verifySettled<T>(read: () => Promise<T>, ok: (v: T) => boo
 //
 // For an observable ref: the device's value wins where it differs from what the project would
 // write; where it agrees, the baseline is the project's own live value (and stays SPARSE, an
-// absent entry meaning "holds the application default", which is exactly what it holds).
+// absent entry meaning "holds the application default", which is exactly what it holds). A ref
+// the image writes at its default although the project stores another value for it (`defaulted`,
+// an inactive parameter) keeps the device's value: the project's value is not what it holds.
 function foldDeviceValues(
   paramBase: Map<string, string>,
   deviceVals: Map<string, string>,
   projectVals: Map<string, string>,
   liveParams: Map<string, string>,
   relevantRefs?: Set<string>,
+  defaulted?: Set<string>,
 ): void {
   for (const [refId, devVal] of deviceVals) {
     if (relevantRefs && !relevantRefs.has(refId)) continue;
-    if (projectVals.get(refId) !== devVal) { paramBase.set(refId, devVal); continue; }
+    if (projectVals.get(refId) !== devVal || defaulted?.has(refId)) { paramBase.set(refId, devVal); continue; }
     const live = liveParams.get(refId);
     if (live === undefined) paramBase.delete(refId); else paramBase.set(refId, live);
   }
@@ -1060,7 +1063,7 @@ export class SystemBProfile extends DeviceProfile {
       const deviceVals = decodeParameterImage(model, LSM, img);
       dropUnownedText(model, deviceVals, (p) => (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === LSM ? target.owned : undefined));
       const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, device?.relevant);
+      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, device?.relevant, target.defaulted);
       deviceConfig = device?.deviceConfig;
       paramsRead = true;
     }

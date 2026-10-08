@@ -2,7 +2,7 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
-import { byteWidth, MAX_INT_BYTES, encode, textDefaultRefusal } from "./image.ts";
+import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 import { ProductError } from "./errors.ts";
 
 // `textRefusals: "skip"`: a text parameter the codec refuses is left unowned instead of failing the
@@ -201,7 +201,8 @@ const leavesOutInvisible = (app: AppConfig): boolean => app.downloadInvisiblePar
 // `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
 // set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
 // offset 39). Written, never asserted.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; }
+// `defaulted`: inactive parameters written at their default although the values hold another value for them.
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; defaulted: Set<string>; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -255,6 +256,7 @@ export function buildRelativeSegmentTarget(
   const owned = new Array<number>(seg.size).fill(0);
   const verify = new Array<number>(seg.size).fill(0);
   const markers = new Array<number>(seg.size).fill(0);
+  const defaulted = new Set<string>();
 
   for (const ref of model.refs.values()) {
     const param = model.params.get(ref.paramId);
@@ -269,15 +271,18 @@ export function buildRelativeSegmentTarget(
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.
-    //  - inactive plain param that is user-facing (Access != None): own at its default;
-    //    System B writes every such default and the device holds it (PSU byte-match).
+    //  - inactive plain param that is user-facing (Access != None): own at its parameter default,
+    //    not at a value the project still stores for it; System B writes every such default and the
+    //    device holds it (PSU byte-match). The MDT IP Interface/Router's full download writes the
+    //    defaults of inactive parameters the project holds other values for (private corpus
+    //    captures/mdt-router-ets6log-fulldownload.txt, RelMemory(4) +122, +124, +231, +2692).
     //  - inactive Access="None" param: NOT owned; the device byte stays.
     //  - where the application leaves out invisible parameters, an inactive plain param every placement of which
     //    lies in a branch the configuration rejects: NOT owned (below).
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
-    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = values.get(ref.id) ?? param.value;
+    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = param.value;
     //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
     //    capture, 2026-09-25: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
@@ -292,19 +297,18 @@ export function buildRelativeSegmentTarget(
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     let wrote: boolean;
     try {
-      const refusal = textDefaultRefusal(type, param, seg.data);
-      if (refusal) throw refusal;
       wrote = encode(img, param.offset, param.bitOffset, type, v);
     } catch (e) {
       if (opts.textRefusals === "skip" && isTextRefusal(e)) continue;
       throw e;
     }
     if (!wrote) continue;
+    if (!gated && !active.has(ref.id) && values.has(ref.id) && values.get(ref.id) !== v) defaulted.add(ref.id);
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
   }
-  return { lsm, size: seg.size, bytes: img, owned, verify, markers };
+  return { lsm, size: seg.size, bytes: img, owned, verify, markers, defaulted };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write

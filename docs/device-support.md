@@ -168,7 +168,8 @@ trusting a row that does not.
   The tunnelling addresses are device-instance data in the project (`AdditionalAddresses`), not part
   of the load procedure or the parameter image; Busforge reads them only to resolve secured senders.
   What ETS writes for them, and whether a download without them changes the tunnels the interface
-  serves, is not established: no capture of a download onto an IP interface exists. Since the full
+  serves, is not established: the one ETS full download captured onto such an interface (the MDT IP
+  Interface/Router) is not evaluated for them yet. Since the full
   download unloads and reallocates every load object, it is refused before any bus traffic, on the
   System B and the System 7 path (unit-tested on `M-0083_A-0137` and on a System 7 application with
   the attribute added, since no System 7 application in the catalogue declares it). An application whose family is
@@ -180,7 +181,8 @@ trusting a row that does not.
   (with a tool key on file) the security object, and both end in a restart of the interface, which
   cannot be flashed over its own connection ([knx-secure.md](knx-secure.md)). The product data gives
   the interface a System B parameter model (the IP settings are parameters), while it answered
-  `0xFFFF` when read plainly; whether a secured read returns its parameter segment is not shown. Writing the
+  `0xFFFF` when read plainly; whether a secured read returns its parameter segment is not shown.
+  Its parameter image equals ETS's image of that full download, byte for byte. Writing the
   entries waits for such a capture ([roadmap.md](roadmap.md#device-coverage)).
 - **Parameters located in a property instead of memory** are not part of the image model, and no
   Busforge path reads or writes them. Typically this is the hardware type (object 0, PID 78; for

@@ -274,17 +274,20 @@ Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress` and `Text` are e
 parameter image. Time-of-day, color and unrecognised bases write nothing and therefore own
 nothing. Four type details are easy to get wrong:
 
-- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B).
-  ETS's image of the Theben DALI-Gateway KNX plus's full download holds its admin password at its
-  default "dali" in its 8-byte field as `64 61 6c 69 00 00 00 00`, and an empty text field as zeros;
-  no capture shows a changed text value. A text value is text, never a number: "123" is
-  `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
-  `PARAM_TEXT_TOO_LONG`): a character beyond ASCII, a value that leaves no zero byte behind it, a
-  field that is not whole bytes from bit 0, a field whose `<Data>` holds other bytes than the
-  parameter's default encodes to (the MDT IP Interface/Router: "Statuselement00" where the default
-  is empty), and any active text parameter of an absolute-segment (System 7) application, since no
-  System 7 capture shows one. A read-back leaves such a field out of its comparison instead of
-  refusing the whole read.
+- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B). A
+  value as long as its field fills it without a closing zero, and the segment's `<Data>` does not
+  enter: ETS writes the parameter's value over whatever `<Data>` holds there. ETS's images show it on
+  two products: the Theben DALI-Gateway KNX plus holds its admin password "dali" in its 8-byte field
+  as `64 61 6c 69 00 00 00 00`; the MDT IP Interface/Router holds every text field at its value with
+  zeros behind it (an empty description as 30 zero bytes where `<Data>` holds "Statuselement00"), its
+  30-character device name in its 30-byte field without a zero, and its parameter downloads write a
+  changed device name and the change back the same way. A text value is text, never a number: "123"
+  is `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
+  `PARAM_TEXT_TOO_LONG`): a character beyond ASCII, a value longer than its field, a value as long as
+  its field where the application declares `<Options TextParameterZeroTerminate="true">`, a field
+  that is not whole bytes from bit 0, and any active text parameter of an absolute-segment
+  (System 7) application, since no System 7 capture shows one. A read-back leaves such a field out of
+  its comparison instead of refusing the whole read.
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as

@@ -28,11 +28,10 @@ depends on is hardware-proven.
   ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit ends the same; matching ETS
   changes the plans of every System B device, so each needs its run again.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
-  field (catalogues declare `TextParameterZeroTerminate`), a field whose `<Data>` disagrees with the
-  parameter's default (the MDT IP Interface/Router), and text on System 7 applications (the
-  Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until a capture shows them; a
-  changed text value is shown by no capture yet. The editor does not check a text against its field
-  when it is saved: the refusal comes at the flash
+  field where the application declares `TextParameterZeroTerminate` (the GVS AMMA), and text on
+  System 7 applications (the Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until
+  a capture shows them. The editor does not check a text against its field when it is saved: the
+  refusal comes at the flash
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
 - **One parameter, several references.** Where an application gives one parameter several
   `ParameterRef`s, the image builders encode each and the last one wins; no corpus application
@@ -77,8 +76,9 @@ depends on is hardware-proven.
   read-back, a bus check and a power cut.
 - **Devices that answer an opaque device descriptor** (IP interfaces) need a different read path or
   secure support; which one is not decided.
-- **KNX IP interfaces as targets.** Capture an ETS download onto an IP interface, model what it
-  writes for the tunnelling entries, then lift `FULL_DOWNLOAD_TUNNELING_ENTRIES` against that capture.
+- **KNX IP interfaces as targets.** Evaluate the captured ETS full download of the MDT IP
+  Interface/Router for what it writes for the tunnelling entries, model it, then lift
+  `FULL_DOWNLOAD_TUNNELING_ENTRIES` against that capture.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).

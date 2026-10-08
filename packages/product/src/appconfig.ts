@@ -186,6 +186,9 @@ export interface AppConfig {
   // <Options DownloadInvisibleParameters>: "None" where ETS downloads no parameter the configuration
   // does not show (deviceimage.ts buildRelativeSegmentTarget); undefined where the application does not say.
   downloadInvisibleParameters?: string;
+  // <Options TextParameterZeroTerminate="true">: a text parameter's value is stored with a closing zero,
+  // so it can take at most one character less than its field.
+  textParameterZeroTerminate: boolean;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -333,6 +336,7 @@ export function parseAppConfig(xml: string): AppConfig {
     maxTunnelingUserEntries: appAttrs.MaxTunnelingUserEntries === undefined ? 0
       : /^\d+$/.test(appAttrs.MaxTunnelingUserEntries) ? Number(appAttrs.MaxTunnelingUserEntries) : NaN,
     parameterByteOrder,
+    textParameterZeroTerminate: optionsNode ? attrsOf(optionsNode).TextParameterZeroTerminate === "true" : false,
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,

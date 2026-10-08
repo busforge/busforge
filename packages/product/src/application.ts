@@ -15,9 +15,10 @@ import { ProductError } from "./errors.ts";
 export type ParamBase = "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
 // littleEndian: the application declares <Options ParameterByteOrder="LittleEndian">; a multi-byte
 // value is then stored least significant byte first.
+// zeroTerminate: a Text type of an application that declares <Options TextParameterZeroTerminate="true">.
 // binaryValues: for a BinaryValue type, each enumeration value's bytes (absent where an enumeration
 // declares none).
-export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; binaryValues?: Map<number, Buffer>; }
+export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; zeroTerminate?: boolean; binaryValues?: Map<number, Buffer>; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
 export interface Segment { id: string; lsm: number; size: number; data: Buffer; }
@@ -71,6 +72,7 @@ function paramType(app: AppConfig, t: CfgType): ParamType {
   const base = imageBase(t);
   return {
     id: t.id, base, sizeInBit: t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}),
+    ...(base === "Text" && app.textParameterZeroTerminate ? { zeroTerminate: true } : {}),
     ...(base === "BinaryValue" ? { binaryValues: new Map(t.enums.flatMap((e) => (e.binary ? [[e.value, e.binary] as [number, Buffer]] : []))) } : {}),
   };
 }

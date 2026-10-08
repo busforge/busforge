@@ -21,8 +21,6 @@ export function buildParameterImage(model: AppModel, lsm: number, instanceValues
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
-    const refusal = textDefaultRefusal(type, param, seg.data);
-    if (refusal) throw refusal;
     encode(img, param.offset, param.bitOffset, type, v);
   }
   return img;
@@ -122,40 +120,30 @@ export const byteWidth = (sizeInBit: number, bitOffset = 0): number => Math.max(
 // such a parameter as "programmed" (e.g. the post-flash baseline reset).
 export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "BinaryValue", "Number", "Float", "IPAddress", "Text"]);
 
-// A text parameter's field: the value's ASCII characters, then zero bytes to the end of the field.
-// ETS's image of the Theben DALI-Gateway KNX plus's full download holds "dali" in its 8-byte admin
-// password field as 64 61 6c 69 00 00 00 00 (private corpus captures/dali-ets6log-fulldownload-real.txt
-// l. 581, row 0C40 of RelMemory(4); on the wire dali-ets-fulldownload-real.log writes 64 61 6c 69 at
-// 0x5C48 and leaves the zeros to the allocation fill). That capture writes the parameter's default
-// value into a field no <Data> covers. No capture shows a character beyond ASCII, a value that fills its
-// field, or a field that is not whole bytes from bit 0: those are refused here; a <Data> that disagrees
-// with the parameter's default is refused by textDefaultRefusal.
+// A text parameter's field: the value's ASCII characters, then zero bytes to the end of the field; a
+// value as long as the field fills it without a closing zero. The segment's <Data> does not enter: ETS
+// writes the parameter's value over it. Shown by ETS's images (private corpus captures/):
+//  - Theben DALI-Gateway KNX plus, full download: "dali" in an 8-byte field no <Data> covers as
+//    64 61 6c 69 00 00 00 00 (dali-ets6log-fulldownload-real.txt l. 581, row 0C40 of RelMemory(4)).
+//  - MDT IP Interface/Router (M-0083_A-0137), full download (mdt-router-ets6log-fulldownload.txt, RelMemory(4)):
+//    every text field holds its value and zeros over a <Data> holding other texts ("" over
+//    "Statuselement00" is 30 zero bytes, "Bit Alarm 1" over "Bit Alarm 2"), and the 30-character
+//    "MDT IP Interface mit IPRouting" fills its 30-byte field. Its parameter downloads write
+//    "hc10" and 22 zeros (mdt-router-ets6log-partial-name.txt) and the 30 characters without a zero
+//    (mdt-router-ets6log-partial-name-revert.txt) into that field.
+// No capture shows a character beyond ASCII, a field that is not whole bytes from bit 0, or a
+// field-length value in an application declaring TextParameterZeroTerminate: those are refused.
 export function textBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
   const where = `text parameter type ${type.id} at offset ${offset}`;
   if (bit !== 0 || type.sizeInBit % 8 !== 0) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: a ${type.sizeInBit}-bit field at bit ${bit} has no known byte layout`);
   if (Array.from({ length: valStr.length }, (_, i) => valStr.charCodeAt(i)).some((c) => c === 0 || c > 0x7f)) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" holds a character beyond ASCII or a zero character, whose bytes no ETS image shows`);
   const chars = Buffer.from(valStr, "latin1");
   const size = type.sizeInBit / 8;
-  if (chars.length >= size) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" takes ${chars.length} bytes, the ${size}-byte field holds at most ${size - 1} and a closing zero`);
+  if (chars.length > size) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" takes ${chars.length} bytes, the field holds ${size}`);
+  if (chars.length === size && type.zeroTerminate) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" fills the ${size}-byte field of an application that stores its texts with a closing zero; it holds at most ${size - 1} characters`);
   const field = Buffer.alloc(size);
   chars.copy(field);
   return field;
-}
-
-// A text parameter whose segment <Data> holds, in its field, bytes other than its default value
-// encodes to: which of the two ETS writes no capture shows (MDT A-0137's <Data> holds
-// "Statuselement00" where the parameter's default is ""). Checked against the segment's pristine
-// <Data>, so it does not depend on the order the parameters are encoded in. A field <Data> leaves
-// zero or does not reach is no conflict (the DALI-Gateway's).
-export function textDefaultRefusal(type: ParamType, param: { id: string; offset?: number; bitOffset: number; value?: string }, data: Buffer): ProductError | undefined {
-  if (type.base !== "Text" || param.offset === undefined) return undefined;
-  const held = data.subarray(param.offset, param.offset + type.sizeInBit / 8);
-  if (held.every((b) => b === 0)) return undefined;
-  let want: Buffer;
-  try { want = textBytes(type, param.offset, param.bitOffset, param.value ?? ""); }
-  catch { want = Buffer.alloc(0); }
-  if (want.subarray(0, held.length).equals(held)) return undefined;
-  return new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset}: the segment's default image holds ${held.toString("hex")} in its field, its default value is "${param.value ?? ""}"; which ETS writes is not known`);
 }
 
 // A BinaryValue parameter's bytes: those of the enumeration its value names, as declared. This is the
@@ -264,13 +252,16 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
   }
   if (type.base === "Text") {
-    // The characters before the first zero byte, every byte after it zero; any other field (no zero,
-    // a byte beyond ASCII, bytes behind the zero) decodes to nothing, as encode would not write it.
+    // The characters before the first zero byte, every byte after it zero, or a field of characters
+    // without a zero where the application does not terminate its texts; any other field (a byte
+    // beyond ASCII, bytes behind the zero) decodes to nothing, as encode would not write it.
     const size = type.sizeInBit / 8;
     if (bit !== 0 || !Number.isInteger(size) || offset + size > img.length) return undefined;
     const field = img.subarray(offset, offset + size);
-    const end = field.indexOf(0);
-    if (end < 0 || field.subarray(end).some((b) => b !== 0)) return undefined;
+    const zero = field.indexOf(0);
+    if (zero < 0 && type.zeroTerminate) return undefined;
+    const end = zero < 0 ? size : zero;
+    if (field.subarray(end).some((b) => b !== 0)) return undefined;
     const chars = field.subarray(0, end);
     return chars.some((b) => b > 0x7f) ? undefined : chars.toString("latin1");
   }

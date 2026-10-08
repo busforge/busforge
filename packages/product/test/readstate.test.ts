@@ -354,13 +354,13 @@ corpusDescribe("readState records settings that only the device's configuration 
   });
 });
 
-// The MDT IP Interface/Router's text fields are refused by the codec (their <Data> disagrees with their defaults), so
-// its read-back's build leaves them unowned. A project value there must not fold as "in sync" just because the device
-// and the image both still hold <Data>: the field keeps the baseline it had.
+// A text value the codec refuses (a character beyond ASCII: no ETS capture shows its bytes) leaves its field unowned
+// in the read-back's build. A project value there must not fold as "in sync" just because the device and the image
+// both still hold the segment's <Data>: the field keeps the baseline it had.
 corpusDescribe("System B readState: a text field the codec refuses is compared neither way", () => {
   const cfg = app("M-0083_A-0137-20-7EB2.xml.gz");
-  const REF = "M-0083_A-0137-20-7EB2_P-249_R-249"; // 30-byte text, <Data> "Statuselement00", default ""
-  const liveParams = new Map([[REF, "Flur"]]);
+  const REF = "M-0083_A-0137-20-7EB2_P-162_R-162"; // device name, 30-byte text, <Data> "MDT KNX IP-Interface"
+  const liveParams = new Map([[REF, "Küche"]]);
   const target = buildRelativeSegmentTarget(cfg, liveParams, APP_PROGRAM, { textRefusals: "skip" })!;
   const PARAM_BASE = 0x4000;
   const GT = PARAM_BASE + target.size + 0x1000;
@@ -371,9 +371,32 @@ corpusDescribe("System B readState: a text field the codec refuses is compared n
     seedBytes(dev, PARAM_BASE, target.bytes);
     for (const obj of [1, 2, 3]) { dev.mem.set(tableAddrs[obj], 0); dev.mem.set(tableAddrs[obj] + 1, 0); }
     const offset = cfg.params.get(cfg.refs.get(REF)!.paramId)!.offset!;
-    expect(Buffer.from(target.bytes.subarray(offset, offset + 15)).toString("latin1")).toBe("Statuselement00");
+    expect(Buffer.from(target.bytes.subarray(offset, offset + 20)).toString("latin1")).toBe("MDT KNX IP-Interface");
     const all = new Set(cfg.refs.keys());
     const rb = await classify(cfg).readState(asDev(dev), cfg.mask, { liveParams, baseParams: new Map(), moduleInstances: [], configFor: () => ({ shown: all, active: all }) });
     expect(rb.paramBase.has(REF)).toBe(false);
+  });
+});
+
+// An inactive parameter is written at its default, not at the value the project still stores for it (the MDT IP
+// Interface/Router's full download, tools/etsdiff.test.ts). A device holding that default is therefore not "in sync"
+// with the stored value: the read records the device's value as the baseline, so the stored value stays a change.
+corpusDescribe("System B readState: an inactive parameter with a stored value keeps the device's value as its baseline", () => {
+  const cfg = app("M-0083_A-0137-20-7EB2.xml.gz");
+  const REF = "M-0083_A-0137-20-7EB2_P-315_R-315"; // e-mail text, inactive at defaults, default "Bit Alarm 1"
+  const liveParams = new Map([[REF, "Wetterstation"]]);
+  const target = buildRelativeSegmentTarget(cfg, liveParams, APP_PROGRAM, { textRefusals: "skip" })!;
+  const PARAM_BASE = 0x4000;
+  const GT = PARAM_BASE + target.size + 0x1000;
+  const tableAddrs: Record<number, number> = { [APP_PROGRAM]: PARAM_BASE, 1: GT + 0x10, 2: GT + 0x20, 3: GT + 0x30 };
+
+  test("the device holding the default records the default, not the stored value", async () => {
+    expect(target.defaulted.has(REF)).toBe(true);
+    const dev = new MockReadDevice(tableAddrs);
+    seedBytes(dev, PARAM_BASE, target.bytes);
+    for (const obj of [1, 2, 3]) { dev.mem.set(tableAddrs[obj], 0); dev.mem.set(tableAddrs[obj] + 1, 0); }
+    const all = new Set(cfg.refs.keys());
+    const rb = await classify(cfg).readState(asDev(dev), cfg.mask, { liveParams, baseParams: new Map(), moduleInstances: [], configFor: () => ({ shown: all, active: all }) });
+    expect(rb.paramBase.get(REF)).toBe("Bit Alarm 1");
   });
 });

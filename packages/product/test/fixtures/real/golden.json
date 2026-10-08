@@ -409,7 +409,8 @@
     "modelHash": "513df9efe4134d7c",
     "lsms": {
       "4": {
-        "refused": "PARAM_TEXT_UNSUPPORTED"
+        "build": "1757dfbccda5ddfd",
+        "decodeHash": "095e28d35bd12ee1"
       }
     }
   },

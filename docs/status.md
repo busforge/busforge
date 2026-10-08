@@ -115,9 +115,11 @@ What each row does not show:
     restart at once, ETS's association order) apply; neither has run a write under them. On a DALI
     gateway holding the application the full download takes ETS's partial form, equal to ETS's capture
     of it.
-  - **MDT IP Interface/Router**: its parameter image is refused for its text parameters
-    (`PARAM_TEXT_UNSUPPORTED`, [device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)),
-    so its parameter flash is refused until an ETS capture shows those fields.
+  - **MDT IP Interface/Router**: its parameter image equals ETS's image of its full download byte for
+    byte, text fields and the defaults of inactive parameters included, and its parameter flash
+    changes the same bytes as ETS's parameter downloads (it sends every owned byte, ETS only the
+    differing ones; `tools/etsdiff.test.ts`); it has not run on the device, since a secured session
+    needs the project's tool key.
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
     parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
     shows a text parameter; a read-back leaves those fields out.

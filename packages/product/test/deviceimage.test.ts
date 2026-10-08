@@ -357,7 +357,7 @@ describe("a BinaryValue parameter writes its enumeration's bytes", () => {
 // rest; diffBytes counts only the owned bytes that actually change.
 const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned): RelativeSegmentTarget => {
   const bits = (m: (boolean | number)[]) => m.map((o) => (o === true ? 0xff : o === false ? 0 : o));
-  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0) };
+  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0), defaulted: new Set() };
 };
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
@@ -588,17 +588,13 @@ corpusTest("the relative images of the full download and the parameter flash sta
     const r = (own: boolean) => { const t = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst, ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };
     expect([f, r(true), r(false)]).toEqual([f, full, surgical]);
   }
-  // MDT IP Interface/Router: its <Data> holds other text in its text fields than their defaults encode to ("MDT KNX
-  // IP-Interface" where the default is "MDT IP Interface mit IPRouting", 30 bytes in a 30-byte field;
-  // "Statuselement00" where it is ""). No ETS capture shows which ETS writes: refused (codec.test.ts "text parameters").
+  // MDT IP Interface/Router: every text field holds its value over <Data>, the 30-character device name fills its
+  // 30-byte field. With the house unit's project values this image equals ETS's image of its full download byte for
+  // byte (tools/etsdiff.test.ts, "MDT IP Interface/Router"); at defaults the fingerprint pins it.
   const ip = parseAppConfig(readRealFixture("M-0083_A-0137-20-7EB2.xml.gz"));
-  for (const own of [true, false]) {
-    expect(() => buildRelativeSegmentTarget(ip, new Map(), 4, { ownIdleUnionDefaults: own })).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
-  }
-  // The read-back's build leaves those fields out of the comparison and compares the rest.
-  const rb = buildRelativeSegmentTarget(ip, new Map(), 4, { textRefusals: "skip" })!;
-  expect(rb.owned.slice(71, 101).every((m) => m === 0)).toBe(true);
-  expect(rb.owned.filter(Boolean).length).toBeGreaterThan(0);
+  const ipr = (own: boolean) => { const t = buildRelativeSegmentTarget(ip, new Map(), 4, { ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };
+  expect([ipr(true), ipr(false)]).toEqual(["53447b1aba6bb593/681b13d79dac48c8/2349", "53447b1aba6bb593/681b13d79dac48c8/2349"]);
+  expect(Buffer.from(buildRelativeSegmentTarget(ip, new Map(), 4)!.bytes.subarray(71, 101)).toString("latin1")).toBe("MDT IP Interface mit IPRouting");
 });
 
 // GVS AMMA byte 64: "Output 3&4 function" (2 bits at bit offset 0) shares the byte with that
