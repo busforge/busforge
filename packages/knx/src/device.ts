@@ -287,11 +287,13 @@ export class KnxDevice {
   private unauthentic = 0;
   // `afterWrap` runs once the request is framed for the wire and before it is sent, so an answer
   // that races the send is already taken under whatever it sets up.
-  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void): Promise<ParsedApdu | null> {
-    try { return await this.requestTries(build, expectResponse, tries, afterWrap); }
+  // `deviceAckSuffices`: the device's T_ACK proves the frame arrived, so the interface's L_Data.con
+  // is not waited for once it is there, and its absence is no error (the confirmed restart, below).
+  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
+    try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
     finally { this.peerClosed = null; }
   }
-  private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void): Promise<ParsedApdu | null> {
+  private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
     // Whether the last try was acknowledged and then got only unauthentic answers: the device
     // answered and was not believed, which is a different failure from silence.
     let rejectedAfterAck = false;
@@ -312,7 +314,11 @@ export class KnxDevice {
       const tpdu = this.onWire(build(this.seq));
       afterWrap?.();
       try {
-        await this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
+        const sent = this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
+        if (deviceAckSuffices) {
+          sent.catch(() => undefined);
+          await Promise.race([sent, ackP.then((acked) => (acked ? undefined : new Promise<never>(() => undefined)))]);
+        } else await sent;
       } catch (e) {
         // A link to the interface that stalled or closed takes no retry: the frame may be stuck in
         // it, and a repetition would queue behind it.
@@ -800,7 +806,12 @@ export class KnxDevice {
     try {
       // One try, waiting for the transport acknowledgement only: a second restart to a device that
       // is already rebooting is not sent. The answer is taken by a waiter set up before the send.
-      await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); });
+      // The device's T_ACK is the proof of delivery, not the interface's L_Data.con: an MDT IP
+      // interface sends no confirmation for this frame while the device it reached acknowledges and
+      // answers it, and ETS goes on without one (private corpus captures/mdt-router-ets6log-
+      // {fulldownload,partial-name,partial-name-revert}.txt: "Ack arrived for ConfirmedRestart_req"
+      // and its response, no "Conf after" for that Sec_req, where every other Sec_req has one).
+      await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); }, true);
     } catch (e) {
       const code = (e as { code?: string }).code;
       if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION") { this.respResolve = null; throw e; }
@@ -871,7 +882,11 @@ export class KnxDevice {
     else await this.sendRestart();
     try {
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
-    } catch {
+    } catch (e) {
+      // A link to the interface that stalled or closed says nothing about the device: whether the
+      // probe reached it is unknown, so it is no proof of the reboot.
+      const code = (e as { code?: string }).code;
+      if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
       return;                        // gone. It restarted, and it wrote its flash on the way out.
     }
     if (!requireReboot) return;      // this firmware persisted at LoadCompleted; a live device is fine

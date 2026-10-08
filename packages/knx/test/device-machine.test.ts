@@ -438,6 +438,60 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     expect(tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01)).length).toBe(1);
   }, 20000);
 
+  // The MDT IP Interface/Router as ETS 6 meets it through an MDT IP interface (private corpus
+  // captures/mdt-router-ets6log-fulldownload.txt, -partial-name.txt, -partial-name-revert.txt): the device
+  // acknowledges the confirmed restart and answers it, the interface sends no L_Data.con for that frame, and
+  // ETS logs "Ack arrived for ConfirmedRestart_req" and the response with no "Conf after" for it. A tunnel that
+  // waits for the confirmation rejects with TUNNEL_CON_TIMEOUT after its timeout.
+  const conNeverComes = (deviceAcks: boolean, error = 0) => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    const plain = tun.sendCemi.bind(tun);
+    tun.sendCemi = async (cemi: Buffer) => {
+      const tpdu = Buffer.from(cemi.subarray(9));
+      if (ignorable(tpdu) || parseApdu(tpdu).apci !== (APCI.RESTART | 0x01)) return plain(cemi);
+      tun.sent.push(tpdu);
+      if (deviceAcks) {
+        tun.reply([0xc2 | (parseApdu(tpdu).seq << 2)]);
+        tun.reply([0x40 | (parseApdu(tpdu).seq << 2) | 0x03, 0xa1, error, 0x00, 0x00]);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+      throw Object.assign(new Error("the interface did not confirm the frame"), { code: "TUNNEL_CON_TIMEOUT" });
+    };
+    return { tun, dev };
+  };
+  test("confirmed: the device's acknowledgement and answer prove delivery when the interface never confirms the frame", async () => {
+    const { tun, dev } = conNeverComes(true);
+    await dev.restart(true, true);
+    expect(tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01)).length).toBe(1);
+  }, 20000);
+  test("confirmed: without the interface's confirmation the device's answer is still checked", async () => {
+    const { dev } = conNeverComes(true, 1);
+    const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+    expect(failure).toMatchObject({ code: "RESTART_REFUSED" });
+  }, 20000);
+  // The probe after the restart through an interface that stalls: whether it reached the device is unknown,
+  // so its failure is not taken as the device's silence.
+  test("a probe the interface never confirms is no proof of the reboot", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.2.11");
+    const plain = tun.sendCemi.bind(tun);
+    tun.sendCemi = async (cemi: Buffer) => {
+      const tpdu = Buffer.from(cemi.subarray(9));
+      if (ignorable(tpdu) || parseApdu(tpdu).apci !== APCI.DEVICE_DESCRIPTOR_READ) return plain(cemi);
+      tun.sent.push(tpdu);
+      throw Object.assign(new Error("the interface did not confirm the frame"), { code: "TUNNEL_CON_TIMEOUT" });
+    };
+    tun.handler = (tpdu) => { if (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.RESTART) tun.reply([0xc2 | (parseApdu(tpdu).seq << 2)]); };
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect(failure).toMatchObject({ code: "TUNNEL_CON_TIMEOUT" });
+  }, 20000);
+  test("confirmed: neither the device's acknowledgement nor the interface's confirmation is still a failed send", async () => {
+    const { dev } = conNeverComes(false);
+    const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+    expect(failure).toMatchObject({ code: "TUNNEL_CON_TIMEOUT" });
+  }, 20000);
+
   test("a send the interface refuses PROPAGATES: silence we never caused proves nothing", async () => {
     const tun = new FakeTransport();
     const dev = new KnxDevice(tun, "1.2.11");

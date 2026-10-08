@@ -791,7 +791,10 @@ the captures of the Jung 400021SE, the GVS AMMA and the Theben DALI-Gateway show
   does not, gets the plain A_Restart), A_Restart type 1 with erase code 1 and channel 0 (`81 01 00`, ETS6.log
   `ConfirmedRestart_req`). The device answers A_Restart_Response, error 0 and the seconds it needs (1),
   and reboots. Busforge refuses an answer with an error code (`RESTART_REFUSED`), waits the stated time
-  (at most 3 s) and then requires the device to be gone, as after the basic restart.
+  (at most 3 s) and then requires the device to be gone, as after the basic restart. The device's
+  T_ACK proves the restart arrived: an MDT IP interface sends no confirmation (L_Data.con) for this
+  frame while the device acknowledges and answers it, and ETS goes on without one; Busforge does the
+  same. A probe the interface does not confirm proves no reboot and fails the step.
 
 What Busforge does besides: it reads the load states back after its load-state writes; the full
 download writes the parameter image sparsely against the allocation's fill, where ETS also sends the
