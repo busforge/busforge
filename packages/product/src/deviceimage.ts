@@ -2,7 +2,14 @@ import type { AppConfig, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
-import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
+import { byteWidth, MAX_INT_BYTES, encode, textDefaultRefusal } from "./image.ts";
+import { ProductError } from "./errors.ts";
+
+// `textRefusals: "skip"`: a text parameter the codec refuses is left unowned instead of failing the
+// build. Only for the read-back, which compares what it can and does not write; every path that
+// writes keeps the refusal.
+type TextRefusals = "refuse" | "skip";
+const isTextRefusal = (e: unknown): boolean => e instanceof ProductError && e.code.startsWith("PARAM_TEXT_");
 
 // Build the parameter memory image for the MV-0705 (absolute-segment) device model.
 //
@@ -64,7 +71,7 @@ export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
   values: Map<string, string>,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals } = {},
 ): DeviceSegmentImage[] {
   return buildAbsoluteSegmentTargets(app, values, opts).map(({ id, address, size, bytes }) => ({ id, address, size, bytes }));
 }
@@ -72,7 +79,7 @@ export function buildAbsoluteSegmentImages(
 export function buildAbsoluteSegmentTargets(
   app: AppConfig,
   values: Map<string, string>,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals } = {},
 ): DeviceSegmentTarget[] {
   // Module instances: the imported project's set when given, else re-run the allocators
   // for a from-scratch device so its channel parameters are placed at the same offsets
@@ -123,7 +130,14 @@ export function buildAbsoluteSegmentTargets(
       if (v === undefined) continue; // not visible / not active: keep the <Data> default
       const type = model.types.get(param.typeId);
       if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
-      // Only mark bytes owned if encode ACTUALLY wrote them. A text/time/color/other
+      // An active text parameter on these (System 7) segments: no ETS capture of a System 7 product
+      // shows one (the Meteodata 140 S's are inactive in every captured configuration), so its byte
+      // layout here is not known.
+      if (type.base === "Text") {
+        if (opts.textRefusals === "skip") continue;
+        throw new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: no ETS capture shows a text parameter on this memory model`);
+      }
+      // Only mark bytes owned if encode ACTUALLY wrote them. A time/color/other
       // type (or a malformed value) writes nothing, so it must not claim authority over
       // its bytes: the flash path would otherwise push the segment's init/default value
       // over device memory the parameter never derived. Gating on the real write keeps
@@ -170,7 +184,7 @@ export function buildAbsoluteSegmentTargets(
 //    push that default into the channel memory. Hardware-mapped on HMG 6T (offsets 617,
 //    1129 are the inactive "Zeit fuer zykl. Senden" param sitting in MD-12/MD-6 regions).
 // Ownership is gated on encode() ACTUALLY writing, exactly like the absolute path, so a
-// text/time/malformed value claims no bytes.
+// time/colour/malformed value claims no bytes.
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
 // An application that declares <Options DownloadInvisibleParameters="None">: ETS leaves out a parameter that
@@ -196,7 +210,7 @@ export function buildRelativeSegmentTarget(
   // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member,
   // as ETS writes it in both its full and its parameter download (GVS AMMA captures, 2026-09-25/26).
   // The read-back model leaves it unset: it compares what the configuration derives.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals } = {},
 ): RelativeSegmentTarget | null {
   const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
   const model = toAppModel(app, { includeUnions: true, instances });
@@ -249,9 +263,9 @@ export function buildRelativeSegmentTarget(
     const cfgParam = app.params.get(ref.paramId);
     // An integer parameter wider than the integer codec (6 bytes) has no encoding Busforge knows;
     // it is never owned and the device byte is preserved. A BinaryValue parameter of any width
-    // writes its enumeration's bytes.
+    // writes its enumeration's bytes, a text parameter its characters.
     const wType = model.types.get(param.typeId);
-    if (wType && wType.base !== "BinaryValue" && Number.isFinite(wType.sizeInBit) && byteWidth(wType.sizeInBit, param.bitOffset) > MAX_INT_BYTES) continue;
+    if (wType && wType.base !== "BinaryValue" && wType.base !== "Text" && Number.isFinite(wType.sizeInBit) && byteWidth(wType.sizeInBit, param.bitOffset) > MAX_INT_BYTES) continue;
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.
@@ -276,7 +290,16 @@ export function buildRelativeSegmentTarget(
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
-    if (!encode(img, param.offset, param.bitOffset, type, v)) continue;
+    let wrote: boolean;
+    try {
+      const refusal = textDefaultRefusal(type, param, seg.data);
+      if (refusal) throw refusal;
+      wrote = encode(img, param.offset, param.bitOffset, type, v);
+    } catch (e) {
+      if (opts.textRefusals === "skip" && isTextRefusal(e)) continue;
+      throw e;
+    }
+    if (!wrote) continue;
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);

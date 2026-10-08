@@ -262,7 +262,7 @@ level, keyed on the catalogue attribute, the load-procedure element or the mask,
 applications (the one list left decides where the structural flash is offered, not what it sends,
 [below](#structural-flash)). The captures are the tests: `tools/etsdiff.test.ts` plans the captured
 downloads from the catalogue and compares each with ETS's wire and ETS's logged image; the captures
-of the Theben DALI-Gateway and the MDT BE-06001.02 have no such test yet. A capture-matched plan is
+of the MDT BE-06001.02 have no such test yet. A capture-matched plan is
 reference evidence (Busforge's bytes and steps equal ETS's), not a hardware claim; what has run on
 which device is in [status.md](status.md).
 
@@ -306,6 +306,17 @@ leaves out what its stamps or its read of the unit say the device holds (on Syst
 and sends what R16 selects); it reads the load state after its own
 load-state writes; and its full download reads the unit's program id first and refuses another
 application.
+
+**On System B the bytes on the wire differ, the unit's memory does not.** In a full download ETS
+writes of the application segment the bytes a parameter covers, and leaves out runs of 31 and more
+bytes equal to the allocation's fill and the fill bytes at the image's start and end (Theben MIX 2,
+three products: fill runs of up to 30 bytes written, from 31 left out; Theben DALI-Gateway KNX plus:
+143 bytes no parameter covers and five fill bytes at the ends left out). Busforge leaves out fill runs
+of 12 bytes and more and writes the bytes no parameter covers inside a run (`sparseRuns`). Its
+parameter flash writes every owned byte, where ETS, on an application declaring
+`PreferPartialDownloadIfApplicationLoaded` whose record of the unit holds, writes only the changed ones
+(Theben DALI-Gateway: one byte of 3009; Jung 400021SE). Every byte only one side writes holds the value
+the unit holds already: the fill, or the unit's own byte.
 
 ## ETS-captured System 7 downloads
 
@@ -822,8 +833,9 @@ MDT BE-02001.02, whose captures reshape the com-object table, and the Auro prese
 `M-0081_A-FE01`, the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S
 and the Theben MIX 2, whose captures revert a parameter change and a link change in one download;
 that revert changes link bits, not the com-object set. The list is evidence, not ETS behaviour: an
-application joins it with its capture test. The Theben DALI-Gateway and the MDT BE-06001.02 have such
-captures without a test yet, and are not offered. The thelsing/OpenKNX and GVS stacks stay off,
+application joins it with its capture test. The Theben DALI-Gateway's structural plan equals its ETS
+revert capture (`tools/etsdiff.test.ts`) and is not offered yet; the MDT BE-06001.02 has such captures
+without a test, and is not offered. The thelsing/OpenKNX and GVS stacks stay off,
 because the bracket rests on firmware behaviour they are shown not to share (keeping a segment's
 bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX, the
 flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other

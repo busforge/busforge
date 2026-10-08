@@ -21,6 +21,8 @@ export function buildParameterImage(model: AppModel, lsm: number, instanceValues
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+    const refusal = textDefaultRefusal(type, param, seg.data);
+    if (refusal) throw refusal;
     encode(img, param.offset, param.bitOffset, type, v);
   }
   return img;
@@ -28,9 +30,9 @@ export function buildParameterImage(model: AppModel, lsm: number, instanceValues
 
 // Read the parameter values back out of a memory image. Inverse of
 // buildParameterImage: same ref iteration and skip conditions, so the keys line
-// up with what buildParameterImage would write. Only memory-backed numeric/float
-// parameters are decodable; text/other types are skipped (left to the caller's
-// existing value). Keyed by ParameterRef id.
+// up with what buildParameterImage would write. Types the codec does not represent
+// (time/colour/other) are skipped (left to the caller's existing value). Keyed by
+// ParameterRef id.
 export function decodeParameterImage(model: AppModel, lsm: number, img: Buffer): Map<string, string> {
   const out = new Map<string, string>();
   for (const ref of model.refs.values()) {
@@ -40,7 +42,7 @@ export function decodeParameterImage(model: AppModel, lsm: number, img: Buffer):
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     const v = decode(img, param.offset, param.bitOffset, type);
-    if (v === undefined) continue; // text/other: not represented in the image
+    if (v === undefined) continue; // not represented in the image, or a field encode would refuse
     out.set(ref.id, v);
   }
   return out;
@@ -59,7 +61,7 @@ export function decodeAbsoluteImage(model: AppModel, segId: string, img: Buffer)
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     const v = decode(img, param.offset, param.bitOffset, type);
-    if (v === undefined) continue; // text/other: not represented in the image
+    if (v === undefined) continue; // not represented in the image, or a field encode would refuse
     out.set(ref.id, v);
   }
   return out;
@@ -87,7 +89,7 @@ export function decodeDpt9(raw: number): number {
 
 // Returns true iff bytes were actually written. The flash path relies on this to
 // decide which bytes a parameter OWNS (may be written to the device): a type the
-// image does not represent (text/time/color/other) or a malformed value writes
+// image does not represent (color/other) or a malformed value writes
 // nothing and must not claim any bytes. See deviceflash.ts.
 // Parse a dotted-quad IPv4 string into its 4 octets, or undefined if malformed.
 // Strict: exactly four 0-255 integers, no extra parts. Used by the IPAddress codec.
@@ -115,10 +117,46 @@ export const MAX_INT_BYTES = 6;
 export const byteWidth = (sizeInBit: number, bitOffset = 0): number => Math.max(1, Math.ceil((bitOffset + sizeInBit) / 8));
 
 // The type bases encode() can represent in the parameter image. MUST stay in sync with
-// encode() below: everything else (Text, Time, Color, Other) writes nothing
+// encode() below: everything else (Time, Color, Other) writes nothing
 // and therefore is never programmed by a flash. Consumers use this to avoid claiming
 // such a parameter as "programmed" (e.g. the post-flash baseline reset).
-export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "BinaryValue", "Number", "Float", "IPAddress"]);
+export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "BinaryValue", "Number", "Float", "IPAddress", "Text"]);
+
+// A text parameter's field: the value's ASCII characters, then zero bytes to the end of the field.
+// ETS's image of the Theben DALI-Gateway KNX plus's full download holds "dali" in its 8-byte admin
+// password field as 64 61 6c 69 00 00 00 00 (private corpus captures/dali-ets6log-fulldownload-real.txt
+// l. 581, row 0C40 of RelMemory(4); on the wire dali-ets-fulldownload-real.log writes 64 61 6c 69 at
+// 0x5C48 and leaves the zeros to the allocation fill). That capture writes the parameter's default
+// value into a field no <Data> covers. No capture shows a character beyond ASCII, a value that fills its
+// field, or a field that is not whole bytes from bit 0: those are refused here; a <Data> that disagrees
+// with the parameter's default is refused by textDefaultRefusal.
+export function textBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
+  const where = `text parameter type ${type.id} at offset ${offset}`;
+  if (bit !== 0 || type.sizeInBit % 8 !== 0) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: a ${type.sizeInBit}-bit field at bit ${bit} has no known byte layout`);
+  if (Array.from({ length: valStr.length }, (_, i) => valStr.charCodeAt(i)).some((c) => c === 0 || c > 0x7f)) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" holds a character beyond ASCII or a zero character, whose bytes no ETS image shows`);
+  const chars = Buffer.from(valStr, "latin1");
+  const size = type.sizeInBit / 8;
+  if (chars.length >= size) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" takes ${chars.length} bytes, the ${size}-byte field holds at most ${size - 1} and a closing zero`);
+  const field = Buffer.alloc(size);
+  chars.copy(field);
+  return field;
+}
+
+// A text parameter whose segment <Data> holds, in its field, bytes other than its default value
+// encodes to: which of the two ETS writes no capture shows (MDT A-0137's <Data> holds
+// "Statuselement00" where the parameter's default is ""). Checked against the segment's pristine
+// <Data>, so it does not depend on the order the parameters are encoded in. A field <Data> leaves
+// zero or does not reach is no conflict (the DALI-Gateway's).
+export function textDefaultRefusal(type: ParamType, param: { id: string; offset?: number; bitOffset: number; value?: string }, data: Buffer): ProductError | undefined {
+  if (type.base !== "Text" || param.offset === undefined) return undefined;
+  const held = data.subarray(param.offset, param.offset + type.sizeInBit / 8);
+  if (held.every((b) => b === 0)) return undefined;
+  let want: Buffer;
+  try { want = textBytes(type, param.offset, param.bitOffset, param.value ?? ""); }
+  catch { want = Buffer.alloc(0); }
+  if (want.subarray(0, held.length).equals(held)) return undefined;
+  return new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset}: the segment's default image holds ${held.toString("hex")} in its field, its default value is "${param.value ?? ""}"; which ETS writes is not known`);
+}
 
 // A BinaryValue parameter's bytes: those of the enumeration its value names, as declared. This is the
 // schema's definition of the type, not a behaviour read off one application's captures, so it holds
@@ -147,6 +185,12 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     for (let i = 0; i < 4; i++) img[offset + i] = octets[i]; // 4 bytes, big-endian (a.b.c.d)
     return true;
   }
+  if (type.base === "Text") {
+    const bytes = textBytes(type, offset, bit, valStr);
+    if (offset + bytes.length > img.length) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter type ${type.id} at offset ${offset}: its ${bytes.length} bytes reach past the ${img.length}-byte segment`);
+    bytes.copy(img, offset);
+    return true;
+  }
   if (type.base === "BinaryValue") {
     const bytes = binaryValueBytes(type, offset, bit, valStr);
     if (offset + bytes.length > img.length) throw new ProductError("PARAM_BINARY_VALUE_UNDECLARED", `BinaryValue parameter type ${type.id} at offset ${offset}: its ${bytes.length} bytes reach past the ${img.length}-byte segment`);
@@ -164,11 +208,10 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     // Double); refuse to own the bytes rather than silently writing a wrong-sized value.
     return false;
   }
-  // Only Value (enum/restriction) and Number are integer-coded into the image. Text,
-  // Time, Color, IPAddress and other types are NOT represented in the parameter image,
-  // so they must not be written here. Keeping this symmetric with decode is what
-  // prevents a numeric-looking text value (e.g. "" -> 0, or "123") from being written
-  // as a bogus integer, which for a wide text type also overflows the byte writer.
+  // Only Value (enum/restriction) and Number are integer-coded into the image. Time, Color
+  // and other types are NOT represented in the parameter image, so they must not be written
+  // here. Keeping this symmetric with decode is what prevents a numeric-looking value from
+  // being written as a bogus integer.
   if (type.base !== "Value" && type.base !== "Number") return false;
   const v = Number(valStr);
   if (!Number.isFinite(v)) return false;
@@ -212,13 +255,24 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
 }
 
 // Inverse of encode. Returns the decoded value as a string, or undefined for
-// anything not represented in the image (text/time/other, or a layout the encoder
+// anything not represented in the image (color/other, or a layout the encoder
 // would refuse). Read-back is best-effort, so it skips rather than throws.
 function decode(img: Buffer, offset: number, bit: number, type: ParamType): string | undefined {
   if (!Number.isFinite(offset)) return undefined;
   if (type.base === "IPAddress") {
     if (offset + 4 > img.length) return undefined;
     return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
+  }
+  if (type.base === "Text") {
+    // The characters before the first zero byte, every byte after it zero; any other field (no zero,
+    // a byte beyond ASCII, bytes behind the zero) decodes to nothing, as encode would not write it.
+    const size = type.sizeInBit / 8;
+    if (bit !== 0 || !Number.isInteger(size) || offset + size > img.length) return undefined;
+    const field = img.subarray(offset, offset + size);
+    const end = field.indexOf(0);
+    if (end < 0 || field.subarray(end).some((b) => b !== 0)) return undefined;
+    const chars = field.subarray(0, end);
+    return chars.some((b) => b > 0x7f) ? undefined : chars.toString("latin1");
   }
   if (type.base === "BinaryValue") {
     if (type.littleEndian || bit !== 0) return undefined; // mirror encode's refusal
@@ -233,7 +287,7 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     if (type.sizeInBit === 16) return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
     return undefined; // unknown float width: no codec (mirrors encode's refusal)
   }
-  if (type.base !== "Value" && type.base !== "Number") return undefined; // text/time/other
+  if (type.base !== "Value" && type.base !== "Number") return undefined; // time/other
   const { sizeInBit } = type;
   const span = byteWidth(sizeInBit, bit);
   if (span > MAX_INT_BYTES || offset + span > img.length) return undefined; // mirror encode's refusal

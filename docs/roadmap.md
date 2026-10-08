@@ -16,10 +16,27 @@ depends on is hardware-proven.
   run on the device.
 - **Structural flash on more applications.** It is offered only where its plan is tested against an
   ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The
-  Theben DALI-Gateway and the MDT BE-06001.02 have such captures and wait for their tests. The GVS
+  Theben DALI-Gateway's plan is tested against its capture and not offered yet; the MDT BE-06001.02
+  has such captures and waits for its tests. The GVS
   AMMA (persists at every `LoadCompleted`) and OpenKNX/thelsing (whose full download has to write the
   tables before the parameter image, which the structural bracket does not) stay off for their
   firmware.
+- **The System B write set as ETS's.** On the wire ETS leaves out fill runs from 31 bytes, the fill
+  at the image's ends and bytes no parameter covers, and its parameter download sends only the
+  changed bytes where the application prefers a partial download; Busforge's full download leaves
+  out fill runs from 12 bytes and its parameter flash sends every owned byte
+  ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit ends the same; matching ETS
+  changes the plans of every System B device, so each needs its run again.
+- **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
+  field (catalogues declare `TextParameterZeroTerminate`), a field whose `<Data>` disagrees with the
+  parameter's default (the MDT IP Interface/Router), and text on System 7 applications (the
+  Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until a capture shows them; a
+  changed text value is shown by no capture yet. The editor does not check a text against its field
+  when it is saved: the refusal comes at the flash
+  ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
+- **One parameter, several references.** Where an application gives one parameter several
+  `ParameterRef`s, the image builders encode each and the last one wins; no corpus application
+  shows two of them disagreeing, but a builder should write only the parameter's effective reference.
 - **Deactivated parameters in the System 7 parameter flash.** ETS writes where its whole image
   changes, so a parameter a change deactivates goes back to its `<Data>` template value
   ([findings.md](findings.md) §28). The structural flash does that; the plain parameter flash still

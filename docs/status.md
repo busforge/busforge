@@ -115,6 +115,12 @@ What each row does not show:
     restart at once, ETS's association order) apply; neither has run a write under them. On a DALI
     gateway holding the application the full download takes ETS's partial form, equal to ETS's capture
     of it.
+  - **MDT IP Interface/Router**: its parameter image is refused for its text parameters
+    (`PARAM_TEXT_UNSUPPORTED`, [device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)),
+    so its parameter flash is refused until an ETS capture shows those fields.
+  - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
+    parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
+    shows a text parameter; a read-back leaves those fields out.
 - **Jung 400021SE** runs in Data Secure mode, secure-commissioned by ETS. Its plain claims were shown
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and
@@ -137,8 +143,18 @@ What each row does not show:
   unanswered. Persistence is the restart each write ends with. The smoke spec keeps both surgical
   capabilities out of automated runs, because recovering a failed run needs the device's serial
   console.
-- **Theben DALI gateway.** No read-back of its tables is on record. The DCA-replacement plugin for
-  it renders committed fixtures and proves nothing about the device on a bus.
+- **Theben DALI gateway.** ETS 6 was captured running a full download (after unloading the
+  application), its partial form on a unit holding the application, a parameter, a group-address
+  and a revert download. Busforge's plans equal them (`tools/etsdiff.test.ts`): ETS's bracket in each,
+  every byte ETS wrote with ETS's value, the admin-password text parameter as ETS's image holds it;
+  where the wire differs, the bytes only one side writes hold what the unit holds already
+  ([load-procedures.md](load-procedures.md#the-rules-by-level)). None of it has run on the device. The
+  gateway's DALI configuration (addresses, groups, scenes) lives in a vendor interface object written
+  only by the manufacturer's DCA plugin; ETS's downloads left it unchanged, and no Busforge path
+  writes it. While ETS loads the application with the group tables still loaded, the gateway sends its
+  failure object as set, and does not send it cleared after the restart: a read returns the cleared
+  value. The DCA-replacement plugin renders committed fixtures and proves nothing about the device on
+  a bus.
 - **Auro M-0081_A-FE01.** ETS 6 was captured running its full, parameter and group-address download
   and their revert: the declared steps in their declared order, `LdCtrlTaskCtrl1` (Address 0,
   Count 0) as a PID 5 write of zeros

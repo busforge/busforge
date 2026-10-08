@@ -49,7 +49,7 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeRestriction` (enumeration) | full | dropdown, options ordered by `DisplayOrder` |
 | `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider |
 | `TypeFloat` | full | decimal input; the codec takes its width from `Encoding` (KNX 2-byte DPT-9, or IEEE-754 Single) and refuses an unknown width |
-| `TypeText` | full | text input |
+| `TypeText` | full | text input; the image writes its ASCII characters and zero bytes to the end of the field, and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
 | `TypeColor` (RGB) | full | native colour picker, stores `#RRGGBB` |

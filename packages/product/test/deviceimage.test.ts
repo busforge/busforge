@@ -575,8 +575,10 @@ corpusTest("the relative images of the full download and the parameter flash sta
     // At defaults every module slot is empty: the parameters only its channels place are left out
     // (DownloadInvisibleParameters="None").
     ["M-0048_A-493B-21-B471.xml.gz", "618de79d42321646/3c3dbc7ebbd077d1/18", "618de79d42321646/3c3dbc7ebbd077d1/18"],
-    ["M-0048_A-9071-20-F258-O00EF.xml.gz", "46cbaee9e105624c/92067062ffcf6d7e/2993", "46cbaee9e105624c/92067062ffcf6d7e/2993"],
-    ["M-0083_A-0137-20-7EB2.xml.gz", "1e314970f1fcd316/ec139466568e418e/249", "1e314970f1fcd316/ec139466568e418e/249"],
+    // The two 8-byte text fields at 3136 (empty) and 3144 (admin password "dali") are owned and hold their
+    // characters, as ETS's image of its full download does (private corpus
+    // captures/dali-ets6log-fulldownload-real.txt l. 581: 00×8, 64 61 6c 69 00 00 00 00).
+    ["M-0048_A-9071-20-F258-O00EF.xml.gz", "b1cee59d8c958946/1f42e96742fba59f/3009", "b1cee59d8c958946/1f42e96742fba59f/3009"],
     ["M-0085_A-0072-30-69AA.xml.gz", "92c7b74b07859d64/50280f1974b73b94/229", "0637574cc5dee1f2/89a5a7b7cbcadf73/158"],
     ["M-0162_A-0004-11-F245.xml.gz", "193046a5b142618e/1ac1e7503513d72a/163", "193046a5b142618e/1ac1e7503513d72a/163"],
   ];
@@ -586,6 +588,17 @@ corpusTest("the relative images of the full download and the parameter flash sta
     const r = (own: boolean) => { const t = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst, ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };
     expect([f, r(true), r(false)]).toEqual([f, full, surgical]);
   }
+  // MDT IP Interface/Router: its <Data> holds other text in its text fields than their defaults encode to ("MDT KNX
+  // IP-Interface" where the default is "MDT IP Interface mit IPRouting", 30 bytes in a 30-byte field;
+  // "Statuselement00" where it is ""). No ETS capture shows which ETS writes: refused (codec.test.ts "text parameters").
+  const ip = parseAppConfig(readRealFixture("M-0083_A-0137-20-7EB2.xml.gz"));
+  for (const own of [true, false]) {
+    expect(() => buildRelativeSegmentTarget(ip, new Map(), 4, { ownIdleUnionDefaults: own })).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
+  }
+  // The read-back's build leaves those fields out of the comparison and compares the rest.
+  const rb = buildRelativeSegmentTarget(ip, new Map(), 4, { textRefusals: "skip" })!;
+  expect(rb.owned.slice(71, 101).every((m) => m === 0)).toBe(true);
+  expect(rb.owned.filter(Boolean).length).toBeGreaterThan(0);
 });
 
 // GVS AMMA byte 64: "Output 3&4 function" (2 bits at bit offset 0) shares the byte with that

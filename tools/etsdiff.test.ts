@@ -1783,3 +1783,152 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
     });
   }
 });
+
+// ETS 6 downloads of the Theben DALI-Gateway KNX plus (System B, not secured) on the house unit, private corpus captures/dali-*:
+// a real full download after ETS unloaded the application (dali-ets-fulldownload-real.log), a partial download after
+// group 16's "Time for Dimming" (P-781, offset 782) went from 10 s to 6 s, one after linking the unlinked object 458
+// ("Group 16, Status") to the test group address 15/7/250, and one that reverted both. The configuration is the
+// project's (captures/dali-gateway-unit-fulldownload.json, read before the first download), the unit held ETS's image
+// throughout.
+corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) against ETS", () => {
+  const xml = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const fx = JSON.parse(captureText("dali-gateway-unit-fulldownload.json")) as {
+    ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: [number, ComObjInstanceOverride][];
+    segments: Record<string, { at: number; hex: string }>;
+  };
+  const ia = iaToNum(fx.ia);
+  const TIME_FOR_DIMMING = { ref: "M-0048_A-9071-20-F258-O00EF_P-781_R-832", from: "20", to: "12", offset: 782 }; // half seconds
+  const LINKED = 458;
+  const PROGRAM_ID = Buffer.from("0048907120", "hex");
+  const APP_AT = 0x5000;
+  const build = (params: Map<string, string>, links: typeof fx.links) => classify(cfg).planFullDownload(cfg.mask, {
+    ia: fx.ia, params, links, moduleInstances: fx.instances, comObjectOverrides: new Map(fx.overrides), proc,
+  });
+  const params = new Map(fx.params);
+  const full = build(params, fx.links);
+  const segment = (b: typeof full, lsm: number) => b.segments.find((s) => s.lsm === lsm)!.image;
+  const asMap = (img: Buffer) => new Map(Array.from(img, (b, i) => [i, b] as [number, number]));
+  const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+  const unit = (lsm: number) => Buffer.from(fx.segments[lsm].hex, "hex");
+  const withLink = [...fx.links, { comObjNum: LINKED, gaRaws: [parseGa("15/7/250")] }];
+  // ETS switches the unit into verify mode (object 0 PID 14 = 04) before its first memory write; Busforge's full
+  // download does the same (its verifyMode step), its partial flashes read each write back (VERIFY_MODE above).
+  const etsBracket = (file: string) => systemBCaptureBracket(file, ia).filter((st) => st !== "prop 0/14");
+
+  test("the configuration is the project's: the parameter changed is at ETS's value before it, the object unlinked", () => {
+    expect(buildDeviceConfig(cfg, params, undefined, fx.instances).imageValues.get(TIME_FOR_DIMMING.ref)).toBe(TIME_FOR_DIMMING.from);
+    expect(fx.links.some((l) => l.comObjNum === LINKED)).toBe(false);
+  });
+
+  // ETS's image (its log, RelMemory(4) row 0C40, l. 581) holds the admin password P-817 as "dali" and four zero bytes.
+  // Of the application segment it lists the bytes some parameter covers, which are exactly the bytes Busforge's image
+  // owns; the 143 others ("--") keep the allocation's fill 0, which Busforge's image holds there.
+  test("full download: Busforge's four segments are ETS's image, byte for byte, the admin password's text included", () => {
+    const ets = relImage("dali-ets6log-fulldownload-real.txt");
+    for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(full, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+    const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: fx.instances, ownIdleUnionDefaults: true })!;
+    const owned = new Map([...asMap(segment(full, 4))].filter(([o]) => target.owned[o]));
+    expect(sorted(owned)).toEqual(sorted(ets.get(4)!));
+    expect([...asMap(segment(full, 4))].filter(([o, b]) => !target.owned[o] && b !== 0)).toEqual([]);
+    expect(segment(full, 4).subarray(3144, 3152).toString("hex")).toBe("64616c6900000000");
+  });
+
+  // On the wire both sides write the tables whole. Of the application, ETS writes its image's bytes but the fill-0
+  // bytes at its start and end, Busforge the runs sparseRuns leaves (fill runs of 12 bytes and more skipped, bytes no
+  // parameter covers included): the bytes only one side writes are all 0, the allocation's fill, so the unit ends
+  // the same (docs/roadmap.md, the System B write set).
+  test("full download: every byte ETS wrote on the wire is Busforge's, the rest is the fill, and the unit held this image before", () => {
+    const cap = parseCapture(captureText("dali-ets-fulldownload-real.log"), ia);
+    const refs = reportedTableReferences(cap);
+    const r = compareSegments(full.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
+    expect(r.segments.map((s) => [s.lsm, s.divergences.length])).toEqual([[4, 0], [3, 0], [2, 0], [1, 0]]);
+    expect(r.unattributed).toEqual([]);
+    const wire = memoryImage(cap.writes);
+    const ours = new Map<number, number>();
+    for (const st of full.plan) if (st.op === "writeSegment") st.bytes.forEach((b, i) => ours.set(refs.get(st.lsm)! + (st.offset ?? 0) + i, b));
+    expect([...wire].filter(([a, b]) => ours.has(a) && ours.get(a) !== b)).toEqual([]);
+    expect([...wire].filter(([a, b]) => !ours.has(a) && b !== 0)).toEqual([]);
+    expect([...ours].filter(([a, b]) => !wire.has(a) && b !== 0)).toEqual([]);
+    for (const lsm of [4, 3, 2, 1]) expect([lsm, segment(full, lsm).equals(unit(lsm))]).toEqual([lsm, true]);
+  });
+
+  test("full download: ETS's bracket, the PEI program unloaded first, the application allocated with fill 0, the plain restart", () => {
+    const ets = etsBracket("dali-ets-fulldownload-real.log");
+    expect(systemBCaptureBracket("dali-ets-fulldownload-real.log", ia).filter((st) => st === "prop 0/14")).toEqual(["prop 0/14"]);
+    expect(full.plan.filter((st) => st.op === "verifyMode" && st.on).length).toBe(1);
+    expect(systemBPlanBracket(full.plan)).toEqual(ets);
+    expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
+    expect(ets).toContain("alloc:4:3152:1:0");
+    expect(ets.at(-1)).toBe("restart:80");
+  });
+
+  const held = segment(full, 4);
+  const parFlash = (values: Map<string, string>, current: Buffer) => {
+    const target = buildRelativeSegmentTarget(cfg, values, 4, { moduleInstances: fx.instances, ownIdleUnionDefaults: true })!;
+    const { image } = mergeRelativeTarget(current, target);
+    const ours = new Map<number, number>();
+    for (const r of ownedRuns(image, target.owned)) r.bytes.forEach((b, i) => ours.set(r.offset + i, b));
+    const plan = withClosing(withConfirmedRestart(planRelativeParFlash(4, image, target.owned, APP_AT, PROGRAM_ID, true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+    return { ours, image, plan };
+  };
+  const changed = new Map(params).set(TIME_FOR_DIMMING.ref, TIME_FOR_DIMMING.to);
+
+  // ETS's parameter download is differential (PreferPartialDownloadIfApplicationLoaded; dali-ets6log-partial-params.txt:
+  // "removed 3008 identical bytes"): of its 3009 owned bytes it writes the one that differs from its record of the unit,
+  // 0x530E = 0C (dali-ets-partial-params.log). Busforge's parameter flash writes every owned byte; all but that one
+  // carry the unit's value (docs/roadmap.md, the System B write set).
+  test("parameter flash: the byte ETS changes, with its value, the others as the unit holds them, in ETS's bracket", () => {
+    const { ours, plan } = parFlash(changed, held);
+    const ets = relImage("dali-ets6log-partial-params.txt").get(4)!;
+    expect(sorted(ets)).toEqual([[TIME_FOR_DIMMING.offset, 12]]);
+    expect([...ours].filter(([o, b]) => held[o] !== b)).toEqual(sorted(ets));
+    const wire = memoryImage(parseCapture(captureText("dali-ets-partial-params.log"), ia).writes);
+    expect(sorted(wire)).toEqual([[APP_AT + TIME_FOR_DIMMING.offset, 12]]);
+    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-params.log"));
+  });
+
+  test("group-address flash: ETS's tables and com-object table, in ETS's bracket", () => {
+    const linked = build(params, withLink);
+    const ets = relImage("dali-ets6log-partial-links.txt");
+    for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(linked, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+    const plan = withClosing(withConfirmedRestart(planSystemBGaFlash({ addr: segment(linked, 1), assoc: segment(linked, 2), comObj: segment(linked, 3) }, true, false), proc.secureEnabled), proc, "grp");
+    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-links.log"));
+  });
+
+  // ETS reverts both changes in one partial download, one bracket over all four objects; Busforge reverts them with its
+  // parameter flash and its group-address flash (bytes here) or with its structural flash (next test).
+  // ETS's revert is differential as well ("removed 3008 identical bytes"): 0x530E = 14 back.
+  test("revert: the parameter byte and the tables ETS's revert holds", () => {
+    const before = parFlash(changed, held).image;
+    const { ours } = parFlash(params, before);
+    const ets = relImage("dali-ets6log-partial-revert.txt");
+    expect(sorted(ets.get(4)!)).toEqual([[TIME_FOR_DIMMING.offset, held[TIME_FOR_DIMMING.offset]]]);
+    expect([...ours].filter(([o, b]) => before[o] !== b)).toEqual(sorted(ets.get(4)!));
+    for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(full, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+  });
+
+  test("structural flash of the revert: ETS's bracket, and every byte of ETS's revert with its value", () => {
+    const unitParams = parFlash(changed, held).image;
+    const unitComObj = segment(build(params, withLink), 3);
+    const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: fx.instances, ownIdleUnionDefaults: true })!;
+    const { image } = mergeRelativeTarget(unitParams, target);
+    const comObj = segment(full, 3);
+    const plan = withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
+      params: { image, owned: target.owned, keptAt: APP_AT },
+      comObj: { image: comObj, owned: differingBytes(comObj, unitComObj), keptAt: 0x4000 },
+      addr: segment(full, 1), assoc: segment(full, 2),
+    }, PROGRAM_ID, true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-revert.log"));
+    const ets = relImage("dali-ets6log-partial-revert.txt");
+    const written = (lsm: number) => new Map(plan.flatMap((st) => (st.op === "writeSegmentOwned" && st.lsm === lsm
+      ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number])) : [])));
+    expect([...written(4)].filter(([o, b]) => unitParams[o] !== b)).toEqual(sorted(ets.get(4)!));
+    const com = written(3);
+    expect([...com].filter(([o, b]) => ets.get(3)!.get(o) !== b)).toEqual([]);
+    expect([...ets.get(3)!].filter(([o, b]) => unitComObj[o] !== b && !com.has(o))).toEqual([]);
+    const whole = (lsm: number) => plan.flatMap((st) => (st.op === "writeSegment" && st.lsm === lsm ? [asMap(st.bytes)] : []));
+    for (const lsm of [2, 1]) expect([lsm, whole(lsm).map(sorted)]).toEqual([lsm, [sorted(ets.get(lsm)!)]]);
+  });
+});

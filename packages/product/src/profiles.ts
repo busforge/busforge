@@ -110,6 +110,18 @@ function foldDeviceValues(
   }
 }
 
+// A text field the read-back's build left unowned (textRefusals "skip": its byte layout is not
+// shown by any capture) is compared neither way: its ref leaves the device values, so the read
+// keeps the baseline it had instead of reporting the field in sync.
+function dropUnownedText(model: AppModel, vals: Map<string, string>, segOf: (p: { codeSegment?: string }) => ReadonlyArray<number> | undefined): void {
+  for (const ref of model.refs.values()) {
+    const p = model.params.get(ref.paramId);
+    if (!p || p.offset === undefined || model.types.get(p.typeId)?.base !== "Text") continue;
+    const owned = segOf(p);
+    if (owned && !owned[p.offset]) vals.delete(ref.id);
+  }
+}
+
 // Which refs a read-back records drift for: the ones the project's configuration shows, plus the
 // ones the DEVICE's configuration shows. Visibility depends on parameter values (a sensor type set
 // to "none" hides every setting of that sensor), so relevance from the project alone skips exactly
@@ -1038,13 +1050,15 @@ export class SystemBProfile extends DeviceProfile {
     // target (not the legacy full-image build), so read-back compares against exactly the bytes
     // we would put on the device, and union branches resolve to the active one instead of the
     // last writer of an overlapping region. Same shape as the System 7 path below.
-    const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances }) : null;
+    // A text field the codec refuses is left out of the comparison here (textRefusals), not the whole read.
+    const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances, textRefusals: "skip" }) : null;
     if (target) {
       // loadedTableAddr, not tableAddr: a device that was never programmed points its parameter
       // segment at address 0, and reading there would decode whatever bytes happen to live at the
       // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
       const img = await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
       const deviceVals = decodeParameterImage(model, LSM, img);
+      dropUnownedText(model, deviceVals, (p) => (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === LSM ? target.owned : undefined));
       const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
       foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, device?.relevant);
       deviceConfig = device?.deviceConfig;
@@ -1393,7 +1407,7 @@ export class System7Profile extends DeviceProfile {
     const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     const instances = ctx.moduleInstances?.length ? ctx.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, ctx.liveParams) : []);
     const absModel = toAppModel(cfg, { includeUnions: true, instances });
-    const absoluteTargets = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { moduleInstances: ctx.moduleInstances });
+    const absoluteTargets = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { moduleInstances: ctx.moduleInstances, textRefusals: "skip" });
 
     // memRead reports progress in BYTES; accumulate across segments for a whole-read bar.
     const totalBytes = absoluteTargets.reduce((n, t) => n + t.size, 0);
@@ -1405,6 +1419,7 @@ export class System7Profile extends DeviceProfile {
       for (const [r, v] of decodeAbsoluteImage(absModel, t.id, t.bytes)) projectVals.set(r, v);
       doneBytes += t.size;
     }
+    for (const t of absoluteTargets) dropUnownedText(absModel, deviceVals, (p) => (p.codeSegment === t.id ? t.owned : undefined));
     const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
     foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, device?.relevant);
 

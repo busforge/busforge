@@ -61,11 +61,11 @@ for (const m of manifest.devices) {
       const app = parseAppConfig(row.xml);
       const mi = db.query("SELECT instances FROM device_modules WHERE project_id=? AND device_id=?").get(projectId, dev.instance_id) as any;
       const moduleInstances: ModuleInstance[] = mi ? JSON.parse(mi.instances) : [];
-      const target = buildRelativeSegmentTarget(app, values, 4, { moduleInstances });
+      const target = buildRelativeSegmentTarget(app, values, 4, { moduleInstances, textRefusals: "skip" });
       if (target) built.set("LSM4", { bytes: target.bytes, owned: target.owned });
     } catch (e) { console.log(`${m.ia} build error: ${(e as Error).message}`); }
   } else {
-    try { const app = parseAppConfig(row.xml); for (const t of buildAbsoluteSegmentTargets(app, values)) built.set(t.id.split("_").pop()!, { bytes: t.bytes, owned: t.owned }); }
+    try { const app = parseAppConfig(row.xml); for (const t of buildAbsoluteSegmentTargets(app, values, { textRefusals: "skip" })) built.set(t.id.split("_").pop()!, { bytes: t.bytes, owned: t.owned }); }
     catch (e) { console.log(`${m.ia} build error: ${(e as Error).message}`); } // record as NO-BUILD below, do not abort the run
   }
 

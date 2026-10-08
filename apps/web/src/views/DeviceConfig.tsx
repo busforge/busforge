@@ -146,8 +146,8 @@ export function DeviceConfig() {
 
   // Honest read-back disclosure: every way the shown change state was NOT confirmed
   // against the hardware. Device-class limits (params/links unsupported) plus the
-  // type-level blind spot: text and colour parameters are not image-representable, so
-  // read-back can never verify them even on an otherwise supported device.
+  // type-level blind spot: colour parameters are not image-representable, and a text parameter only
+  // where its byte layout is known, so read-back cannot verify them on an otherwise supported device.
   const rb = view?.readbackSupport;
   const hasTextColorParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param" && (i.param.control === "text" || i.param.control === "color")));
   const readbackNotes: string[] = [];

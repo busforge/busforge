@@ -264,8 +264,8 @@
     "modelHash": "7dc46ecacf60375e",
     "lsms": {
       "4": {
-        "build": "7075e1e93df62a62",
-        "decodeHash": "169f8cece010fd90"
+        "build": "faeca33fa0042e99",
+        "decodeHash": "cf93496c055a9ea7"
       }
     }
   },
@@ -409,8 +409,7 @@
     "modelHash": "513df9efe4134d7c",
     "lsms": {
       "4": {
-        "build": "a1e2ab1450fe6df7",
-        "decodeHash": "2bc4a7d3ad3e9fe5"
+        "refused": "PARAM_TEXT_UNSUPPORTED"
       }
     }
   },

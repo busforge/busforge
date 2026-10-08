@@ -359,9 +359,10 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
 
 // Parameter refs a flash can never write, among the device's STORED overrides (the rows
 // resetParamBase would adopt): memory-backed params whose type base the image codec does
-// not represent (text/time/colour/other; IMAGE_WRITABLE_BASES mirrors encode()).
+// not represent (colour/other; IMAGE_WRITABLE_BASES mirrors encode()). A text param whose
+// write is refused is not here: the flash that would write it is refused, so nothing is adopted.
 // Resolved on the flat application model, not the visibility-filtered view, so a
-// currently-hidden text param is covered too. A ref we cannot resolve at all is kept
+// currently-hidden param is covered too. A ref we cannot resolve at all is kept
 // conservatively: we cannot prove the flash wrote it. Memory-less params are NOT kept:
 // there is nothing on the device to program or drift, so adopting them is honest.
 // `params` lets the caller pass a snapshot read once before a flash, so the "unwritten"

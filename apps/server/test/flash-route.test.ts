@@ -179,18 +179,16 @@ corpusDescribe("POST /flash: baseline adoption is gated on verified", () => {
 });
 
 corpusDescribe("POST /flash: keepDrift wiring for params the flash can never write", () => {
-  test("a memory-backed TEXT override keeps its changed chip across a verified flash; a VALUE override is adopted", async () => {
+  // The flash route's adoption, with the parameter flash itself mocked: what the image codec cannot represent keeps
+  // its changed chip, what it writes is adopted after a verified flash.
+  const flashTwo = async (xml: string, refs: [string, string][]) => {
     const state = freshState();
-    // M-0083 A-0137 (System B) carries memory-backed TypeText params. The image codec
-    // cannot represent text, so a flash never writes them; adopting such an override
-    // into the baseline would fake it as programmed.
-    const a0137 = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
     const form = new FormData();
     form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));
     form.set("password", "tester12");
     const imp = (await (await handleApi(req("/api/projects/import", { method: "POST", body: form }), state))!.json()) as any;
     const proj = (await (await handleApi(req(`/api/projects/${imp.id}`), state))!.json()) as any;
-    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [a0137, "M-TEST_A-1"]);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, "M-TEST_A-1"]);
     const conn = (await (await handleApi(req("/api/connections", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }),
@@ -200,21 +198,31 @@ corpusDescribe("POST /flash: keepDrift wiring for params the flash can never wri
     }), state);
     const projectId = imp.id, deviceId = proj.devices[0].id;
     await acknowledgeUntested(state, projectId, deviceId);
-
-    const TEXT_REF = "M-0083_A-0137-20-7EB2_P-162_R-162";  // memory-backed TypeText (unwritable)
-    const VALUE_REF = "M-0083_A-0137-20-7EB2_P-1_R-1";     // memory-backed Value (writable)
-    setDeviceParam(state.db, projectId, deviceId, TEXT_REF, "Kanalname");
-    setDeviceParam(state.db, projectId, deviceId, VALUE_REF, "1");
+    for (const [ref, v] of refs) setDeviceParam(state.db, projectId, deviceId, ref, v);
     const before = getDeviceChangedKeys(state.db, projectId, deviceId).params;
-    expect(before.has(TEXT_REF)).toBe(true);
-    expect(before.has(VALUE_REF)).toBe(true);
-
+    for (const [ref] of refs) expect(before.has(ref)).toBe(true);
     paramFlashImpl = async () => flashed(true);
     await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    return getDeviceChangedKeys(state.db, projectId, deviceId).params;
+  };
 
-    const after = getDeviceChangedKeys(state.db, projectId, deviceId).params;
+  test("a memory-backed COLOUR override keeps its changed chip across a verified flash; a VALUE override is adopted", async () => {
+    // No catalogue of the corpus has a memory-backed parameter of a type the codec does not represent, so the
+    // MDT A-0137's 30-byte text type is declared a colour here: memory-backed, never written.
+    const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz").replace('<TypeText SizeInBit="240" />', '<TypeColor Space="RGB" />');
+    const COLOUR_REF = "M-0083_A-0137-20-7EB2_P-162_R-162";
+    const VALUE_REF = "M-0083_A-0137-20-7EB2_P-1_R-1";
+    const after = await flashTwo(xml, [[COLOUR_REF, "#102030"], [VALUE_REF, "1"]]);
     expect(after.has(VALUE_REF)).toBe(false); // written and verified -> adopted
-    expect(after.has(TEXT_REF)).toBe(true);   // never written -> the drift chip survives
+    expect(after.has(COLOUR_REF)).toBe(true); // never written -> the drift chip survives
+  });
+
+  test("a memory-backed TEXT override is adopted after a verified flash, like a VALUE override", async () => {
+    const TEXT_REF = "M-0048_A-9071-20-F258-O00EF_P-817_R-868"; // the DALI-Gateway's admin password, 8 bytes
+    const VALUE_REF = "M-0048_A-9071-20-F258-O00EF_P-1_R-1";
+    const after = await flashTwo(catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), [[TEXT_REF, "admin"], [VALUE_REF, "1"]]);
+    expect(after.has(VALUE_REF)).toBe(false);
+    expect(after.has(TEXT_REF)).toBe(false);
   });
 
   test("a HIDDEN (inactive) override with a writable type keeps its drift chip; a visible one is adopted", async () => {

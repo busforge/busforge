@@ -150,7 +150,8 @@ mark every byte they actually wrote as **owned**.
 | **Left alone** | manufacturer default, an erased `0xFF` gap, an inactive-branch parameter, an ETS-computed table | never written |
 
 Ownership is gated on the encoder actually writing: a type the image does not represent
-(text, time, color) or a malformed value writes nothing and claims no bytes.
+(color, other) or a malformed value writes nothing and claims no bytes; a text value the codec
+refuses fails the build (below).
 
 A second, narrower mask, `verify`, is the subset a post-flash read-back may assert. It
 excludes bytes owned only by `Access="None"` device-internal markers (download-recognition
@@ -207,7 +208,8 @@ that preserves a working device and one that corrupts a channel.
   owned and written, as ETS's image holds it. A value with no declared bytes, or bytes that do not
   fill the type from bit 0, is refused (`PARAM_BINARY_VALUE_UNDECLARED`).
 - **An integer parameter wider than 6 bytes is never owned.** The integer codec caps there
-  (`MAX_INT_BYTES`).
+  (`MAX_INT_BYTES`). A text parameter of any width is owned like a plain parameter and writes its
+  characters (below).
 - **Where the application declares `<Options DownloadInvisibleParameters="None">`, an inactive plain
   parameter in a branch the configuration rejects is not owned**: one every placement of which lies
   in a `<when>` of a `choose` that was evaluated and not taken (a module slot left empty, a channel
@@ -268,10 +270,21 @@ rather than writing a wrong-sized value.
 
 ## Which parameter types reach the image at all
 
-Only `Value` (enum/restriction), `Number`, `Float` and `IPAddress` are encoded into the
-parameter image. Text, time-of-day, color and unrecognised bases write nothing and therefore
-own nothing, so a numeric-looking text value can never be written as a bogus integer. Three
-type details are easy to get wrong:
+Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress` and `Text` are encoded into the
+parameter image. Time-of-day, color and unrecognised bases write nothing and therefore own
+nothing. Four type details are easy to get wrong:
+
+- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B).
+  ETS's image of the Theben DALI-Gateway KNX plus's full download holds its admin password at its
+  default "dali" in its 8-byte field as `64 61 6c 69 00 00 00 00`, and an empty text field as zeros;
+  no capture shows a changed text value. A text value is text, never a number: "123" is
+  `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
+  `PARAM_TEXT_TOO_LONG`): a character beyond ASCII, a value that leaves no zero byte behind it, a
+  field that is not whole bytes from bit 0, a field whose `<Data>` holds other bytes than the
+  parameter's default encodes to (the MDT IP Interface/Router: "Statuselement00" where the default
+  is empty), and any active text parameter of an absolute-segment (System 7) application, since no
+  System 7 capture shows one. A read-back leaves such a field out of its comparison instead of
+  refusing the whole read.
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as

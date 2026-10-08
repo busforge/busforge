@@ -37,8 +37,12 @@ function diffSnapshot(a: AppSnapshot | undefined, b: AppSnapshot): string[] {
     const oa = a.lsms[lsm], ob = b.lsms[lsm];
     if (!oa) { out.push(`  lsm ${lsm}: ADDED`); continue; }
     if (!ob) { out.push(`  lsm ${lsm}: REMOVED`); continue; }
-    if (oa.build !== ob.build) out.push(`  lsm ${lsm}: image bytes CHANGED`);
-    if (oa.decodeHash !== ob.decodeHash) out.push(`  lsm ${lsm}: decoded read-back CHANGED`);
+    const ra = "refused" in oa ? oa.refused : undefined, rb = "refused" in ob ? ob.refused : undefined;
+    if (ra !== rb) { out.push(`  lsm ${lsm}: refusal ${ra ?? "none"} -> ${rb ?? "none"}`); continue; }
+    if ("build" in oa && "build" in ob) {
+      if (oa.build !== ob.build) out.push(`  lsm ${lsm}: image bytes CHANGED`);
+      if (oa.decodeHash !== ob.decodeHash) out.push(`  lsm ${lsm}: decoded read-back CHANGED`);
+    }
   }
   for (const seg of new Set([...Object.keys(a.absolute ?? {}), ...Object.keys(b.absolute ?? {})])) {
     const oa = a.absolute?.[seg], ob = b.absolute?.[seg];

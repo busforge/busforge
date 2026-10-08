@@ -57,7 +57,7 @@ test("the plan writes only active-parameter bytes, never the inactive param or t
 // active 32-bit text param at offset 0; P-2 is an active numeric param at offset 4.
 const textXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0006"><ApplicationPrograms>
-<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Text Owns Nothing">
+<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Text On An Absolute Segment">
 <Static>
 <ParameterTypes>
 <ParameterType Id="M-0006_A-0001-01-0001_PT-T"><TypeText SizeInBit="32"/></ParameterType>
@@ -78,13 +78,13 @@ const textXml = `<?xml version="1.0" encoding="utf-8"?>
 </ParameterBlock></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
-test("a text parameter owns no bytes: only the numeric param is scheduled", () => {
-  const plan = planAbsoluteSegmentFlash(parseAppConfig(textXml), new Map());
-  const seg = plan.segments[0];
-  // Offsets 0-3 (the text param) are NOT owned; only offset 4 (the numeric param) is.
-  expect(seg.ownedBytes).toBe(1);
-  expect(seg.runs.map((r) => r.address)).toEqual([104]);
-  expect([...seg.runs[0].bytes]).toEqual([3]);
+// No ETS capture of a System 7 product shows an active text parameter (the Meteodata 140 S's are inactive in every
+// captured configuration): an absolute-segment build refuses one; the read-back's build
+// leaves it out of the comparison.
+test("an active text parameter on an absolute segment is refused; the read-back target leaves it unowned", () => {
+  expect(() => planAbsoluteSegmentFlash(parseAppConfig(textXml), new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
+  const [t] = buildAbsoluteSegmentTargets(parseAppConfig(textXml), new Map(), { textRefusals: "skip" });
+  expect(t.owned.map((m) => (m ? 1 : 0))).toEqual([0, 0, 0, 0, 1]);
 });
 
 test("with a device read-back, only owned bytes that actually differ are scheduled", () => {

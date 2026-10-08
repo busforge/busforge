@@ -77,8 +77,8 @@ describe("parameter image codec", () => {
     expect(out.get("R-P-u8")).toBe("200");
     expect(out.get("R-P-s16")).toBe("-1000");
     expect(out.get("R-P-float")).toBe("21.5");
-    // Text params are not represented in the image and must not be decoded.
-    expect(out.has("R-P-text")).toBe(false);
+    // The text param decodes to its characters (codec.test.ts "text parameters", evidence there).
+    expect(out.get("R-P-text")).toBe("x");
   });
 
   test("decodes manufacturer defaults when no instance value is set", () => {

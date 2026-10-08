@@ -4,7 +4,7 @@ import type { AppModel, ParamType, Param, ParamRef, ParamBase } from "../src/app
 
 // Exhaustive codec coverage for the image path: every integer width and sign, the
 // bitfield placement (non-zero bit offsets), both KNX float encodings, the
-// not-represented types (Text/Other), and multi-segment routing. The real-catalogue
+// text parameters, the not-represented types (Other), and multi-segment routing. The real-catalogue
 // suite pins manufacturer data; this pins the byte-level contract precisely with
 // hand-built models, including paths real fixtures may not exercise.
 
@@ -82,35 +82,88 @@ describe("float encodings", () => {
 });
 
 describe("types not represented in the image are neither written nor decoded", () => {
-  const def = Buffer.alloc(SEG); def.fill(0xee, 0, 8); // recognizable default
+  const def = Buffer.alloc(SEG); def.fill(0xee, 0, 18); // recognizable default
   const m = mk(
-    { Ttext: { base: "Text", sizeInBit: 112 }, Tother: { base: "Other", sizeInBit: 32 } },
-    { Ptext: { type: "Ttext", offset: 0, value: "hello" }, Pother: { type: "Tother", offset: 14, value: "abc" } },
+    { Tother: { base: "Other", sizeInBit: 32 } },
+    { Pother: { type: "Tother", offset: 14, value: "abc" } },
     [{ id: "S", lsm: 4, size: SEG, data: def }],
   );
-  test("Text/Other params leave their bytes at the segment default and are absent from decode", () => {
+  test("Other params leave their bytes at the segment default and are absent from decode", () => {
     const img = buildParameterImage(m, 4, new Map());
-    expect(img.subarray(0, 8).toString("hex")).toBe("eeeeeeeeeeeeeeee"); // unwritten
-    const decoded = decodeParameterImage(m, 4, img);
-    expect(decoded.has("R-Ptext")).toBe(false);
-    expect(decoded.has("R-Pother")).toBe(false);
+    expect(img.subarray(14, 18).toString("hex")).toBe("eeeeeeee"); // unwritten
+    expect(decodeParameterImage(m, 4, img).has("R-Pother")).toBe(false);
   });
+});
 
-  // Regression for the MDT IP-interface crash: a Text param whose value coerces to a
-  // finite number (the empty string -> 0, or a numeric-looking string) must NOT be
-  // integer-encoded. The old encoder did Number("")===0 and tried to write a wide
-  // integer (e.g. 30 bytes for a 240-bit text), throwing and aborting the flash.
-  test("a Text param with a numeric-looking or empty value is never integer-encoded (no crash)", () => {
-    const big = mk(
-      { Ttext240: { base: "Text", sizeInBit: 240 } },
-      { Pempty: { type: "Ttext240", offset: 0, value: "" }, Pnum: { type: "Ttext240", offset: 30, value: "123" } },
-      [{ id: "S", lsm: 4, size: SEG, data: Buffer.alloc(SEG).fill(0xcd) }],
-    );
-    let img!: Buffer;
-    expect(() => { img = buildParameterImage(big, 4, new Map()); }).not.toThrow();
-    // both text fields stay at the segment default; neither value leaked into bytes
-    expect(img.subarray(0, 60).every((b) => b === 0xcd)).toBe(true);
-    expect(decodeParameterImage(big, 4, img).size).toBe(0);
+// A text parameter's field holds its ASCII characters and zero bytes to the end. Evidence: ETS's image of
+// the Theben DALI-Gateway KNX plus's full download, admin password "dali" in 8 bytes = 64 61 6c 69 00 00 00 00
+// (private corpus captures/dali-ets6log-fulldownload-real.txt l. 581; on the wire dali-ets-fulldownload-real.log
+// writes 64 61 6c 69 at 0x5C48). Every other expectation here is a refusal of what no capture shows.
+describe("text parameters", () => {
+  const m = () => mk(
+    { Ttext: { base: "Text", sizeInBit: 64 }, Ttext240: { base: "Text", sizeInBit: 240 } },
+    { Ptext: { type: "Ttext", offset: 0, value: "dali" }, Pempty: { type: "Ttext240", offset: 8, value: "" }, Pnum: { type: "Ttext240", offset: 38, value: "123" } },
+    [{ id: "S", lsm: 4, size: 68, data: Buffer.alloc(68) }], // the fields start empty, as in the DALI capture
+  );
+  // The DALI capture's field: "dali" and four zero bytes. Its empty text field P-822 at +3136..3143 is
+  // all zero in the same row (l. 581).
+  test("the characters, then zero bytes to the end of the field; an empty value is all zero", () => {
+    const img = buildParameterImage(m(), 4, new Map());
+    expect(img.subarray(0, 8).toString("hex")).toBe("64616c6900000000");
+    expect(img.subarray(8, 38).every((b) => b === 0)).toBe(true);
+  });
+  // Regression for the MDT IP-interface crash: a numeric-looking text value is text, never an integer
+  // (the old encoder did Number("123") and tried to write a 30-byte integer). Same rule as above.
+  test("a numeric-looking value is written as its characters", () => {
+    const img = buildParameterImage(m(), 4, new Map());
+    expect(img.subarray(38, 42).toString("hex")).toBe("31323300");
+    expect(img.subarray(42, 68).every((b) => b === 0)).toBe(true);
+  });
+  test("decode returns what encode wrote", () => {
+    expect(roundtrip(m(), { "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" })).toMatchObject({ "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" });
+  });
+  test("a field without a closing zero, with a byte beyond ASCII, or with bytes behind the zero, decodes to nothing", () => {
+    const img = Buffer.alloc(68);
+    img.write("12345678", 0, "latin1");
+    img.write("ab\0xyz", 38, "latin1");
+    img.write("K\xfcche", 8, "latin1");
+    const out = decodeParameterImage(m(), 4, img);
+    expect(out.has("R-Ptext")).toBe(false);
+    expect(out.has("R-Pempty")).toBe(false);
+    expect(out.has("R-Pnum")).toBe(false);
+  });
+  test("a value that leaves no closing zero byte is refused", () => {
+    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "1234567"]]))).not.toThrow();
+    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "12345678"]]))).toThrow(/at most 7/);
+  });
+  test("a character beyond ASCII, or a zero character, is refused", () => {
+    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "Küche"]]))).toThrow(/beyond ASCII/);
+    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "a\0b"]]))).toThrow(/zero character/);
+  });
+  // MDT A-0137's <Data> holds "Statuselement00" where the parameter's default is "": no capture shows which
+  // ETS writes. A <Data> that holds the default's own bytes is no conflict, whatever value is written.
+  test("a field whose <Data> disagrees with the parameter's default is refused, whatever the value", () => {
+    const filled = (data: string) => mk({ T: { base: "Text", sizeInBit: 64 } }, { P: { type: "T", offset: 0, value: "dali" } },
+      [{ id: "S", lsm: 4, size: 8, data: Buffer.from(data, "hex") }]);
+    expect(() => buildParameterImage(filled("5374617475730000"), 4, new Map())).toThrow(/holds 5374617475730000 in its field/);
+    expect(() => buildParameterImage(filled("5374617475730000"), 4, new Map([["R-P", "Status"]]))).toThrow(/holds 5374617475730000/);
+    expect(buildParameterImage(filled("64616c6900000000"), 4, new Map()).toString("hex")).toBe("64616c6900000000");
+    expect(buildParameterImage(filled("64616c6900000000"), 4, new Map([["R-P", "admin"]])).toString("hex")).toBe("61646d696e000000");
+  });
+  // The check reads the segment's <Data>, not the image being built: two refs of one parameter, one at a new value,
+  // pass in either order.
+  test("the <Data> check does not depend on the order the parameters are encoded in", () => {
+    for (const order of [["R1", "R2"], ["R2", "R1"]]) {
+      const m = mk({ T: { base: "Text", sizeInBit: 64 } }, { P: { type: "T", offset: 0, value: "dali" } });
+      m.refs = new Map(order.map((id) => [id, { id, paramId: "P" }]));
+      expect(() => buildParameterImage(m, 4, new Map([["R1", "admin"]]))).not.toThrow();
+    }
+  });
+  test("a field that is not whole bytes from bit 0 is refused", () => {
+    const odd = mk({ T: { base: "Text", sizeInBit: 12 } }, { P: { type: "T", offset: 0, value: "a" } });
+    expect(() => buildParameterImage(odd, 4, new Map())).toThrow(/no known byte layout/);
+    const shifted = mk({ T: { base: "Text", sizeInBit: 16 } }, { P: { type: "T", offset: 0, bit: 4, value: "a" } });
+    expect(() => buildParameterImage(shifted, 4, new Map())).toThrow(/no known byte layout/);
   });
 });
 

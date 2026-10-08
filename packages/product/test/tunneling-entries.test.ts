@@ -45,11 +45,14 @@ corpusDescribe("full download of an application with tunnelling entries", () => 
     expect(err).toMatchObject({ code: "FULL_DOWNLOAD_TUNNELING_ENTRIES" });
   });
 
-  test("the declaration alone decides: the same application without entries plans a download", () => {
+  // Past the tunnelling gate the plan reaches the parameter image, which this application's text fields refuse (its
+  // <Data> disagrees with their defaults; codec.test.ts "text parameters"). Without text fields it plans a download.
+  test("the declaration alone decides: the same application without entries reaches its parameter image", () => {
     const xml = ipXml.replace('MaxTunnelingUserEntries="4"', 'MaxTunnelingUserEntries="0"');
-    const cfg = parseAppConfig(xml);
-    expect(classify(cfg).capabilities().fullDownload).toBe(true);
-    expect(classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml) }).imageBytes).toBeGreaterThan(0);
+    const plan = (x: string) => { const cfg = parseAppConfig(x); return classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(x) }); };
+    expect(classify(parseAppConfig(xml)).capabilities().fullDownload).toBe(true);
+    expect(() => plan(xml)).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
+    expect(plan(xml.replace(/<TypeText [^>]*\/>/g, '<TypeColor Space="RGB" />')).imageBytes).toBeGreaterThan(0);
   });
 
   test.each(["four", "", " ", "-1", "1.5"])("a declaration %p that is not a non-negative integer counts as declaring entries", (v) => {

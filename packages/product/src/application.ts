@@ -32,8 +32,8 @@ export interface AppModel {
 const hex = (s: string) => parseInt(s, 16);
 
 // Map the config layer's richer type to the image codec's base: Float = DPT codec, Value/Number =
-// integer, BinaryValue = the chosen enumeration's bytes, IPAddress = four octets; everything else is
-// not represented in the image.
+// integer, BinaryValue = the chosen enumeration's bytes, IPAddress = four octets, Text = its characters;
+// everything else is not represented in the image.
 function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
   // TypeTime (durations/periods) has no float or enum semantics: ETS stores it in the
   // parameter image as a plain unsigned integer, so encode it as Number. The config

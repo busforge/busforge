@@ -115,10 +115,18 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         // Relative (System B): build from decoded defaults must reproduce the default image.
         const relModel = toAppModel(app, { instances });
         for (const lsm of new Set(relModel.segments.map((s) => s.lsm))) {
-          const def = buildParameterImage(relModel, lsm, new Map());
-          const stored = decodeParameterImage(relModel, lsm, def);
+          // A segment whose default image is refused for its text parameters (pinned in the snapshot test)
+          // round-trips every other parameter.
+          const pinned = golden[name].lsms[String(lsm)];
+          const refused = "refused" in pinned ? pinned.refused : undefined;
+          const m = refused
+            ? { ...relModel, params: new Map([...relModel.params].filter(([, p]) => relModel.types.get(p.typeId)?.base !== "Text")) }
+            : relModel;
+          if (refused) expect(() => buildParameterImage(relModel, lsm, new Map())).toThrow(expect.objectContaining({ code: refused }));
+          const def = buildParameterImage(m, lsm, new Map());
+          const stored = decodeParameterImage(m, lsm, def);
           // rebuilt == def is strictly stronger than decode(rebuilt) == stored, so assert the bytes.
-          expect(buildParameterImage(relModel, lsm, stored).equals(def)).toBe(true);
+          expect(buildParameterImage(m, lsm, stored).equals(def)).toBe(true);
           roundTripped += stored.size;
         }
 

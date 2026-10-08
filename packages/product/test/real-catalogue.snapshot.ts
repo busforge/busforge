@@ -5,6 +5,7 @@ import { parseApplication } from "../src/application.ts";
 import { buildParameterImage, decodeParameterImage } from "../src/image.ts";
 import { buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import { planAbsoluteSegmentFlash } from "../src/deviceflash.ts";
+import { ProductError } from "../src/errors.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 
 // Golden-master snapshot of a manufacturer ApplicationProgram, used to pin the
@@ -28,7 +29,8 @@ export const CONFIG_BASES = new Set(["Value", "BinaryValue", "Number", "Float", 
 export interface AppSnapshot {
   shape: { types: number; params: number; refs: number; comObjects: number; segments: number; hasModules: boolean };
   modelHash: string;
-  lsms: Record<string, { build: string; decodeHash: string }>;
+  // `refused`: the default image of that segment is refused with this code (a coded ProductError).
+  lsms: Record<string, { build: string; decodeHash: string } | { refused: string }>;
   // Absolute-segment (MV-0705) sections, present iff the app declares AbsoluteSegments.
   // Like `lsms`, these are stability locks, not correctness proofs: the hashes pin
   // "the default build/masks/plan have not changed", correctness is pinned separately
@@ -56,12 +58,14 @@ export function snapshot(xml: string): AppSnapshot {
   const segs = model.segments.map((s) => `${s.id}|${s.lsm}|${s.size}|${sha(s.data.toString("base64"))}`).sort();
   const modelHash = sha(JSON.stringify({ types, params, refs, segs }));
 
-  // Build a default image per segment and pin its bytes + read-back. A throw here is
-  // a real defect (the codec cannot place a real parameter), so it is NOT swallowed:
-  // the test fails loudly rather than recording the failure as the expected state.
+  // Build a default image per segment and pin its bytes + read-back. A refusal with a code is pinned
+  // as `refused`, so it cannot appear or vanish unnoticed; any other throw is a real defect (the codec
+  // cannot place a real parameter), so it is NOT swallowed and the test fails loudly.
   const lsms: AppSnapshot["lsms"] = {};
   for (const lsm of [...new Set(model.segments.map((s) => s.lsm))].sort((a, b) => a - b)) {
-    const img = buildParameterImage(model, lsm, new Map());
+    let img: Buffer;
+    try { img = buildParameterImage(model, lsm, new Map()); }
+    catch (e) { if (e instanceof ProductError) { lsms[String(lsm)] = { refused: e.code }; continue; } throw e; }
     // The comparator reproduces bare .sort() EXACTLY (it stringifies each entry to "refId,value"
     // and compares those). It is spelled out rather than left implicit because this hash is a
     // stability snapshot: change the order and the hash changes, which would read as "the codec
