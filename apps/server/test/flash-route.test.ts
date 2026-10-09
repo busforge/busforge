@@ -443,17 +443,48 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     } finally { downloadImpl = realDownload; }
   });
 
-  test("an interface whose family refuses every write anyway (MV-0012) keeps its family's SYSTEM1_LOAD_UNCAPTURED", async () => {
+  // The MDT IP Interface Secure (MV-0012) writes its tunnelling addresses itself (the KNXnet/IP object's PID 53, as
+  // ETS's capture shows), so its download is not refused for them; the route hands the device's KNXnet/IP settings
+  // from the project to the download and the parameter flash, and none where the project holds none.
+  test("a System 1 interface (MV-0012) is not refused for its tunnelling entries; its KNXnet/IP settings reach both writes", async () => {
     const a0138 = catalogueXml("M-0083_A-0138-21-F18E-O0072.xml.gz");
     expect(a0138).toContain('MaxTunnelingUserEntries="4"');
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0138);
-    downloadImpl = async () => { throw new Error("the full download must not be reached"); };
+    const seen: unknown[] = [];
+    downloadImpl = async (o) => { seen.push(o.knxIp); throw new Error("stop"); };
+    paramFlashImpl = async (o) => { seen.push(o.knxIp); throw new Error("stop"); };
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download`))!;
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as any).error.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    } finally { downloadImpl = realDownload; }
+      const run = async () => {
+        for (const route of ["download", "flash"]) {
+          const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`))!;
+          const body = (await res.json()) as any;
+          if (body.id) await state.queue.wait(body.id);
+        }
+      };
+      await run();
+      const settings = { instanceName: "", productName: "IP Interface", productNameTranslations: [], ipConfig: { Assign: "Fixed", IPAddress: "192.0.2.2" }, additionalAddresses: [255], securityAttributes: ["ToolKey"], toolKeyLoaded: true, busInterfaces: 0, installation: { Name: "" } };
+      state.db.run("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)", [projectId, deviceId, JSON.stringify(settings)]);
+      await run();
+      const ia = ((await (await handleApi(req(`/api/projects/${projectId}`), state))!.json()) as any).devices[0].ia;
+      expect(seen).toEqual([undefined, undefined, { ia, ...settings }, { ia, ...settings }]);
+    } finally { downloadImpl = realDownload; paramFlashImpl = realParamFlash; }
+  });
+
+  // The System 1 parameter download loads the security object, so a verified one records its fingerprint and the
+  // device no longer shows its security state as unknown.
+  test("a verified System 1 parameter download of a secure device records its security object", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, catalogueXml("M-0083_A-0138-21-F18E-O0072.xml.gz"));
+    putDeviceSecurity(state.db, projectId, [{ deviceId, toolKey: Buffer.alloc(16, 7), serialNumber: Buffer.alloc(6, 2), sequenceNumber: "1", source: "import" }], state.masterKey);
+    const security = async () => ((await (await handleApi(req(`/api/projects/${projectId}`), state))!.json()) as any).devices.find((d: any) => d.id === deviceId).changes.security;
+    expect(await security()).toBe("unknown");
+    paramFlashImpl = async () => flashed(true);
+    try {
+      const body = (await (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!.json()) as any;
+      await state.queue.wait(body.id);
+      expect(await security()).toBeFalsy();
+    } finally { paramFlashImpl = realParamFlash; }
   });
 
   test("a never-programmed one keeps its parameter and group-address flash", async () => {

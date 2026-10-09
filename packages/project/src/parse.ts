@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
+import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type DeviceKnxIp, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
 import { KnxprojError } from "./errors.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
@@ -53,7 +53,7 @@ export const manufacturerOf = (ref: string): number => {
   return m ? parseInt(m[1], 16) : 0;
 };
 
-export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map()): Project {
+export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const doc = p.parse(xml0) as XmlNode;
 
@@ -78,8 +78,9 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
   const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
   const { secureSenders, unresolvedSenders } = parseSecureSenders(doc, devices, busInterfaceIndex);
+  const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, doc, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
 
-  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
+  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
 }
 
 // The project's group-address style, as a level count. ETS stores GroupAddressStyle on
@@ -123,6 +124,45 @@ function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | "
     toolKey: text(sec.ToolKey),
     serialNumber: text(dev?.SerialNumber),
     sequenceNumber: text(sec.SequenceNumber),
+  };
+}
+
+// An element's attributes as text, read off its start tag in the source: the parsed node holds its
+// attributes and its child elements under the same names, and an empty child element parses to "" like an
+// empty attribute.
+function attrsOfTag(tag: string): Record<string, string> {
+  const ent: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+  return Object.fromEntries([...tag.matchAll(/([\w:.-]+)="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => ent[e])]));
+}
+// The start tag of the first element `name` in `xml` from `from` on, or "" where there is none.
+function startTag(xml: string, name: string, from = 0): string {
+  const m = new RegExp(`<${name}(?=[\\s/>])[^>]*>`).exec(xml.slice(from));
+  return m ? m[0] : "";
+}
+
+// The KNXnet/IP settings a DeviceInstance carries besides its parameters, or undefined for a device
+// with neither <IPConfig> nor <AdditionalAddresses> (not a KNXnet/IP device in the project).
+function parseDeviceKnxIp(xml0: string, doc: XmlNode, deviceId: string, productNames: Map<string, string>, productTranslations: ReadonlyMap<string, string[]>): DeviceKnxIp | undefined {
+  const dev = findDeviceInstance(doc, deviceId);
+  const additional = node(dev?.AdditionalAddresses);
+  // The device's own element in the source, for the attributes of its children: its start tag, and up to its
+  // end tag unless it closes itself.
+  const open = new RegExp(`<DeviceInstance\\s[^>]*?\\bId="${deviceId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>`).exec(xml0);
+  const own = !open ? "" : open[0].endsWith("/>") ? open[0] : xml0.slice(open.index, xml0.indexOf("</DeviceInstance>", open.index));
+  const ipTag = startTag(own, "IPConfig");
+  if (!ipTag && !additional) return undefined;
+  const secAttrs = attrsOfTag(startTag(own, "Security"));
+  return {
+    deviceId,
+    instanceName: text(dev?.Name),
+    productName: productNames.get(text(dev?.ProductRefId)) ?? "",
+    productNameTranslations: productTranslations.get(text(dev?.ProductRefId)) ?? [],
+    ipConfig: ipTag ? attrsOfTag(ipTag) : null,
+    additionalAddresses: kids(additional?.Address).map((a) => { const v = attr(a.Address); const n = v === undefined || v === "" ? NaN : Number(v); return Number.isInteger(n) ? n : null; }),
+    securityAttributes: Object.keys(secAttrs),
+    toolKeyLoaded: secAttrs.ToolKey !== undefined && secAttrs.ToolKey === secAttrs.LoadedToolKey,
+    busInterfaces: kids(node(dev?.BusInterfaces)?.BusInterface).length,
+    installation: attrsOfTag(startTag(xml0, "Installation")),
   };
 }
 

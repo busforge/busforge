@@ -8,6 +8,7 @@ import { insertSpaces, setProjectSource, SOURCE_NAME_MAX, type ImportSource } fr
 import { applyProjectProperties } from "./projectProps.ts";
 import { EXPORT_VERSION, type ProjectExport } from "./exportProject.ts";
 import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
+import { isKnxIpSettings } from "./deviceparams.ts";
 import { putGroupKeys, type GroupKeySource } from "./groupKeys.ts";
 import { putGroupSenders, putSendSequences, isIndividualAddress, MAX_SEQUENCE, type SenderSource } from "./groupSenders.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
@@ -82,8 +83,15 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   checkBaggageSize(baggage.map((b) => ({ name: b.name as string, bytes: Buffer.byteLength(b.dataBase64 as string, "base64") })));
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates", "deviceKnxIp"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
+  }
+  const knxIpDevices = new Set<string>();
+  const exportedDevices = new Set((d.devices as Record<string, unknown>[]).map((dev) => dev?.id));
+  for (const k of (d.deviceKnxIp as Record<string, unknown>[] | undefined) ?? []) {
+    const { deviceId, ...settings } = k ?? {};
+    if (typeof deviceId !== "string" || !exportedDevices.has(deviceId) || knxIpDevices.has(deviceId) || !isKnxIpSettings(settings)) throw new ApiError("BUSFORGE_INVALID", "malformed deviceKnxIp entry");
+    knxIpDevices.add(deviceId);
   }
   // A recorded telegram's security state must be one the monitor produces: an unknown one would be
   // shown as if it were decrypted or not.
@@ -192,6 +200,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const m of data.deviceModules) insMod.run(id, m.deviceId, JSON.stringify(m.instances));
     const insOverride = db.prepare("INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
     for (const o of data.deviceComObjOverrides) insOverride.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
+    const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
+    for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
 
     for (const [cid, xml] of Object.entries(data.catalog)) putAppProgram(db, cid, xml);
     for (const b of data.baggage) putBaggage(db, id, b.name, Buffer.from(b.dataBase64, "base64"));

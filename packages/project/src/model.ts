@@ -125,6 +125,24 @@ export interface GroupRangeNode {
   addresses: GroupAddress[];
 }
 
+// The settings of a KNXnet/IP device that the project keeps on its DeviceInstance outside the
+// application's parameters (0.xml), which ETS writes into the device's KNXnet/IP parameter object.
+// Attributes are kept verbatim (names and values as ETS stores them, the security element's names
+// only): what a value means, and which values a download can write, is decided where it is written.
+// installation: the attributes of the project's <Installation> (the routing multicast settings live there).
+export interface DeviceKnxIp {
+  deviceId: string;
+  instanceName: string;                    // the DeviceInstance Name, "" where ETS shows the product name
+  productName: string;                     // the product's catalogue text (Hardware.xml Product Text, its default language)
+  productNameTranslations: string[];       // the same text in the catalogue's other languages
+  ipConfig: Record<string, string> | null; // <IPConfig> attributes
+  additionalAddresses: (number | null)[];  // <AdditionalAddresses> Address values, in document order; null where not a number
+  securityAttributes: string[];            // attribute names of <Security>
+  toolKeyLoaded: boolean;                  // <Security> holds a ToolKey equal to its LoadedToolKey
+  busInterfaces: number;                   // <BusInterface> elements under <BusInterfaces>
+  installation: Record<string, string>;
+}
+
 export interface Project {
   name: string;
   groupAddressLevels: Levels; // group-address style (2 or 3), from GroupAddressStyle
@@ -138,6 +156,7 @@ export interface Project {
   deviceLinks: DeviceLinks[];     // per-device com-object -> GA links from 0.xml
   deviceComObjOverrides: DeviceComObjOverrides[]; // per-device com-object flags/priority the project sets, from 0.xml
   deviceSecurity: DeviceSecurity[]; // per-device Data-Secure tool keys from 0.xml (only secure devices)
+  deviceKnxIp: DeviceKnxIp[];     // KNXnet/IP device settings from 0.xml (only devices with IPConfig or AdditionalAddresses)
   groupKeys: GroupKey[]; // Data-Secure group keys from 0.xml (only secured group addresses)
   secureSenders: SecureSender[]; // bus interfaces assigned to group addresses (0.xml BusInterface Connectors)
   unresolvedSenders: number;      // such assignments whose interface address could not be resolved (surfaced, never guessed)

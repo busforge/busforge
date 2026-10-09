@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -14,7 +14,7 @@ import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
 import { buildSecurityObject, reachableGroupKeys, type OtherDevice } from "./securityobject.ts";
-import { bcu1Segment, bcu1ApplicationRefusal, decodeEmptyBcu1Tables, system1LoadRefusal, SYSTEM1_GROUP_TABLES_REFUSAL } from "./system1.ts";
+import { bcu1Segment, bcu1ApplicationRefusal, decodeEmptyBcu1Tables, system1LoadRefusal, planSystem1Download, system1PreconditionRefusal, BCU1_EEPROM, BCU1_RUN_ERROR, SYSTEM1_GROUP_TABLES_REFUSAL, KNXIP_PID, type KnxIpDevice, type System1Download } from "./system1.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
 // done/total counters (unit-agnostic; memory reads report bytes). Structurally identical
@@ -452,6 +452,8 @@ interface FlashOp {
   // covers it, so run it even without a diff and let it finish the load. "refuse": the plan brackets
   // only what differs and could leave it as it is, with or without a diff.
   loadIncomplete?: "rewrite" | "refuse";
+  // Written even where every byte compared is equal: the operation writes state it does not read.
+  alwaysWrite?: boolean;
 }
 
 // A device that has just rebooted can still be starting its application and drop management frames
@@ -489,7 +491,7 @@ async function runFlashOp(
   if (op.loadIncomplete === "refuse") {
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
-  if (op.diffBytes === 0 && !op.loadIncomplete) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
+  if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
@@ -568,6 +570,9 @@ export interface ParamFlashCtx extends WriteGate {
   // gate that can be switched off by omission is not a gate. See comobjtable.ts.
   baseParams: Map<string, string>;
   moduleInstances?: ModuleInstance[];
+  // A KNXnet/IP device's settings the project keeps outside its parameters, which a download that writes
+  // the KNXnet/IP parameter object needs (System 1). Absent: the project holds none for the device.
+  knxIp?: KnxIpDevice;
   dryRun: boolean;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
@@ -597,6 +602,7 @@ export interface FullDownloadCtx extends WriteGate {
   backupBeforeUnload?: boolean;
   // Present exactly when the device runs KNX Data Secure: the project's group keys, by address.
   security?: SecureTablesCtx;
+  knxIp?: KnxIpDevice; // as ParamFlashCtx.knxIp
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
 }
@@ -676,6 +682,7 @@ export interface FullDownloadInputs {
   // Absent: not known to hold it.
   unitHoldsApplication?: boolean;
   unitMemory?: RelativeUnitMemory;
+  knxIp?: KnxIpDevice; // as ParamFlashCtx.knxIp
 }
 // What a System B unit holding the application has in its application segment and com-object table,
 // read before the partial form: the bytes, where each segment is, and the memory-control-block regions
@@ -1919,22 +1926,30 @@ export class System7Profile extends DeviceProfile {
 
 
 // System 1 (BCU1) devices: the application's parameters and every table in the EEPROM segment at 0x0100
-// (system1.ts). Read: the segment, where it holds this application loaded, decoded at the offsets the application gives (the MDT IP Interface
-// Secure read under its secure session holds ETS's values there), and the group tables where they are
-// empty. Every write is refused: no ETS capture of a System 1 download exists (system1LoadRefusal).
+// (system1.ts). Read: the segment, where it holds this application loaded, decoded at the offsets the
+// application gives, and the group tables where they are empty. Written: the download ETS's capture shows
+// for a Data Secure KNXnet/IP interface (planSystem1Download), on the parameter route and the full-download
+// route alike, since the mask declares one procedure ("all") and such an application no partial download
+// (LegacyNoPartialDownload). Group tables are not written: no capture shows a System 1 group-address download.
 export class System1Profile extends DeviceProfile {
   readonly memoryModel = "bcu1" as const;
+  // The download loads the security object (its tables cleared; the application has no group objects).
+  override readonly loadsSecurityObject = true;
+  // The download refuses a unit whose IP or tunnelling addresses are not the project's and has run only on a
+  // unit holding the application, so it is no way back for a factory unit or one with another application.
+  override fullDownloadLoadsApplication(): boolean { return false; }
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
 
   capabilities(): DeviceCapabilities {
     const read = !!this.cfg && bcu1Segment(this.cfg) !== undefined;
-    return { readParams: read, readLinks: read, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false };
+    const write = read && !system1LoadRefusal(this.cfg!);
+    return { readParams: read, readLinks: read, flashParams: write, flashLinks: false, fullDownload: write, structuralFlash: false };
   }
 
   override operationRefusals(): OperationRefusals {
     if (!this.cfg) return {};
     const load = system1LoadRefusal(this.cfg);
-    return { flashParams: load, fullDownload: load, flashLinks: SYSTEM1_GROUP_TABLES_REFUSAL };
+    return { ...(load ? { flashParams: load, fullDownload: load } : {}), flashLinks: SYSTEM1_GROUP_TABLES_REFUSAL };
   }
 
   async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
@@ -1955,10 +1970,104 @@ export class System1Profile extends DeviceProfile {
     return { mask, paramsRead: true, linksRead: links !== null, paramBase, links: links ?? [], deviceConfig: device?.deviceConfig };
   }
 
-  async flashParameters(): Promise<FlashResult> { refuseWith(system1LoadRefusal(this.requireCfg("parameter flash"))); }
+  async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
+    return this.download(dev, mask, ctx, "parameter flash");
+  }
   async flashGroupTables(): Promise<FlashResult> { refuseWith(SYSTEM1_GROUP_TABLES_REFUSAL); }
-  override async downloadFull(): Promise<FlashResult> { refuseWith(system1LoadRefusal(this.requireCfg("full download"))); }
-  override planFullDownload(): FullDownloadBuild { refuseWith(system1LoadRefusal(this.requireCfg("full download"))); }
+  override async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    return this.download(dev, mask, ctx, "full download");
+  }
+  override planFullDownload(_mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    const build = this.plan(inputs.params, inputs.knxIp, "full download");
+    return { plan: build.plan, imageBytes: build.written.filter(Boolean).length, segments: [{ id: bcu1Segment(this.cfg!)!.id, lsm: 0, source: "params", address: BCU1_EEPROM.address, image: build.image }] };
+  }
+
+  private plan(params: Map<string, string>, knxIp: KnxIpDevice | undefined, op: string, heldName?: Buffer | null): System1Download {
+    const cfg = this.requireCfg(op);
+    refuse(system1LoadRefusal(cfg));
+    if (!knxIp) {
+      throw new ProductError("SYSTEM1_KNXIP_MISSING", "the project holds no KNXnet/IP settings for this device (IP configuration, additional addresses), which this download writes; re-import the .knxproj");
+    }
+    return planSystem1Download(cfg, params, knxIp, heldName);
+  }
+
+  // Refused before anything is read: a project without the device's KNXnet/IP settings, links to write (the
+  // plan writes the group tables empty), a session that is not secured (the capture is a secured download, and
+  // the plan loads the security object), a KNX USB link (it drops secured requests of 40 octets and more, and
+  // the friendly name is one 30-byte write). Read first: the EEPROM segment, the MAC address (the plan reads it
+  // after the security object's load completed; a unit without it is refused here), the friendly name (its
+  // language is kept) and the other KNXnet/IP properties: the backup, the change count, the precondition ETS
+  // reads and the settings the capture does not show. A change of the address settings (PID 55, 60-62, 53) is
+  // refused: the capture writes the values the unit holds, and the link this download runs over may be the
+  // unit's own tunnel, which such a change would move. Always written, never reported unchanged: the download
+  // also writes state it does not read (the secured service families, the security object, 0x00CE-0x00DF).
+  // Verified after the restart: the run error FF, every written byte that reads back as written (verify), and
+  // every written property.
+  private async download(dev: KnxDevice, mask: string, ctx: (ParamFlashCtx | FullDownloadCtx), op: string): Promise<FlashResult> {
+    const cfg = this.requireCfg(op);
+    refuse(system1LoadRefusal(cfg));
+    if (!ctx.knxIp) this.plan(ctx.params, ctx.knxIp, op);
+    if ("links" in ctx && ctx.links.length) throw new ProductError("SYSTEM1_LOAD_UNCAPTURED", "the project links this System 1 device to group addresses, and its download writes the group tables empty; refusing to drop them");
+    if (!dev.secured) throw new ProductError("SYSTEM1_SECURE_SESSION_REQUIRED", "the ETS capture of this download is a secured one, and it loads the device's security object; refusing to run it without the device's tool key");
+    if (dev.overUsb) throw new ProductError("SYSTEM1_TRANSPORT_UNCAPTURED", "this download writes the KNXnet/IP object's friendly name in one 30-byte secured request, which a KNX USB interface does not carry; refusing to run it over USB");
+    const eeprom = await dev.memRead(BCU1_EEPROM.address, BCU1_EEPROM.size, undefined, (d) => ctx.onProgress?.("backup", d, BCU1_EEPROM.size), ctx.signal);
+    // The plan reads the MAC address after the security object's load completed; a unit that does not give it
+    // would stop the plan there, so it is asked first.
+    if (!(await readKnxIpProperty(dev, KNXIP_PID.MAC_ADDRESS, 1))) {
+      throw new ProductError("SYSTEM1_UNIT_UNCAPTURED", "the device does not give its KNXnet/IP MAC address, which the download reads as ETS does; refusing to start it");
+    }
+    const heldName = await readKnxIpProperty(dev, KNXIP_PID.FRIENDLY_NAME, 30);
+    const build = this.plan(ctx.params, ctx.knxIp, op, heldName);
+    refuse(system1PreconditionRefusal(cfg, build.image, eeprom));
+    const props: { pid: number; held: Buffer | null }[] = [];
+    for (const w of build.knxIp) props.push({ pid: w.pid, held: w.pid === KNXIP_PID.FRIENDLY_NAME ? heldName : await readKnxIpProperty(dev, w.pid, w.count) });
+    for (const [i, w] of build.knxIp.entries()) {
+      const held = props[i].held;
+      if (KNXIP_ADDRESSING.includes(w.pid) && !(held && held.equals(w.data))) {
+        throw new ProductError("SYSTEM1_IP_CHANGE_UNCAPTURED", `the device's KNXnet/IP property ${w.pid} holds ${held?.toString("hex") ?? "nothing readable"} where the project sets ${w.data.toString("hex")}; no capture shows ETS changing a unit's IP or tunnelling addresses, and this download may run over the unit's own tunnel, so refusing`);
+      }
+    }
+    let diffBytes = build.verify.reduce((n, v, i) => n + (v && eeprom[i] !== build.image[i] ? 1 : 0), 0);
+    build.knxIp.forEach((w, i) => { const held = props[i].held; diffBytes += held && held.length === w.data.length ? byteDiff(w.data, held) : w.data.length; });
+    const stamp = Date.now();
+    return runFlashOp(dev, mask, ctx, {
+      extendedMemory: cfg.loadProcedures.extendedMemoryServices,
+      imageBytes: build.written.filter(Boolean).length + build.knxIp.reduce((n, w) => n + w.data.length, 0),
+      diffBytes,
+      alwaysWrite: true,
+      backup: `${ctx.deviceId}-AS-0100-${stamp}.bin`,
+      backups: [
+        { file: `${ctx.deviceId}-AS-0100-${stamp}.bin`, bytes: eeprom },
+        { file: `${ctx.deviceId}-knxip-${stamp}.json`, bytes: Buffer.from(JSON.stringify(props.map((p) => ({ pid: p.pid, held: p.held?.toString("hex") ?? null })))) },
+      ],
+      write: async () => {
+        let n = 0;
+        await runLoadPlan(dev, build.plan, { onStep: (_i, _s, total) => ctx.onProgress?.("write", ++n, total) });
+      },
+      verify: async () => {
+        ctx.onProgress?.("verify");
+        const runs = (back: Buffer) => back[BCU1_RUN_ERROR] === 0xff && build.verify.every((v, i) => !v || back[i] === build.image[i]);
+        const { ok } = await verifySettled(() => dev.memRead(BCU1_EEPROM.address, BCU1_EEPROM.size), runs);
+        if (!ok) return false;
+        for (const w of build.knxIp) {
+          const { ok: same } = await verifySettled(() => dev.propExtRead(OBJECT_TYPE_KNXNETIP, 1, w.pid, 1, w.count), (back) => back.equals(w.data));
+          if (!same) return false;
+        }
+        return true;
+      },
+    });
+  }
+}
+
+// The KNXnet/IP properties that address the interface on the network and on the bus: the assignment method,
+// IP address, mask, gateway and the additional (tunnelling) addresses.
+const KNXIP_ADDRESSING: readonly number[] = [KNXIP_PID.IP_ASSIGNMENT_METHOD, KNXIP_PID.IP_ADDRESS, KNXIP_PID.SUBNET_MASK, KNXIP_PID.DEFAULT_GATEWAY, KNXIP_PID.ADDITIONAL_INDIVIDUAL_ADDRESSES];
+
+// A KNXnet/IP object property as the device holds it before a download, or null where it does not give
+// it (a read it refuses); the write then counts every byte as changed.
+async function readKnxIpProperty(dev: KnxDevice, pid: number, count: number): Promise<Buffer | null> {
+  try { return await dev.propExtRead(OBJECT_TYPE_KNXNETIP, 1, pid, 1, count); }
+  catch (e) { if (e instanceof KnxError && e.code === "PROPERTY_EXT_READ_REFUSED") return null; throw e; }
 }
 
 // Every recognised-but-not-implemented memory model: System 2 (BCU2), System 300, couplers,

@@ -110,14 +110,15 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true });
   });
 
-  test("System 1 (MV-0012 / BCU1) device: its own profile, read only", () => {
+  test("System 1 (MV-0012 / BCU1) device: its own profile, reads and writes its parameters, not its group tables", () => {
     // MV-0012 carries an AbsoluteSegment and must not be routed into the System 7 path, whose group
-    // tables have another format. It resolves to the System 1 profile, which reads and writes nothing.
+    // tables have another format. It resolves to the System 1 profile, which runs the download ETS's capture
+    // shows for this Data Secure KNXnet/IP interface (system1.ts) and writes no group tables.
     const cfg = realApp("M-0083_A-0138-21-F18E-O0072.xml.gz"); // mask MV-0012
     expect(cfg.mask).toBe("MV-0012");
     const profile = classify(cfg);
     expect(profile.constructor.name).toBe("System1Profile");
-    expect(profile.capabilities()).toEqual({ readParams: true, readLinks: true, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
+    expect(profile.capabilities()).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: false, fullDownload: true, structuralFlash: false });
   });
 });
 

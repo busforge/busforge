@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, type SpaceNode, type GroupAddressSecurity } from "@busforge/project";
+import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp } from "@busforge/project";
+import { getDeviceKnxIp } from "./deviceparams.ts";
 import { getAppProgram } from "./catalog.ts";
 import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
@@ -44,6 +45,9 @@ export interface ProjectExport {
   // attributes as ETS stores them. Required: an artifact without it would write every object with its
   // application's flags.
   deviceComObjOverrides: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
+  // A KNXnet/IP device's settings from the project (device_knxip, @busforge/project DeviceKnxIp). Optional so
+  // artifacts from before they were kept still import; such a device's download that writes them is refused.
+  deviceKnxIp?: DeviceKnxIp[];
   catalog: Record<string, string>; // appProgramId -> application-program XML
   baggage: { name: string; dataBase64: string }[];
   // Restore points and the recorded bus log. Optional so an artifact from before
@@ -139,6 +143,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceComObjOverrides: (db.query("SELECT device_id AS deviceId, seq, com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? ORDER BY device_id, seq")
       .all(projectId) as { deviceId: string; seq: number; comObjRefId: string; attrs: string }[])
       .map((r) => ({ ...r, attrs: JSON.parse(r.attrs) as Record<string, string> })),
+    deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
+      .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
     catalog,
     baggage,
     snapshots,

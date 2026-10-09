@@ -39,7 +39,7 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const projectXml = (inner && tryTextOf(inner, "project.xml")) ?? tryTextOf(outer, "project.xml");
 
   const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
-  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs));
+  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer));
 }
 
 // BusInterface Id -> AddressIndex, as the application programs declare them. It says which of a
@@ -73,6 +73,21 @@ function parseProductNames(outer: Map<string, Buffer>): Map<string, string> {
     }
   }
   return names;
+}
+
+// A product's catalogue text in the catalogue's other languages (Hardware.xml TranslationUnit), by product id.
+function parseProductTranslations(outer: Map<string, Buffer>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [key, buf] of outer) {
+    if (!key.endsWith("Hardware.xml")) continue;
+    for (const m of dec.decode(buf).matchAll(/<TranslationElement RefId="([^"]+_P-[^"]+)">([\s\S]*?)<\/TranslationElement>/g)) {
+      const raw = /<Translation AttributeName="Text" Text="([^"]*)"/.exec(m[2])?.[1];
+      const ent: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+      const text = raw?.replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => ent[e]);
+      if (text !== undefined) out.set(m[1], [...(out.get(m[1]) ?? []), text]);
+    }
+  }
+  return out;
 }
 
 const dec = new TextDecoder("utf-8");

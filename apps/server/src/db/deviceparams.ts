@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ModuleInstance } from "@busforge/product";
-import type { CatalogProduct } from "@busforge/project";
+import type { CatalogProduct, DeviceKnxIp } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 
 // A device's stored parameter values (ParameterRef id -> value), seeded from the
@@ -85,6 +85,26 @@ export function getDeviceComObjOverrides(db: Database, projectId: string, device
   });
 }
 
+// Whether a value has the shape of a stored KNXnet/IP settings record (DeviceKnxIp without deviceId).
+export function isKnxIpSettings(v: unknown): v is Omit<DeviceKnxIp, "deviceId"> {
+  const strings = (o: unknown) => !!o && typeof o === "object" && !Array.isArray(o) && Object.values(o).every((x) => typeof x === "string");
+  const r = v as Record<string, unknown> | null;
+  return !!r && typeof r === "object" && typeof r.instanceName === "string" && typeof r.productName === "string"
+    && Array.isArray(r.productNameTranslations) && r.productNameTranslations.every((x) => typeof x === "string")
+    && (r.ipConfig === null || strings(r.ipConfig)) && Array.isArray(r.additionalAddresses) && r.additionalAddresses.every((a) => a === null || Number.isInteger(a))
+    && Array.isArray(r.securityAttributes) && r.securityAttributes.every((x) => typeof x === "string") && typeof r.toolKeyLoaded === "boolean"
+    && Number.isInteger(r.busInterfaces) && strings(r.installation);
+}
+
+// A KNXnet/IP device's settings from the project (device_knxip), or null where the project holds none.
+export function getDeviceKnxIp(db: Database, projectId: string, deviceId: string): Omit<DeviceKnxIp, "deviceId"> | null {
+  const r = db.query("SELECT settings FROM device_knxip WHERE project_id = ? AND device_id = ?").get(projectId, deviceId) as { settings: string } | null;
+  if (!r) return null;
+  const v = JSON.parse(r.settings) as unknown;
+  if (!isKnxIpSettings(v)) throw new Error(`device_knxip row ${projectId}/${deviceId} is not a KNXnet/IP settings record (corrupt store)`);
+  return v;
+}
+
 // A device's com-object -> GA links (comObjRefId -> ga raws, ordered by slot).
 export function getDeviceLinks(db: Database, projectId: string, deviceId: string): Map<string, number[]> {
   const rows = db.query("SELECT com_obj_ref_id AS refId, ga_raw AS gaRaw FROM device_links WHERE project_id = ? AND device_id = ? ORDER BY com_obj_ref_id, slot")
@@ -129,7 +149,7 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_knxip"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.

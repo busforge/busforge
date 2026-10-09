@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { KnxTransport } from "./transport.ts";
+import { KnxUsbTransport } from "./usb.ts";
 import type { SecureSession } from "./secureSession.ts";
 import { SECURE_APDU_OVERHEAD } from "./secure.ts";
 import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, propertyExtHead, APCI, type ParsedApdu } from "./frame.ts";
@@ -59,6 +60,11 @@ function serviceMismatch(what: string, got: number, want: number): KnxError {
 
 // The security interface object (KNX Data Secure) and its security-mode function property.
 export const OBJECT_TYPE_SECURITY = 17;
+// The KNXnet/IP parameter object (KNX 03_08_03 §2.5), reached by type through the extended services.
+export const OBJECT_TYPE_KNXNETIP = 11;
+// A property service's return code for an element or property the device does not have (E_ADDRESS_VOID;
+// ETS 6 reports it as ResourceNotFound).
+export const RETURN_CODE_ADDRESS_VOID = 0xfd;
 // Properties of the security interface object that a secured download loads.
 export const SECURITY_PID = {
   LOAD_STATE_CONTROL: 5,
@@ -408,14 +414,18 @@ export class KnxDevice {
     return rest.subarray(3);
   }
   // A confirmed write: the device answers with a return code, and anything but success is refused.
-  async propExtWriteCon(objectType: number, instance: number, pid: number, data: Buffer, start = 1, count = 1): Promise<void> {
+  // `tolerate`: the one return code a load procedure ignores for this write (an OnError Ignore); the
+  // write then returns false, a success true.
+  async propExtWriteCon(objectType: number, instance: number, pid: number, data: Buffer, start = 1, count = 1, tolerate?: number): Promise<boolean> {
     assertElements(start, count);
     const head = propertyExtHead(objectType, instance, pid);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_EXT_WRITE_CON, Buffer.concat([head, Buffer.from([count, start >> 8, start & 0xff]), data])), true);
     const rest = this.extEcho(r!, APCI.PROPERTY_EXT_WRITE_CON_RESP, head, "an extended property write");
+    if (tolerate !== undefined && rest.length >= 4 && rest[3] === tolerate) return false;
     if (rest.length < 4 || rest[3] !== 0x00) {
       throw new KnxError("PROPERTY_EXT_WRITE_REFUSED", `object type ${objectType} PID ${pid} element ${start}: the device answered ${rest.toString("hex") || "nothing"}`);
     }
+    return true;
   }
   // Function properties answer both the command and the state read with [returnCode, result...].
   async funcPropExtCommand(objectType: number, instance: number, pid: number, data: Buffer): Promise<{ returnCode: number; result: Buffer }> {
@@ -576,6 +586,9 @@ export class KnxDevice {
   // ---- raw acquisition (docs/raw-acquisition.md): read-only services that hand back what the
   // device answered, refusals included, instead of throwing them away ----
   get secured(): boolean { return this.secure !== undefined; }
+  // Whether the device is reached through a KNX USB interface, whose single HID report drops a secured
+  // request of 40 octets or more (SECURE_WRITE_PATH_APDU); every other link is a KNXnet/IP tunnel.
+  get overUsb(): boolean { return this.tun instanceof KnxUsbTransport; }
 
   // The type 0 descriptor, refused unless the answer is one (deviceDescriptor takes any answer).
   async descriptorType0(): Promise<string> {

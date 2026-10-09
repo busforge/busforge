@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, STRUCTURAL_FLASH_CAPTURED, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, STRUCTURAL_FLASH_CAPTURED, planSystem1Download, MV0012_DEFAULT_LOAD, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
@@ -2322,5 +2322,105 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
     const ets = etsWrites("mdt-router-ets6log-fulldownload.txt");
     const inSegment = [...ets].filter(([a]) => a >= at && a < at + target.size);
     expect([...ours].sort((x, y) => x[0] - y[0])).toEqual(inSegment.sort((x, y) => x[0] - y[0]));
+  });
+});
+
+// ETS 6.4.1's application download of the MDT IP Interface Secure (M-0083_A-0138, MV-0012, System 1, Data Secure)
+// on the house unit, through its own tunnel (captures/mdt-ip-secure-ets6log-fulldownload.txt; the encrypted proxy
+// log is mdt-ip-secure-ets-fulldownload.log). The application allows no partial download, so this is ETS's
+// parameter download too. ETS's log holds every telegram it sent inside the secured ones, the procedure it ran and
+// its image. The project's settings for the unit: captures/mdt-ip-secure-unit-knxip.json and -unit-memory.json.
+corpusDescribe("MDT IP Interface Secure (M-0083_A-0138, System 1) against ETS", () => {
+  const A = "M-0083_A-0138-21-F18E-O0072";
+  const cfg = parseAppConfig(catalogueXml(`${A}.xml.gz`));
+  const LOG = "mdt-ip-secure-ets6log-fulldownload.txt";
+  const params = new Map((JSON.parse(captureText("mdt-ip-secure-unit-memory.json")) as { params: [string, string][] }).params);
+  const fx = JSON.parse(captureText("mdt-ip-secure-unit-knxip.json")) as { knxIp: KnxIpDevice; afterEts: { eeprom: string } };
+  // ETS took the product's text in its own language (German) for the friendly name, and the unit held it
+  // afterwards; Busforge keeps the language the unit holds, else takes the catalogue's default one.
+  const GERMAN = Buffer.from("SCN-IP000.03 IP Interface mit ");
+  const build = (heldName?: Buffer) => planSystem1Download(cfg, params, fx.knxIp, heldName);
+  const hexOf = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+
+  // Every write and read ETS sent from its first write on, one line per telegram, as the plan's steps below.
+  const etsWire = () => {
+    const out: string[] = [];
+    for (const l of captureText(LOG).split(/\r?\n/)) {
+      const m = l.match(/ Sending Sec_req .*InnerTelegram=(\w+)_req -> [\d.]+ \([^)]*\) (.*?) succeeded/);
+      if (!m) continue;
+      const f = Object.fromEntries([...m[2].matchAll(/(\w+)=(.*?)(?= \w+=|$)/g)].map((x) => [x[1], x[2]]));
+      const line = m[1] === "MemoryExtended_Write" ? `mem ${f.Address.slice(1).toLowerCase()}=${hexOf(f.Data)}`
+        : m[1] === "PropertyExtValue_WriteCon" ? `prop ${f.ObjectType}/${f.PID}#${f.StartIndex}*${f.NumberOfElements}=${hexOf(f.Data)}`
+        : m[1] === "PropertyExtValue_Read" ? `read ${f.ObjectType}/${f.PID}#${f.StartIndex}*${f.NumberOfElements}`
+        : m[1] === "FunctionPropertyExtCommand" ? `func ${f.ObjectType}/${f.PID}=${hexOf(f.Command)}`
+        : m[1] === "ConfirmedRestart" ? "restart confirmed" : null;
+      if (line && (out.length || line.startsWith("mem "))) out.push(line);
+    }
+    return out;
+  };
+  const planWire = (plan: LoadPlan) => plan.map((s) => {
+    if (s.op === "writeMem") return `mem ${s.address.toString(16).padStart(4, "0")}=${s.bytes.toString("hex")}`;
+    if (s.op === "securityLsm") return `func 17/5=${Buffer.concat([Buffer.from([s.event]), Buffer.alloc(9)]).toString("hex")}`;
+    if (s.op === "writeSecurityProp") return `prop 17/${s.pid}#${s.start}*${s.data.length / s.elementSize}=${s.data.toString("hex")}`;
+    if (s.op === "writePropExt") return `prop ${s.objectType}/${s.pid}#${s.start}*${s.count}=${s.data.toString("hex")}`;
+    if (s.op === "readPropExt") return `read ${s.objectType}/${s.pid}#${s.start}*${s.count}`;
+    if (s.op === "funcPropExt") return `func ${s.objectType}/${s.pid}=${s.data.toString("hex")}`;
+    if (s.op === "restart") return s.confirmed ? "restart confirmed" : "restart";
+    return s.op;
+  });
+
+  // One plan step per ETS telegram. The secured memory writes go out in chunks of the secured path's size
+  // (KnxDevice.memWrite), where ETS sent each run in one telegram; the bytes and addresses are the same.
+  test("the download's steps are ETS's telegrams, one for one, on a unit holding the German name", () => {
+    expect(planWire(build(GERMAN).plan)).toEqual(etsWire());
+    expect(etsWire().length).toBe(29);
+  });
+
+  test("on a unit holding no product name, the catalogue's default language: only the friendly name differs", () => {
+    const ours = planWire(build().plan), ets = etsWire();
+    const differing = ours.map((s, i) => [s, ets[i]]).filter(([a, b]) => a !== b);
+    expect(differing).toEqual([[
+      `prop 11/76#1*30=${Buffer.from("SCN-IP000.03 IP Interface with").toString("hex")}`,
+      `prop 11/76#1*30=${Buffer.from("SCN-IP000.03 IP Interface mit ").toString("hex")}`,
+    ]]);
+  });
+
+  // ETS's image: "--" where it writes nothing, which is the bytes the <Mask> leaves out and no parameter covers. It
+  // also lists the run error 0x010D (FF), which only the procedure's inline writes set; the plan writes it so.
+  test("the image is ETS's, byte for byte, and the bytes ETS leaves out are those the plan does not write from it", () => {
+    const { image, written, plan } = build();
+    const ets = etsLog(LOG).image;
+    const ours = new Map([...image].flatMap((b, i) => (written[i] ? [[0x0100 + i, b] as [number, number]] : [])));
+    ours.set(0x010d, image[0x0d]);
+    expect([...ours].sort((a, b) => a[0] - b[0])).toEqual([...ets].filter(([a]) => a >= 0x0100 && a < 0x0200).sort((a, b) => a[0] - b[0]));
+    expect(span(written.flatMap((w, i) => (w ? [] : [0x0100 + i])))).toEqual(["101-103", "10d-10d", "117-118", "13e-171", "1ff-1ff"]);
+    expect(plan.filter((s) => s.op === "writeMem" && s.address === 0x010d).map((s) => s.op === "writeMem" && [s.bytes.toString("hex"), s.opens ?? s.closes])).toEqual([["00", "run error"], ["ff", "run error"]]);
+  });
+
+  // The unit read after ETS's download holds the image in every byte the plan verifies; 0x0176, the TTL parameter
+  // (Access="None") written as 64, holds 32: the unit keeps PID 67 there, which the download writes afterwards.
+  test("the unit after ETS's download holds every verified byte; the TTL parameter's byte holds PID 67", () => {
+    const { image, verify, written, knxIp } = build();
+    const after = Buffer.from(fx.afterEts.eeprom, "hex");
+    expect(verify.flatMap((v, i) => (v && after[i] !== image[i] ? [i] : []))).toEqual([]);
+    expect(written.flatMap((w, i) => (w && !verify[i] ? [0x0100 + i] : []))).toEqual([0x0176]);
+    expect([image[0x76], after[0x76], knxIp.find((w) => w.pid === 67)!.data[0]]).toEqual([64, 32, 32]);
+  });
+
+  test("the procedure ETS ran is the master data's MV-0012 procedure with its restart replaced by what the plan writes", () => {
+    const verbs = etsLog(LOG).steps.map((s) => `${s.verb}${s.attrs.ObjType ? `:${s.attrs.ObjType}` : ""}`);
+    const master = verbs.indexOf("LdCtrlUnload:17");
+    expect(verbs.slice(0, master).filter((v) => v !== "LdCtrlSetControlVariable")).toEqual(MV0012_DEFAULT_LOAD.filter((s) => s.verb !== "LdCtrlSetControlVariable" && s.verb !== "LdCtrlRestart").map((s) => s.verb));
+    expect(verbs.slice(master)).toEqual([
+      "LdCtrlUnload:17", "LdCtrlLoad:17", "LdCtrlWriteProp:17", "LdCtrlLoadCompleted:17", "LdCtrlLoadImageProp:11",
+      ...Array(9).fill("LdCtrlWriteProp:11"),
+      "LdCtrlMapError", "LdCtrlInvokeFunctionProp:11", "LdCtrlMapError", "LdCtrlMapError", "LdCtrlInvokeFunctionProp:11", "LdCtrlMapError", "LdCtrlMapError", "LdCtrlInvokeFunctionProp:11", "LdCtrlMapError",
+      "LdCtrlMasterReset", "LdCtrlDisconnect",
+    ]);
+    // The procedure ETS lists also writes the security object's group key table with no element (Count="0"),
+    // which it does not execute; its address table write is answered E_ADDRESS_VOID and ignored (OnError
+    // ResourceNotFound).
+    expect(captureText(LOG)).toContain('<LdCtrlWriteProp ObjType="17" PropId="53" Count="0" Verify="true" />');
+    expect(captureText(LOG)).toMatch(/WritePropertyExt\([\d.]+, 17\[0\]\/54, PDT=4, 0\.\.\.0\) failed: Schreiben von PropertyExtended\(17\*1\/54, 0, 1\) fehlgeschlagen: E_ADDRESS_VOID/);
   });
 });

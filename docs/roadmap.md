@@ -47,11 +47,11 @@ depends on is hardware-proven.
 - **Property-based loading** for devices that expose an object model instead of a memory image,
   and the fixed-EEPROM model of **System 2**. Both are recognised and refused today; each is a
   generic, mask-keyed capability, not per-device code.
-- **Writing System 1 devices.** Read-back works; the parameter, group-address and full download are
-  refused until ETS captures of the MDT IP Interface Secure show what ETS writes besides the mask's
-  load procedure: the bytes its `<Mask>` leaves out (its IP settings and name) and any properties.
-  The unit is an IP interface whose restart drops the tunnels it serves, the capture's own included,
-  so it is captured over another access path. The group tables with entries are not decoded.
+- **System 1 beyond the MDT IP Interface Secure.** The download of a Data Secure KNXnet/IP interface on
+  MV-0012 is written as ETS's capture shows it; every other System 1 application, and every KNXnet/IP
+  setting that capture does not show (a device name, DHCP, tunnelling users, IP Secure, the
+  installation's routing settings), is refused until a capture shows it. The group tables with entries
+  are not decoded, and no System 1 group-address download is captured.
 - **Time a large MV-0705 download against the stop grace period.** The 30-minute
   `stop_grace_period` ([deployment.md](deployment.md)) has been measured only against small MV-0705
   images.

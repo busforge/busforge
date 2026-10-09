@@ -41,8 +41,15 @@ const VERDICT: Record<MemoryModel, [read: string, flashP: string, flashGa: strin
   none: ["❌", "❌", "❌"],
 };
 
+// A mask whose verdict differs from its memory model's: the System 1 download Busforge runs is the one ETS's
+// capture shows, on MV-0012 (system1.ts DEFAULT_LOAD), and only for a Data Secure KNXnet/IP interface (¹ in the doc).
+const MASK_VERDICT: Record<string, [read: string, flashP: string, flashGa: string]> = {
+  "MV-0012": ["✅ params + links", "✅ ¹", "❌"],
+};
+const plain = (v: [string, string, string]) => v.map((c) => c.replace(/ ¹$/, "")) as [string, string, string];
+
 const row = (m: (typeof MASKS)[number]): string => {
-  const [read, flashP, flashGa] = VERDICT[m.memoryModel];
+  const [read, flashP, flashGa] = MASK_VERDICT[m.mask] ?? VERDICT[m.memoryModel];
   return `| \`${m.mask}\` | ${m.medium} | ${FAMILY_LABEL[m.family]} | ${m.memoryModel} | ${read} | ${flashP} | ${flashGa} |`;
 };
 
@@ -59,7 +66,10 @@ describe("docs/device-support.md stays in sync with the mask registry", () => {
   corpusTest("VERDICT for each memory model matches classify().capabilities()", () => {
     expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities())).toEqual(VERDICT.relative); // System B
     expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities())).toEqual(VERDICT.absolute); // System 7
-    expect(cells(classify(realApp("M-0083_A-0138-21-F18E-O0072.xml.gz")).capabilities())).toEqual(VERDICT.bcu1); // System 1
+    // System 1: the MDT IP Interface Secure on MV-0012, and the same application on another System 1 mask.
+    const a0138 = realApp("M-0083_A-0138-21-F18E-O0072.xml.gz");
+    expect(cells(classify(a0138).capabilities())).toEqual(plain(MASK_VERDICT["MV-0012"]));
+    expect(cells(classify({ ...a0138, mask: "MV-0010" }).capabilities())).toEqual(VERDICT.bcu1);
   });
 
   test("VERDICT for an unimplemented family matches classifyByMask().capabilities()", () => {

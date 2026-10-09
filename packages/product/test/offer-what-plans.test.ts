@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, parseLoadProcedures, assessParCoverage, classify, maskInfo, planSystem7GaFlash, type AppConfig, type ComObjectLink } from "../src/index.ts";
+import { parseAppConfig, parseLoadProcedures, assessParCoverage, classify, maskInfo, planSystem7GaFlash, type AppConfig, type ComObjectLink, type KnxIpDevice } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -19,7 +19,8 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 //   - LdCtrlLoadImageProp PID 27 closing a procedure is a read before the restart, and the GVS AMMA's
 //     closing object 4 PID 67 = 01 write is sent as declared: neither refuses anything.
 // Two refusals have other reasons and are listed so the table covers every fixture: M-0083_A-0137
-// declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1: read only, no ETS capture of a System 1 download).
+// declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1: its one procedure
+// "all" runs on the parameter route and the full-download route alike; no group-address download is captured).
 const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDownload: boolean }> = {
   "M-0002_A-A001-13-63C2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0004_A-7072-21-99A7-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
@@ -33,10 +34,18 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0083_A-00B4-32-3919.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0083_A-00B6-32-9642.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0083_A-0137-20-7EB2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
-  "M-0083_A-0138-21-F18E-O0072.xml.gz": { flashParams: false, flashLinks: false, fullDownload: false },
+  "M-0083_A-0138-21-F18E-O0072.xml.gz": { flashParams: true, flashLinks: false, fullDownload: true },
   "M-0085_A-0072-30-69AA.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-008E_A-7079-10-9C41.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
   "M-0162_A-0004-11-F245.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
+};
+
+// The KNXnet/IP settings of a device instance, as the ETS capture of the System 1 download shows them; device
+// instance data like the individual address, which the planners of other families do not read.
+const KNXIP: KnxIpDevice = {
+  ia: "1.1.250", instanceName: "", productName: "A KNXnet/IP interface with Secure", productNameTranslations: [], additionalAddresses: [251, 252, 253, 254],
+  ipConfig: { Assign: "Fixed", IPAddress: "192.0.2.2", SubnetMask: "255.255.255.0", DefaultGateway: "192.0.2.1" },
+  securityAttributes: ["ToolKey", "LoadedToolKey", "SequenceNumber"], toolKeyLoaded: true, busInterfaces: 0, installation: { Name: "" },
 };
 
 corpusDescribe("capabilities() offers a write exactly where its planner runs the declared procedure", () => {
@@ -62,7 +71,7 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
       let code: string | undefined;
       // In either form (deviceflash.ts absoluteFullForm): on a unit without the application, or holding it.
       for (const unitHoldsApplication of [false, true]) {
-        try { profile.planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc, unitHoldsApplication }); code = undefined; break; } catch (e) { code = (e as { code?: string }).code ?? "uncoded"; }
+        try { profile.planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc, unitHoldsApplication, knxIp: KNXIP }); code = undefined; break; } catch (e) { code = (e as { code?: string }).code ?? "uncoded"; }
       }
       expect(caps.fullDownload).toBe(code === undefined);
       const refusal = profile.operationRefusals().fullDownload;
@@ -71,6 +80,8 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
 
     test(`${file}: the parameter and the structural flash are offered only where the par coverage blocks nothing`, () => {
       const model = maskInfo(cfg.mask).memoryModel;
+      // A System 1 mask declares no "par" procedure: its parameter download is the full download.
+      if (model === "bcu1") { expect([caps.flashParams, caps.structuralFlash]).toEqual([caps.fullDownload, false]); return; }
       const coverageClear = (model === "absolute" || model === "relative") && assessParCoverage(proc, model).blocked.length === 0;
       expect(caps.flashParams).toBe(coverageClear);
       if (caps.structuralFlash) expect(coverageClear).toBe(true);

@@ -25,7 +25,7 @@ A device is flashable only when both are handled.
 | --- | --- | --- |
 | **ProductProcedure** | one self-contained `<LoadProcedure>`, every `LdCtrl` step inline | **executed directly** from the XML (absolute-segment devices) |
 | **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`; `all`, and `auto`, the schema default when the attribute is absent, apply to both) | the base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
-| **DefaultProcedure** | nothing in the XML, fixed by mask version in the master data (legacy BCU1/2) | **explicit gap**: refused, not crashed; for System 1 the MV-0012 procedure is carried as data and names what a write would cover (below) |
+| **DefaultProcedure** | nothing in the XML, fixed by mask version in the master data (legacy BCU1/2) | System 1 MV-0012: the master data's procedure carried as data, run as ETS runs it for a Data Secure KNXnet/IP interface ([below](#system-1-the-mv-0012-download)); every other one refused, not crashed |
 
 ## What the engine does
 
@@ -190,18 +190,54 @@ Surveyed from the real catalogue (`parseLoadProcedures` plus the coverage test i
 ProductProcedure and MergedProcedure of the catalogue fixtures except one class, refused:
 
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
-  gap named in the styles table above. For System 1 the master data's MV-0012 Load procedure is
-  carried as data (`packages/product/src/system1.ts`): it stops the application (run error
-  `0x010D` = 00), sets the address table to the device's own address only (`0x0116` = 01), writes
-  `0x0100`, `0x0104`-`0x010C`, `0x010E`-`0x0115` and `0x0119`-`0x01FE` from the image, clears
-  `0x00CE`-`0x00DF`, writes `0x0116` from the image, restarts the application (`0x010D` = FF) and
-  restarts the device; it declares only `all`, so a parameter download is the same procedure. Its
-  image is not the application's `<Data>` throughout: a unit ETS programmed holds the application's
-  own id and PEI type at `0x0104`-`0x0107` and `0x0109`, where the template carries another. Its
-  `0x0119`-`0x01FE` run covers bytes the application's `<Mask>` may leave out (on the MDT IP Interface
-  Secure its IP settings and name), and no ETS capture shows what ETS writes there or which properties
-  it writes besides; the parameter and full download are refused (`SYSTEM1_LOAD_UNCAPTURED`), the
-  group-address flash too (`SYSTEM1_GROUP_TABLES_UNCAPTURED`).
+  gap named in the styles table above, except the System 1 download below.
+
+### System 1: the MV-0012 download
+
+The master data's MV-0012 Load procedure is carried as data (`packages/product/src/system1.ts`): it
+stops the application (run error `0x010D` = 00), sets the address table to the device's own address
+only (`0x0116` = 01), writes `0x0100`, `0x0104`-`0x010C`, `0x010E`-`0x0115` and `0x0119`-`0x01FE` from
+the image, clears `0x00CE`-`0x00DF`, writes `0x0116` from the image, lets the application run again
+(`0x010D` = FF) and restarts the device. It declares only `all`, so a parameter download is the same
+procedure. ETS 6 runs it on the MDT IP Interface Secure, a Data Secure KNXnet/IP interface, like this,
+and Busforge writes the same, write for write in the same order (pinned by `tools/etsdiff.test.ts`
+against ETS's own log of the download; the secured memory writes go out in smaller chunks than ETS's
+single telegrams, with the same bytes):
+
+1. **Reads first:** the manufacturer id at `0x0104` and the hardware configuration at `0x010C` (a
+   manufacturer-written byte the image carries). Busforge reads the whole segment and refuses a unit of
+   another manufacturer or with another hardware configuration (`SYSTEM1_UNIT_UNCAPTURED`).
+2. **The image** is the segment's `<Data>` with the parameters' values over it, and the application's
+   own id (manufacturer, application number, version) at `0x0104`-`0x0107` and its PEI type at
+   `0x0109`, where the template carries another application's.
+3. **The memory writes:** each image write of the procedure covers only the bytes the `<Mask>` marks or
+   a parameter covers, one write per run of them. On the MDT unit the run `0x0119`-`0x01FE` becomes
+   `0x0119`-`0x013D` and `0x0172`-`0x01FE`; `0x013E`-`0x0171`, where the unit keeps its IP settings and
+   name, is not written to memory. A TTL parameter the `<Mask>` leaves out (`0x0176`, `Access="None"`)
+   is written, because a parameter covers it. The writes are the confirmed `A_MemoryExtended_Write`,
+   read back by nobody before the restart.
+4. **In place of the closing restart:** the security object (type 17) unloaded, loaded, its
+   individual address table cleared (element 0 = 0; the unit has none and answers `E_ADDRESS_VOID`,
+   which ETS ignores and Busforge tolerates for this write only), load completed. Then the KNXnet/IP
+   parameter object (type 11): its MAC address read, and written, in this order, PID 51 (installation
+   id, 0), 66 (routing multicast address, 224.0.23.12), 67 (TTL, 32), 76 (friendly name, the product's
+   text cut to 30 characters), 55 (IP assignment manual), 60-62 (IP address, mask, gateway from the
+   project's `IPConfig`) and 53 (the project's additional addresses on the device's line, its
+   tunnelling addresses). The unit keeps PID 67 in `0x0176`, so the TTL parameter's byte reads 32
+   afterwards. Then PID 94 (secured service families) switched off for routing, device management and
+   tunnelling, and the confirmed restart.
+
+PID 66 and 67 are not in the project: they are ETS's values for an installation without routing
+settings of its own. ETS writes the friendly name in its own language; Busforge keeps the language the
+unit holds where its name is the product's text in one of the catalogue's languages, else it takes the
+catalogue's default language. Busforge reads the unit first and refuses a download that would change its
+IP or tunnelling addresses (`SYSTEM1_IP_CHANGE_UNCAPTURED`), one without the device's tool key
+(`SYSTEM1_SECURE_SESSION_REQUIRED`) and one over USB (`SYSTEM1_TRANSPORT_UNCAPTURED`). Everything the capture does not show is refused
+rather than guessed (`SYSTEM1_KNXIP_UNCAPTURED`): a device name of its own, DHCP or another assignment,
+another number of additional addresses than the application takes, tunnelling users, a pending tool
+key or authentication code, an installation id, routing multicast address, BCU key or latency
+tolerance of the installation. After the restart Busforge reads the segment back (every written byte
+but the restamped TTL byte) and every written property.
 
 The System 7 **group-address flash** writes the address and association tables (objects 1 and 2)
 and, where the application names the com-object table's segment, the linked bits in it (object 3).

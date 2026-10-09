@@ -454,6 +454,17 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id, seq)
   );
   `,
+  // A KNXnet/IP device's settings the project keeps on its DeviceInstance outside the parameters (0.xml
+  // IPConfig, AdditionalAddresses, the security element's attribute names, the Installation's attributes;
+  // @busforge/project DeviceKnxIp, without deviceId), JSON. Read-only project data, written at import.
+  `
+  CREATE TABLE device_knxip (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id  TEXT NOT NULL,
+    settings   TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

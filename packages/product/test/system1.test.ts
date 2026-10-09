@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, classifyByMask, System1Profile, buildAbsoluteSegmentTargets, system1LoadRefusal, bcu1UnmarkedImageWrites, MV0012_DEFAULT_LOAD, ProductError } from "../src/index.ts";
+import { parseAppConfig, classify, classifyByMask, System1Profile, buildAbsoluteSegmentTargets, system1LoadRefusal, knxIpWrites, planSystem1Download, system1PreconditionRefusal, MV0012_DEFAULT_LOAD, ProductError, type KnxIpDevice } from "../src/index.ts";
 import { catalogueXml, captureText } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -9,7 +9,7 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // offsets 117 (P-5), 118 (P-1), 119-122 (P-7, an IP address), 123-124 (P-10) and 141 (P-11); its <Mask>
 // leaves out 0x0101-0x0103, 0x0117-0x0118, 0x013E-0x0171, 0x0176 and 0x01FF (read off the catalogue).
 // The master data's MV-0012 Load procedure writes 0x0100, 0x0104-0x010C, 0x010E-0x0115, 0x0119-0x01FE and
-// 0x0116 from the image.
+// 0x0116 from the image. The download's telegrams against ETS's: tools/etsdiff.test.ts.
 
 const A = "M-0083_A-0138-21-F18E-O0072";
 const ref = (p: string) => `${A}_${p}`;
@@ -48,30 +48,126 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
     return b;
   };
 
-  test("resolves to the System 1 profile: it reads, and refuses every write with its own code", () => {
+  const fx = JSON.parse(captureText("mdt-ip-secure-unit-knxip.json")) as { knxIp: KnxIpDevice };
+  const knxIp = (over: Partial<KnxIpDevice> = {}): KnxIpDevice => ({ ...fx.knxIp, ...over });
+  const params = new Map((JSON.parse(captureText("mdt-ip-secure-unit-memory.json")) as { params: [string, string][] }).params);
+
+  test("resolves to the System 1 profile: it reads, writes parameters and full downloads, and refuses group tables", () => {
     const p = classify(cfg);
     expect(p).toBeInstanceOf(System1Profile);
-    expect(p.capabilities()).toEqual({ readParams: true, readLinks: true, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
-    const r = p.operationRefusals();
-    expect(r.flashParams?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    expect(r.fullDownload?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    expect(r.flashLinks?.code).toBe("SYSTEM1_GROUP_TABLES_UNCAPTURED");
+    expect(p.capabilities()).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: false, fullDownload: true, structuralFlash: false });
+    expect(p.operationRefusals()).toEqual({ flashLinks: expect.objectContaining({ code: "SYSTEM1_GROUP_TABLES_UNCAPTURED" }) });
+    expect(system1LoadRefusal(cfg)).toBeNull();
   });
 
-  test("the refusal names the bytes the mask's procedure writes from the image and the <Mask> leaves out", () => {
-    expect(bcu1UnmarkedImageWrites(cfg, MV0012_DEFAULT_LOAD)).toEqual([{ from: 0x013e, to: 0x0171 }, { from: 0x0176, to: 0x0176 }]);
-    expect(system1LoadRefusal(cfg).message).toContain("0x013E-0x0171, 0x0176");
-    // A mask whose procedure Busforge does not carry is refused as well, saying so.
+  // Only what the capture shows is written: a Data Secure KNXnet/IP interface running the master data's MV-0012 procedure.
+  test("a System 1 application the capture does not show is refused: another mask, not secure, no additional addresses", () => {
     expect(system1LoadRefusal({ ...cfg, mask: "MV-0010" })).toEqual({ code: "SYSTEM1_LOAD_UNCAPTURED", message: expect.stringContaining("MV-0010 is not in Busforge") });
+    expect(system1LoadRefusal({ ...cfg, loadProcedures: { ...cfg.loadProcedures, secureEnabled: false } })?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
+    expect(system1LoadRefusal({ ...cfg, additionalAddressesCount: 0 })?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
+    expect(classify({ ...cfg, additionalAddressesCount: 0 }).capabilities()).toMatchObject({ flashParams: false, fullDownload: false });
   });
 
-  test("every write path throws the refusal before touching the device", async () => {
+  test("the KNXnet/IP properties written are the project's settings and ETS's defaults, in ETS's order", () => {
+    expect(knxIpWrites(cfg, knxIp()).map((w) => `${w.pid}*${w.count}=${w.data.toString("hex")}`)).toEqual([
+      "51*1=0000", "66*1=e000170c", "67*1=20", `76*30=${Buffer.from("SCN-IP000.03 IP Interface with").toString("hex")}`,
+      "55*1=01", "60*1=cb007129", "61*1=ffffff00", "62*1=cb007101", "53*4=11ff11fe11fd11fc",
+    ]);
+  });
+
+  test("every KNXnet/IP setting the capture does not show is refused, not guessed", async () => {
+    const refused = (over: Partial<KnxIpDevice>) => code(() => knxIpWrites(cfg, knxIp(over)));
+    const cases: Partial<KnxIpDevice>[] = [
+      { instanceName: "Gateway" },
+      { productName: "SCN-IP000.03" },                                   // shorter than the 30-character field
+      { productName: "SCN-IP000.03 IP Interface für Secure" },           // not ASCII
+      { ipConfig: null },
+      { ipConfig: { ...fx.knxIp.ipConfig, Assign: "Auto" } },
+      { ipConfig: { ...fx.knxIp.ipConfig, IPAddress: "192.0.2.300" } },
+      { ipConfig: { ...fx.knxIp.ipConfig, DnsServer: "1.1.1.1" } },
+      { additionalAddresses: [255, 254, 253] },
+      { additionalAddresses: [255, 254, 253, 256] },
+      { securityAttributes: [...fx.knxIp.securityAttributes, "DeviceAuthenticationCode"] },
+      { toolKeyLoaded: false },
+      { busInterfaces: 1 },
+      { installation: { ...fx.knxIp.installation, IPRoutingMulticastAddress: "239.0.0.1" } },
+      { installation: { ...fx.knxIp.installation, BCUKey: "305419896" } },
+      { installation: { ...fx.knxIp.installation, IPRoutingLatencyTolerance: "1000" } },
+    ];
+    for (const c of cases) expect([c, await refused(c)]).toEqual([c, "SYSTEM1_KNXIP_UNCAPTURED"]);
+  });
+
+  test("the precondition ETS reads: this manufacturer's unit, its hardware configuration the image's", () => {
+    const { image } = planSystem1Download(cfg, params, knxIp());
+    expect(system1PreconditionRefusal(cfg, image, segment())).toBeNull();
+    const other = segment(); other[0x04] = 0x72;
+    expect(system1PreconditionRefusal(cfg, image, other)?.code).toBe("SYSTEM1_UNIT_UNCAPTURED");
+    const hw = segment(); hw[0x0c] = 0xac;
+    expect(system1PreconditionRefusal(cfg, image, hw)?.code).toBe("SYSTEM1_UNIT_UNCAPTURED");
+  });
+
+  test("a write without the project's KNXnet/IP settings is refused before touching the device; group tables are refused", async () => {
     const p = classify(cfg);
-    const dev = asDev(new MockEeprom(segment()));
-    expect(await code(p.flashParameters(dev, "MV-0012", {} as never))).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    expect(await code(p.downloadFull(dev, "MV-0012", {} as never))).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    expect(await code(() => p.planFullDownload("MV-0012", {} as never))).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    expect(await code(p.flashGroupTables(dev, "MV-0012", {} as never))).toBe("SYSTEM1_GROUP_TABLES_UNCAPTURED");
+    const m = new MockEeprom(segment());
+    expect(await code(p.flashParameters(asDev(m), "MV-0012", { params, deviceId: "d" } as never))).toBe("SYSTEM1_KNXIP_MISSING");
+    expect(await code(p.downloadFull(asDev(m), "MV-0012", { params, deviceId: "d" } as never))).toBe("SYSTEM1_KNXIP_MISSING");
+    expect(await code(() => p.planFullDownload("MV-0012", { params } as never))).toBe("SYSTEM1_KNXIP_MISSING");
+    expect(await code(p.flashGroupTables(asDev(m), "MV-0012", {} as never))).toBe("SYSTEM1_GROUP_TABLES_UNCAPTURED");
+    expect(m.reads).toEqual([]);
+  });
+
+  // A unit as the house unit was after ETS's download: the image, and the KNXnet/IP properties the plan writes,
+  // the friendly name in German.
+  const unit = (over: { name?: string; props?: Record<number, Buffer>; secured?: boolean; overUsb?: boolean; eeprom?: (b: Buffer) => void } = {}) => {
+    const name = Buffer.from(over.name ?? "SCN-IP000.03 IP Interface mit ");
+    const { image, knxIp: writes } = planSystem1Download(cfg, params, knxIp(), name);
+    const held = new Map<number, Buffer>(writes.map((w) => [w.pid, Buffer.from(w.data)]));
+    held.set(76, name);
+    held.set(64, Buffer.from("020000000001", "hex"));
+    for (const [pid, b] of Object.entries(over.props ?? {})) held.set(Number(pid), b);
+    const bytes = Buffer.from(image); bytes[0x76] = 32; // the TTL byte the unit keeps PID 67 in
+    over.eeprom?.(bytes);
+    return Object.assign(new MockEeprom(bytes), {
+      secured: over.secured ?? true, overUsb: over.overUsb ?? false,
+      propExtRead: async (_t: number, _i: number, pid: number) => held.get(pid)!,
+    });
+  };
+  const files: string[] = [];
+  const dry = (dev: object, extra: object = {}) => classify(cfg).flashParameters(asDev(dev as MockEeprom), "MV-0012", { deviceId: "d", appXml: "", params, baseParams: params, knxIp: knxIp(), dryRun: true, persistBackups: (f) => { files.push(...f.map((x) => x.file)); return "b"; }, ...extra });
+
+  // Nothing compared differs, and the download still runs: it writes state it does not read.
+  test("a dry run on a unit holding the project counts no change, keeps the German name, and is not reported unchanged", async () => {
+    files.length = 0;
+    expect(await dry(unit())).toMatchObject({ kind: "dryRun", diffBytes: 0 });
+    expect(files.map((b) => b.replace(/-\d+\./, "."))).toEqual(["d-AS-0100.bin", "d-knxip.json"]);
+  });
+
+  test("a dry run counts the verified bytes and property bytes that differ", async () => {
+    // P-10 (verified) differs; a name that is no product text is replaced by the default language's (two characters differ).
+    expect(await dry(unit({ name: "SCN-IP000.03 IP Interface wXth", eeprom: (b) => { b[0x7b] ^= 0xff; } }))).toMatchObject({ kind: "dryRun", diffBytes: 2 });
+  });
+
+  test("refused before anything is written: an unsecured session, a link other than KNXnet/IP, links, an IP or tunnelling address change", async () => {
+    expect(await code(dry(unit({ secured: false })))).toBe("SYSTEM1_SECURE_SESSION_REQUIRED");
+    expect(await code(dry(unit({ overUsb: true })))).toBe("SYSTEM1_TRANSPORT_UNCAPTURED");
+    expect(await code(classify(cfg).downloadFull(asDev(unit() as unknown as MockEeprom), "MV-0012", { deviceId: "d", ia: "1.1.250", appXml: "", params, links: [{ comObjNum: 1, gaRaws: [1] }], knxIp: knxIp(), dryRun: true, persistBackups: () => "b" }))).toBe("SYSTEM1_LOAD_UNCAPTURED");
+    for (const [pid, b] of [[60, "cb00712a"], [55, "04"], [53, "11ff11fe11fd11fb"], [62, "cb0071fe"]] as const) {
+      expect([pid, await code(dry(unit({ props: { [pid]: Buffer.from(b, "hex") } })))]).toEqual([pid, "SYSTEM1_IP_CHANGE_UNCAPTURED"]);
+    }
+    expect(await code(dry(unit({ eeprom: (b) => { b[0x04] = 0x72; } })))).toBe("SYSTEM1_UNIT_UNCAPTURED");
+  });
+
+  test("an application with group objects or room for table entries is not written: the download writes the tables empty", () => {
+    expect(system1LoadRefusal({ ...cfg, groupTables: { ...cfg.groupTables, addressMaxEntries: 4 } })?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
+    expect(system1LoadRefusal({ ...cfg, comObjects: new Map([["O-1", {} as never]]) })?.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
+  });
+
+  test("the friendly name keeps a language the unit holds, else the catalogue's default; an unparseable address is refused", async () => {
+    const name = (held?: string) => knxIpWrites(cfg, knxIp(), held === undefined ? undefined : Buffer.from(held)).find((w) => w.pid === 76)!.data.toString("latin1");
+    expect(name("SCN-IP000.03 IP Interface mit ")).toBe("SCN-IP000.03 IP Interface mit ");
+    expect(name("Gateway")).toBe("SCN-IP000.03 IP Interface with");
+    expect(name()).toBe("SCN-IP000.03 IP Interface with");
+    expect(await code(() => knxIpWrites(cfg, knxIp({ additionalAddresses: [255, 254, null, 252] })))).toBe("SYSTEM1_KNXIP_UNCAPTURED");
   });
 
   test("readState reads the segment once and takes the device's values as the baseline", async () => {

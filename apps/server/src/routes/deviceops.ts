@@ -1,9 +1,10 @@
-import { parseAppConfig, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate } from "@busforge/product";
+import { parseAppConfig, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
+import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -578,6 +579,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, dataDir: state.dataDir, ...tables.ctx,
           params: dlParams, links: resolved.links, moduleInstances: dlModules, comObjectOverrides: dlOverrides,
+          ...knxIpOf(db, id, deviceId, dev.ia),
           dryRun: dryDl, onProgress: progress, ...gate,
         });
       }, commit, () => {
@@ -622,15 +624,23 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined);
     if (flStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, appXml);
     if (flStale !== "surgical") return flStale;
+    // A System 1 parameter download is the full download, the security object loaded with it (system1.ts).
+    const loadsSecurity = !!flApp && classify(flApp).memoryModel === "bcu1";
+    let flFingerprint: string | null = null;
     return programOrPreview(state,
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "flash-params" }, dryParams, "before-flash",
-      (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => flashDeviceParameters({
+      (progress, commit, gate) => programSubmission(state, id, deviceId, dev.programmingToken, dryParams, () => {
+        if (loadsSecurity) flFingerprint = securityTablesWithFingerprint(state, id, deviceId, [], dev.ia).fingerprint;
+        return flashDeviceParameters({
           projectId: id, deviceId, ia: dev.ia, appXml,
           connection: conn, secure,
           params: flashParams, baseParams: flashBase, moduleInstances: flashModules, dataDir: state.dataDir,
+          ...knxIpOf(db, id, deviceId, dev.ia),
           dryRun: dryParams, onProgress: progress, ...gate,
-        }), commit, () => {
+        });
+      }, commit, () => {
         resetParamBase(db, id, deviceId, flashParams, unwrittenParamRefs(state, id, deviceId, flashParams, flashModules));
+        if (loadsSecurity) setSecurityBase(state, id, deviceId, flFingerprint);
         if (paramsEndNever) clearNeverProgrammed(db, id, deviceId);
       }),
     );
@@ -691,6 +701,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   return null;
+}
+
+// The KNXnet/IP settings the project holds for a device, as the write contexts take them; nothing where it
+// holds none (the profile that needs them refuses then).
+function knxIpOf(db: Database, projectId: string, deviceId: string, ia: string): { knxIp?: KnxIpDevice } {
+  const settings = getDeviceKnxIp(db, projectId, deviceId);
+  return settings ? { knxIp: { ia, ...settings } } : {};
 }
 
 // A GroupValueWrite or GroupValueRead the user sends, handed to the interface over the monitor

@@ -30,7 +30,10 @@ export type LoadStep =
   | { op: "loadCompleted"; lsm: number; assert?: boolean }
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
   | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0) — a full download does, a par download does not
-  | { op: "writeMem"; address: number; bytes: Buffer }   // absolute addr, or relative resolved by the planner
+  // absolute addr, or relative resolved by the planner. `opens`/`closes`: the write stops / lets run again an
+  // application outside any load-state machine (a System 1 run error), so a failure between the two leaves
+  // the device without a running application, as an open load-state machine does.
+  | { op: "writeMem"; address: number; bytes: Buffer; opens?: string; closes?: string }
   // Declare an absolute segment to an LSM (LdCtrlAbsSegment): the segment must be declared to the LSM
   // before its data is written. Written to the memory-mapped control 0x0104, or with `viaProperty` as
   // the LSM's PID 5 write (a property-mapped mask); asserts the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
@@ -82,8 +85,17 @@ export type LoadStep =
   | { op: "stampAppId"; lsm: number; data: Buffer }       // propWrite(lsm, 13, appId) so loadCompleted validates
   // The Data Secure security object (type 17): a load event whose resulting state is asserted, and a
   // confirmed write of whole elements of one of its properties (see planSecurityObjectLoad).
+  // `tolerate`: the return code the load procedure ignores for this write (OnError Ignore); a write
+  // with it goes out as one request.
   | { op: "securityLsm"; event: number }
-  | { op: "writeSecurityProp"; pid: number; start: number; elementSize: number; data: Buffer };
+  | { op: "writeSecurityProp"; pid: number; start: number; elementSize: number; data: Buffer; tolerate?: number }
+  // An interface object reached by its object type through the extended services (the KNXnet/IP
+  // parameter object, type 11): a confirmed write of `count` elements from `start`, which must answer
+  // success; a read that must answer the `count` elements (a declared LdCtrlLoadImageProp); a function
+  // property command that must answer return code 0.
+  | { op: "writePropExt"; objectType: number; instance: number; pid: number; start: number; count: number; data: Buffer }
+  | { op: "readPropExt"; objectType: number; instance: number; pid: number; start: number; count: number }
+  | { op: "funcPropExt"; objectType: number; instance: number; pid: number; data: Buffer };
 
 export type LoadPlan = LoadStep[];
 
@@ -127,7 +139,7 @@ export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts 
   // The load-state machines this run has sent an UNLOAD or LOAD to and not yet completed. A failure
   // while any is open may leave the device without a complete application: an event that failed
   // may still have reached the device, so it counts from the moment it is sent.
-  const open = new Set<number | "security">();
+  const open = new Set<number | string>();
   try { await runSteps(dev, plan, opts, open); }
   catch (e) {
     if (open.size > 0 && e !== null && typeof e === "object" && Object.isExtensible(e)) (e as { leftUnloaded?: boolean }).leftUnloaded = true;
@@ -140,7 +152,7 @@ export function leftUnloaded(e: unknown): boolean {
   return e !== null && typeof e === "object" && (e as { leftUnloaded?: unknown }).leftUnloaded === true;
 }
 
-async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set<number | "security">): Promise<void> {
+async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set<number | string>): Promise<void> {
   // Which write service the device takes is settled before the first load-state event, so a device
   // that does not answer the question is refused before anything is unloaded. A device written with
   // the confirmed extended write is never put into verify mode, and is not read back before the
@@ -208,10 +220,12 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         break;
       }
       case "writeMem": {
-        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); break; }
+        if (step.opens) open.add(step.opens);
+        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); if (step.closes) open.delete(step.closes); break; }
         const block = await dev.classicReadChunk();
         const have = await dev.memRead(step.address, step.bytes.length, block);
         for (const r of differingRuns(step.address, step.bytes, have, block)) await dev.memWrite(r.address, r.bytes, { verify: true });
+        if (step.closes) open.delete(step.closes);
         break;
       }
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
@@ -270,7 +284,25 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (step.event === LSM.LOAD_COMPLETED) open.delete("security");
         break;
       }
-      case "writeSecurityProp": await dev.propExtWriteElements(OBJECT_TYPE_SECURITY, 1, step.pid, step.start, step.elementSize, step.data); break;
+      case "writeSecurityProp":
+        if (step.tolerate === undefined) await dev.propExtWriteElements(OBJECT_TYPE_SECURITY, 1, step.pid, step.start, step.elementSize, step.data);
+        else await dev.propExtWriteCon(OBJECT_TYPE_SECURITY, 1, step.pid, step.data, step.start, step.data.length / step.elementSize, step.tolerate);
+        break;
+      case "writePropExt": await dev.propExtWriteCon(step.objectType, step.instance, step.pid, step.data, step.start, step.count); break;
+      // Reported at the plan's end, like readProp: the read comes after the last load completion.
+      case "readPropExt": {
+        try {
+          const v = await dev.propExtRead(step.objectType, step.instance, step.pid, step.start, step.count);
+          opts.onRead?.(step.objectType, step.pid, step.start, v);
+        }
+        catch (e) { unread ??= e instanceof Error ? e : new KnxError("PROPERTY_EXT_READ_REFUSED", String(e)); }
+        break;
+      }
+      case "funcPropExt": {
+        const { returnCode, result } = await dev.funcPropExtCommand(step.objectType, step.instance, step.pid, step.data);
+        if (returnCode !== 0) throw new KnxError("FUNCTION_PROPERTY_REFUSED", `object type ${step.objectType} PID ${step.pid}: the device answered return code 0x${returnCode.toString(16)} (${result.toString("hex") || "no data"}) to ${step.data.toString("hex")}`);
+        break;
+      }
       case "loadCompleted": {
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
         if (step.assert !== false) {

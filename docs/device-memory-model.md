@@ -565,7 +565,7 @@ A device is end-to-end programmable only when both axes are handled.
 | Gap | What it is | Status |
 | --- | --- | --- |
 | **True property-based loading** | parameters loaded via interface-object property writes instead of a memory image (IP interfaces, routers, cEMI servers). Needs a generic `A_PropertyValue_Write` download path | not implemented |
-| **Legacy System 1 / BCU1** | MV-001x, the mask's `DefaultProcedure`, one EEPROM segment at `0x0100` holding parameters and tables | config shown, read back (parameters; group tables when empty), every write refused ([device-support.md](device-support.md#known-gaps)) |
+| **Legacy System 1 / BCU1** | MV-001x, the mask's `DefaultProcedure`, one EEPROM segment at `0x0100` holding parameters and tables | config shown, read back (parameters; group tables when empty); the MV-0012 download of a Data Secure KNXnet/IP interface written as ETS runs it, every other write refused ([load-procedures.md](load-procedures.md#system-1-the-mv-0012-download)) |
 | **Application code (LSM5)** | a separate application-program download | not implemented as its own capability. A System 7 full download does write the static code segments the load procedure declares, straight from their `<Data>` (see [load-procedures.md](load-procedures.md)); OpenKNX does not need it at all (firmware ships as a USB `.uf2`) |
 | **KNX IP Secure** | encrypted tunnelling/routing | out of scope. KNX **Data** Secure is implemented, see [knx-secure.md](knx-secure.md) |
 | **Non-TP media (RF, PL, IP)** | different addressing and services than TP | code-shared, never exercised on the wire. The PL/RF/IP masks run the same codec and load procedure as their TP siblings, so they are implemented but unproven; see [status.md](status.md) |

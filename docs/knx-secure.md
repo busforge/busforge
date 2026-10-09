@@ -412,19 +412,21 @@ dropped too and reported as `DEVICE_NOT_ANSWERING`, because a replay is MAC-vali
 retransmission is ordinary transport, so it is no evidence against the key. Neither is ever used.
 The robustness check alters both answers between the tunnel and the session, not on the bus.
 
-A secure parameter flash needs a secure device that has a parameter image and is not itself the
-interface carrying the flash. Two common classes of secure device are not such targets:
+A secure parameter flash needs a secure device that has a parameter image. Two common classes of secure
+device need more than that:
 
 - **A secure IP interface may keep its network settings outside its parameters.** The MDT IP
   Interface Secure (MV-0012) is a System 1 `DefaultProcedure` device: five parameters in its EEPROM
-  segment at `0x0100`, which Busforge reads back under the secure session, while its IP settings and
-  name are device properties of the project that the unit keeps in the same segment, in bytes the
-  application's `<Mask>` leaves out. Its writes are refused until an ETS capture shows what ETS writes
-  there ([device-support.md](device-support.md#known-gaps)). The MDT IP Interface/Router
+  segment at `0x0100`, while its IP settings, tunnelling addresses and name are device properties of
+  the project that it takes in its KNXnet/IP parameter object. Its download writes both, as ETS does
+  ([load-procedures.md](load-procedures.md#system-1-the-mv-0012-download)). The MDT IP Interface/Router
   (MV-07B0) does have a System B parameter segment, but its tunnelling entries are not modeled
   ([device-support.md](device-support.md#known-gaps)).
-- **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash
-  restarts it, which drops the connection carrying the flash.
+- **A device that is itself the bus gateway** can be flashed over its own connection: the MDT IP
+  Interface Secure's confirmed restart has been shown to keep its tunnels, and Busforge's verify read
+  went over the same tunnel afterwards. Another gateway's restart may drop the connection carrying the
+  flash; Busforge then reopens it to verify, and refuses the verify when the interface hands the tunnel
+  another address (`TUNNEL_ADDRESS_CHANGED`).
 
 The secured full download, parameter flash and GA flash are supported on System B; the products
 they are shown on, among them the Jung 400021SE (`M-0004_A-7072-21`, `IsSecureEnabled="true"`), are

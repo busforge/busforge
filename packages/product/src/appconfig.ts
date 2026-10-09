@@ -181,6 +181,9 @@ export interface AppConfig {
   // They are device-instance data (the project's AdditionalAddresses), outside the parameter image
   // and the load procedure. NaN when the attribute is present but not a non-negative integer.
   maxTunnelingUserEntries: number;
+  // ApplicationProgram AdditionalAddressesCount: how many further individual addresses the device takes
+  // (the project's AdditionalAddresses); 0 where absent, NaN where not a non-negative integer.
+  additionalAddressesCount: number;
   // <Options ParameterByteOrder>: the byte order of multi-byte parameter values in memory.
   parameterByteOrder: "BigEndian" | "LittleEndian";
   // <Options DownloadInvisibleParameters>: "None" where ETS downloads no parameter the configuration
@@ -335,6 +338,8 @@ export function parseAppConfig(xml: string): AppConfig {
     appPeiType: Number(appAttrs.PeiType ?? 0),
     maxTunnelingUserEntries: appAttrs.MaxTunnelingUserEntries === undefined ? 0
       : /^\d+$/.test(appAttrs.MaxTunnelingUserEntries) ? Number(appAttrs.MaxTunnelingUserEntries) : NaN,
+    additionalAddressesCount: appAttrs.AdditionalAddressesCount === undefined ? 0
+      : /^\d+$/.test(appAttrs.AdditionalAddressesCount) ? Number(appAttrs.AdditionalAddressesCount) : NaN,
     parameterByteOrder,
     textParameterZeroTerminate: optionsNode ? attrsOf(optionsNode).TextParameterZeroTerminate === "true" : false,
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),

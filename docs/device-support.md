@@ -74,7 +74,7 @@ trusting a row that does not.
 | `MV-0001` | TP | Dummy | none | ❌ | ❌ | ❌ |
 | `MV-0010` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-0011` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
-| `MV-0012` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-0012` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ✅ ¹ | ❌ |
 | `MV-0013` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-0020` | TP | System 2 (BCU2) | bcu2 | ❌ | ❌ | ❌ |
 | `MV-0021` | TP | System 2 (BCU2) | bcu2 | ❌ | ❌ | ❌ |
@@ -112,6 +112,10 @@ trusting a row that does not.
 | `MV-4012` | IP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-5705` | IP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-57B0` | IP | System B | relative | ✅ params + links | ✅ | ✅ |
+
+¹ Only a Data Secure KNXnet/IP interface (`IsSecureEnabled`, additional addresses), the one System 1
+download an ETS capture shows; the parameter download is its full download. Every other System 1
+application is refused (`SYSTEM1_LOAD_UNCAPTURED`), see [Known gaps](#known-gaps).
 
 ## The com-object table: three paths, and the difference matters
 
@@ -155,17 +159,23 @@ trusting a row that does not.
 
 ## Known gaps
 
-- **System 1 (BCU1)** is read, not written. The master data gives every BCU1 mask one EEPROM
-  segment of 256 bytes at `0x0100` holding the parameters and the tables, and a load procedure fixed
-  by the mask (the application declares `DefaultProcedure`). The read takes that segment, decodes the
-  parameters at the offsets the application gives, and the group tables where they are empty (the
-  address table holds only the device's own address, the association table nothing); tables with
-  entries are reported as not read, since no device has shown Busforge their entry layout. Every write
-  is refused: the parameter and the full download with `SYSTEM1_LOAD_UNCAPTURED` (the mask declares
-  one procedure for both, and no ETS capture shows what ETS writes besides it; on the MDT IP Interface
-  Secure the procedure covers `0x013E`-`0x0171` and `0x0176`, which the application's `<Mask>` leaves
-  out and where the unit keeps its IP settings and name), the group-address flash with
-  `SYSTEM1_GROUP_TABLES_UNCAPTURED`.
+- **System 1 (BCU1)** is read, and written only as ETS's capture shows it. The master data gives every
+  BCU1 mask one EEPROM segment of 256 bytes at `0x0100` holding the parameters and the tables, and a
+  load procedure fixed by the mask (the application declares `DefaultProcedure`). The read takes that
+  segment, decodes the parameters at the offsets the application gives, and the group tables where
+  they are empty (the address table holds only the device's own address, the association table
+  nothing); tables with entries are reported as not read, since no device has shown Busforge their
+  entry layout. The one write is the download of a Data Secure KNXnet/IP interface on MV-0012 (the MDT
+  IP Interface Secure): the mask's procedure, the security object and the KNXnet/IP parameter object's
+  properties, as ETS runs it ([load-procedures.md](load-procedures.md#system-1-the-mv-0012-download)).
+  It runs on the parameter route and the full-download route alike, since the mask declares one
+  procedure and the application no partial download. Refused: every other System 1 application
+  (`SYSTEM1_LOAD_UNCAPTURED`), any KNXnet/IP setting of the project the capture does not show, such as
+  a device name of its own, DHCP, tunnelling users, IP Secure, routing multicast settings of the
+  installation (`SYSTEM1_KNXIP_UNCAPTURED`), a unit of another manufacturer or another hardware
+  configuration (`SYSTEM1_UNIT_UNCAPTURED`), a project without the device's KNXnet/IP settings, such as
+  an archive from before Busforge kept them (`SYSTEM1_KNXIP_MISSING`), and the group-address flash
+  (`SYSTEM1_GROUP_TABLES_UNCAPTURED`; the MDT application has no group objects).
 - **System 2 (BCU2)** appears in real projects. It is recognised and refused; implementing it means
   the classic fixed-EEPROM address/association/com-object/parameter model, which is a separate
   effort. See [roadmap.md](roadmap.md).
@@ -183,14 +193,16 @@ trusting a row that does not.
   Interface/Router) is not evaluated for them yet. Since the full
   download unloads and reallocates every load object, it is refused before any bus traffic, on the
   System B and the System 7 path (unit-tested on `M-0083_A-0137` and on a System 7 application with
-  the attribute added, since no System 7 application in the catalogue declares it). An application whose family refuses
-  every write anyway (the MV-0012 IP Interface Secure) keeps its family's `SYSTEM1_LOAD_UNCAPTURED`. The capability
+  the attribute added, since no System 7 application in the catalogue declares it). The System 1
+  download of the MV-0012 IP Interface Secure writes its tunnelling addresses itself (the KNXnet/IP
+  object's PID 53, as ETS does), so it is not refused for them. The capability
   flag does not offer the download either, so a device never verified since it was placed keeps the
   surgical flashes instead of being sent to the download; read-back and secure
   identify stay available. Those flashes leave the properties the entries live in alone, but they are
   not harmless: they rewrite the parameter segment, or the group tables, the com-object table and
-  (with a tool key on file) the security object, and both end in a restart of the interface, which
-  cannot be flashed over its own connection ([knx-secure.md](knx-secure.md)). The product data gives
+  (with a tool key on file) the security object, and both end in a restart of the interface, which on
+  the MDT box that also serves the tunnels drops them for up to a minute; Busforge then reopens its own
+  to verify ([knx-secure.md](knx-secure.md)). The product data gives
   the interface a System B parameter model (the IP settings are parameters), while it answered
   `0xFFFF` when read plainly; whether a secured read returns its parameter segment is not shown.
   Its parameter image equals ETS's image of that full download, byte for byte. Writing the
