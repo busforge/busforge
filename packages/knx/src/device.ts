@@ -524,7 +524,7 @@ export class KnxDevice {
   // requests up to that length (3 octets of APCI and address), capped at EXT_READ_CHUNK: the path
   // (interface, couplers, a single USB HID report) has its own limit, and that size is what the
   // extended reads already carry over the bench's USB interface and the house's IP interface.
-  private async classicReadChunk(): Promise<number> {
+  async classicReadChunk(): Promise<number> {
     return transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead;
   }
   // The extended services run at the path limits in a plain session, as they always have; a secured

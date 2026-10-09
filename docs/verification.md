@@ -222,6 +222,11 @@ Both have a guard, and both are the reason the hardware smoke framework
 
 Even for a device whose image has never been read back, the flash path does not fly blind:
 
+On a memory-mapped System 7 mask (MV-0700/0701) a write is decided by a read of the unit before it
+(as ETS writes these devices), and checked by a read after it. A unit that answers a memory read with
+something other than what it stores would have a byte left out and still pass: both reads see the same
+answer.
+
 1. **Mask check.** Refuse if the device's application mask does not match the program (wrong
    device, or wrong application).
 2. **Declared pre-flight.** Run the application's own `CompareProp` checks (hardware type,

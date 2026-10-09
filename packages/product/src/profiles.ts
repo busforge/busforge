@@ -1575,7 +1575,7 @@ export class System7Profile extends DeviceProfile {
         // The memory-mapped System 7 masks (MV-0700/0701) drive their LSMs over 0x0104, not PID 5;
         // a surgical param flash needs the same transport the full download does, or it would talk
         // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
-        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
+        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
       },
       verify: async (confirmedOnly) => {
         for (const t of targets) {
@@ -1668,7 +1668,7 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1733,7 +1733,7 @@ export class System7Profile extends DeviceProfile {
       ...(loaded ? {} : { loadIncomplete: "refuse" as const }),
       backup: `${ctx.deviceId}-structure-${stamp}`,
       backups: ctx.dryRun ? [] : images.map((r) => ({ file: `${ctx.deviceId}-structure-${stamp}-${r.id.split("_").pop()}.bin`, bytes: current.get(r.address)! })),
-      write: () => runLoadPlan(dev, plan, { memMappedLsms: memMapped, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } }),
+      write: () => runLoadPlan(dev, plan, { memMappedLsms: memMapped, readCompare: memMapped, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } }),
       // Every written segment is read back, and every load-state machine it concerns must be LOADED.
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1896,7 +1896,7 @@ export class System7Profile extends DeviceProfile {
       diffBytes: imageBytes, // a full download owns every byte it writes
       backup: `${ctx.deviceId}-full-${stamp}`,
       backups,
-      write: async () => { await runLoadPlan(dev, plan, { memMappedLsms, onWrite: (d, t) => ctx.onProgress?.("write", d, t) }); },
+      write: async () => { await runLoadPlan(dev, plan, { memMappedLsms, readCompare: memMappedLsms, onWrite: (d, t) => ctx.onProgress?.("write", d, t) }); },
       // Read every written segment back and compare to what we built, masking out the download-
       // recognition bytes the device re-stamps for itself (the MV-0701 P-2228 "Downloaderkennung").
       // Only a full byte-match across every segment is a verified download.

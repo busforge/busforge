@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { declareAbsSegmentMM, declareTaskSegmentMM, lsmEvent, lsmState, STATE } from "../src/flash.ts";
-import { runLoadPlan, type LoadPlan } from "../src/loadrunner.ts";
+import { runLoadPlan, differingRuns, type LoadPlan } from "../src/loadrunner.ts";
 import { KnxDevice } from "../src/device.ts";
 
 // Recording stub for the MEMORY-MAPPED LSM interface (MV-0700/0701). The load control is a
@@ -23,9 +23,13 @@ class MMDev {
       // event 3 (segment / task declaration) does not change the LSM state
     }
   }
-  async memRead(addr: number, len: number) {
+  mem = new Map<number, number>();
+  reads: { addr: number; len: number; chunk?: number }[] = [];
+  async classicReadChunk() { return 12; }
+  async memRead(addr: number, len: number, chunk?: number) {
     if (addr >= 46825 && addr < 46825 + 16) return Buffer.from([this.state.get(addr - 46825) ?? STATE.UNLOADED]);
-    return Buffer.alloc(len);
+    this.reads.push({ addr, len, chunk });
+    return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0));
   }
   async propWrite() { throw new Error("property (PID 5) path must not be used for a memory-mapped LSM"); }
   async propRead() { throw new Error("property (PID 5) path must not be used for a memory-mapped LSM"); }
@@ -209,5 +213,27 @@ describe("property-mapped LSM controls (MV-0705)", () => {
     d.restart = async () => { restarts.push(1); };
     expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "readProp", obj: 2, pid: 27, start: 1 }, { op: "restart" }]).catch((e: unknown) => e)).toMatchObject({ code: "PROPERTY_READ_EMPTY" });
     expect(restarts).toEqual([1]);
+  });
+});
+
+describe("read-compare writes (memory-mapped System 7, as ETS writes them)", () => {
+  test("per 12-byte block, the span from the first to the last differing byte, equal bytes inside included", () => {
+    const want = Buffer.from("0114030a031e0001020000" + "c201000200000000000000", "hex");
+    const have = Buffer.from("0814030a001e6800" + "00c201" + "c201000200000000000000", "hex");
+    expect(differingRuns(0x6d01, want, have, 12).map((r) => [r.address.toString(16), r.bytes.toString("hex")])).toEqual([["6d01", "0114030a031e0001020000"]]);
+    expect(differingRuns(0x6d01, want, want, 12)).toEqual([]);
+    expect(differingRuns(0, Buffer.from([1, 2, 3, 4, 5]), Buffer.from([0, 2, 3, 4, 0]), 2).map((r) => [r.address, r.bytes.toString("hex")])).toEqual([[0, "01"], [4, "05"]]);
+    expect(() => differingRuns(0, Buffer.alloc(3), Buffer.alloc(2), 12)).toThrow("partial read");
+  });
+
+  test("the runner reads each writeMem first in the device's read blocks and writes only those spans", async () => {
+    const d = new MMDev();
+    [0x01, 0x02, 0x03].forEach((b, i) => d.mem.set(0x4800 + i, b));
+    await runLoadPlan(asDev(d), [{ op: "writeMem", address: 0x4800, bytes: Buffer.from([0x01, 0xaa, 0x03]) }], { memMappedLsms: true, readCompare: true });
+    expect(d.reads).toEqual([{ addr: 0x4800, len: 3, chunk: 12 }]);
+    expect(d.writes).toEqual([{ addr: 0x4801, hex: "aa", verify: true }]);
+    const plain = new MMDev();
+    await runLoadPlan(asDev(plain), [{ op: "writeMem", address: 0x4800, bytes: Buffer.from([0x01, 0xaa, 0x03]) }], { memMappedLsms: true });
+    expect([plain.reads, plain.writes]).toEqual([[], [{ addr: 0x4800, hex: "01aa03", verify: true }]]);
   });
 });

@@ -827,8 +827,8 @@ export function planAbsoluteFullDownload(
   // is the device's own and is not written). Of each, the bytes ETS's image holds (etsWrittenRuns): the
   // application stays loaded, so of its data segments only the bytes a parameter covers. ETS then leaves
   // out the bytes it believes the device already holds (its differential download, from the stamps it
-  // read in the previous download); Busforge keeps no such record and writes the whole image, every byte
-  // of it read back after the restart.
+  // read in the previous download); Busforge keeps no such record and writes the whole image (on a
+  // memory-mapped mask, read and compared, what differs from it), every byte read back after the restart.
   if (opts.form === "partial") {
     const t = planSystem7TableBrackets(app, procedure, { addr, assoc });
     tableSegs(t);
