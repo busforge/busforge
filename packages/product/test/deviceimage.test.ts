@@ -595,7 +595,8 @@ corpusTest("the relative images of the full download and the parameter flash sta
   const ipr = (own: boolean) => { const t = buildRelativeSegmentTarget(ip, new Map(), 4, { ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };
   expect([ipr(true), ipr(false)]).toEqual(["53447b1aba6bb593/681b13d79dac48c8/2349", "53447b1aba6bb593/681b13d79dac48c8/2349"]);
   expect(Buffer.from(buildRelativeSegmentTarget(ip, new Map(), 4)!.bytes.subarray(71, 101)).toString("latin1")).toBe("MDT IP Interface mit IPRouting");
-});
+  // Parses six whole catalogues and builds each image twice: 1.8 s alone at load 25 (1.7 s of it CPU), 11 s in a full check at load 30.
+}, 30_000);
 
 // GVS AMMA byte 64: "Output 3&4 function" (2 bits at bit offset 0) shares the byte with that
 // channel's unions. With the channel disabled the unions are idle: the parameter flash owns only
