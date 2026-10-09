@@ -14,6 +14,7 @@ import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
 import { buildSecurityObject, reachableGroupKeys, type OtherDevice } from "./securityobject.ts";
+import { bcu1Segment, bcu1ApplicationRefusal, decodeEmptyBcu1Tables, system1LoadRefusal, SYSTEM1_GROUP_TABLES_REFUSAL } from "./system1.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
 // done/total counters (unit-agnostic; memory reads report bytes). Structurally identical
@@ -1858,11 +1859,53 @@ export class System7Profile extends DeviceProfile {
 }
 
 
-// Every recognised-but-not-implemented memory model: System 1 (BCU1), System 2 (BCU2),
-// System 300, couplers, interfaces, IR decoders, media couplers, RF-only, unknown masks.
+// System 1 (BCU1) devices: the application's parameters and every table in the EEPROM segment at 0x0100
+// (system1.ts). Read: the segment, where it holds this application loaded, decoded at the offsets the application gives (the MDT IP Interface
+// Secure read under its secure session holds ETS's values there), and the group tables where they are
+// empty. Every write is refused: no ETS capture of a System 1 download exists (system1LoadRefusal).
+export class System1Profile extends DeviceProfile {
+  readonly memoryModel = "bcu1" as const;
+  constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
+
+  capabilities(): DeviceCapabilities {
+    const read = !!this.cfg && bcu1Segment(this.cfg) !== undefined;
+    return { readParams: read, readLinks: read, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false };
+  }
+
+  override operationRefusals(): OperationRefusals {
+    if (!this.cfg) return {};
+    const load = system1LoadRefusal(this.cfg);
+    return { flashParams: load, fullDownload: load, flashLinks: SYSTEM1_GROUP_TABLES_REFUSAL };
+  }
+
+  async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
+    const cfg = this.requireCfg("read-back");
+    const seg = bcu1Segment(cfg);
+    if (!seg) throw new UnsupportedOperation("read-back", this.family, this.mask);
+    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
+    const model = toAppModel(cfg, { includeUnions: true, instances: [] });
+    const target = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { textRefusals: "skip" }).find((t) => t.id === seg.id);
+    const eeprom = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("params", d, seg.size), ctx.signal);
+    refuse(bcu1ApplicationRefusal(cfg, eeprom));
+    const deviceVals = decodeAbsoluteImage(model, seg.id, eeprom);
+    const projectVals = target ? decodeAbsoluteImage(model, seg.id, target.bytes) : new Map<string, string>();
+    if (target) dropUnownedText(model, deviceVals, (p) => (p.codeSegment === seg.id ? target.owned : undefined));
+    const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, device?.relevant);
+    const links = decodeEmptyBcu1Tables(eeprom);
+    return { mask, paramsRead: true, linksRead: links !== null, paramBase, links: links ?? [], deviceConfig: device?.deviceConfig };
+  }
+
+  async flashParameters(): Promise<FlashResult> { refuseWith(system1LoadRefusal(this.requireCfg("parameter flash"))); }
+  async flashGroupTables(): Promise<FlashResult> { refuseWith(SYSTEM1_GROUP_TABLES_REFUSAL); }
+  override async downloadFull(): Promise<FlashResult> { refuseWith(system1LoadRefusal(this.requireCfg("full download"))); }
+  override planFullDownload(): FullDownloadBuild { refuseWith(system1LoadRefusal(this.requireCfg("full download"))); }
+}
+
+// Every recognised-but-not-implemented memory model: System 2 (BCU2), System 300, couplers,
+// interfaces, IR decoders, media couplers, RF-only, unknown masks.
 // Capabilities are all false and every operation throws, so such a device is reported as
 // honestly unsupported instead of being misrouted into a path that would fabricate a result.
-// (This is what fixes MV-0012: it has an AbsoluteSegment and used to be misread as System 7.)
 export class UnsupportedProfile extends DeviceProfile {
   constructor(readonly memoryModel: MemoryModel, readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
   capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false }; }
@@ -1876,11 +1919,12 @@ function profileFor(mask: string, cfg: AppConfig | null): DeviceProfile {
   switch (info.memoryModel) {
     case "relative": return new SystemBProfile(info.family, mask, cfg);
     case "absolute": return new System7Profile(info.family, mask, cfg);
+    case "bcu1": return new System1Profile(info.family, mask, cfg);
     // Memory models nobody has implemented. They resolve to a profile whose every operation
     // throws, which is the whole point (see UnsupportedProfile). Enumerated rather than caught by
     // a `default`, so that a model added to masks.ts cannot land here by accident and be declared
     // unsupported when someone has in fact implemented it.
-    case "bcu1": case "bcu2": case "system300": case "none":
+    case "bcu2": case "system300": case "none":
       return new UnsupportedProfile(info.memoryModel, info.family, mask, cfg);
   }
 }

@@ -72,10 +72,10 @@ trusting a row that does not.
 | Mask | Medium | Family | Memory model | Read-back | Flash params | Flash GA |
 |---|---|---|---|---|---|---|
 | `MV-0001` | TP | Dummy | none | ❌ | ❌ | ❌ |
-| `MV-0010` | TP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-0011` | TP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-0012` | TP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-0013` | TP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
+| `MV-0010` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-0011` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-0012` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-0013` | TP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-0020` | TP | System 2 (BCU2) | bcu2 | ❌ | ❌ | ❌ |
 | `MV-0021` | TP | System 2 (BCU2) | bcu2 | ❌ | ❌ | ❌ |
 | `MV-0025` | TP | System 2 (BCU2) | bcu2 | ❌ | ❌ | ❌ |
@@ -95,9 +95,9 @@ trusting a row that does not.
 | `MV-091A` | TP | Coupler | none | ❌ | ❌ | ❌ |
 | `MV-0AFD` | TP | Unknown | none | ❌ | ❌ | ❌ |
 | `MV-0AFE` | TP | Unknown | none | ❌ | ❌ | ❌ |
-| `MV-1011` | PL | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-1012` | PL | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-1013` | PL | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
+| `MV-1011` | PL | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-1012` | PL | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-1013` | PL | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-1310` | PL | Interface | none | ❌ | ❌ | ❌ |
 | `MV-1311` | PL | Interface | none | ❌ | ❌ | ❌ |
 | `MV-17B0` | PL | System B | relative | ✅ params + links | ✅ | ✅ |
@@ -108,8 +108,8 @@ trusting a row that does not.
 | `MV-2705` | RF | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-27B0` | RF | System B | relative | ✅ params + links | ✅ | ✅ |
 | `MV-2920` | RF | Media coupler | none | ❌ | ❌ | ❌ |
-| `MV-3012` | IP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
-| `MV-4012` | IP | System 1 (BCU1) | bcu1 | ❌ | ❌ | ❌ |
+| `MV-3012` | IP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
+| `MV-4012` | IP | System 1 (BCU1) | bcu1 | ✅ params + links | ❌ | ❌ |
 | `MV-5705` | IP | System 7 (M112) | absolute | ✅ params + links | ✅ | ✅ |
 | `MV-57B0` | IP | System B | relative | ✅ params + links | ✅ | ✅ |
 
@@ -155,9 +155,20 @@ trusting a row that does not.
 
 ## Known gaps
 
-- **System 1 / System 2 (BCU1/BCU2)** appear in real projects. They are recognised and refused;
-  implementing them means the classic fixed-EEPROM address/association/com-object/parameter
-  model, which is a separate effort. See [roadmap.md](roadmap.md).
+- **System 1 (BCU1)** is read, not written. The master data gives every BCU1 mask one EEPROM
+  segment of 256 bytes at `0x0100` holding the parameters and the tables, and a load procedure fixed
+  by the mask (the application declares `DefaultProcedure`). The read takes that segment, decodes the
+  parameters at the offsets the application gives, and the group tables where they are empty (the
+  address table holds only the device's own address, the association table nothing); tables with
+  entries are reported as not read, since no device has shown Busforge their entry layout. Every write
+  is refused: the parameter and the full download with `SYSTEM1_LOAD_UNCAPTURED` (the mask declares
+  one procedure for both, and no ETS capture shows what ETS writes besides it; on the MDT IP Interface
+  Secure the procedure covers `0x013E`-`0x0171` and `0x0176`, which the application's `<Mask>` leaves
+  out and where the unit keeps its IP settings and name), the group-address flash with
+  `SYSTEM1_GROUP_TABLES_UNCAPTURED`.
+- **System 2 (BCU2)** appears in real projects. It is recognised and refused; implementing it means
+  the classic fixed-EEPROM address/association/com-object/parameter model, which is a separate
+  effort. See [roadmap.md](roadmap.md).
 - **Non-application devices** (couplers, interfaces, media couplers) are out of scope for
   parameter commissioning by design. An interface whose product data uses an application mask (the
   MDT IP Interface/Router, MV-07B0) is routed to that mask's profile: read-back, parameter and
@@ -172,8 +183,8 @@ trusting a row that does not.
   Interface/Router) is not evaluated for them yet. Since the full
   download unloads and reallocates every load object, it is refused before any bus traffic, on the
   System B and the System 7 path (unit-tested on `M-0083_A-0137` and on a System 7 application with
-  the attribute added, since no System 7 application in the catalogue declares it). An application whose family is
-  refused anyway (the MV-0012 IP Interface Secure) keeps `FULL_DOWNLOAD_UNSUPPORTED`. The capability
+  the attribute added, since no System 7 application in the catalogue declares it). An application whose family refuses
+  every write anyway (the MV-0012 IP Interface Secure) keeps its family's `SYSTEM1_LOAD_UNCAPTURED`. The capability
   flag does not offer the download either, so a device never verified since it was placed keeps the
   surgical flashes instead of being sent to the download; read-back and secure
   identify stay available. Those flashes leave the properties the entries live in alone, but they are

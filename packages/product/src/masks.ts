@@ -37,11 +37,11 @@ export type SystemFamily =
 
 // The on-device memory model that decides how we read/program a device. This is what
 // classify() dispatches on: "relative" -> System B path, "absolute" -> System 7 path,
-// everything else has no implemented programming path (-> UnsupportedProfile).
+// "bcu1" -> System 1 (read only), everything else has no implemented path (-> UnsupportedProfile).
 export type MemoryModel =
   | "absolute" // System 7: parameters in fixed AbsoluteSegments, System-7 group tables
   | "relative" // System B: parameters in a relative LSM4 segment, count-prefixed group tables
-  | "bcu1" // System 1 fixed EEPROM model (not implemented)
+  | "bcu1" // System 1 fixed EEPROM model (read only, see system1.ts)
   | "bcu2" // System 2 fixed EEPROM model (not implemented)
   | "system300" // System 300 model (not implemented)
   | "none"; // no application memory model (couplers, interfaces, IR, media couplers, dummy)

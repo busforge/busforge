@@ -19,7 +19,7 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 //   - LdCtrlLoadImageProp PID 27 closing a procedure is a read before the restart, and the GVS AMMA's
 //     closing object 4 PID 67 = 01 write is sent as declared: neither refuses anything.
 // Two refusals have other reasons and are listed so the table covers every fixture: M-0083_A-0137
-// declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1, nothing).
+// declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1: read only, no ETS capture of a System 1 download).
 const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDownload: boolean }> = {
   "M-0002_A-A001-13-63C2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0004_A-7072-21-99A7-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },

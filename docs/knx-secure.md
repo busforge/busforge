@@ -415,10 +415,12 @@ The robustness check alters both answers between the tunnel and the session, not
 A secure parameter flash needs a secure device that has a parameter image and is not itself the
 interface carrying the flash. Two common classes of secure device are not such targets:
 
-- **A secure IP interface may have no parameter image.** The MDT IP Interface Secure (MV-0012) is a
-  `DefaultProcedure` device with **zero parameter segments**, configured through properties rather than a parameter image, so a parameter
-  flash has nothing to write. Supporting it means building a property-based configuration path, a
-  separate unimplemented capability, not "adding DefaultProcedure". The MDT IP Interface/Router
+- **A secure IP interface may keep its network settings outside its parameters.** The MDT IP
+  Interface Secure (MV-0012) is a System 1 `DefaultProcedure` device: five parameters in its EEPROM
+  segment at `0x0100`, which Busforge reads back under the secure session, while its IP settings and
+  name are device properties of the project that the unit keeps in the same segment, in bytes the
+  application's `<Mask>` leaves out. Its writes are refused until an ETS capture shows what ETS writes
+  there ([device-support.md](device-support.md#known-gaps)). The MDT IP Interface/Router
   (MV-07B0) does have a System B parameter segment, but its tunnelling entries are not modeled
   ([device-support.md](device-support.md#known-gaps)).
 - **A device that is itself the bus gateway cannot be flashed over its own connection.** The flash

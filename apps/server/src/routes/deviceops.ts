@@ -248,8 +248,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const body = (await req.json().catch(() => ({}))) as { lang?: string };
     // Refuse up front for device classes whose state we cannot read at all: reading anyway
     // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
-    // and System 7 both read; a recognised-but-unimplemented family (e.g. System 1 / BCU1)
-    // resolves to UnsupportedProfile (all capabilities false) and is refused here. Honest
+    // and System 7 both read, System 1 where its application declares the EEPROM segment; a
+    // recognised-but-unimplemented family (e.g. System 2 / BCU2) resolves to UnsupportedProfile
+    // (all capabilities false) and is refused here. Honest
     // refusal beats false confidence.
     const rbCaps = classify(parseAppConfig(appXml)).capabilities();
     if (!rbCaps.readParams && !rbCaps.readLinks) {

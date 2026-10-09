@@ -75,11 +75,11 @@ const baselineRows = (db: Database, projectId: string) => ({
 });
 
 corpusDescribe("POST /read-back", () => {
-  test("unsupported device class (MV-0012) -> 400 DEVICE_READBACK_UNSUPPORTED, baseline untouched", async () => {
+  test("unsupported device class (MV-0020) -> 400 DEVICE_READBACK_UNSUPPORTED, baseline untouched", async () => {
     const state = freshState();
-    // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile,
+    // The M-0083 A-0138 app relabelled to mask MV-0020 (System 2 / BCU2) -> UnsupportedProfile,
     // all capabilities false. Reading it anyway would fabricate a "verified" baseline.
-    const { projectId, deviceId } = await projectWithApp(state, realXml("M-0083_A-0138-21-F18E-O0072.xml.gz"));
+    const { projectId, deviceId } = await projectWithApp(state, realXml("M-0083_A-0138-21-F18E-O0072.xml.gz").replace('MaskVersion="MV-0012"', 'MaskVersion="MV-0020"'));
     const before = baselineRows(state.db, projectId);
 
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;

@@ -30,11 +30,12 @@ const FAMILY_LABEL: Record<SystemFamily, string> = {
 };
 
 // Read-back / flash-params / flash-GA verdict per implemented memory model. Mirrors the
-// capabilities() of SystemBProfile (relative), System7Profile (absolute), and UnsupportedProfile.
+// capabilities() of SystemBProfile (relative), System7Profile (absolute), System1Profile (bcu1), and
+// UnsupportedProfile.
 const VERDICT: Record<MemoryModel, [read: string, flashP: string, flashGa: string]> = {
   relative: ["✅ params + links", "✅", "✅"],
   absolute: ["✅ params + links", "✅", "✅"],
-  bcu1: ["❌", "❌", "❌"],
+  bcu1: ["✅ params + links", "❌", "❌"],
   bcu2: ["❌", "❌", "❌"],
   system300: ["❌", "❌", "❌"],
   none: ["❌", "❌", "❌"],
@@ -58,11 +59,12 @@ describe("docs/device-support.md stays in sync with the mask registry", () => {
   corpusTest("VERDICT for each memory model matches classify().capabilities()", () => {
     expect(cells(classify(realApp("M-0048_A-493B-21-B471.xml.gz")).capabilities())).toEqual(VERDICT.relative); // System B
     expect(cells(classify(realApp("M-0083_A-00B4-32-3919.xml.gz")).capabilities())).toEqual(VERDICT.absolute); // System 7
+    expect(cells(classify(realApp("M-0083_A-0138-21-F18E-O0072.xml.gz")).capabilities())).toEqual(VERDICT.bcu1); // System 1
   });
 
   test("VERDICT for an unimplemented family matches classifyByMask().capabilities()", () => {
     // A recognised-but-unimplemented family resolves to UnsupportedProfile: every aspect false.
-    expect(cells(classifyByMask("MV-0010").capabilities())).toEqual(VERDICT.bcu1);
+    expect(cells(classifyByMask("MV-0020").capabilities())).toEqual(VERDICT.bcu2);
   });
 
   test("the matrix has no rows for masks that are not in the registry", () => {
