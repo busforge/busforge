@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { KnxIpServer, KnxUsbTransport, listUsbInterfaces, numToIa } from "@busforge/knx";
+import { KnxIpServer, KnxUsbTransport, listUsbInterfaces, numToIa, USB_HID_MAX_APDU } from "@busforge/knx";
 import { parseArgs, selectInterface, ConfigError } from "./config.ts";
 import { superviseInterface } from "./supervise.ts";
 
@@ -57,6 +57,7 @@ log(`interface is ${usb.assignedIa === 0 ? "NOT telling us its address" : numToI
 
 const server = new KnxIpServer({
   transport: usb,
+  maxApdu: USB_HID_MAX_APDU,
   addresses: cfg.addresses.length ? cfg.addresses : undefined,
   serialNumber: usb.serialNumber,
   name: cfg.name,

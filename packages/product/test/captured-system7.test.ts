@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, buildAbsoluteSegmentTargets, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -257,6 +257,86 @@ corpusDescribe("the System 7 rules hold for every catalogue application", () => 
     const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
     // group indices: 0x0900=1 0x0901=2 0x0902=3 0x0903=4 0x0904=5 0x0905=6
     expect(buildGroupTablesMv0705(multi, 0x11fa).assoc.toString("hex")).toEqual("06" + "0600" + "0101" + "0402" + "0300" + "0500" + "0202");
+  });
+});
+
+// A memory-mapped System 7 unit (MV-0701): its load-state machines take the 11-byte control at 0x0104 and
+// answer their state at 46825 + LSM; the program id is object 3 PID 13. It records every memory read and
+// every memory write but the controls, in order.
+class MemMappedDevice {
+  mem = new Map<number, number>();
+  written: [number, number][] = [];
+  ops: string[] = [];
+  constructor(cfg: AppConfig, public programId: Buffer) {
+    for (const s of cfg.absoluteSegments) s.data.forEach((b, i) => this.mem.set(s.address + i, b));
+    for (const lsm of [1, 2, 3]) this.mem.set(46825 + lsm, STATE.LOADED);
+  }
+  async connect() {}
+  async disconnect() {}
+  async deviceDescriptor() { return "MV-0701"; }
+  async authorizeFreeKey() { return 0; }
+  async restart() {}
+  async writesConfirmed() { return false; }
+  confirmedWrites() { return []; }
+  clearConfirmedWrites() {}
+  setExtendedMemoryServices() {}
+  async classicReadChunk() { return 12; }
+  async memRead(addr: number, len: number, chunk?: number) {
+    if (addr < 46825) { this.ops.push(`read ${addr.toString(16)}+${len}/${chunk ?? "-"}`); }
+    return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0));
+  }
+  async memWrite(addr: number, data: Buffer) {
+    if (addr === 0x0104) {
+      const lsm = data[0] >> 4, ev = data[0] & 0x0f;
+      if (ev !== 3) this.mem.set(46825 + lsm, ev === 1 ? STATE.LOADING : ev === 2 ? STATE.LOADED : STATE.UNLOADED);
+      return;
+    }
+    this.ops.push(`write ${addr.toString(16)}+${data.length}`);
+    data.forEach((b, i) => { this.mem.set(addr + i, b); this.written.push([addr + i, b]); });
+  }
+  async propRead(obj: number, pid: number) { return obj === 3 && pid === 13 ? this.programId : Buffer.alloc(0); }
+}
+
+// The ABB US/U 4.2 (M-0002_A-A001-13-63C2, MV-0701): its parameter flash runs read-compare (RunOpts.readCompare)
+// through the profile. The unit holds the target image but for "Transmission delay after bus voltage recovery"
+// (P-3, 0x6F01) at its default 2; the flash to 5 reads the block holding it and writes that one byte.
+corpusDescribe("a memory-mapped System 7 parameter flash, run against an emulated unit", () => {
+  const xml = catalogueXml("M-0002_A-A001-13-63C2.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const DELAY = "M-0002_A-A001-13-63C2_P-3_R-3";
+
+  test("only the byte that differs is written, its block read first in the unit's read size, and the flash verifies", async () => {
+    const params = new Map([[DELAY, "5"]]);
+    const dev = new MemMappedDevice(cfg, Buffer.from("0002a00113", "hex"));
+    for (const t of buildAbsoluteSegmentTargets(cfg, params)) t.bytes.forEach((b, i) => { if (t.owned[i]) dev.mem.set(t.address + i, b); });
+    dev.mem.set(0x6f01, 2);
+    const r = await classify(cfg).flashParameters(dev as unknown as KnxDevice, cfg.mask, {
+      deviceId: "d", appXml: xml, params, baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+    });
+    expect(r).toMatchObject({ kind: "flashed", verified: true, diffBytes: 1 });
+    expect(dev.written).toEqual([[0x6f01, 5]]);
+    // The planned write was read first, in the unit's 12-byte read blocks, then the differing byte written.
+    const w = dev.ops.indexOf("write 6f01+1");
+    expect(dev.ops.slice(w - 1, w + 1)).toEqual(["read 6f01+1/12", "write 6f01+1"]);
+  });
+
+  test("a full download reports the bytes it wrote, and its progress runs over the planned bytes", async () => {
+    const dev = new MemMappedDevice(cfg, Buffer.from("0002a00113", "hex"));
+    dev.mem.set(0x4001, 0x11).set(0x4002, 0xc9);
+    const progress: [number, number][] = [];
+    const r = await classify(cfg).downloadFull(dev as unknown as KnxDevice, cfg.mask, {
+      deviceId: "d", ia: "1.1.201", appXml: xml, params: new Map(), links: [], dryRun: false, persistBackups: () => "backup",
+      onProgress: (phase, done, total) => { if (phase === "write" && done !== undefined && total !== undefined) progress.push([done, total]); },
+    });
+    expect(r).toMatchObject({ kind: "flashed", verified: true });
+    if (r.kind !== "flashed") throw new Error("not flashed");
+    // The unit held the segments' templates, so most of the image is not written.
+    expect(r.diffBytes).toBe(dev.written.length);
+    expect(r.diffBytes).toBeGreaterThan(0);
+    expect(r.diffBytes).toBeLessThan(r.imageBytes);
+    expect(progress.length).toBeGreaterThan(1);
+    expect(progress.every(([d, t], i) => t === progress[0][1] && d <= t && (i === 0 || d > progress[i - 1][0]))).toBe(true);
+    expect(progress.at(-1)![0]).toBe(progress[0][1]);
   });
 });
 

@@ -220,7 +220,9 @@ interface, each of them a real interoperability constraint worth knowing:
   alongside its tunnel and reads the interface's own interface-object properties over it. Refusing it
   makes ETS abort the whole session. The bridge answers the two hard requirements (maximum APDU
   length and the device descriptor), plus the medium type and the list of additional individual
-  addresses.
+  addresses. The maximum APDU length is what one USB report has been shown to carry, 40 octets: ETS
+  sends at most the smaller of it and the device's own per frame, and a longer frame is dropped by
+  the USB interface.
 - **Do not run the UDP acknowledge-and-retransmit loop on a TCP channel.** Over TCP the transport is
   already reliable and ETS deliberately sends no tunnelling acknowledgements. Waiting for them drops
   the client the instant the first bus telegram reaches it.

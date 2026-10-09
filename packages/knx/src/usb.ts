@@ -117,6 +117,12 @@ function resolveUsbPath(devices: HidDeviceInfo[], want: { vendorId?: number; pro
   return paths[0];
 }
 
+// The longest APDU one HID report carries on the bench's KNX-USB interface (a report is not fragmented,
+// findings §13): ETS's 35-byte A_MemoryExtended_Write (40 octets) passed it, a 50-byte one (55) and
+// Busforge's 40-byte one (45) were dropped. 41-43 octets, which the report's layout would leave room
+// for, have not been sent.
+export const USB_HID_MAX_APDU = 40;
+
 export class KnxUsbTransport implements KnxTransport {
   // The interface's own individual address, read from its Device Object at connect. Sending is
   // not what needs it: a cEMI with source 0.0.0 gets the interface's address substituted, which

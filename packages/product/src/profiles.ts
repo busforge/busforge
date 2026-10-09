@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
@@ -480,7 +480,9 @@ interface FlashOp {
   diffBytes: number;
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
-  write: () => Promise<void>;                     // the model-specific download (device restarts after)
+  // The model-specific download (device restarts after). Where the device's read decides what goes on the
+  // bus (read-compare), it returns the bytes it wrote, and the result's diffBytes is that count.
+  write: () => Promise<void | number>;
   // The application's <Options SupportsExtendedMemoryServices>: which memory write service the device
   // takes (KnxDevice.setExtendedMemoryServices). Required, so no write path can leave it to the device.
   extendedMemory: boolean;
@@ -494,6 +496,13 @@ interface FlashOp {
   loadIncomplete?: "rewrite" | "refuse";
   // Filled by `write` with the closing stamp reads of a download that writes the parameters (ImageStamp).
   stamps?: ImageStamp[];
+}
+
+// The bytes a write put on the bus where read-compare decides them (a memory-mapped System 7 mask): the
+// result's diffBytes then (FlashOp.write); undefined elsewhere, where the planned count stands.
+function sentBytes(readCompare: boolean): { add: (n: number) => void; total: () => number | undefined } {
+  let n = 0;
+  return { add: (b) => { n += b; }, total: () => (readCompare ? n : undefined) };
 }
 
 // A device that has just rebooted can still be starting its application and drop management frames
@@ -537,11 +546,11 @@ async function runFlashOp(
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();
   dev.setExtendedMemoryServices(op.extendedMemory);
-  await op.write();
+  const written = await op.write();
   await reconnectAfterRestart(dev);
   const confirmedOnly: ConfirmedOnlyRange[] = [];
   const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
-  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
+  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
 }
 
 // The read-back check of a segment read at `at` against the bytes it should hold, accepting the bytes
@@ -757,6 +766,12 @@ function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided:
   const instances = cfg.hasModules ? (provided.length ? provided : resolveModuleInstances(cfg, params)) : [];
   return { model: toAppModel(cfg, { includeUnions: true, instances }), instances };
 }
+// A parameter or structural flash writing a colour parameter (refuseColorWrites), each configuration's
+// module instances resolved as moduleAwareModel does.
+function refuseColorChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }): void {
+  const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
+  refuseColorWrites(cfg, ctx.params, at(ctx.params), { values: ctx.baseParams, instances: at(ctx.baseParams) });
+}
 
 // Group-table readers (readGroupTables / readGroupTablesMv0705) live in @busforge/knx
 // (grouptable-read.ts) next to the layout descriptors the product codec is asserted
@@ -955,6 +970,7 @@ export class SystemBProfile extends DeviceProfile {
         `${unmapped.length} stored value(s) cannot be placed in this device's parameter image (e.g. ${unmapped[0]}); refusing to commission a device with a configuration we cannot express`);
     }
 
+    refuseColorWrites(cfg, ctx.params, instances);
     // In the full form the download owns the whole segment: every byte we do not derive is the
     // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
@@ -1233,6 +1249,7 @@ export class SystemBProfile extends DeviceProfile {
     // The device keeps the com-object table it was last programmed with. If these parameters
     // imply a different one, flashing would leave that table stale while reporting success.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
+    refuseColorChange(cfg, ctx);
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
     // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
@@ -1405,6 +1422,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = parseLoadProcedures(ctx.appXml);
     const coverage = assertParCoverage(proc, "relative");
+    refuseColorChange(cfg, ctx);
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -1595,6 +1613,7 @@ export class System7Profile extends DeviceProfile {
     // com-object table too, so a parameter that changes the active object set or its flags
     // would silently invalidate it. See comobjtable.ts.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
+    refuseColorChange(cfg, ctx);
     const moduleInstances = ctx.moduleInstances;
     const targets = buildAbsoluteSegmentTargets(cfg, ctx.params, { moduleInstances }).filter((t) => t.size > 0);
     const totalBytes = targets.reduce((n, t) => n + t.size, 0);
@@ -1637,7 +1656,9 @@ export class System7Profile extends DeviceProfile {
         // The memory-mapped System 7 masks (MV-0700/0701) drive their LSMs over 0x0104, not PID 5;
         // a surgical param flash needs the same transport the full download does, or it would talk
         // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
-        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
+        const sent = sentBytes(isMemoryMappedLsm(mask));
+        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
+        return sent.total();
       },
       verify: async (confirmedOnly) => {
         for (const t of targets) {
@@ -1730,7 +1751,9 @@ export class System7Profile extends DeviceProfile {
       ],
       write: async () => {
         ctx.onProgress?.("write");
-        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask) }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        const sent = sentBytes(isMemoryMappedLsm(mask));
+        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        return sent.total();
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1763,6 +1786,7 @@ export class System7Profile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = parseLoadProcedures(ctx.appXml);
     const coverage = assertParCoverage(proc, "absolute");
+    refuseColorChange(cfg, ctx);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     const active = new Set(view.imageComObjects.keys());
@@ -1795,7 +1819,11 @@ export class System7Profile extends DeviceProfile {
       ...(loaded ? {} : { loadIncomplete: "refuse" as const }),
       backup: `${ctx.deviceId}-structure-${stamp}`,
       backups: ctx.dryRun ? [] : images.map((r) => ({ file: `${ctx.deviceId}-structure-${stamp}-${r.id.split("_").pop()}.bin`, bytes: current.get(r.address)! })),
-      write: () => runLoadPlan(dev, plan, { memMappedLsms: memMapped, readCompare: memMapped, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } }),
+      write: async () => {
+        const sent = sentBytes(memMapped);
+        await runLoadPlan(dev, plan, { memMappedLsms: memMapped, readCompare: memMapped, onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } });
+        return sent.total();
+      },
       // Every written segment is read back, and every load-state machine it concerns must be LOADED.
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1831,6 +1859,7 @@ export class System7Profile extends DeviceProfile {
     refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc));
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
+    refuseColorWrites(cfg, ctx.params, instances);
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate would build an association to an
     // object the device ignores: a group address the UI calls programmed and the device never answers.
@@ -1958,7 +1987,16 @@ export class System7Profile extends DeviceProfile {
       diffBytes: imageBytes, // a full download owns every byte it writes
       backup: `${ctx.deviceId}-full-${stamp}`,
       backups,
-      write: async () => { await runLoadPlan(dev, plan, { memMappedLsms, readCompare: memMappedLsms, onWrite: (d, t) => ctx.onProgress?.("write", d, t) }); },
+      write: async () => {
+        const planned = plan.reduce((n, st) => n + (st.op === "writeMem" ? st.bytes.length : 0), 0);
+        let done = 0;
+        const sent = sentBytes(memMappedLsms);
+        await runLoadPlan(dev, plan, {
+          memMappedLsms, readCompare: memMappedLsms, onWritten: sent.add,
+          onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (done += step.bytes.length), planned); },
+        });
+        return sent.total();
+      },
       // Read every written segment back and compare to what we built, masking out the download-
       // recognition bytes the device re-stamps for itself (the MV-0701 P-2228 "Downloaderkennung").
       // Only a full byte-match across every segment is a verified download.

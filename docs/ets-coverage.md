@@ -52,7 +52,7 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeText` | full | text input; the image writes its ASCII characters and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
-| `TypeColor` (RGB) | full | native colour picker, stores `#RRGGBB` |
+| `TypeColor` (RGB) | edit only | native colour picker, stores `#RRGGBB` in the project; programming a colour in use is refused, no ETS capture shows its encoding ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeNone` (named) | full | display-only caption, rendered read-only; a nameless one is a pure layout spacer and is dropped |
 | `TypeRestriction` `Base="BinaryValue"` | not editable | badge; the image writes the bytes of the enumeration its value names (`Access="None"` object-link tables of the Theben MIX 2) |
 | `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register |

@@ -67,7 +67,7 @@ async function connect(): Promise<Rig> {
     close: () => { wire.serverMsg = null; },
   };
   const noopTcpListener = (): ServerTcpListener => ({ listen: (_p, cb) => cb(), onConnection: () => {}, close: () => {} });
-  const server = new KnxIpServer({ transport: new FakeBus(), createSocket: () => serverSock, createTcpListener: noopTcpListener, now: () => clock.t, name: "Bench" });
+  const server = new KnxIpServer({ maxApdu: 40, transport: new FakeBus(), createSocket: () => serverSock, createTcpListener: noopTcpListener, now: () => clock.t, name: "Bench" });
   await server.start();
   const tunnel = new KnxIpTunnel("198.51.100.99", 3671, () => clientSock);
   await tunnel.connect();

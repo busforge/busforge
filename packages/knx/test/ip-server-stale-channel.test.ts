@@ -36,7 +36,7 @@ describe("KnxIpServer: a stale channel's dying queue must not take a successor w
     let onConn: ((s: ServerTcpSocket) => void) | null = null;
     const listener: ServerTcpListener = { listen: (_p, cb) => cb(), onConnection: (cb) => { onConn = cb; }, close: () => {} };
     const transport = { assignedIa: IA, onCemi: null, onRawCemi: null as ((c: Buffer) => void) | null, onClosed: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async () => {} } as unknown as KnxTransport;
-    const server = new KnxIpServer({ transport, addresses: [IA], createSocket: () => noopUdp, createTcpListener: () => listener, log: () => {} });
+    const server = new KnxIpServer({ maxApdu: 40, transport, addresses: [IA], createSocket: () => noopUdp, createTcpListener: () => listener, log: () => {} });
     await server.start();
 
     // Client A connects and gets channel 1.

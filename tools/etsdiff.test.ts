@@ -751,6 +751,56 @@ corpusDescribe("ABB US/U 4.2 (M-0002_A-A001-13-63C2) full download on a loaded u
     const steps = (x: string[]) => x.filter((s) => s !== "write");
     expect(steps(planSteps(build().plan))).toEqual(steps(captureSteps(FILE, ia)));
   });
+
+  // ETS 6 partial download on the same unit after the defaults' full download (abb-usu-4.2-ets-partial-links.log): object 1
+  // linked, and two parameters (UP-341, UP-342) the unit held as 49665 set to 450. ETS reads each block and writes what
+  // differs. The project is not in the corpus: the configurations before and after are Busforge's decoding of what the
+  // unit held (ETS's reads over the defaults' download) and of what ETS left, the links read from ETS's tables.
+  test("structural flash of the partial download: ETS's steps, and read and compared, ETS's bytes", () => {
+    const LINKS = "abb-usu-4.2-ets-partial-links.log";
+    const wire = memoryImage(parseCapture(captureText(LINKS), ia).writes);
+    const template = new Map(cfg.absoluteSegments.flatMap((sg) => Array.from(sg.data, (b, i) => [sg.address + i, b] as [number, number])));
+    const defaults = memoryImage(parseCapture(captureText("abb-usu-4.2-ets-fulldownload-defaults.log"), ia).writes);
+    const held = heldBeforeWrite(LINKS, ia, new Map([...template, ...defaults]));
+    const after = new Map([...held, ...wire]);
+    const model = toAppModel(cfg, { includeUnions: true });
+    // The value of every parameter active under the configuration, until the active set settles.
+    const configOf = (mem: Map<number, number>) => {
+      const decoded = new Map<string, string>();
+      for (const sg of cfg.absoluteSegments) {
+        if (sg.data.length === 0) continue;
+        const img = Buffer.from(sg.data);
+        for (let i = 0; i < sg.size; i++) { const v = mem.get(sg.address + i); if (v !== undefined) img[i] = v; }
+        for (const [r, v] of decodeAbsoluteImage(model, sg.id, img)) decoded.set(r, v);
+      }
+      let params = new Map<string, string>();
+      for (let i = 0; ; i++) {
+        const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
+        const next = new Map([...decoded].filter(([r]) => active.has(r)));
+        if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) return params;
+        if (i > 16) throw new Error("the configuration read from the capture never settled");
+        params = next;
+      }
+    };
+    const params = configOf(after), baseParams = configOf(held);
+    expect([...params].filter(([r, v]) => baseParams.get(r) !== v)).toEqual([["M-0002_A-A001-13-63C2_UP-341_R-559", "450"], ["M-0002_A-A001-13-63C2_UP-342_R-558", "450"]]);
+    const bytes = (id: string | undefined) => {
+      const sg = cfg.absoluteSegments.find((x) => x.id === id)!;
+      return Buffer.from(Array.from({ length: sg.size }, (_, i) => after.get(sg.address + i) ?? 0));
+    };
+    const links = decodeGroupTablesMv0705(bytes(cfg.groupTables.addressSegment), bytes(cfg.groupTables.associationSegment));
+    expect(links).toEqual([{ comObjNum: 1, gaRaws: [0x1b04] }]);
+    expect(classify(cfg).capabilities().structuralFlash).toBe(true);
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device: held, params, baseParams, links });
+    const steps = (x: string[]) => x.filter((st) => st !== "write");
+    expect(steps(planSteps(plan))).toEqual(steps(captureSteps(LINKS, ia)));
+    const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
+    // The memory-mapped load controls at 0x0104 aside, ETS's nine bytes: the address and association table, the
+    // config bytes of objects 1 and 3, the two parameters.
+    const ets = new Map([...wire].filter(([a]) => a >= 0x4000));
+    expect(span(ets)).toEqual(["4003-4004", "4202-4202", "4407-4407", "440f-440f", "6d0a-6d0d"]);
+    expect(sorted(readCompared(plan, held))).toEqual(sorted(ets));
+  });
 });
 
 // ETS 6 downloads of the Gira Tastsensor 3 Komfort (M-0008, MV-0705, DynamicTableManagement),

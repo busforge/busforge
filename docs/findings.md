@@ -440,7 +440,11 @@ with 55 but declares no option, ETS writes it classic, and the gateway acknowled
 on the transport layer without ever answering it. The ABB US/U 4.2 and MDT BE-02001.02 (no option, no
 property) are written classic too.
 Its first chunk size on the GVS, 50 bytes, is the maximum APDU minus the 5 octets around the
-data; the USB interface refused that frame and ETS continued with 35. Busforge makes the same
+data; the USB interface refused that frame and ETS continued with 35. ETS bounds the chunk by the
+interface's own maximum APDU length too (the OpenKNX RaumController declares 254; behind an IP
+interface announcing 210 ETS logs "NegotiateMaxApduLength -> 210, restricted by ByInterface"), so
+Busforge's bridge announces the 40 octets a USB report has been shown to carry
+([connections.md](connections.md)). Busforge makes the same
 choice from the same option and property, with its own transport limit as the second bound, and the
 table lands exactly.
 

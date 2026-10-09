@@ -432,7 +432,7 @@ async function serveTcp(addresses?: number[]): Promise<ServerRig> {
   const listener = new FakeTcpListener();
   const clock = { t: 1_000_000 };
   const server = new KnxIpServer({
-    transport: bus, addresses,
+    maxApdu: 40, transport: bus, addresses,
     createSocket: () => new FakeUdpServerSocket(),
     createTcpListener: () => listener,
     now: () => clock.t, name: "Bench",
@@ -680,7 +680,7 @@ describe("KNXnet/IP tunnel over TCP, client and server end to end", () => {
     const bus = new FakeBus();
     const listener = new FakeTcpListener();
     const server = new KnxIpServer({
-      transport: bus,
+      maxApdu: 40, transport: bus,
       createSocket: () => new FakeUdpServerSocket(),
       createTcpListener: () => listener,
       name: "Bench",

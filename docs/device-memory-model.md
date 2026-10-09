@@ -272,7 +272,12 @@ rather than writing a wrong-sized value.
 
 Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress` and `Text` are encoded into the
 parameter image. Time-of-day, color and unrecognised bases write nothing and therefore own
-nothing. Four type details are easy to get wrong:
+nothing. No ETS download captured holds a colour parameter in use, so how ETS encodes a colour is
+not known: a parameter or structural flash refuses (`PARAM_COLOR_UNSUPPORTED`) when a colour in use
+differs from the configuration the device was last programmed with, or comes into use, and a full
+download refuses any colour in use: it knows no configuration the device holds, and would leave
+either the segment's `<Data>` or the unit's bytes where the colour lies. Four type details are easy
+to get wrong:
 
 - **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B). A
   value as long as its field fills it without a closing zero, and the segment's `<Data>` does not
