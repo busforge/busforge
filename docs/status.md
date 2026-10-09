@@ -82,7 +82,7 @@ Read-back means our built image was compared byte-for-byte against the device's 
 `verified` write proves that read-back for every owned byte, except the bytes a device written with
 the confirmed extended write does not give back: those rest on its write confirmation alone, are named
 in the result (`confirmedOnly`) and are accepted only under the conditions in
-[load-procedures.md](load-procedures.md#the-rules-by-level). No device has run a write that needed them.
+[load-procedures.md](load-procedures.md#the-rules-by-level). The MDT IP Interface/Router has (device notes below).
 Bus behaviour means the device was observed acting on the bus through an independent witness
 connection, which is the only check that catches a byte-perfect flash of a semantically wrong
 value.
@@ -105,7 +105,7 @@ value.
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket and the changed byte, the segment stamp equal to the one after ETS's download (see below) | hardware, add and remove with the tables re-declared, exactly the bytes of ETS's image, wire and stamps equal to ETS's (see below) | hardware, exactly the bytes of ETS's image, shown on the wire; on a unit already holding the application, every planned byte already equal (see below) | hardware: answers a group read after the download and after each flash; the GA flash's new association not observed (the object has no read flag) |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket, the changed byte and the download marker (see below) | hardware, add and remove with the tables re-declared as one region, wire equal to ETS's (see below) | hardware, declared order with `LdCtrlTaskCtrl1`, exactly the bytes of ETS's image, wire equal to ETS's; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
 | Theben Meteodata 140 S (M-0048, MV-0701 product) | MV-0701 | absolute, dynamic tables, memory-mapped LSM | hardware | hardware, ETS's bracket over `0x0104`, the changed byte and the download marker, wire equal to ETS's (see below) | hardware, add and remove with the tables re-declared as one region, every byte ETS wrote equal (see below) | hardware, declared order with `LdCtrlTaskCtrl1` over `0x0104`, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
-| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | not proven | not proven; planned with its security object where a tool key is on file | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, see below) | not proven |
+| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | hardware, under a secured session; the password field on the write confirmation (see below) | not proven; planned with its security object where a tool key is on file | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, see below) | not proven |
 | MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, EEPROM segment at `0x0100` | hardware, Busforge's read-back under the secure session, on a unit ETS programmed: no drift; its memory (collector) holds in every parameter byte Busforge's image of the project, the group tables empty (reference) | refused (`SYSTEM1_LOAD_UNCAPTURED`) | refused (`SYSTEM1_GROUP_TABLES_UNCAPTURED`) | refused (`SYSTEM1_LOAD_UNCAPTURED`) | not proven |
 
 What each row does not show:
@@ -121,14 +121,6 @@ What each row does not show:
     association order) apply; it has run no write under them.
   - **Theben DALI gateway**: the full download onto a unit that does not hold the application (the
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
-  - **MDT IP Interface/Router**: its parameter image equals ETS's image of its full download byte for
-    byte, text fields and the defaults of inactive parameters included, and its parameter flash
-    changes the same bytes as ETS's parameter downloads (it sends every owned byte, ETS only the
-    differing ones; `tools/etsdiff.test.ts`); it has not run on the device, since a secured session
-    needs the project's tool key. Its web interface password field reads `FF` after ETS's confirmed
-    write of it; a Busforge write that also changes another byte would verify that field on the
-    write confirmation alone (`confirmedOnly`), one that changes nothing else ends unverified, and the
-    field always counts as a difference in the preview: shown in tests on a mock unit only.
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
     parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
     shows a text parameter; a read-back leaves those fields out.
@@ -174,6 +166,19 @@ What each row does not show:
   brackets), the gateway sends its failure object as set, and does not send it cleared after the
   restart: a read returns the cleared value. The DCA-replacement plugin renders committed fixtures and
   proves nothing about the device on a bus.
+- **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
+  equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
+  parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads (it
+  sends every owned byte, ETS only the differing ones; `tools/etsdiff.test.ts`). On a unit, under a
+  secured session with the project's tool key, through a logging proxy: a parameter flash changing the
+  device name was `verified`, its web interface password field (20 bytes, read back as `FF` after any
+  write) accepted on the write confirmation alone and named in the result (`confirmedOnly`); a flash
+  that changes nothing but that field ends unverified, as nothing readable shows it landed. The field
+  always counts as a difference in the preview. Every restart of the unit makes an MDT IP interface
+  beside it stop serving its tunnels for up to a minute and then drop them; Busforge opens its link
+  again, and a secured session refuses a link that comes back under another individual address
+  (`TUNNEL_ADDRESS_CHANGED`), so such a flash is written and restarted but not verified by Busforge:
+  shown once, the unit read back under a secured session afterwards held the planned image.
 - **MDT Universal Interface 6-fold BE-06001.02 `M-0083_A-00B4-32-3919`** (MV-0705, module device).
   ETS 6 was captured running a full, a parameter, a group-address and a revert download; Busforge's
   plans equal them (`tools/etsdiff.test.ts`). On a unit, through a logging proxy, each `verified`: the

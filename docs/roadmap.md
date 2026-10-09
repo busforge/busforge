@@ -64,6 +64,12 @@ depends on is hardware-proven.
   through a fresh tunnel each time; a `KnxIpTunnel` used directly (tools) and reopened without a
   disconnect leaks its earlier UDP socket and, after a failed connect, sends its disconnect for the
   earlier channel. Close the old socket on every connect and disconnect only an established channel.
+- **A secured session across a tunnel that comes back under another address.** When an interface
+  drops its tunnels after a restart (an MDT IP interface beside a restarting MDT IP router), the link
+  can come back under another individual address; Busforge then refuses the read-back
+  (`TUNNEL_ADDRESS_CHANGED`) rather than go on with a session bound to the old one, so the write is not
+  verified. Rebinding the session (same tool key, sequence kept, Sync again) would verify it. No ETS
+  capture shows the case: ETS reads nothing back after the restart.
 - **Echo checks on every management answer.** A memory read refuses an answer for another address,
   and a repeated data frame is dropped at the transport layer. `propRead` and `deviceDescriptor` still
   take any answer of the right sequence: a late answer to an abandoned earlier request would be taken
