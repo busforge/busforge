@@ -42,7 +42,7 @@ All hardware verification is on **twisted pair**.
 | Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
-| Flash parameters (surgical, owned bytes only) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. |
+| Flash parameters (surgical) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. Writes the bytes ETS's parameter download writes: on a property-mapped System 7 mask every byte a parameter covers, on a memory-mapped one the bytes that differ from the unit ([load-procedures.md](load-procedures.md#the-rules-by-level)); on System B every owned byte. |
 | Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer shown to need it also holds the application object in its own load bracket. System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see [Known unproven](#known-unproven)). On System 7 both tables are unloaded and declared where ETS puts them, by rule ([load-procedures.md](load-procedures.md#the-rules-by-level)); shown on hardware on the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S, the ABB US/U 4.2 and the MDT BE-02001.02 (device notes and smoke specs below). |
 | Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. The form follows the catalogue: the declared procedure in its order (`LdCtrlTaskCtrl1` encoded from its attributes), or ETS's partial form on a unit holding an application that declares `PreferPartialDownloadIfApplicationLoaded` ([load-procedures.md](load-procedures.md#the-rules-by-level)). On the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S it ran only onto a unit already holding the application, so not as first-time commissioning, and the hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
 | Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. |
@@ -183,7 +183,8 @@ What each row does not show:
   ETS 6 was captured running a full, a parameter, a group-address and a revert download; Busforge's
   plans equal them (`tools/etsdiff.test.ts`). On a unit, through a logging proxy, each `verified`: the
   full download (ETS's bracket, every byte of ETS's image), a parameter flash and its revert (ETS's
-  bracket; Busforge writes the changed bytes, ETS rewrites the parameter segment with the same values),
+  bracket; on the unit it ran writing the changed bytes, its plan writes every byte a parameter covers,
+  as ETS does, pinned by `tools/etsdiff.test.ts`),
   a group-address flash adding and removing a link (ETS's bracket and table bytes; the added address
   answered a group read) and a structural flash that activates a logic channel's output object and
   links it, and its revert (ETS's steps, every byte both write with ETS's value; the new object
@@ -195,8 +196,8 @@ What each row does not show:
   ([load-procedures.md](load-procedures.md#declared-order-system-7-downloads)). Busforge's three
   writes are pinned against those captures (`tools/etsdiff.test.ts`; the parameter values are decoded
   from ETS's own image, the project behind the unit is not in the corpus). The parameter and
-  group-address flash's wire equals ETS's partial downloads, apart from verify mode and the unchanged
-  bytes ETS writes too. On the unit, every byte the
+  group-address flash's wire equals ETS's partial downloads, apart from verify mode; the parameter flash
+  ran writing the changed byte, its plan writes every byte a parameter covers, as ETS does. On the unit, every byte the
   full download planned already equalled the unit as ETS had left it: the sequence (unload, PID 5
   declarations, `LdCtrlTaskCtrl1`, `LoadCompleted`, restart) was accepted and the unit stayed loaded
   and answering, but the transfer of changed bytes is shown by the two flashes, not by the full
@@ -222,7 +223,8 @@ What each row does not show:
   each ending `verified`. Full download: every planned byte already equalled the unit, the wire shows
   exactly the bytes of ETS's image, and the read after its restart equals the reference, so it shows
   sequence and bytes, not changed bytes transferred. Parameter flash (one parameter changed and
-  reverted): ETS's bracket with the changed byte (ETS also writes the unchanged bytes). Group-address
+  reverted): ETS's bracket with the changed byte. Without a record of its last download its plan writes
+  ETS's whole parameter image (421 bytes, `tools/etsdiff.test.ts`), where ETS, holding its record, wrote 7. Group-address
   flash (one link added and removed): the bytes of ETS's group-address download, the wire equal to
   ETS's byte for byte. After each flash the unit's PID 27 stamps equal those after ETS's own download
   of the same change, the last read equals the reference, and the unit answered a group read; the
@@ -234,8 +236,8 @@ What each row does not show:
   table segments re-declared as one region, as on the Gira
   ([load-procedures.md](load-procedures.md#the-theluxa-p300)). Busforge's three plans equal the
   captures (`tools/etsdiff.test.ts`), and all three ran on the unit through a logging proxy, each
-  `verified`, the wire equal to ETS's (the parameter flash's bracket, where ETS also writes the
-  unchanged bytes). Of the full download's bytes only the download marker differed from the unit
+  `verified`, the wire equal to ETS's (the parameter flash ran writing the changed bytes; its plan
+  writes every byte a parameter covers, as ETS does, pinned by `tools/etsdiff.test.ts`). Of the full download's bytes only the download marker differed from the unit
   (written as ETS does, cleared by the unit), so the transfer of changed bytes is shown by the two
   flashes. A group read was answered after each write, and an added address answered until the link
   was removed. The final read equals the reference, the bytes ETS's revert leaves behind the shrunk

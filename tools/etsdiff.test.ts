@@ -873,7 +873,10 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     expect(w.segments.flatMap((s) => s.divergences.map((d) => [s.id.split("_").pop(), d.offset, d.busforge, d.ets]))).toEqual([["AS-41E5", 3 + 64 * 4 + 2, 0x47, 0x4f]]);
   });
 
-  test("parameter flash: Busforge writes the changed byte with ETS's value, in ETS's bracket", () => {
+  // Without a record of its last download (the image stamps it read after it) ETS writes its whole parameter
+  // image, the 421 bytes its log lists before its differential cut; so does Busforge. With the record ETS wrote
+  // 7 of them, the ones it held changed.
+  test("parameter flash without a record: ETS's bracket, ETS's whole parameter image, the bytes ETS wrote with their values", () => {
     const ref = [...baseline.params.keys()].find((k) => k.includes("_P-3764_"))!;
     expect(baseline.params.get(ref)).toBe("30");
     const after = new Map(baseline.params).set(ref, "40");
@@ -883,13 +886,12 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     expect(planSteps(plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-partial-params.log")));
     const ets = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-params.log"), ia).writes);
     const ours = bytesOf(plan);
-    expect([...ours].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
-    // ETS writes the rest of its 4-byte run at $435C and the download marker, each already on the
-    // device; Busforge compares against what it read and writes the one byte that differs.
-    const etsOnly = [...ets.keys()].filter((a) => !ours.has(a));
-    expect(span(etsOnly)).toEqual(["435c-435e", "454e-4550"]);
-    const held = new Map([...current.entries()].flatMap(([id, b]) => { const s = cfg.absoluteSegments.find((x) => x.id === id)!; return [...b].map((v, i) => [s.address + i, v] as [number, number]); }));
-    expect(etsOnly.filter((a) => held.get(a) !== ets.get(a))).toEqual([]);
+    expect([...ours].filter(([a, b]) => ets.get(a) !== undefined && ets.get(a) !== b)).toEqual([]);
+    expect([...ets.keys()].filter((a) => !ours.has(a))).toEqual([]);
+    const fullBuild = classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: after, links: baseline.links, proc, comObjectOverrides: object64Read, unitHoldsApplication: true });
+    const image = [...bytesOf(fullBuild.plan)].filter(([a]) => a >= 0x435c);
+    expect(image.length).toBe(421);
+    expect([...ours].sort(([a], [b]) => a - b)).toEqual(image.sort(([a], [b]) => a - b));
   });
 
   // The group-address flash keeps the com-object table the device holds and changes only the link
@@ -1038,7 +1040,9 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     expect([...log.image]).toEqual([...memoryImage(parseCapture(captureText(PARTIAL), ia).writes)].sort(([a], [b]) => a - b));
   });
 
-  test("parameter flash: ETS's bracket, and the one changed byte with ETS's value; ETS also writes every unchanged parameter byte", () => {
+  // ETS writes every byte a parameter's memory covers, AS-4200 offsets 0-49 but 3 and 36, changed or not
+  // (parWriteSet); so does Busforge.
+  test("parameter flash: ETS's bracket, and exactly the bytes ETS writes, every parameter-covered byte with its value", () => {
     const led = [...baseline.params.keys()].find((k) => k.startsWith(`${LED}_`))!;
     const after = new Map(baseline.params).set(led, "0");
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, held]]));
@@ -1046,14 +1050,8 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = memoryImage(parseCapture(captureText(PARTIAL), ia).writes);
-    const ours = bytesOf(plan);
-    expect([...ours]).toEqual([[0x4207, 0x00]]);
+    expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
     expect(ets.get(0x4207)).toBe(0x00);
-    // ETS writes every byte a parameter owns, AS-4200 offsets 0-49 but 3 and 36; Busforge writes the
-    // byte that differs from what it read. Every byte only ETS writes is what the device already holds.
-    const etsOnly = [...ets.keys()].filter((a) => !ours.has(a));
-    expect(span(etsOnly)).toEqual(["4200-4202", "4204-4206", "4208-4223", "4225-4231"]);
-    expect(etsOnly.filter((a) => held[a - paramSeg.address] !== ets.get(a))).toEqual([]);
   });
 
   // The com-object table the device holds after ETS's full download, with the link bits of `links`, as
@@ -1100,14 +1098,12 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const before = Buffer.from(held);
     before[7] = 0;
     const par = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, before]]));
-    expect([...bytesOf(par.plan)]).toEqual([[0x4207, 0x01]]);
     expect(ets.get(0x4207)).toBe(0x01);
-    // Every byte ETS writes beyond the tables and the com-object table is a parameter byte of the full
-    // download's image, with its value; offsets 3 and 36 (no parameter) are not among them.
-    const image = bytesOf(full().plan);
+    // Every byte ETS writes beyond the tables and the com-object table is a parameter byte, offsets 3 and 36
+    // (no parameter) not among them: exactly the parameter flash's bytes, with their values.
     const params = [...ets].filter(([a]) => !ga.has(a));
     expect(span(params.map(([a]) => a))).toEqual(["4200-4202", "4204-4223", "4225-4231"]);
-    expect(params.filter(([a, b]) => image.get(a) !== b)).toEqual([]);
+    expect([...bytesOf(par.plan)].sort(([a], [b]) => a - b)).toEqual(params.sort(([a], [b]) => a - b));
   });
 
   test("structural flash of the revert: ETS's bracket set, and every byte ETS changed with ETS's value", () => {
@@ -1294,7 +1290,7 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
   const onUnit = Buffer.from(held);
   onUnit[0] = 0x00;
 
-  test("parameter flash: ETS's bracket, the changed byte and the download marker with ETS's values; ETS also writes every unchanged parameter byte", () => {
+  test("parameter flash: ETS's bracket, and exactly the bytes ETS writes, the changed byte and the download marker among them", () => {
     expect(held[0]).toBe(0xaa);
     const after = new Map(baseline.params).set(tempRef(), "1");
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, onUnit]]));
@@ -1302,10 +1298,8 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = memoryImage(parseCapture(captureText(PARTIAL), ia).writes);
-    expect([...bytesOf(plan)]).toEqual([[0x4800, 0xaa], [0x4813, 0x01]]);
+    expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
     expect([ets.get(0x4800), ets.get(0x4813)]).toEqual([0xaa, 0x01]);
-    const etsOnly = [...ets.keys()].filter((a) => a !== 0x4800 && a !== 0x4813);
-    expect(etsOnly.filter((a) => onUnit[a - paramSeg.address] !== ets.get(a))).toEqual([]);
   });
 
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
@@ -1351,12 +1345,12 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     expect(sorted(ours)).toEqual(sorted(tablesOf(revert)));
     expect(sorted(ours)).toEqual(sorted(tablesOf(etsLog("theluxa-p300-ets6log-partial-revert.txt").image)));
     expect(span(ours)).toEqual(["4000-4000", "4003-400f", "43fc-45d2"]);
-    // The parameter bytes of the revert: the parameter flash writes the one byte back, with ETS's value;
-    // every other byte ETS writes there is the full download's.
+    // The parameter bytes of the revert are exactly the parameter flash's, the changed byte back with ETS's
+    // value; every one of them is the full download's.
     const before = Buffer.from(onUnit);
     before[19] = 1;
     const par = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, before]]));
-    expect([...bytesOf(par.plan)]).toEqual([[0x4800, 0xaa], [0x4813, 0x00]]);
+    expect(sorted(bytesOf(par.plan))).toEqual(sorted(new Map([...revert].filter(([a]) => a >= 0x4800))));
     expect([revert.get(0x4800), revert.get(0x4813)]).toEqual([0xaa, 0x00]);
     expect([...revert].filter(([a, b]) => a >= 0x4800 && written.get(a) !== b)).toEqual([]);
   });
@@ -2169,7 +2163,7 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
     expect([...log.image]).toEqual([...wire(PARTIAL)].sort(([a], [b]) => a - b));
   });
 
-  test("parameter flash: ETS's bracket, and the changed bytes with ETS's values; ETS also writes every unchanged parameter-covered byte", () => {
+  test("parameter flash: ETS's bracket, and exactly the bytes ETS writes, every parameter-covered byte with its value", () => {
     const after = new Map(params).set(LONG_PRESS.ref, LONG_PRESS.to);
     const pseg = segmentHeld(0x44c8);
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[pseg.seg.id, pseg.bytes]]), { moduleInstances: fx.instances });
@@ -2177,13 +2171,12 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
     expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = wire(PARTIAL);
-    const ours = bytesOf(plan);
-    expect([...ours]).toEqual([[0x44cc, 0x82], [0x44cd, 0x58]]);
-    expect([...ours].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
-    // Every byte only ETS writes is what the unit already holds.
-    const etsOnly = [...ets.keys()].filter((a) => !ours.has(a));
-    expect(etsOnly.length).toBe(275);
-    expect(etsOnly.filter((a) => held.get(a) !== ets.get(a))).toEqual([]);
+    expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
+    expect([ets.get(0x44cc), ets.get(0x44cd)]).toEqual([0x82, 0x58]);
+    // Without the project's module instances the planner places them by the allocators, as the image build
+    // does, and plans the same bytes.
+    const bare = planAbsoluteParFlash(cfg, after, proc, new Map([[pseg.seg.id, pseg.bytes]]));
+    expect([...bytesOf(bare.plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
   });
 
   test("group-address flash: ETS's partial download, the tables in their declared brackets, the com-object table to its counted entries with the new link bit", () => {

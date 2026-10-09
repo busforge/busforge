@@ -22,9 +22,9 @@ depends on is hardware-proven.
   firmware.
 - **The parameter flash's write set as ETS's.** ETS's parameter download sends only the bytes that
   differ from its record of the unit where the device's image stamps (PID 27) still equal the ones it
-  read after its last download, and every byte of its image where they do not; Busforge's parameter
-  flash sends every owned byte ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit
-  ends the same. The full download's write set is ETS's on System B; on System 7 ETS also reads the
+  read after its last download, and every byte of its image where they do not; Busforge keeps no such
+  record and sends the whole image (System 7) or every owned byte (System B)
+  ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit ends the same. The full download's write set is ETS's on System B; on System 7 ETS also reads the
   unit first and leaves out what it holds (Theben Meteodata 140 S, ABB US/U 4.2), where Busforge writes
   its whole image.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its

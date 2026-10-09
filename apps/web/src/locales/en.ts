@@ -221,6 +221,7 @@ const en = {
     FULL_DOWNLOAD_UNSUPPORTED: "Commissioning this device from scratch is not supported yet: its memory model has never been proven to survive a full download, so Busforge refuses rather than half-write it.",
     COM_OBJECT_SIZE_UNKNOWN: "A communication object declares a datapoint size Busforge cannot express as a KNX value field type. It refuses to write a com-object table with a guessed size.",
     COM_OBJECT_TABLE_EMPTY: "This application declares no communication objects, so there is no com-object table to write.",
+    PARAM_SEGMENT_UNKNOWN: "A parameter of this application has a type of no known width, so Busforge cannot tell which bytes ETS's parameter download writes, and does not write.",
     PARAM_SEGMENT_NOT_READ: "Busforge could not read one of the device's parameter segments in full, so it cannot tell which bits of a shared byte it must keep, and does not write.",
     FLASH_UNVERIFIED_LINK_DOWN: "The write finished and the device confirmed its restart, but the link to the interface did not come back in time to read it back. The write is not verified; read the device back.",
     MEMORY_SERVICES_UNDECIDED: "The device declares a long telegram, and it is not known whether its application takes the extended memory write, so Busforge does not write to it.",

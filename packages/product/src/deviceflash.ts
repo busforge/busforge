@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
-import { buildAbsoluteSegmentTargets, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
+import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
@@ -23,7 +23,8 @@ import { OBJ, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadSt
 // philosophy applied to writing: change only what we can prove, leave the rest.
 //
 // Passing `current` (a device read-back per segment) narrows the plan further to the
-// owned bytes that actually DIFFER, so an unchanged reconfiguration writes nothing.
+// owned bytes that actually DIFFER, so an unchanged reconfiguration writes nothing. The parameter
+// flash (planAbsoluteParFlash) widens a changed plan to the bytes ETS writes (parWriteSet).
 
 export interface FlashRun { address: number; bytes: Buffer; } // absolute device address
 export interface SegmentFlashPlan {
@@ -31,6 +32,7 @@ export interface SegmentFlashPlan {
   address: number;
   size: number;
   runs: FlashRun[]; // contiguous byte runs to write via memWrite, sorted by address
+  image: Buffer; // the segment as it is to end: the target's owned bits over the device's (`current`) bytes
   ownedBytes: number; // bytes under flash authority (derived from active parameters)
   writtenBytes: number; // bytes actually scheduled to write (== ownedBytes if no `current`)
   skippedUnowned: number; // bytes we deliberately never touch (defaults / gaps / inactive)
@@ -86,6 +88,7 @@ export function planAbsoluteSegmentFlash(
       address: t.address,
       size: t.size,
       runs,
+      image,
       ownedBytes,
       writtenBytes,
       skippedUnowned: t.size - ownedBytes,
@@ -98,10 +101,10 @@ export function planAbsoluteSegmentFlash(
 // Turn the surgical segment plan into an executable LoadPlan by wrapping it in the
 // device's declared LSM load bracket. The procedure (parsed from the app program) tells
 // us which AbsoluteSegment lives under which LSM (by address) and the order LSMs load;
-// we emit the minimal "par" download proven on hardware: for each LSM that owns a
-// changed segment, Load -> write its changed owned runs -> LoadCompleted, wrapped in
-// connect/restart/disconnect. Byte selection is delegated to planAbsoluteSegmentFlash,
-// so the owned-byte authority lives in exactly one place.
+// we emit the "par" download proven on hardware: for each LSM that owns a segment with
+// bytes to write, Load -> write them (parWriteSet) -> LoadCompleted, then restart. The owned
+// bytes and their values come from planAbsoluteSegmentFlash, so the owned-byte authority lives
+// in exactly one place.
 //
 // `unplaceable` lists segments that have changed owned bytes but are NOT declared in the
 // load procedure (so we have no LSM to load them under). They are reported, never
@@ -110,6 +113,8 @@ export function planAbsoluteSegmentFlash(
 
 export interface AbsParFlashPlan {
   plan: LoadPlan;
+  // Per segment written by parameter coverage: the image written and which bytes it covers.
+  covered: { id: string; address: number; image: Buffer; covered: boolean[] }[];
   changedBytes: number;
   segments: { id: string; address: number; lsm: number; changed: number }[];
   unplaceable: { id: string; address: number; changed: number }[];
@@ -420,6 +425,17 @@ export function planAbsoluteStructuralFlash(
   return { plan, changedBytes, lsms, concerned: lsms, segments, ...tableRefsOf(app, tables) };
 }
 
+// Which bytes ETS's parameter download of a System 7 application writes, by its mask family. On a
+// memory-mapped mask (MV-0700/0701) ETS reads each block of its image and writes only the bytes that
+// differ (its "optimistic write"; Theben Meteodata 140 S, ABB US/U 4.2). On a property-mapped mask it
+// writes every byte a parameter's memory covers, changed or not (Auro M-0081_A-FE01, Theben TheLuxa
+// P300, MDT BE-06001.02 partial downloads; their ETS logs list exactly those bytes as the image). Where
+// the application closes with image stamps (LdCtrlLoadImageProp PID 27, the Gira M-0008), ETS writes only
+// what differs from its record of its last download while the stamps still equal that record, and the
+// same every-covered-byte image where they do not; Busforge keeps no record, so it writes that image.
+export type ParWriteSet = "differing" | "parameterBytes";
+export const parWriteSet = (app: AppConfig): ParWriteSet => (isMemoryMappedLsm(app.mask) ? "differing" : "parameterBytes");
+
 export function planAbsoluteParFlash(
   app: AppConfig,
   values: Map<string, string>,
@@ -428,6 +444,23 @@ export function planAbsoluteParFlash(
   opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean } = {},
 ): AbsParFlashPlan {
   const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current });
+  // What ETS writes of a parameter download (parWriteSet): on a memory-mapped mask it reads its image
+  // first and writes the bytes that differ, which are fp's runs; elsewhere every byte a parameter's
+  // memory covers, in every parameter segment, once anything changed.
+  // `covered` is what the caller verifies besides the owned bytes: the device's own values it rewrote.
+  const differing = fp.segments.reduce((n, sg) => n + sg.writtenBytes, 0);
+  const covered: AbsParFlashPlan["covered"] = [];
+  if (differing > 0 && parWriteSet(app) === "parameterBytes") {
+    const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
+    for (const sg of fp.segments) {
+      const cov = parameterMemoryBytes(app, sg.id, sg.size, { moduleInstances: instances, colorWidth: true });
+      if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${sg.id} has a type of no known width, so the bytes ETS's parameter download writes there cannot be told; refusing to guess`);
+      const outside = sg.runs.flatMap((r) => [...r.bytes.keys()].map((k) => r.address - sg.address + k)).filter((i) => !cov[i]);
+      if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${sg.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
+      sg.runs = runsFromMask(sg.image, sg.address, cov);
+      covered.push({ id: sg.id, address: sg.address, image: sg.image, covered: cov });
+    }
+  }
 
   // From the procedure's PAR-applicable steps (a step scoped AppliesTo="full" must not
   // shape a par download): which LSM owns each absolute segment (by address), and the
@@ -446,8 +479,11 @@ export function planAbsoluteParFlash(
   const unplaceable: AbsParFlashPlan["unplaceable"] = [];
   let changedBytes = 0;
   for (const seg of fp.segments) {
-    if (!seg.runs.length) continue; // no changed owned bytes in this segment
+    if (!seg.runs.length) continue; // nothing to write in this segment
     const lsm = lsmByAddress.get(seg.address);
+    // A segment without a change whose LSM the procedure does not load is left out, as before coverage
+    // writes: nothing of it has to reach the device.
+    if (seg.writtenBytes === 0 && (lsm === undefined || !lsmOrder.includes(lsm))) continue;
     // Unplaceable if we have no LSM for this segment's address, OR the LSM exists but the
     // procedure never loads it (no LdCtrlLoad, so it is absent from lsmOrder). The plan is
     // built by iterating lsmOrder, so an un-loaded LSM's runs would be silently omitted while
@@ -476,7 +512,7 @@ export function planAbsoluteParFlash(
     plan.push(...closingLoadSteps(closingSteps(procedure, "par")));
     if (has("LdCtrlRestart")) plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true });
   }
-  return { plan, changedBytes, segments, unplaceable };
+  return { plan, changedBytes, segments, unplaceable, covered };
 }
 
 // ── Full download and group-address flash for absolute-segment (System 7) devices ────────────────

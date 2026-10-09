@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxDevice, LSM, STATE } from "@busforge/knx";
-import { parseAppConfig, buildAbsoluteSegmentTargets } from "@busforge/product";
+import { parseAppConfig, buildAbsoluteSegmentTargets, parameterMemoryBytes } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -95,7 +95,7 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
       expect(!!targets[0].owned[flip]).toBe(true);
     });
 
-    test("real flash of a one-byte drift: writes ONLY that byte, verifies, LSM ends LOADED", async () => {
+    test("real flash of a one-byte drift: writes the bytes ETS writes, that byte changed, verifies, LSM ends LOADED", async () => {
       const dev = seeded(true);
       const profile = classify(cfg);
       const { ctx, backups, events } = ctxFor(false);
@@ -135,8 +135,11 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
       // that did ended LOADED (a half-open machine would still read LOADING/UNLOADED).
       expect(dev.state.size).toBeGreaterThan(0);
       for (const [, s] of dev.state) expect(s).toBe(STATE.LOADED);
-      // Exactly one byte was written (the single one-byte run of the plan).
-      expect(dev.writes).toEqual([{ addr: targets[0].address + flip, len: 1 }]);
+      // Written: every byte a parameter's memory covers, as ETS's parameter download of this application
+      // writes them (parWriteSet); the bytes no active parameter owns carry what the device held.
+      const covered = parameterMemoryBytes(cfg, targets[0].id, targets[0].size)!;
+      const writtenAt = dev.writes.flatMap((w) => Array.from({ length: w.len }, (_, i) => w.addr + i));
+      expect(writtenAt).toEqual(covered.flatMap((c, i) => (c ? [targets[0].address + i] : [])));
     }, 15_000); // reconnectAfterRestart sleeps 3 s (not injectable through flashParameters)
 
     test("verify has teeth: a device that does not persist the write reports verified:false, NOT a fake success", async () => {

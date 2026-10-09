@@ -302,8 +302,17 @@ a segment ETS loads afresh carries the bytes its `<Mask>` marks and every byte a
 (the whole segment without a mask); a data segment written into the loaded application carries
 exactly the bytes a parameter covers, with or without `<Mask>`, and a segment no parameter covers
 gets none (the ABB US/U 4.2's code segment `AS-4600` and its `AS-6F10`). On the memory-mapped masks
-ETS reads the unit first and sends only the bytes that differ from it (Meteodata, ABB); Busforge
-writes the whole image and reads it back.
+ETS reads the unit first and sends only the bytes that differ from it (Meteodata, ABB); Busforge's
+full download writes the whole image and reads it back.
+
+**Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): on a
+memory-mapped mask (MV-0700/0701) the bytes that differ from the unit, which ETS reads first
+(Theben Meteodata 140 S); on a property-mapped mask every byte a parameter's memory covers, changed or
+not, in every parameter segment (Auro M-0081_A-FE01, Theben TheLuxa P300, MDT BE-06001.02: their ETS
+logs list exactly those bytes). Where the application closes with image stamps (Gira M-0008) ETS
+writes only what differs from its record of its last download while the stamps still equal it, the
+same every-covered-byte image otherwise; Busforge keeps no record and writes that image. A
+`TypeColor` parameter covers three bytes in the RGB and the HSV space (MDT BE-06001.02's image).
 
 **Firmware, not ETS behaviour.** Three exceptions are keyed on the manufacturer, because they
 describe a firmware stack, each hardware-shown: `PERSIST_ON_LOAD_COMPLETED` (GVS: the configuration
@@ -347,7 +356,7 @@ the check.
 
 **Where Busforge departs from ETS, on every rule.** It switches on no verify mode on System 7 and
 reads every write back instead; it keeps no stamps, so on System 7 it writes the whole image where ETS
-leaves out what its stamps or its read of the unit say the device holds (on System B it reads the unit
+leaves out what its stamps or (in a full download) its read of the unit say the device holds (on System B it reads the unit
 and sends what R16 selects); it reads the load state after its own
 load-state writes; and its full download reads the unit's program id first and refuses another
 application.
@@ -526,10 +535,9 @@ Busforge; when a table shrinks, its old tail stays in the segment behind it
 
 Where Busforge departs from ETS, deliberately:
 
-- **The parameter flash writes the changed bytes only.** It reads the parameter segment first and
-  writes the bytes that differ (minimal divergence); ETS writes every parameter-owned byte. Every
-  byte only ETS writes is, in the capture, what the device already held. The read is also a
-  departure: ETS does not read the segment.
+- **The parameter flash reads the parameter segment first**, which ETS does not; it keeps the bits no
+  parameter owns from that read. It writes the bytes ETS writes, every byte a parameter covers; a
+  covered byte no active parameter owns carries the device's value, where ETS writes its own image's.
 - **It does not switch on verify mode** (object 0 PID 14 `04`), in either download; Busforge reads
   every write back instead, as on the Gira ([above](#ets-captured-system-7-downloads)).
 - **It reads the load state after its own load-state writes.** After `Load`, each `AbsSegment`, the

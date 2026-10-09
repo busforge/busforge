@@ -1549,7 +1549,8 @@ export class System7Profile extends DeviceProfile {
       current.set(t.id, onDev);
     }
 
-    const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
+    const { plan, changedBytes, unplaceable, covered } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
+    const writeBytes = plan.reduce((n, st) => n + (st.op === "writeMem" ? st.bytes.length : 0), 0);
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
       throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `${unplaceable.length} changed parameter segment(s) are not declared in the device's load procedure; refusing to flash to avoid a silent partial write`);
@@ -1574,7 +1575,7 @@ export class System7Profile extends DeviceProfile {
         // The memory-mapped System 7 masks (MV-0700/0701) drive their LSMs over 0x0104, not PID 5;
         // a surgical param flash needs the same transport the full download does, or it would talk
         // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
-        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
+        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
       },
       verify: async (confirmedOnly) => {
         for (const t of targets) {
@@ -1582,11 +1583,15 @@ export class System7Profile extends DeviceProfile {
           // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
           // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
           const match = confirmedOnlyMatch(dev, t.address, t.bytes, t.verify, current.get(t.id) ?? null);
+          // The bytes a parameter covers and none owns were written back with the device's own values
+          // (parWriteSet): they must read back as written, as owned bytes must.
+          const cov = covered.find((c) => c.id === t.id);
+          const keptAsWritten = (back: Buffer) => !cov || cov.covered.every((c, i) => !c || t.owned[i] !== 0 || back[i] === cov.image[i]);
           const { value, ok } = await verifySettled(
             () => dev.memRead(t.address, t.size, undefined, (d, n) => ctx.onProgress?.("verify", d, n)),
-            (back) => match(back) !== null,
+            (back) => match(back) !== null && keptAsWritten(back),
           );
-          if (!ok || !settledMatch(match(value), confirmedOnly)) return false;
+          if (!ok || !keptAsWritten(value) || !settledMatch(match(value), confirmedOnly)) return false;
         }
         return true;
       },
