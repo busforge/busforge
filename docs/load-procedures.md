@@ -300,14 +300,20 @@ persists at `LoadCompleted`, so a restart need not prove a reboot), `HOLD_APPLIC
 `SETTLE_BEFORE_RESTART` (thelsing/OpenKNX: the full download settles on a fresh connection before
 the restart, instead of R11's restart at once). They are described [below](#the-flash-bracket-and-why-it-is-tight).
 
-**How ETS checks a write, by write service.** On a device written with the classic `A_Memory_Write`
-(one that does not declare `PID_MAX_APDU_LENGTH`, System B and System 7 alike: Auro, Gira, MDT
-BE-02001.02 and BE-06001.02, Theben TheLuxa P300 and DALI-Gateway) ETS reads object 0 PID 14 and writes
-it back with bit `04` set right before its first memory write, in every capture of such a download,
-and takes the device's echo of each write. On a device that declares the property it writes with the
-confirmed `A_MemoryExtended_Write` and switches on no verify mode in any capture (GVS AMMA, Jung
-400021SE, Theben MIX 2, OpenKNX, MDT IP Interface/Router): the device's answer to each chunk, a return
-code, is the check. Neither reads memory back. The memory-mapped System 7 masks (ABB US/U 4.2, Theben
+**Which write service ETS takes, and how it checks a write.** ETS writes memory with the confirmed
+`A_MemoryExtended_Write` exactly on the applications declaring `<Options
+SupportsExtendedMemoryServices="true">` (GVS AMMA, Jung 400021SE, Theben MIX 2, OpenKNX, MDT IP
+Interface/Router), and with the
+classic `A_Memory_Write` on every other one, whether the device declares `PID_MAX_APDU_LENGTH` or not:
+the Theben DALI-Gateway answers the property with 55, has no such option, and ETS writes it classic in
+blocks of 52 bytes (the maximum APDU less 3). That gateway acknowledges an extended write on the
+transport layer and never answers it, so the option, not the property, decides; Busforge takes it from
+the application and refuses a write to a device declaring a long APDU while the option is unknown.
+On a device written classic (System B and System 7 alike: Auro, Gira, MDT BE-02001.02 and BE-06001.02,
+Theben TheLuxa P300 and DALI-Gateway) ETS reads object 0 PID 14 and writes it back with bit `04` set
+right before its first memory write, in every capture of such a download, and takes the device's echo
+of each write. With the extended write it switches on no verify mode in any capture: the device's
+answer to each chunk, a return code, is the check. Neither reads memory back. The memory-mapped System 7 masks (ABB US/U 4.2, Theben
 Meteodata 140 S) get no verify mode either.
 
 **Busforge reads back, and takes a write confirmation only where the device does not give a byte

@@ -103,9 +103,10 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(dev.memReadExtended(0x15000, 4)).rejects.toThrow(/echoed/);
   });
 
-  test("a device that declares PID_MAX_APDU_LENGTH is written with the confirmed extended write at any address", async () => {
+  test("an application declaring the extended memory services is written with the confirmed extended write at any address", async () => {
     const tun = new FakeExtTransport({ maxApdu: 20 });
     const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
     const data = Buffer.from(Array.from({ length: 40 }, (_, i) => i + 1));
     await dev.memWrite(0x3774, data, { verify: false });
     expect(tun.sawClassic).toBe(0);
@@ -115,6 +116,7 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
 
   test("each chunk the device confirms is logged with its bytes; a rejected one is not, and clearing empties the log", async () => {
     const dev = new KnxDevice(new FakeExtTransport({ maxApdu: 20 }), "1.1.11");
+    dev.setExtendedMemoryServices(true);
     const data = Buffer.from(Array.from({ length: 20 }, (_, i) => i + 1));
     await dev.memWrite(0x3774, data, { verify: false });
     expect(dev.confirmedWrites()).toEqual([{ address: 0x3774, bytes: data.subarray(0, 15) }, { address: 0x3774 + 15, bytes: data.subarray(15) }]);
@@ -126,12 +128,46 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(refused.confirmedWrites()).toEqual([]);
   });
 
+  // The Theben DALI-Gateway KNX plus declares a maximum APDU of 55 and acknowledges an extended write
+  // on the transport layer without ever answering it; its application has no
+  // SupportsExtendedMemoryServices option, and ETS writes it with A_Memory_Write.
+  test("an application without the extended memory services is written classic, even where the device declares a long APDU", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 55 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(false);
+    expect(await dev.writesConfirmed()).toBe(false);
+    await dev.memWrite(0x4000, Buffer.from(Array.from({ length: 30 }, (_, i) => i)), { verify: false });
+    expect(tun.sawExtended).toBe(0);
+    expect(tun.sawClassic).toBe(3); // 12 + 12 + 6
+  });
+
+  test("a device declaring a long APDU is not written while its application's memory services are unknown", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 55 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    const asked = await dev.writesConfirmed().then(() => null, (e: Error) => e);
+    expect(asked?.message).toMatch(/SupportsExtendedMemoryServices/);
+    const written = await dev.memWrite(0x4000, Buffer.from([1, 2, 3]), { verify: false }).then(() => null, (e: Error) => e);
+    expect(written?.message).toMatch(/SupportsExtendedMemoryServices/);
+    expect(tun.sawExtended + tun.sawClassic).toBe(0);
+  });
+
+  test("a device declaring no APDU length is written classic whatever the application declares", async () => {
+    const tun = new FakeExtTransport();
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
+    expect(await dev.writesConfirmed()).toBe(false);
+    await dev.memWrite(0x4000, Buffer.from([1, 2, 3]), { verify: false });
+    expect(tun.sawExtended).toBe(0);
+    expect(tun.sawClassic).toBe(1);
+  });
+
   // thelsing/OpenKNX answers a memory read from flash while the write still sits in its RAM
   // erase-block buffer, so a read-back before the restart shows the old bytes. ETS reads nothing
   // back; neither does the confirmed write, even when a caller asks for verify or an echo.
   test("the confirmed extended write is not read back before the restart", async () => {
     const tun = new FakeExtTransport({ maxApdu: 20 });
     const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
     await dev.memWrite(0x3774, Buffer.from([1, 2, 3, 4]), { verify: true, echo: true });
     expect(tun.sawClassic).toBe(0);
     expect(tun.extWrites).toEqual([4]);

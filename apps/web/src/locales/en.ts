@@ -222,6 +222,7 @@ const en = {
     COM_OBJECT_SIZE_UNKNOWN: "A communication object declares a datapoint size Busforge cannot express as a KNX value field type. It refuses to write a com-object table with a guessed size.",
     COM_OBJECT_TABLE_EMPTY: "This application declares no communication objects, so there is no com-object table to write.",
     PARAM_SEGMENT_NOT_READ: "Busforge could not read one of the device's parameter segments in full, so it cannot tell which bits of a shared byte it must keep, and does not write.",
+    MEMORY_SERVICES_UNDECIDED: "The device declares a long telegram, and it is not known whether its application takes the extended memory write, so Busforge does not write to it.",
     DEVICE_MAX_APDU_INVALID: "The device declares a maximum telegram length too short to carry a memory write, so Busforge does not write to it.",
     PROPERTY_EXT_READ_REFUSED: "The device returned no value for a property of its security object.",
     PROPERTY_EXT_WRITE_REFUSED: "The device refused a write to a property of its security object.",

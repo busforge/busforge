@@ -44,9 +44,14 @@ export interface LoadProcedures {
   //    the address table's segment as long as the table (Gira M-0008, TheLuxa P300, Meteodata 140 S).
   //  - secureEnabled: IsSecureEnabled="true". ETS runs the mask's secure procedure, which closes a System B
   //    download with the confirmed restart (Theben MIX 2, Jung 400021SE, GVS AMMA against the DALI-Gateway).
+  //  - extendedMemoryServices: <Options SupportsExtendedMemoryServices="true">. ETS writes memory with
+  //    A_MemoryExtended_Write only on such an application (Jung 400021SE, GVS AMMA, Theben MIX 2, OpenKNX);
+  //    elsewhere with A_Memory_Write, also on a unit that declares a long APDU (Theben DALI-Gateway, 55),
+  //    which takes no extended write.
   preferPartialIfLoaded: boolean;
   dynamicTables: boolean;
   secureEnabled: boolean;
+  extendedMemoryServices: boolean;
 }
 
 // The LdCtrl vocabulary the executor models. Sourced from the full inventory of the
@@ -111,6 +116,7 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
     preferPartialIfLoaded: (options ? attrsOf(options).PreferPartialDownloadIfApplicationLoaded : undefined) === "true",
     dynamicTables: appAttrs.DynamicTableManagement === "true",
     secureEnabled: appAttrs.IsSecureEnabled === "true",
+    extendedMemoryServices: (options ? attrsOf(options).SupportsExtendedMemoryServices : undefined) === "true",
   };
 }
 

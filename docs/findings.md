@@ -426,14 +426,17 @@ holds the value just written to 0x377a, twelve bytes (one chunk) earlier. Every 
 is correct and acknowledged (logged through a proxy); written slowly, the table lands exactly. The
 device is being overtaken.
 
-ETS never writes that device classically. It reads `PID_MAX_APDU_LENGTH` (device object, PID 56)
-after the descriptor, and on a device that answers it (GVS AMMA 55, Jung 400021SE 233) it uses
-the confirmed `A_MemoryExtended_Write` at every address, waiting for each write response; on
-the ABB US/U 4.2 and MDT BE-02001.02, which do not implement the property, it writes classic.
+ETS never writes that device classically. Its application declares `<Options
+SupportsExtendedMemoryServices="true">`, ETS reads `PID_MAX_APDU_LENGTH` (device object, PID 56) after
+the descriptor, and it uses the confirmed `A_MemoryExtended_Write` at every address, waiting for each
+write response. The option decides, not the property: the Theben DALI-Gateway answers the property
+with 55 but declares no option, ETS writes it classic, and the gateway acknowledges an extended write
+on the transport layer without ever answering it. The ABB US/U 4.2 and MDT BE-02001.02 (no option, no
+property) are written classic too.
 Its first chunk size on the GVS, 50 bytes, is the maximum APDU minus the 5 octets around the
 data; the USB interface refused that frame and ETS continued with 35. Busforge makes the same
-choice from the same property, with its own transport limit as the second bound, and the table
-lands exactly.
+choice from the same option and property, with its own transport limit as the second bound, and the
+table lands exactly.
 
 ## 14. What ETS writes in a partial download, and what Busforge writes
 

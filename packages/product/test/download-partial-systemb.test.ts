@@ -52,6 +52,8 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     async writesConfirmed() { return false; }
     confirmedWrites() { return this.log; }
     clearConfirmedWrites() { this.log = []; }
+    extendedMemory: boolean | undefined;
+    setExtendedMemoryServices(on: boolean) { this.extendedMemory = on; }
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => (this.o.hidden?.has(addr + i) ? 0xff : this.mem.get(addr + i) ?? 0xff))); }
@@ -98,6 +100,15 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     expect(cfg.loadProcedures.preferPartialIfLoaded).toBe(true);
     expect(cfg.loadProcedures.secureEnabled).toBe(false);
   });
+
+  // The unit declares a maximum APDU of 55 and never answers an extended write; ETS's captures write
+  // it with A_Memory_Write (dali-ets-fulldownload-real.log: 137 A_Memory_Write, no extended write).
+  test("the application declares no extended memory services, and the download tells the device so", async () => {
+    expect(cfg.loadProcedures.extendedMemoryServices).toBe(false);
+    const unit = new MockUnit();
+    await run(unit);
+    expect(unit.extendedMemory).toBe(false);
+  }, 30_000);
 
   test("project unchanged: the application is not reloaded, the com-object table (control 1) and the group tables go whole, no PEI unload", async () => {
     const unit = new MockUnit();

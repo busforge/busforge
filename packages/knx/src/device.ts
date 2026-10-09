@@ -457,9 +457,23 @@ export class KnxDevice {
   // PID_MAX_APDU_LENGTH of the device object, read once per connection; null when the device does not
   // implement it. A value too small to carry one byte in an extended write is refused.
   private maxApdu: number | null | undefined;
+  // Whether the application declares the extended memory services (<Options
+  // SupportsExtendedMemoryServices="true">), set by the caller that knows the application. A device
+  // declaring a long APDU does not by that take A_MemoryExtended_Write: the Theben DALI-Gateway (55)
+  // acknowledges it on the transport layer and never answers, and ETS writes it with A_Memory_Write.
+  private extendedMemory: boolean | undefined;
+  setExtendedMemoryServices(on: boolean): void { this.extendedMemory = on; }
   // Whether memWrite uses the confirmed extended write on this device. The load runner asks before
   // its first load-state event, where ETS reads the property too (right after the descriptor).
-  async writesConfirmed(): Promise<boolean> { return (await this.maxApduLength()) !== null; }
+  async writesConfirmed(): Promise<boolean> {
+    const maxApdu = await this.maxApduLength();
+    if (maxApdu === null) return false;
+    if (this.extendedMemory === undefined) {
+      throw new KnxError("MEMORY_SERVICES_UNDECIDED",
+        "the device declares a long APDU, and without its application's SupportsExtendedMemoryServices option it is unknown whether it takes the extended memory write; refusing to write it");
+    }
+    return this.extendedMemory;
+  }
   private async maxApduLength(): Promise<number | null> {
     if (this.maxApdu !== undefined) return this.maxApdu;
     const v = await this.propReadIfPresent(0, PID_MAX_APDU_LENGTH);
@@ -674,16 +688,17 @@ export class KnxDevice {
     // Past the 16-bit reach of A_Memory_Write, the device is written with A_MemoryExtended. Classic
     // path (and every device that fits in 16 bits) stays byte-identical below.
     if (addr >= 0 && addr + data.length - 1 > 0xffff) return this.memWriteExtended(addr, data, { chunk: opts.chunk, onProgress: opts.onProgress });
-    // A device that declares PID_MAX_APDU_LENGTH is written the way ETS writes it: with the confirmed
-    // A_MemoryExtended_Write, one answered chunk at a time, however low the address. The classic write
-    // is acknowledged by the transport layer before the firmware has stored it, and a GVS AMMA took
-    // the next chunk while still storing the previous one after a segment reallocation (a byte of the
-    // com-object table landed 12 bytes further on). ETS captures of four devices: the two that answer
-    // the property (GVS AMMA 55, Jung 400021SE 233) are written extended only, the two that do not
-    // (ABB US/U 4.2, MDT BE-02001.02) classic only. Like ETS, it is not read back mid-bracket
-    // (see memWriteExtended); `verify` and `echo` apply to the classic write only.
-    const maxApdu = await this.maxApduLength();
-    if (maxApdu !== null) {
+    // An application declaring the extended memory services, on a device that declares
+    // PID_MAX_APDU_LENGTH, is written the way ETS writes it: with the confirmed A_MemoryExtended_Write,
+    // one answered chunk at a time, however low the address. The classic write is acknowledged by the
+    // transport layer before the firmware has stored it, and a GVS AMMA took the next chunk while still
+    // storing the previous one after a segment reallocation (a byte of the com-object table landed 12
+    // bytes further on). ETS captures: every application declaring the option (GVS AMMA, Jung 400021SE,
+    // Theben MIX 2, OpenKNX) is written extended only; every other one classic only, also the Theben
+    // DALI-Gateway, which answers the property with 55 (writesConfirmed). Like ETS, it is not read back
+    // mid-bracket (see memWriteExtended); `verify` and `echo` apply to the classic write only.
+    if (await this.writesConfirmed()) {
+      const maxApdu = (await this.maxApduLength())!;
       const chunk = Math.min(transferChunks(maxApdu, this.secure !== undefined).extWrite, opts.chunk ?? Infinity);
       return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }

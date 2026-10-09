@@ -121,6 +121,7 @@ class MockDevice {
   async writesConfirmed() { return false; }
   confirmedWrites() { return []; }
   clearConfirmedWrites() {}
+  setExtendedMemoryServices() {}
   async authorizeFreeKey() { return 0; } // the level the Gira granted ETS's free key
   async memWrite(addr: number, data: Buffer) { this.writes++; data.forEach((b, i) => this.mem.set(addr + i, b)); }
   programId = Buffer.alloc(0);

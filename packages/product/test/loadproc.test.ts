@@ -19,6 +19,18 @@ corpusTest("every real catalogue load procedure parses with a recognized style",
   }
 });
 
+// Which memory write service ETS takes follows this option: in the corpus captures the GVS AMMA, the
+// Theben MIX 2 and the Jung 400021SE (option set) are written with A_MemoryExtended_Write only, the
+// Theben DALI-Gateway and the MDT BE-06001.02 (option absent) with A_Memory_Write only.
+corpusTest("the extended memory services option is read from the application's Options", () => {
+  const ext = (prefix: string) => parseLoadProcedures(readRealFixture(listRealFixtures().find((f) => f.startsWith(prefix))!)).extendedMemoryServices;
+  expect(ext("M-0085_A-0072")).toBe(true);
+  expect(ext("M-0048_A-493B")).toBe(true);
+  expect(ext("M-0004_A-7072")).toBe(true);
+  expect(ext("M-0048_A-9071")).toBe(false);
+  expect(ext("M-0083_A-00B4")).toBe(false);
+});
+
 corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () => {
   const allVerbs = new Set<string>();
   const allUnknown = new Set<string>();
@@ -106,7 +118,7 @@ corpusTest('the GVS AMMA\'s AppliesTo="all" steps are part of both its downloads
 // download: declared reads of PID 27 and property writes, executed as declared before the restart.
 const GVS = "M-0085_A-0072-30-69AA";
 const pid67 = (attrs: Record<string, string> = {}): LdStep => ({ verb: "LdCtrlWriteProp", attrs: { AppliesTo: "all", ObjIdx: "4", PropId: "67", Verify: "true", InlineData: "01", ...attrs } });
-const lpOf = (mergeId: number, ...steps: LdStep[]): LoadProcedures => ({ style: "MergedProcedure", app: GVS, blocks: [{ mergeId, steps }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false });
+const lpOf = (mergeId: number, ...steps: LdStep[]): LoadProcedures => ({ style: "MergedProcedure", app: GVS, blocks: [{ mergeId, steps }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false, extendedMemoryServices: false });
 const write67: ClosingStep = { kind: "write", obj: 4, pid: 67, start: 1, data: Buffer.from([1]), verify: true };
 
 test("a declared property write in merge block 7 closes every download it applies to", () => {
@@ -198,7 +210,7 @@ test("par policy: unknown verbs and unmodeled steps block, never silently vanish
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "absolute").kind).toBe("blocked");
   expect(assessParStep(step("LdCtrlMadeUpVerb"), "relative").kind).toBe("blocked");
   // load-image stamps: a closing read behind the last LoadCompleted, of PID 27 only; outside a procedure blocked
-  const stamped = (s: LdStep): LoadProcedures => ({ style: "ProductProcedure", blocks: [{ steps: [step("LdCtrlLoadCompleted", { LsmIdx: "3" }), s] }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false });
+  const stamped = (s: LdStep): LoadProcedures => ({ style: "ProductProcedure", blocks: [{ steps: [step("LdCtrlLoadCompleted", { LsmIdx: "3" }), s] }], verbs: [], unknown: [], preferPartialIfLoaded: false, dynamicTables: false, secureEnabled: false, extendedMemoryServices: false });
   const read27 = step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "27" }), read5 = step("LdCtrlLoadImageProp", { ObjIdx: "1", PropId: "5" });
   expect(assessParStep(read27, "absolute").kind).toBe("blocked");
   expect(assessParStep(read27, "absolute", stamped(read27)).kind).toBe("executed");

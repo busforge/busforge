@@ -393,6 +393,9 @@ interface FlashOp {
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
   write: () => Promise<void>;                     // the model-specific download (device restarts after)
+  // The application's <Options SupportsExtendedMemoryServices>: which memory write service the device
+  // takes (KnxDevice.setExtendedMemoryServices). Required, so no write path can leave it to the device.
+  extendedMemory: boolean;
   // Post-restart read-back comparison. A byte it accepts on the device's write confirmation alone goes
   // into `confirmedOnly` (see confirmedOnlyMatch).
   verify: (confirmedOnly: ConfirmedOnlyRange[]) => Promise<boolean>;
@@ -443,6 +446,7 @@ async function runFlashOp(
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();
+  dev.setExtendedMemoryServices(op.extendedMemory);
   await op.write();
   await reconnectAfterRestart(dev);
   const confirmedOnly: ConfirmedOnlyRange[] = [];
@@ -960,6 +964,7 @@ export class SystemBProfile extends DeviceProfile {
     }
 
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
       imageDigest: fullDownloadImageDigest(segments),
       // Everything is written: a full download owns every byte of every segment, so there is no
@@ -1028,6 +1033,7 @@ export class SystemBProfile extends DeviceProfile {
     const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
     const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
       imageDigest: fullDownloadImageDigest(segments),
       diffBytes: changedBytes
@@ -1142,6 +1148,7 @@ export class SystemBProfile extends DeviceProfile {
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
     const loaded = await allLoaded(dev, [LSM]);
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length,
       diffBytes,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
@@ -1219,6 +1226,7 @@ export class SystemBProfile extends DeviceProfile {
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const tablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]);
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: addr.length + assoc.length + comObj.length,
       diffBytes: byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj) // 0 iff all three match
         + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
@@ -1319,6 +1327,7 @@ export class SystemBProfile extends DeviceProfile {
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
     const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
     return structural(runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length + comObj.length + addr.length + assoc.length,
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
         + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
@@ -1499,6 +1508,7 @@ export class System7Profile extends DeviceProfile {
     }
     const paramsLoaded = await allLoaded(dev, paramLsms, isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: totalBytes,
       diffBytes: changedBytes,
       ...(paramsLoaded ? {} : { loadIncomplete: "refuse" as const }),
@@ -1586,6 +1596,7 @@ export class System7Profile extends DeviceProfile {
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: [...ga.writes, ...ga.comObjWrites].reduce((n, w) => n + w.image.length, 0),
       ...(gaTablesLoaded ? {} : { loadIncomplete: "refuse" as const }),
       diffBytes,
@@ -1656,6 +1667,7 @@ export class System7Profile extends DeviceProfile {
     const loaded = await allLoaded(dev, concerned, memMapped);
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
       imageBytes: total,
       diffBytes: changedBytes,
       ...(loaded ? {} : { loadIncomplete: "refuse" as const }),
@@ -1818,6 +1830,7 @@ export class System7Profile extends DeviceProfile {
 
     const memMappedLsms = isMemoryMappedLsm(mask);
     return runFlashOp(dev, mask, ctx, {
+      extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
       imageDigest: fullDownloadImageDigest(segments),
       diffBytes: imageBytes, // a full download owns every byte it writes

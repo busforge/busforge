@@ -33,6 +33,7 @@ corpusDescribe("the structural flash against real applications", () => {
     async writesConfirmed() { return false; }
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
+    setExtendedMemoryServices() {}
     async memWrite(addr: number, data: Buffer) { this.writes.push({ addr, len: data.length }); for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
     async propRead(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);

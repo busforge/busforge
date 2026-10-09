@@ -524,14 +524,17 @@ than truncated and written to the wrong place.
 `memRead` **auto-selects** by address: a range whose last byte exceeds `0xFFFF` is served
 entirely by the extended path, everything at or below stays on the classic path.
 
-`memWrite` selects **by device, as ETS does**. Before its first write on a connection it reads
-`PID_MAX_APDU_LENGTH` (device object, PID 56). A device that implements it is written with the
-confirmed `A_MemoryExtended_Write` at every address, in chunks of at most that length minus the
-5 octets around the data; one that does not is written with the classic service. ETS captures
-of four devices show exactly this split: the GVS AMMA (55) and the Jung 400021SE (233)
-are written extended only, the ABB US/U 4.2 and the MDT BE-02001.02 (property absent) classic
-only. The difference matters: the classic write is acknowledged by the transport layer before
-the firmware has stored it, and after a segment reallocation the GVS AMMA was overtaken by the
+`memWrite` selects **by application and device, as ETS does**. The caller sets whether the
+application declares `<Options SupportsExtendedMemoryServices="true">`; before its first write on a
+connection the device reads `PID_MAX_APDU_LENGTH` (device object, PID 56). Where both hold, it writes
+with the confirmed `A_MemoryExtended_Write` at every address, in chunks of at most that length minus
+the 5 octets around the data; otherwise with the classic service. A device declaring the property
+whose application's option was never set is refused before anything is written. ETS captures show
+this split: the GVS AMMA (55), the Jung 400021SE (233), the Theben MIX 2 (55) and OpenKNX (254),
+all declaring the option, are written extended only; the ABB US/U 4.2 and the MDT BE-02001.02
+(property absent) and the Theben DALI-Gateway (55, no option) classic only. The DALI-Gateway
+acknowledges an extended write on the transport layer and never answers it. The difference
+matters: the classic write is acknowledged by the transport layer before the firmware has stored it, and after a segment reallocation the GVS AMMA was overtaken by the
 next chunk ([findings.md](findings.md) §13). A confirmed write is **not read back before the
 restart**, whatever the caller asks: ETS reads nothing back, and on thelsing/OpenKNX a read returns
 the flash while the write still sits in a RAM buffer ([findings.md](findings.md) §16). The

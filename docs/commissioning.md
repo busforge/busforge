@@ -200,9 +200,9 @@ telegrams away from where it happened. There are two equivalent guarantees:
   parameter run is echo-checked as it is written instead of being read back
   (`planSystemBFullDownload`). No other path enables it.
 
-A device that declares `PID_MAX_APDU_LENGTH` is written with the confirmed
-`A_MemoryExtended_Write` instead ([device-memory-model.md](device-memory-model.md)) and is not put
-into verify mode, as ETS does not. Its return code says a chunk was accepted, not what was stored,
+A device whose application declares `SupportsExtendedMemoryServices` and that declares
+`PID_MAX_APDU_LENGTH` is written with the confirmed `A_MemoryExtended_Write` instead
+([device-memory-model.md](device-memory-model.md)) and is not put into verify mode, as ETS does not. Its return code says a chunk was accepted, not what was stored,
 so where the plan asks for the echo the written range is read back instead.
 
 For a large segment, reading everything back is thousands of extra telegrams, so the System B

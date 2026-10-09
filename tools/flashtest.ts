@@ -3,9 +3,12 @@
 // 0x07 -> 0x08), flash it, prove on the bus that the device answers on the new GA,
 // then revert. This WRITES to a real KNX device.
 //
-//   bun run tools/flashtest.ts <interface-ip> <device-ia>
+//   bun run tools/flashtest.ts <interface-ip> <device-ia> <extended|classic>
 //
-//   bun run tools/flashtest.ts 198.51.100.10 1.2.20
+//   bun run tools/flashtest.ts 198.51.100.10 1.2.20 classic
+//
+// The third argument is the application's SupportsExtendedMemoryServices option (extended = set):
+// it decides the memory write service, as it does for ETS.
 //
 // WARNING: this is a WRITE path. It reprograms the group-address table of the
 // device you name and only reverts if every step succeeds. Never run it against a
@@ -18,8 +21,9 @@ import { readGroupTables } from "../packages/knx/src/grouptable-read.ts";
 
 const ip = process.argv[2];
 const ia = process.argv[3];
-if (!ip || !ia) {
-  console.error("usage: bun run tools/flashtest.ts <interface-ip> <device-ia>");
+const services = process.argv[4];
+if (!ip || !ia || (services !== "extended" && services !== "classic")) {
+  console.error("usage: bun run tools/flashtest.ts <interface-ip> <device-ia> <extended|classic>");
   console.error("  WRITE path: reprograms the named device's group-address table, then reverts.");
   process.exit(2);
 }
@@ -53,6 +57,7 @@ async function flash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }): P
   for (let i = 1; i <= 8; i++) {
     const tun = new KnxIpTunnel(ip); await tun.connect();
     const dev = new KnxDevice(tun, ia);
+    dev.setExtendedMemoryServices(services === "extended");
     try { await dev.connect(); await dev.deviceDescriptor(); await runLoadPlan(dev, planSystemBGaFlash(tables)); await dev.disconnect(); await tun.disconnect(); return true; }
     catch (e) { log(`   flash attempt ${i}: ${(e as Error).message}`); try { await tun.disconnect(); } catch { /* teardown between retries: a failed disconnect must not mask the flash error above */ } await sleep(1500); }
   }

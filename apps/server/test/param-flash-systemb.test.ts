@@ -30,6 +30,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     async writesConfirmed() { return false; }
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
+    setExtendedMemoryServices() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
     async propRead(obj: number, pid: number) { if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     async propReadIfPresent() { return null; }

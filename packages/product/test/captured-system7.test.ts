@@ -26,6 +26,7 @@ class GiraDevice {
   async writesConfirmed() { return false; }
   confirmedWrites() { return []; }
   clearConfirmedWrites() {}
+  setExtendedMemoryServices() {}
   async tableAddr(obj: number) { return this.tableRef.get(obj) ?? 0; }
   async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0)); }
   async memWrite(addr: number, data: Buffer) {
