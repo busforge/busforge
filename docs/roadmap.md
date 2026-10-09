@@ -11,9 +11,9 @@ depends on is hardware-proven.
   plan, the new one is capture-tested only ([status.md](status.md#devices-driven-on-real-hardware)):
   the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
   flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
-  System B partial form of the full download (Jung 400021SE, Theben DALI-Gateway), and the structural
-  flash newly offered on the Auro, Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2 and Theben
-  DALI-Gateway, and every write of the MDT BE-06001.02. Each needs its
+  System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
+  download onto a unit without the application, the structural flash newly offered on the Auro,
+  Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2, and every write of the MDT BE-06001.02. Each needs its
   run on the device.
 - **Structural flash on more applications.** It is offered only where its plan is tested against an
   ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The GVS

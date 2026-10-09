@@ -17,7 +17,8 @@ corpusTest("every real catalogue load procedure parses with a recognized style",
     if (lp.style === "DefaultProcedure") expect(lp.blocks.flatMap((b) => b.steps).length).toBe(0);
     else expect(lp.blocks.flatMap((b) => b.steps).length).toBeGreaterThan(0);
   }
-});
+  // Decompresses and parses every corpus catalogue: 5.9 s measured on a host at load 26, under 5 s idle.
+}, 30_000);
 
 // Which memory write service ETS takes follows this option: in the corpus captures the GVS AMMA, the
 // Theben MIX 2 and the Jung 400021SE (option set) are written with A_MemoryExtended_Write only, the
@@ -29,7 +30,8 @@ corpusTest("the extended memory services option is read from the application's O
   expect(ext("M-0004_A-7072")).toBe(true);
   expect(ext("M-0048_A-9071")).toBe(false);
   expect(ext("M-0083_A-00B4")).toBe(false);
-});
+  // Five whole catalogues decompressed and parsed: 7.5 s measured on a host at load 26, under 5 s idle.
+}, 30_000);
 
 corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () => {
   const allVerbs = new Set<string>();
