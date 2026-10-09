@@ -52,7 +52,7 @@ export interface CfgParam {
   baseOffsetArg?: string;
 }
 export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; }
-export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; }
+export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; mask?: Buffer; }
 // An absolute-addressed memory segment (Code/AbsoluteSegment). Used by the MV-0705
 // parameter model, where parameters live in an EEPROM segment at a FIXED address
 // (no allocator), with the default image in <Data>. Kept separate from the
@@ -470,7 +470,8 @@ function parseSegments(staticKids: ONode[]): CfgSegment[] {
     const a = attrsOf(s);
     // Default image: ETS authors it as a <Data> child element, older catalogues as a
     // Data attribute; attrOrText resolves either form.
-    out.push({ id: a.Id, lsm: Number(a.LoadStateMachine), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64") });
+    const mask = attrOrText(s, "Mask");
+    out.push({ id: a.Id, lsm: Number(a.LoadStateMachine), size: Number(a.Size), data: Buffer.from(attrOrText(s, "Data") ?? "", "base64"), ...(mask !== undefined ? { mask: Buffer.from(mask, "base64") } : {}) });
   }
   return out;
 }

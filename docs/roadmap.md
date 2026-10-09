@@ -20,12 +20,13 @@ depends on is hardware-proven.
   AMMA (persists at every `LoadCompleted`) and OpenKNX/thelsing (whose full download has to write the
   tables before the parameter image, which the structural bracket does not) stay off for their
   firmware.
-- **The System B write set as ETS's.** On the wire ETS leaves out fill runs from 31 bytes, the fill
-  at the image's ends and bytes no parameter covers, and its parameter download sends only the
-  changed bytes where the application prefers a partial download; Busforge's full download leaves
-  out fill runs from 12 bytes and its parameter flash sends every owned byte
-  ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit ends the same; matching ETS
-  changes the plans of every System B device, so each needs its run again.
+- **The parameter flash's write set as ETS's.** ETS's parameter download sends only the bytes that
+  differ from its record of the unit where the device's image stamps (PID 27) still equal the ones it
+  read after its last download, and every byte of its image where they do not; Busforge's parameter
+  flash sends every owned byte ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit
+  ends the same. The full download's write set is ETS's on System B; on System 7 ETS also reads the
+  unit first and leaves out what it holds (Theben Meteodata 140 S, ABB US/U 4.2), where Busforge writes
+  its whole image.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
   field where the application declares `TextParameterZeroTerminate` (the GVS AMMA), and text on
   System 7 applications (the Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until

@@ -2,8 +2,9 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { iaToNum, ownedRuns, planSystemBGaFlash, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, STRUCTURAL_FLASH_CAPTURED, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
+import { gunzipSync } from "node:zlib";
+import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, type LoadPlan } from "../packages/knx/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, STRUCTURAL_FLASH_CAPTURED, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
@@ -1838,10 +1839,8 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     expect(segment(full, 4).subarray(3144, 3152).toString("hex")).toBe("64616c6900000000");
   });
 
-  // On the wire both sides write the tables whole. Of the application, ETS writes its image's bytes but the fill-0
-  // bytes at its start and end, Busforge the runs sparseRuns leaves (fill runs of 12 bytes and more skipped, bytes no
-  // parameter covers included): the bytes only one side writes are all 0, the allocation's fill, so the unit ends
-  // the same (docs/roadmap.md, the System B write set).
+  // On the wire both sides write the tables whole and, of the application, its image's bytes but the fill-0 bytes at
+  // its start and end ("System B full download: the bytes ETS writes, and no other").
   test("full download: every byte ETS wrote on the wire is Busforge's, the rest is the fill, and the unit held this image before", () => {
     const cap = parseCapture(captureText("dali-ets-fulldownload-real.log"), ia);
     const refs = reportedTableReferences(cap);
@@ -1852,8 +1851,8 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     const ours = new Map<number, number>();
     for (const st of full.plan) if (st.op === "writeSegment") st.bytes.forEach((b, i) => ours.set(refs.get(st.lsm)! + (st.offset ?? 0) + i, b));
     expect([...wire].filter(([a, b]) => ours.has(a) && ours.get(a) !== b)).toEqual([]);
-    expect([...wire].filter(([a, b]) => !ours.has(a) && b !== 0)).toEqual([]);
-    expect([...ours].filter(([a, b]) => !wire.has(a) && b !== 0)).toEqual([]);
+    expect([...wire].filter(([a]) => !ours.has(a))).toEqual([]);
+    expect([...ours].filter(([a]) => !wire.has(a))).toEqual([]);
     for (const lsm of [4, 3, 2, 1]) expect([lsm, segment(full, lsm).equals(unit(lsm))]).toEqual([lsm, true]);
   });
 
@@ -2230,5 +2229,60 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
     expect(behind.filter((a) => wire(REVERT).has(a))).toEqual([]);
     const ours = [...bytesOf(structural(beforeRevert()).plan).keys(), ...bytesOf(gaFlash(fx.links).plan).keys()];
     expect(behind.filter((a) => ours.includes(a))).toEqual([]);
+  });
+});
+
+// Every System B full download in the corpus, real form (the application unloaded, its segment allocated
+// with fill): the bytes Busforge writes are exactly the bytes ETS wrote, with ETS's values. ETS writes of the
+// parameter segment the bytes off the fill and its image's bytes between two such with fewer than 31
+// bytes between them (fillAllocatedRuns), the tables whole. The configuration is the one ETS downloaded.
+corpusDescribe("System B full download: the bytes ETS writes, and no other", () => {
+  type Fx = { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[]; instances?: ModuleInstance[]; overrides?: unknown };
+  const mix2 = (tag: string) => {
+    const fx = JSON.parse(captureText(`mix2-${tag}-config.json`)) as Fx & { overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
+    return { name: `Theben MIX 2 ${tag}`, xml: catalogueXml("M-0048_A-493B-21-B471.xml.gz"), log: `mix2-${tag}-ets-fulldownload.log`, fx,
+      overrides: (cfg: ReturnType<typeof parseAppConfig>) => placeComObjOverrides(cfg, buildDeviceConfig(cfg, new Map(fx.params), undefined, fx.instances), fx.overrides) };
+  };
+  const dali = JSON.parse(captureText("dali-gateway-unit-fulldownload.json")) as Fx & { overrides: [number, ComObjInstanceOverride][] };
+  const cases = [
+    { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
+    mix2("hmg6t"), mix2("jmg4t"), mix2("rmg8t"),
+    { name: "Theben DALI-Gateway", xml: catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), log: "dali-ets-fulldownload-real.log", fx: dali, overrides: () => new Map(dali.overrides) },
+    { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: "1.1.204", params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
+    { name: "GVS AMMA", xml: catalogueXml("M-0085_A-0072-30-69AA.xml.gz"), log: "gvs-amma-ets-fulldownload-defaults.log", fx: { ia: "1.1.203", params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
+  ];
+  for (const c of cases) {
+    test(`${c.name}: every byte ETS wrote, each with its value, and no byte ETS left out`, () => {
+      const cfg = parseAppConfig(c.xml);
+      const build = classify(cfg).planFullDownload(cfg.mask, {
+        ia: c.fx.ia, params: new Map(c.fx.params), links: c.fx.links, moduleInstances: c.fx.instances ?? [], proc: parseLoadProcedures(c.xml), comObjectOverrides: c.overrides(cfg),
+      });
+      const cap = parseCapture(captureText(c.log), iaToNum(c.fx.ia));
+      const refs = reportedTableReferences(cap);
+      // The GVS capture holds no PID 7 answer for the parameter segment; its base is where ETS's distinctive writes line up.
+      const at = (lsm: number) => refs.get(lsm) ?? inferBase(build.segments.find((s) => s.lsm === lsm)!.image, cap.writes)!;
+      const ours = new Map<number, number>();
+      for (const st of build.plan) if (st.op === "writeSegment") st.bytes.forEach((b, i) => ours.set(at(st.lsm) + (st.offset ?? 0) + i, b));
+      const ets = memoryImage(cap.writes);
+      expect(ours.size).toBeGreaterThan(0);
+      expect([...ours].sort((x, y) => x[0] - y[0])).toEqual([...ets].sort((x, y) => x[0] - y[0]));
+    });
+  }
+
+  // The MDT IP Interface/Router's full download is refused (its tunnelling addresses, declaresTunnelingEntries), so its
+  // parameter segment is held against ETS's secured writes with the rule alone: <Data> images the segment whole.
+  test("MDT IP Interface/Router: the parameter segment's bytes ETS wrote inside its secured telegrams", () => {
+    const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
+    const cfg = parseAppConfig(xml);
+    const fx = JSON.parse(captureText("mdt-router-unit-config.json")) as { params: [string, string][] };
+    const target = buildRelativeSegmentTarget(cfg, new Map(fx.params), 4, { ownIdleUnionDefaults: true })!;
+    const coverage = fullDownloadImageCoverage(cfg, target.owned);
+    expect(coverage.every(Boolean)).toBe(true);
+    const at = 0x14ea;
+    const ours = new Map<number, number>();
+    for (const r of fillAllocatedRuns(target.bytes, coverage, relParamFillByte(parseLoadProcedures(xml)))) r.bytes.forEach((b, i) => ours.set(at + r.offset + i, b));
+    const ets = etsWrites("mdt-router-ets6log-fulldownload.txt");
+    const inSegment = [...ets].filter(([a]) => a >= at && a < at + target.size);
+    expect([...ours].sort((x, y) => x[0] - y[0])).toEqual(inSegment.sort((x, y) => x[0] - y[0]));
   });
 });

@@ -242,33 +242,37 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
   return { ok, got };
 }
 
-// Split a freshly-filled segment into the runs that actually need writing.
+// The bytes of a segment allocated with fill (LdCtrlRelSegment Mode 1) that a full download writes,
+// as ETS 6 writes them: every byte that differs from the fill, and the bytes of ETS's image (`inImage`,
+// non-zero per byte) between two such bytes with fewer than FILL_RUN_SKIPPED bytes between them. A fill
+// run of that length or more, the fill before the first and after the last such byte, and every byte
+// outside the image are left to the allocation, which already set them to the fill; the distance counts
+// the bytes outside the image. Shown by ETS's wire on the OpenKNX RaumController, the three Theben MIX 2
+// products, the Theben DALI-Gateway, the MDT IP Interface/Router, the Jung 400021SE and the GVS AMMA
+// (largest gap bridged 30, smallest left out 31). The device's own CRC over the finished segment
+// (readSegmentCrc) still proves every byte.
 //
-// A full download allocates the parameter segment with fill, and the device pre-fills every byte
-// with `fillByte` for us (thelsing/knx TableObject::allocTable: `for i < size: _memory.writeMemory(
-// addr + i, 1, &fillByte)`). So the only bytes that need to travel over the bus are the ones that
-// DIFFER from the fill. On the OpenKNX RaumController's default configuration (fill 0x00) that is 51
-// bytes out of 21601, i.e. 0.2%: 22 telegrams instead of 1801. A device that fills with 0xFF instead
-// (GVS AMMA) is treated the same way against 0xFF: the manufacturer's default image already carries
-// 0xFF in the bytes it leaves untouched, so the run count stays just as small.
-//
-// This is not a speed optimisation dressed up as a principle. Hammering a small MCU with eighteen
-// hundred memory writes is what killed the device three times before this was understood: it
-// commits its flash while we keep writing at it, and its watchdog resets it mid-commit, after which
-// it discards its whole configuration and comes back factory-fresh. Sending only what carries
-// information removes the problem at its root. The device's own CRC over the finished segment
-// (readSegmentCrc) still proves every one of the 21601 bytes, so nothing is taken on trust.
-//
-// Runs are merged across gaps shorter than one telegram: bridging a few fill bytes is cheaper than
-// paying for another round trip.
-export function sparseRuns(bytes: Buffer, gap = 12, fillByte = 0): { offset: number; bytes: Buffer }[] {
-  const runs: { offset: number; bytes: Buffer }[] = [];
-  let start = -1, lastKept = -1;
+// A byte off the fill outside the image is written all the same (none is on those applications), so
+// the segment ends as the buffer holds it. Writing the whole 21601-byte OpenKNX segment instead makes
+// that firmware commit its flash while the writes go on, and its watchdog resets it mid-commit.
+export const FILL_RUN_SKIPPED = 31;
+export function fillAllocatedRuns(bytes: Buffer, inImage: ReadonlyArray<number>, fillByte: number): { offset: number; bytes: Buffer }[] {
+  const write = new Uint8Array(bytes.length);
+  let last = -1;
   for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] !== fillByte) { if (start < 0) start = i; lastKept = i; }
-    else if (start >= 0 && i - lastKept >= gap) { runs.push({ offset: start, bytes: bytes.subarray(start, lastKept + 1) }); start = -1; }
+    if (bytes[i] === fillByte) continue;
+    if (last >= 0 && i - last - 1 < FILL_RUN_SKIPPED) for (let k = last + 1; k < i; k++) if (inImage[k]) write[k] = 1;
+    write[i] = 1;
+    last = i;
   }
-  if (start >= 0) runs.push({ offset: start, bytes: bytes.subarray(start, lastKept + 1) });
+  const runs: { offset: number; bytes: Buffer }[] = [];
+  for (let i = 0; i < bytes.length;) {
+    if (!write[i]) { i++; continue; }
+    let j = i;
+    while (j + 1 < bytes.length && write[j + 1]) j++;
+    runs.push({ offset: i, bytes: bytes.subarray(i, j + 1) });
+    i = j + 1;
+  }
   return runs;
 }
 
@@ -291,6 +295,7 @@ export function sparseRuns(bytes: Buffer, gap = 12, fillByte = 0): { offset: num
 // `writeSegment` resolves each one through PID_TABLE_REFERENCE at execution time.
 export function planSystemBFullDownload(tables: {
   params: Buffer;   // LSM 4, the parameter image
+  paramsInImage: ReadonlyArray<number>; // per byte of `params`: non-zero where ETS's image holds it
   comObj: Buffer;   // LSM 3, the com-object table (authored, not kept from the device)
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
@@ -319,9 +324,9 @@ export function planSystemBFullDownload(tables: {
     // after every memory write and before any other object completes, as ETS does it.
     ...(security ? [securityUnload] : []),
     // All four brackets are opened and allocated before anything is written, which is what the
-    // mask's procedure does. The parameter segment asks for fill: a first-time download owns the
-    // whole segment, so any byte the new application does not write must be the mask's declared fill
-    // (`fillByte`) rather than whatever the previous one left there.
+    // mask's procedure does. The parameter segment is allocated with the fill its LdCtrlRelSegment
+    // declares (Mode 1, `fillByte`), so every byte the download leaves out holds the fill rather than
+    // what a previous application left there.
     { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true, fillByte }, ...mcbFor(P),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
@@ -336,10 +341,10 @@ export function planSystemBFullDownload(tables: {
     { op: "writeSegment", lsm: C, bytes: tables.comObj, echo: true, verify: false },
     { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
     { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
-    // Only the runs that differ from the fill: the allocation above already set every other byte to
-    // `fillByte` (see sparseRuns). Every chunk is echo-checked as it is written (verify mode, above),
-    // and the device's CRC over the finished segment proves the whole 21601 bytes at the end.
-    ...sparseRuns(tables.params, 12, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
+    // to the fill. Every chunk is echo-checked as it is written (verify mode, above), and the device's
+    // CRC over the finished segment proves the whole segment at the end.
+    ...fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
     ...(security ? planSecurityObjectLoad(security) : []),
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },

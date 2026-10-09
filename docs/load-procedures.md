@@ -128,13 +128,14 @@ and version and checks only the application number is compared the way it asks t
 Malformed inline data throws rather than silently truncating to a shorter (and possibly
 passing) expected value.
 
-The `RelSegment` **fill byte** (what the device pre-fills a freshly allocated segment with,
-before the sparse image write) is honoured, not hardcoded. Most System B devices declare
-`Fill=0`; some declare `Fill=255` (the erased-flash state). The full download reads it
-(`relParamFillByte`) and threads it into both the allocation and the sparse run selection
-(which skips runs equal to the fill), so the un-written regions read back as the fill and the
-device's own segment CRC still proves the whole image. Only a non-default allocation **mode**
-stays unmodeled.
+The `RelSegment` **fill byte** (what the device pre-fills a freshly allocated segment with) is
+honoured, not hardcoded. Most System B devices declare `Fill=0`; some declare `Fill=255` (the
+erased-flash state). The full download reads it (`relParamFillByte`) and threads it into both the
+allocation and the choice of the bytes it leaves to the allocation, so the un-written regions read
+back as the fill and the device's own segment CRC still proves the whole image. The full download's
+allocation **mode** is read from the step: every captured application declares Mode 1 (filled); one
+declaring another is refused (`FULL_DOWNLOAD_STEP_UNSUPPORTED`), and one declaring no allocation gets
+the filled one.
 
 The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by a
 coverage test, so a new device introducing an unknown verb fails the build instead of
@@ -340,16 +341,26 @@ and sends what R16 selects); it reads the load state after its own
 load-state writes; and its full download reads the unit's program id first and refuses another
 application.
 
-**On System B the bytes on the wire differ, the unit's memory does not.** In a full download ETS
-writes of the application segment the bytes a parameter covers, and leaves out runs of 31 and more
-bytes equal to the allocation's fill and the fill bytes at the image's start and end (Theben MIX 2,
-three products: fill runs of up to 30 bytes written, from 31 left out; Theben DALI-Gateway KNX plus:
-143 bytes no parameter covers and five fill bytes at the ends left out). Busforge leaves out fill runs
-of 12 bytes and more and writes the bytes no parameter covers inside a run (`sparseRuns`). Its
-parameter flash writes every owned byte, where ETS, on an application declaring
-`PreferPartialDownloadIfApplicationLoaded` whose record of the unit holds, writes only the changed ones
-(Theben DALI-Gateway: one byte of 3009; Jung 400021SE). Every byte only one side writes holds the value
-the unit holds already: the fill, or the unit's own byte.
+**The System B full download writes the bytes ETS writes.** ETS's image of the application segment
+holds the whole segment where it declares a `<Data>` default image (the bytes its `<Mask>` marks and
+those a parameter covers, where it declares one), else the bytes a parameter covers. Of that image it
+writes every byte that differs from the allocation's fill and the image's bytes between two such bytes
+with fewer than 31 bytes between them, bytes outside the image counted; a fill run of 31
+bytes or more, the fill before the first and after the last such byte and every byte outside the image
+are left to the allocation (`fullDownloadImageCoverage`, `fillAllocatedRuns`). Shown by ETS's own image
+and wire on the OpenKNX RaumController, the three Theben MIX 2 products, the Theben DALI-Gateway KNX
+plus and the MDT IP Interface/Router (largest gap bridged 30 bytes, smallest left out 31), and by its
+wire on the Jung 400021SE and the GVS AMMA; `tools/etsdiff.test.ts` pins Busforge's written bytes to
+ETS's for each. The tables are written whole, as ETS writes them.
+
+**The System B parameter flash still writes more than ETS.** It writes every owned byte, where ETS, on
+an application whose closing reads include the parameter segment's stamps (`LdCtrlLoadImageProp`, PID
+27), writes only the bytes that differ from its record of the unit while the stamps it reads before the
+download equal the ones it read after its last one (Theben DALI-Gateway: one byte of 3009; OpenKNX
+RaumController: one of 424; MDT IP Interface/Router), and every byte of its image where they do not
+(Theben MIX 2, whose firmware clears its download marker after the restart, so the stamps never match:
+"Differential Image Stamp does not match"). Every byte only Busforge writes holds the value the unit
+holds already.
 
 ## ETS-captured System 7 downloads
 
@@ -868,10 +879,9 @@ the captures of the Jung 400021SE, the GVS AMMA and the Theben DALI-Gateway show
   same. A probe the interface does not confirm proves no reboot and fails the step.
 
 What Busforge does besides: it reads the load states back after its load-state writes; the full
-download writes the parameter image sparsely against the allocation's fill, where ETS also sends the
-runs of zeros the allocation already holds; after the restart it probes the device into its reboot and
-reads it back on a new connection. ETS reads PID 7 before each segment. Reads and the left-out runs of
-zeros aside, the wire of each download is ETS's. Only on thelsing/OpenKNX firmware does the full
+download writes the parameter bytes ETS writes ([the rules](#the-rules-by-level)); after the restart it
+probes the device into its reboot and reads it back on a new connection. ETS reads PID 7 before each
+segment. Reads aside, the wire of each download is ETS's. Only on thelsing/OpenKNX firmware does the full
 download settle for 8 s on a fresh connection before the restart instead of closing at once
 (`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)).
 
@@ -1065,8 +1075,8 @@ recovery path for a failed download is to re-run it from the project: the device
 `downloadFull` writes the application id, the parameter image, the com-object table and the
 group tables in one bracket.
 
-- **System B** (`planSystemBFullDownload`): implemented. The parameter segment is written
-  sparsely against the allocation's fill byte, and verified by the device's own segment CRC
+- **System B** (`planSystemBFullDownload`): implemented. Of the parameter segment the bytes ETS
+  writes go over the bus, the rest is left to the allocation's fill (`fillAllocatedRuns`), and it is verified by the device's own segment CRC
   (`PID_MCB_TABLE`) rather than by reading thousands of bytes back. Two CRC-16 conventions
   are accepted, because firmware differs: the thelsing/knx variant augments the CCITT CRC
   with 16 zero bits, other System B firmware uses CCITT-FALSE. A CRC matching neither is not

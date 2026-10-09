@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, sparseRuns, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
 import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
@@ -542,66 +542,62 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
   });
 });
 
-describe("sparse writes (only the bytes that carry information)", () => {
-  // A full download allocates the parameter segment with fill, so the device zeroes it for us. The
-  // only bytes that need to cross the bus are the ones that are not zero. On the real OpenKNX
-  // RaumController that is 51 bytes out of 21601: 22 telegrams instead of 1801. Sending the other
-  // 21550 zeros is not merely wasteful, it is what killed the device: it commits its flash while we
-  // keep writing at it, and its watchdog resets it mid-commit.
-  test("finds the runs and skips the zeros", () => {
+describe("the bytes of a filled segment a full download writes, as ETS writes them", () => {
+  const all = (n: number) => new Array<number>(n).fill(0xff);
+  const runs = (b: Buffer, owned: number[], fill = 0) => fillAllocatedRuns(b, owned, fill).map((r) => [r.offset, r.bytes.toString("hex")]);
+
+  test("the bytes that differ from the fill, nothing before the first or after the last", () => {
     const b = Buffer.alloc(100);
-    b[3] = 0xaa; b[4] = 0xbb;      // a run at 3..4
-    b[60] = 0x01;                   // and one at 60
-    const runs = sparseRuns(b);
-    expect(runs.map((r) => [r.offset, r.bytes.toString("hex")])).toEqual([[3, "aabb"], [60, "01"]]);
+    b[3] = 0xaa; b[4] = 0xbb; b[60] = 0x01;
+    expect(runs(b, all(100))).toEqual([[3, "aabb"], [60, "01"]]);
   });
 
-  test("bridges a gap shorter than one telegram rather than paying for another round trip", () => {
+  test("a fill run of 30 bytes between two such bytes is written, one of 31 is left to the allocation", () => {
+    const b = Buffer.alloc(100);
+    b[0] = 1; b[31] = 1;   // 30 fill bytes between: written with them
+    b[63] = 1;             // 31 fill bytes between: left out
+    expect(fillAllocatedRuns(b, all(100), 0).map((r) => [r.offset, r.bytes.length])).toEqual([[0, 32], [63, 1]]);
+    expect(FILL_RUN_SKIPPED).toBe(31);
+  });
+
+  test("a byte outside the image is never written, but counts in the distance", () => {
     const b = Buffer.alloc(40);
-    b[0] = 1; b[5] = 1;   // 4 zero bytes between them: cheaper to send them than to send a second telegram
-    b[30] = 1;            // 24 zeros away: worth its own telegram
-    expect(sparseRuns(b, 12).map((r) => r.offset)).toEqual([0, 30]);
-    expect(sparseRuns(b, 12)[0].bytes.length).toBe(6); // the gap rode along
+    b[0] = 1; b[20] = 1;
+    const owned = all(40); for (let i = 5; i < 10; i++) owned[i] = 0;
+    expect(runs(b, owned)).toEqual([[0, "01" + "00".repeat(4)], [10, "00".repeat(10) + "01"]]);
   });
 
-  test("an all-zero segment needs no writes at all (the fill already did it)", () => {
-    expect(sparseRuns(Buffer.alloc(4096))).toEqual([]);
+  test("a byte off the fill is written although it lies outside the image", () => {
+    const b = Buffer.alloc(10); b[4] = 7;
+    expect(runs(b, new Array<number>(10).fill(0))).toEqual([[4, "07"]]);
   });
 
-  test("the runs reassemble into the original segment over a zeroed buffer", () => {
-    const original = Buffer.alloc(1000);
-    for (const i of [0, 1, 2, 500, 501, 999]) original[i] = (i % 251) + 1;
-    const rebuilt = Buffer.alloc(1000); // what the device holds after alloc(fill)
-    for (const r of sparseRuns(original)) r.bytes.copy(rebuilt, r.offset);
-    expect(rebuilt).toEqual(original); // nothing was lost by not sending the zeros
+  test("an all-fill segment needs no write at all", () => {
+    expect(fillAllocatedRuns(Buffer.alloc(4096), all(4096), 0)).toEqual([]);
+    expect(fillAllocatedRuns(Buffer.alloc(4096, 0xff), all(4096), 0xff)).toEqual([]);
   });
 
-  // A device that fills with 0xFF (GVS AMMA, Fill=255) must be sparsed against 0xFF, not 0x00: an
-  // 0x00 byte in the image is then MEANINGFUL and must be sent, while an 0xFF byte is the fill.
+  // Against a 0xFF fill (GVS AMMA, Fill=255) a 0x00 byte is a value and is written, an 0xFF byte is the fill.
   test("against a 0xFF fill, the 0xFF bytes are the fill and everything else is written", () => {
-    const b = Buffer.alloc(100, 0xff); // the device pre-filled this with 0xFF
-    b[3] = 0x00; b[4] = 0x00;          // meaningful zeros: must NOT be skipped
-    b[60] = 0x01;
-    const runs = sparseRuns(b, 12, 0xff);
-    expect(runs.map((r) => [r.offset, r.bytes.toString("hex")])).toEqual([[3, "0000"], [60, "01"]]);
+    const b = Buffer.alloc(100, 0xff);
+    b[3] = 0x00; b[4] = 0x00; b[60] = 0x01;
+    expect(runs(b, all(100), 0xff)).toEqual([[3, "0000"], [60, "01"]]);
   });
 
-  test("an all-0xFF segment against a 0xFF fill needs no writes at all", () => {
-    expect(sparseRuns(Buffer.alloc(4096, 0xff), 12, 0xff)).toEqual([]);
-  });
-
-  test("the runs reassemble over a 0xFF-filled buffer, losing nothing", () => {
-    const original = Buffer.alloc(1000, 0xff);
-    for (const i of [0, 1, 2, 500, 501, 999]) original[i] = i % 256; // includes 0x00s that must survive
-    const rebuilt = Buffer.alloc(1000, 0xff); // what the device holds after alloc(fill=0xFF)
-    for (const r of sparseRuns(original, 12, 0xff)) r.bytes.copy(rebuilt, r.offset);
-    expect(rebuilt).toEqual(original);
+  test("the runs over the fill rebuild the segment", () => {
+    for (const fill of [0, 0xff]) {
+      const original = Buffer.alloc(1000, fill);
+      for (const i of [0, 1, 2, 40, 500, 501, 999]) original[i] = (i % 250) + 2;
+      const rebuilt = Buffer.alloc(1000, fill);
+      for (const r of fillAllocatedRuns(original, all(1000), fill)) r.bytes.copy(rebuilt, r.offset);
+      expect(rebuilt).toEqual(original);
+    }
   });
 });
 
 describe("planSystemBFullDownload: the parameter fill byte is threaded end to end", () => {
   const tables = () => ({
-    params: (() => { const p = Buffer.alloc(64, 0xff); p[10] = 0x42; return p; })(),
+    params: (() => { const p = Buffer.alloc(64, 0xff); p[10] = 0x42; return p; })(), paramsInImage: new Array<number>(64).fill(0xff),
     comObj: Buffer.from([1, 2]), addr: Buffer.from([3, 4]), assoc: Buffer.from([5, 6]),
     programId: appId(0x0085, 0x0072, 0x30),
   });
@@ -654,7 +650,7 @@ describe("the download must not restart the device before it has saved", () => {
   // save fires with every load state still LOADING and then never fires again. Which is why the
   // bracket must stay tight and the ONLY long pause belongs at the end.
   const plan = planSystemBFullDownload({
-    params: Buffer.alloc(64, 1), comObj: Buffer.from([0, 1, 0x4f, 0]),
+    params: Buffer.alloc(64, 1), paramsInImage: new Array<number>(64).fill(0xff), comObj: Buffer.from([0, 1, 0x4f, 0]),
     addr: Buffer.from([0, 0]), assoc: Buffer.from([0, 0]), programId: Buffer.alloc(5),
   });
 
@@ -720,7 +716,7 @@ describe("master reset over the bus", () => {
 })
 
 describe("planSystemBFullDownload: the declared MCB entries", () => {
-  const tables = { params: Buffer.alloc(16, 1), comObj: Buffer.from([1, 2]), addr: Buffer.from([3, 4]), assoc: Buffer.from([5, 6]), programId: appId(0x0004, 0x7072, 0x21) };
+  const tables = { params: Buffer.alloc(16, 1), paramsInImage: new Array<number>(16).fill(0xff), comObj: Buffer.from([1, 2]), addr: Buffer.from([3, 4]), assoc: Buffer.from([5, 6]), programId: appId(0x0004, 0x7072, 0x21) };
   const mcb = [
     { obj: 4, element: 1, data: Buffer.from("00001e1400330000", "hex") },
     { obj: 4, element: 2, data: Buffer.from("0000000101330000", "hex") },
