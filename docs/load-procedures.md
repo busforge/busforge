@@ -861,16 +861,22 @@ the captures of the Jung 400021SE, the GVS AMMA and the Theben DALI-Gateway show
 - **The confirmed restart** (the application declares `IsSecureEnabled="true"`; the DALI-Gateway, which
   does not, gets the plain A_Restart), A_Restart type 1 with erase code 1 and channel 0 (`81 01 00`, ETS6.log
   `ConfirmedRestart_req`). The device answers A_Restart_Response, error 0 and the seconds it needs (1),
-  and reboots. Busforge refuses an answer with an error code (`RESTART_REFUSED`), waits the stated time
-  (at most 3 s) and then requires the device to be gone, as after the basic restart. The device's
-  T_ACK proves the restart arrived: an MDT IP interface sends no confirmation (L_Data.con) for this
-  frame while the device acknowledges and answers it, and ETS goes on without one; Busforge does the
-  same. A probe the interface does not confirm proves no reboot and fails the step.
+  and reboots. Busforge refuses an answer with an error code (`RESTART_REFUSED`) and takes an answer
+  with error 0 as the restart's proof, as ETS does: ETS disconnects after it without probing the
+  device. Without an answer it requires the device to be gone, as after the basic restart; a probe the
+  interface does not confirm then proves no reboot and fails the step. The device's T_ACK proves the
+  restart arrived: an MDT IP interface sends no confirmation (L_Data.con) for this frame while the
+  device acknowledges and answers it, and ETS goes on without one; Busforge does the same.
+- **An interface that drops its tunnels after a restart.** Whenever an MDT IP Interface/Router restarts,
+  an MDT IP interface beside it stops serving its tunnels for 40 to 64 seconds and then drops them,
+  the tunnel the download itself runs over included. Busforge's read-back after the restart opens its
+  tunnel again until the interface answers (up to two minutes); a secured session refuses a tunnel
+  that comes back under another individual address (`TUNNEL_ADDRESS_CHANGED`).
 
 What Busforge does besides: it reads the load states back after its load-state writes; the full
 download writes the parameter image sparsely against the allocation's fill, where ETS also sends the
-runs of zeros the allocation already holds; after the restart it probes the device into its reboot and
-reads it back on a new connection. ETS reads PID 7 before each segment. Reads and the left-out runs of
+runs of zeros the allocation already holds; after a restart the device did not answer it probes the
+device into its reboot, and after every restart it reads the device back on a new connection. ETS reads PID 7 before each segment. Reads and the left-out runs of
 zeros aside, the wire of each download is ETS's. Only on thelsing/OpenKNX firmware does the full
 download settle for 8 s on a fresh connection before the restart instead of closing at once
 (`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)).

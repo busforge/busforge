@@ -245,6 +245,17 @@ export class KnxDevice {
     this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
   }
 
+  // Open the KNXnet/IP link again after it went down, e.g. an interface that stopped serving and
+  // dropped its tunnels (a USB link is not reopened: its errors carry no TUNNEL_* code). A secured session is bound to the tunnel's individual address;
+  // a link that comes back under another one is refused, not carried on under the old address.
+  async reopenTransport(): Promise<void> {
+    try { await this.tun.disconnect(); } catch { /* the link is already gone */ }
+    await this.tun.connect();
+    if (this.secure && this.tun.assignedIa !== this.secure.src) {
+      throw new KnxError("TUNNEL_ADDRESS_CHANGED", `the link came back as ${this.tun.assignedIa >> 12}.${(this.tun.assignedIa >> 8) & 15}.${this.tun.assignedIa & 255}, not the address the secured session is bound to`);
+    }
+  }
+
   async connect() {
     this.seq = 0;
     this.lastRxSeq = null;
@@ -839,7 +850,8 @@ export class KnxDevice {
     await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
     this.seq = (this.seq + 1) & 0x0f;
   }
-  private async sendConfirmedRestart(): Promise<void> {
+  // True when the device answered the restart with error code 0; false when it gave no answer.
+  private async sendConfirmedRestart(): Promise<boolean> {
     let take: (p: ParsedApdu | null) => void = () => undefined;
     const answer = new Promise<ParsedApdu | null>((res) => { take = res; });
     try {
@@ -862,17 +874,14 @@ export class KnxDevice {
     const timer = setTimeout(() => take(null), 2000);
     const r = await answer;
     clearTimeout(timer);
-    if (r === null) { this.respResolve = null; return; }
+    if (r === null) { this.respResolve = null; return false; }
     if (r.apci !== (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER) || r.data.length < 3) {
       this.respResolve = null;
       throw new KnxError("RESTART_REFUSED", `the confirmed restart was answered with service 0x${r.apci.toString(16)} ${r.data.toString("hex")}, not an A_Restart_Response`);
     }
     if (r.data[0] !== 0) { this.respResolve = null; throw new KnxError("RESTART_REFUSED", `the device refused the confirmed restart with error code ${r.data[0]}`); }
-    // The seconds the device says its restart takes, before it is probed; at most 3, well inside the
-    // 6 s a silent transport connection lasts, so a device that does not reboot is still found
-    // answering.
-    await new Promise((res) => setTimeout(res, Math.min(r.data.readUInt16BE(1), 3) * 1000));
     this.respResolve = null;
+    return true;
   }
 
 
@@ -916,9 +925,15 @@ export class KnxDevice {
   // "ConfirmedRestart_req"). The device answers it with A_Restart_Response, an error code and the
   // seconds it needs, and reboots. An error code other than 0 is a refused restart. No answer is
   // allowed: the device may be gone before it gets one out, and the silence below is the proof.
+  // The confirmed restart is the exception: the device's own answer (error 0) is the proof, and with
+  // it `requireReboot` is not asked (see below).
   async restart(requireReboot = true, confirmed = false): Promise<void> {
-    if (confirmed) await this.sendConfirmedRestart();
-    else await this.sendRestart();
+    // A confirmed restart the device answered with error code 0 is proven by that answer: ETS takes
+    // it and disconnects without probing (captures/mdt-router-ets6log-{fulldownload,partial-name,
+    // partial-name-revert}.txt). A probe would also go out while an interface that is itself
+    // restarting, or serving a unit that is, takes no frame (an MDT IP router behind its sibling).
+    if (confirmed && await this.sendConfirmedRestart()) return;
+    if (!confirmed) await this.sendRestart();
     try {
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch (e) {

@@ -8,6 +8,8 @@ function mockDev(failProbes: number) {
   const dev = {
     connect: async () => { calls.connect++; },
     disconnect: async () => { calls.disconnect++; },
+    // A device error is not a link error: the link is never reopened here.
+    reopenTransport: async () => { throw new Error("the link must not be reopened for a device error"); },
     deviceDescriptor: async () => {
       if (calls.probe++ < failProbes) throw new Error("no reliable response (device not answering)");
       return "MV-0705";

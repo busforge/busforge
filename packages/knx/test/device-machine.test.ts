@@ -403,12 +403,15 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     };
     return { tun, dev };
   };
-  test("confirmed: sends 81 01 00, takes the device's answer, and still demands the silence after it", async () => {
+  // ETS takes the answer and disconnects without probing the device (private corpus
+  // captures/mdt-router-ets6log-{fulldownload,partial-name,partial-name-revert}.txt).
+  test("confirmed: sends 81 01 00 and takes the device's answer as the restart's proof, without a probe", async () => {
     const { tun, dev } = confirming(0);
     await dev.restart(true, true);
     const sent = tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01));
     expect(sent.map((f) => f.subarray(1).toString("hex"))).toEqual(["810100"]);
     expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.RESTART)).toBe(false);
+    expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.DEVICE_DESCRIPTOR_READ)).toBe(false);
   }, 20000);
   test("confirmed: an answer with an error code is a refused restart", async () => {
     const { dev } = confirming(1);

@@ -314,6 +314,29 @@ describe("KnxIpTunnel over TCP", () => {
     expect(calls[0]!.isGroup).toBe(true);
   });
 
+  // An MDT IP interface drops its tunnels after a restart of the router beside it; the device session
+  // opens the same tunnel object again. The old socket's close, arriving after that, belongs to a
+  // channel that is gone and must not take the new one down.
+  test("a tunnel opened again ignores the close of the socket it replaced", async () => {
+    const socks = [new FakeTcpSocket(), new FakeTcpSocket()];
+    let n = 0;
+    const tunnel = KnxIpTunnel.tcp("192.0.2.10", 3671, () => socks[n++]!);
+    const closed: string[] = [];
+    tunnel.onClosed = (r) => closed.push(r);
+    let p = tunnel.connect(); await tick(); socks[0]!.inject(CONNECT_RES); await p;
+    await tunnel.sendCemi(Buffer.from([0x11, 0x00, 0xbc, 0xe0, 0x00, 0x00, 0x08, 0x01, 0x01, 0x00, 0x81]));
+    await tunnel.disconnect();
+    p = tunnel.connect(); await tick(); socks[1]!.inject(CONNECT_RES); await p;
+    socks[0]!.drop();
+    expect(closed).toEqual([]);
+    expect(socks[1]!.ended).toBe(false);
+    await tunnel.sendCemi(Buffer.from([0x11, 0x00, 0xbc, 0xe0, 0x00, 0x00, 0x08, 0x01, 0x01, 0x00, 0x81]));
+    const req = socks[1]!.sent.filter((f) => f.readUInt16BE(2) === SVC.TUNNEL_REQ);
+    expect(req[0]![8]).toBe(0); // the new channel's first frame carries sequence 0
+    socks[1]!.drop();
+    expect(closed.length).toBe(1);
+  });
+
   test("onClosed fires when the TCP connection drops", async () => {
     const { sock, tunnel } = await connectedTcp();
     const closed: string[] = [];

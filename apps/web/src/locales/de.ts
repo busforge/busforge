@@ -222,6 +222,7 @@ const de: Messages = {
     COM_OBJECT_SIZE_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Datenpunktgröße an, die Busforge nicht als KNX-Value-Field-Type ausdrücken kann. Eine geratene Größe wird nicht geschrieben.",
     COM_OBJECT_TABLE_EMPTY: "Diese Applikation deklariert keine Kommunikationsobjekte, es gibt also keine Objekttabelle zu schreiben.",
     PARAM_SEGMENT_NOT_READ: "Busforge konnte ein Parametersegment des Geräts nicht vollständig lesen. Es kann daher nicht bestimmen, welche Bits eines geteilten Bytes erhalten bleiben müssen, und schreibt nicht.",
+    FLASH_UNVERIFIED_LINK_DOWN: "Das Schreiben ist durchgelaufen und das Gerät hat den Neustart bestätigt, aber die Verbindung zur Schnittstelle kam nicht rechtzeitig zurück, um es zurückzulesen. Das Schreiben ist nicht verifiziert; bitte das Gerät auslesen.",
     MEMORY_SERVICES_UNDECIDED: "Das Gerät meldet lange Telegramme, und es ist nicht bekannt, ob seine Applikation den erweiterten Speicher-Schreibzugriff annimmt. Busforge schreibt deshalb nicht.",
     DEVICE_MAX_APDU_INVALID: "Das Gerät meldet eine maximale Telegrammlänge, die für einen Speicher-Schreibzugriff zu kurz ist. Busforge schreibt deshalb nicht.",
     PROPERTY_EXT_READ_REFUSED: "Das Gerät hat für eine Eigenschaft seines Sicherheitsobjekts keinen Wert geliefert.",

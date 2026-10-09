@@ -1,4 +1,4 @@
-import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -51,27 +51,53 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // answer a lightweight liveness probe, retrying with backoff. Throws only if the device never
 // answers within the budget. Timing is injectable for tests. Worst case on a truly dead device
 // is bounded (~40 s with the defaults: 3 s + 6 probes, each probe's request retries internally),
-// which is acceptable for a one-off commissioning flash and far better than the false-failure.
+// which is acceptable for a one-off commissioning flash and far better than the false-failure. A
+// failed link to the interface reopens it and is retried for up to `linkDeadlineMs` (see LINK_ERRORS).
 export async function reconnectAfterRestart(
-  dev: Pick<KnxDevice, "connect" | "disconnect" | "deviceDescriptor">,
-  opts: { initialMs?: number; tries?: number; delayMs?: number } = {},
+  dev: Pick<KnxDevice, "connect" | "disconnect" | "deviceDescriptor" | "reopenTransport">,
+  opts: { initialMs?: number; tries?: number; delayMs?: number; linkDeadlineMs?: number; linkDown?: boolean } = {},
 ): Promise<void> {
-  const { initialMs = 3000, tries = 6, delayMs = 2000 } = opts;
+  const { initialMs = 3000, tries = 6, delayMs = 2000, linkDeadlineMs = 120_000 } = opts;
+  const start = Date.now();
   await sleep(initialMs);
+  // `tries` counts the device's answers only; failures of the link to the interface are retried,
+  // the link opened again each time, until `linkDeadlineMs` has passed since the restart.
+  let linkDown = opts.linkDown ?? false;
+  let deviceTries = 0;
   let lastErr: unknown;
-  for (let i = 0; i < tries; i++) {
+  for (;;) {
     try {
+      if (linkDown) {
+        // Any failure to open the link again (no answer, no free channel yet, the interface without
+        // its bus) is still the link, not the device; only another address is final.
+        try { await dev.reopenTransport(); }
+        catch (e) { throw (e as { code?: string }).code === "TUNNEL_ADDRESS_CHANGED" ? e : Object.assign(e as Error, { linkFailure: true }); }
+      }
+      linkDown = false;
       await dev.connect();
       await dev.deviceDescriptor(); // probe: confirms the rebooted device answers before verifying
       return;
     } catch (e) {
       lastErr = e;
+      // A link that came back under another address cannot carry the secured session: final.
+      if ((e as { code?: string }).code === "TUNNEL_ADDRESS_CHANGED") throw e;
       try { await dev.disconnect(); } catch { /* connection may already be gone */ }
-      if (i < tries - 1) await sleep(delayMs);
+      if (isLinkError(e) || (e as { linkFailure?: boolean }).linkFailure) {
+        linkDown = true;
+        if (Date.now() - start >= linkDeadlineMs) {
+          throw new KnxError("FLASH_UNVERIFIED_LINK_DOWN", `the link to the interface did not come back within ${Math.round(linkDeadlineMs / 1000)} s of the restart (${(e as Error).message}), so the write is not verified; it may well have landed: read the device back`);
+        }
+      } else if (++deviceTries >= tries) break;
+      await sleep(delayMs);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error("device did not answer after restart");
 }
+// The link to the interface failed, not the device: an MDT IP interface stops serving its tunnels
+// for 40-64 s and then drops them whenever the MDT IP router beside it restarts, so the tunnel is
+// opened again until `linkDeadlineMs` has passed.
+const LINK_ERRORS = new Set(["TUNNEL_CLOSED", "TUNNEL_CON_TIMEOUT", "TUNNEL_ACK_TIMEOUT", "TUNNEL_CONNECT_TIMEOUT", "TUNNEL_CONNECT_FAILED"]);
+function isLinkError(e: unknown): boolean { return LINK_ERRORS.has((e as { code?: string } | undefined)?.code ?? ""); }
 
 // A post-restart verify read can transiently mismatch while a slow device is still settling its
 // memory (it answers the reconnect probe before every byte is stable). Read, check, and on a
@@ -416,9 +442,9 @@ async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>
     // A garbled secured frame, the device closing the link, or an interface reporting the device did
     // not acknowledge (still booting) is no verdict on the write either.
     const code = (e as { code?: string }).code;
-    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED" && code !== "BUS_SEND_FAILED") throw e;
+    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED" && code !== "BUS_SEND_FAILED" && !isLinkError(e)) throw e;
     try { await dev.disconnect(); } catch { /* the link may already be gone */ }
-    await reconnectAfterRestart(dev, { initialMs: 5000 });
+    await reconnectAfterRestart(dev, { initialMs: 5000, linkDown: isLinkError(e) });
     return verify();
   }
 }

@@ -13,7 +13,7 @@ depends on is hardware-proven.
   flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
   System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the Auro,
-  Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2, and every write of the MDT BE-06001.02. Each needs its
+  Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2. Each needs its
   run on the device.
 - **Structural flash on more applications.** It is offered only where its plan is tested against an
   ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The GVS
@@ -54,6 +54,10 @@ depends on is hardware-proven.
 
 ## Verification
 
+- **Reusing one KNXnet/IP tunnel object across reconnects.** The device sessions reopen their link
+  through a fresh tunnel each time; a `KnxIpTunnel` used directly (tools) and reopened without a
+  disconnect leaks its earlier UDP socket and, after a failed connect, sends its disconnect for the
+  earlier channel. Close the old socket on every connect and disconnect only an established channel.
 - **Echo checks on every management answer.** A memory read refuses an answer for another address,
   and a repeated data frame is dropped at the transport layer. `propRead` and `deviceDescriptor` still
   take any answer of the right sequence: a late answer to an abandoned earlier request would be taken

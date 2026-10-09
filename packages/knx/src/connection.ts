@@ -87,6 +87,8 @@ export class KnxIpTunnel implements KnxTransport {
   channel = 0;
   assignedIa = 0;
   private txSeq = 0;
+  // Counts connects: a heartbeat loop of an earlier channel stops once a later connect began.
+  private generation = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
   // Per-send wait for a tunnelling ACK over UDP; an instance field so a test can shorten it.
   private ackTimeoutMs = 1500;
@@ -159,16 +161,23 @@ export class KnxIpTunnel implements KnxTransport {
     else this.sock?.close();
   }
 
+  // Each connect opens a new channel: its sequence counter starts at 0, and the events of a socket
+  // an earlier connect left behind (a late close or error after the gateway dropped the tunnel) are
+  // ignored, so they cannot tear down the channel that replaced it.
   async connect(): Promise<void> {
+    this.txSeq = 0;
+    this.generation++;
+    this.stopHeartbeat();
     if (this.mode === "tcp") return this.connectTcp();
-    this.sock = this.createSocket();
+    const sock = this.sock = this.createSocket();
     await new Promise<void>((r) => this.sock.bind(0, () => r()));
     // The socket callback wants void, so handing it the async handler dropped the promise: a
     // rejection inside (a failed TUNNEL_ACK send) escaped as an unhandled rejection with no clue
     // where it came from. Failing to answer ONE datagram is recoverable — the gateway retransmits —
     // so the tunnel stays up, but it is reported rather than swallowed.
     this.closed = false;
-    this.sock.on("message", (m) => {
+    sock.on("message", (m) => {
+      if (sock !== this.sock) return;
       void this.onMessage(m).catch((e: unknown) => {
         if (this.closed) return; // a datagram lost to teardown is not a failure, it is the teardown
         console.error(`KNX/IP: dropped a datagram: ${e instanceof Error ? e.message : "unknown error"}`);
@@ -181,8 +190,8 @@ export class KnxIpTunnel implements KnxTransport {
     // dead gateway there just times out — which is why this stayed hidden until it ran on Linux. Route
     // it like any bus-connect fault: while connecting, fail the connect at once with a coded error;
     // once the tunnel is up, report it as a closure rather than crash the process.
-    this.sock.on("error", (e) => {
-      if (this.closed) return; // a late error during teardown is expected, not a failure
+    sock.on("error", (e) => {
+      if (this.closed || sock !== this.sock) return; // a late error during teardown is expected, not a failure
       if (this.connectResWaiter) this.connectResWaiter.reject(new KnxError("TUNNEL_CONNECT_FAILED", `connect to ${this.ifaceIp}:${this.port} failed: ${e.message}`));
       else this.onClosed?.(`the bus connection reported an error: ${e.message}`);
     });
@@ -228,7 +237,7 @@ export class KnxIpTunnel implements KnxTransport {
   // shared verbatim; only the wire (a byte stream reassembled into frames) and the HPAIs (TCP
   // protocol code, §5.2.1) differ from the UDP path.
   private async connectTcp(): Promise<void> {
-    this.tcpSock = this.createTcpSocket();
+    const sock = this.tcpSock = this.createTcpSocket();
     this.closed = false;
     // Open the connection first. A refused or unreachable TCP connect is a coded error, not the bare
     // CONNECT timeout a silent UDP gateway would surface.
@@ -241,7 +250,8 @@ export class KnxIpTunnel implements KnxTransport {
     // path uses. A stream that cannot be kept in frame has no safe resync point, so the connection is
     // reaped rather than guessed at.
     const parser = new KnxIpStreamParser();
-    this.tcpSock.onData((chunk) => {
+    sock.onData((chunk) => {
+      if (sock !== this.tcpSock) return;
       let frames: Buffer[];
       try { frames = parser.push(chunk); }
       catch (e) { this.reap(`the TCP stream desynchronised: ${e instanceof Error ? e.message : String(e)}`); return; }
@@ -253,7 +263,7 @@ export class KnxIpTunnel implements KnxTransport {
       }
     });
     // TCP guarantees the socket, not the peer: when the connection drops, so does the channel.
-    this.tcpSock.onClose(() => { this.reap("the TCP connection to the gateway closed"); });
+    sock.onClose(() => { if (sock === this.tcpSock) this.reap("the TCP connection to the gateway closed"); });
 
     // On a TCP connection the HPAIs carry protocol code 0x02 and a zero address/port: the connection
     // is the endpoint, so there is nothing to name (contrast the UDP path's NAT-mode 0.0.0.0:0 HPAI,
@@ -285,8 +295,9 @@ export class KnxIpTunnel implements KnxTransport {
   // One heartbeat round: a CONNECTIONSTATE_REQUEST and its answer, retried per the spec, and if the
   // gateway answers none of them the tunnel is brought down honestly rather than left looking alive.
   private async heartbeat(): Promise<void> {
+    const generation = this.generation;
     for (let i = 0; i < CONNECTIONSTATE_TRIES; i++) {
-      if (this.closed) return;
+      if (this.closed || generation !== this.generation) return;
       const answered = new Promise<boolean>((resolve) => {
         this.stateWaiter = resolve;
         setTimeout(() => { if (this.stateWaiter === resolve) { this.stateWaiter = null; resolve(false); } }, this.stateTimeoutMs);
@@ -297,7 +308,7 @@ export class KnxIpTunnel implements KnxTransport {
       catch { /* socket gone: the missing answer below is treated as the failure it is */ }
       if (await answered) return; // a positive CONNECTIONSTATE_RESPONSE: the channel is alive
     }
-    this.reap("the gateway did not answer three connection-state requests; the tunnel is considered dead");
+    if (generation === this.generation) this.reap("the gateway did not answer three connection-state requests; the tunnel is considered dead");
   }
 
   private stopHeartbeat() {
