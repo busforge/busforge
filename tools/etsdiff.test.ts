@@ -2245,7 +2245,9 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
   };
   const dali = JSON.parse(captureText("dali-gateway-unit-fulldownload.json")) as Fx & { overrides: [number, ComObjInstanceOverride][] };
   const cases = [
-    { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
+    // Parsing and building this application (190061 elements, a 21601-byte segment) took 3.4 s alone and 8.4 s
+    // in a full check running beside others, past the 5 s default.
+    { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>(), timeout: 30_000 },
     mix2("hmg6t"), mix2("jmg4t"), mix2("rmg8t"),
     { name: "Theben DALI-Gateway", xml: catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), log: "dali-ets-fulldownload-real.log", fx: dali, overrides: () => new Map(dali.overrides) },
     { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: "1.1.204", params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
@@ -2266,7 +2268,7 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
       const ets = memoryImage(cap.writes);
       expect(ours.size).toBeGreaterThan(0);
       expect([...ours].sort((x, y) => x[0] - y[0])).toEqual([...ets].sort((x, y) => x[0] - y[0]));
-    });
+    }, "timeout" in c ? c.timeout : undefined);
   }
 
   // The MDT IP Interface/Router's full download is refused (its tunnelling addresses, declaresTunnelingEntries), so its
