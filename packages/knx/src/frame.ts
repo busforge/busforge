@@ -12,6 +12,7 @@ export const numToIa = (n: number) => `${(n >> 12) & 0xf}.${(n >> 8) & 0xf}.${n 
 export const SVC = {
   SEARCH_REQ: 0x0201, SEARCH_RES: 0x0202,
   DESCRIPTION_REQ: 0x0203, DESCRIPTION_RES: 0x0204,
+  SEARCH_REQ_EXT: 0x020b, SEARCH_RES_EXT: 0x020c,
   CONNECT_REQ: 0x0205, CONNECT_RES: 0x0206,
   CONNECTIONSTATE_REQ: 0x0207, CONNECTIONSTATE_RES: 0x0208,
   DISCONNECT_REQ: 0x0209, DISCONNECT_RES: 0x020a,
@@ -159,9 +160,11 @@ export function withDest(cemi: Buffer, dst: number): Buffer {
   out.writeUInt16BE(dst, 2 + out[1] + 4);
   return out;
 }
-// L_Data.req cEMI carrying a raw TPDU (point-to-point, individual dest)
+// L_Data.req cEMI carrying a raw TPDU (point-to-point, individual dest). A TPDU longer than a standard
+// frame carries (16 octets: TPCI and 15 of APDU) goes as an extended frame (control field 1, bit 7 = 0),
+// as ETS sends it (0x30 on its 56- and 211-octet memory writes, 0xB0 on the short ones).
 export function cemiLData(src: number, dst: number, tpdu: Buffer): Buffer {
-  const head = Buffer.from([0x11, 0x00, 0xbc, 0x60, (src >> 8) & 0xff, src & 0xff, (dst >> 8) & 0xff, dst & 0xff, tpdu.length - 1]);
+  const head = Buffer.from([0x11, 0x00, tpdu.length > 16 ? 0x3c : 0xbc, 0x60, (src >> 8) & 0xff, src & 0xff, (dst >> 8) & 0xff, dst & 0xff, tpdu.length - 1]);
   return Buffer.concat([head, tpdu]);
 }
 

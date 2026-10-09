@@ -22,6 +22,9 @@ export interface KnxTransport {
   // than pretend it can.
   onClosed: ((reason: string) => void) | null;
   connect(): Promise<void>;
+  // The longest APDU the interface carries, as it announces it on the open connection (KNXnet/IP: the
+  // Extended Device Information DIB of its SEARCH_RESPONSE_EXTENDED); null where it announces none.
+  queryMaxApdu?(): Promise<number | null>;
   sendCemi(cemi: Buffer): Promise<void>;
   disconnect(): Promise<void>;
 }

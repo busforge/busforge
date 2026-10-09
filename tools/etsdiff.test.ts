@@ -2400,5 +2400,5 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     const ours = ownedRuns(image, mask).flatMap((r) => [...r.bytes].map((b, i) => [0x54 + r.offset + i, b] as [number, number]));
     expect(ours).toEqual([...memoryImage(parseCapture(captureText("openknx-ets-partial-params.log"), iaToNum(fx.ia)).writes)]);
     expect(ours).toEqual([[0x2366, 0x20]]);
-  });
+  }, 30_000); // builds the OpenKNX application, as the full-download comparison above (3.4 s alone, 8.4 s in a loaded check)
 });

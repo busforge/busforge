@@ -314,6 +314,21 @@ group-address download the four bytes ETS wrote unread are taken as the segment'
 are ETS's on a unit with a 15-octet APDU, the only kind captured. `tools/etsdiff.test.ts` pins these
 writes against the captures; the hardware runs on the Meteodata and the ABB wrote the whole image.
 
+**How long a memory write is** (KNX-wide): ETS asks an IP interface for its maximum APDU before it
+connects (a `SEARCH_REQUEST_EXTENDED` asking for the Extended Device Information DIB; an MDT IP
+Interface/Router announces 210) and writes in chunks of the shorter of the device's (`PID_MAX_APDU_LENGTH`)
+and the interface's, less the write's own octets: 5 for `A_MemoryExtended_Write` (205 data bytes on that
+interface, the OpenKNX RaumController captures), 3 for `A_Memory_Write` (52 on the Theben DALI-Gateway's
+55); its log names which limited it ("restricted by ByInterface", "ByTargetDevice"). Busforge asks the
+same on the open tunnel, once per device, before the first load-state event of a download
+(`KnxIpTunnel.queryMaxApdu`, `writeChunks`). Where the interface announces nothing (a USB interface, an
+IP one that does not answer within a second, Busforge's own KNXnet/IP server, which does not answer the
+extended search), the path limit stays: 32 bytes extended, 12 classic. A frame whose TPDU is longer than
+16 octets goes as an extended frame (control field 1 `0x3C`), as ETS sends it (`0x30`, also through
+Busforge's KNXnet/IP server to its USB interface). A line coupler between interface and device that does
+not pass long frames is not modelled, by ETS or by Busforge. The query and the longer writes have run on
+no device.
+
 **Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): on a
 memory-mapped mask (MV-0700/0701) the bytes that differ from the unit, which ETS reads first
 (Theben Meteodata 140 S); on a property-mapped mask every byte a parameter's memory covers, changed or
