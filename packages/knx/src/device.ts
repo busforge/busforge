@@ -194,6 +194,13 @@ async function waitForSyncGap(dst: number): Promise<void> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 }
 
+// How long a KnxDevice waits for the device, in milliseconds: its T_ACK of a request, the answer to
+// it, the pause before repeating an unanswered request, the answer to a Sync request and the
+// answer to a confirmed restart. Code that talks to a device on the bus takes these; a test whose
+// scripted transport answers at once or never passes shorter ones, so a silence costs it no time.
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000 };
+
 export class KnxDevice {
   private dst: number;
   private seq = 0;
@@ -210,8 +217,11 @@ export class KnxDevice {
   private rawInbox: Buffer[] | null = null;
   private rawNotify: (() => void) | null = null;
 
-  constructor(private tun: KnxTransport, ia: string, private secure?: SecureSession) {
+  private readonly timeouts: DeviceTimeouts;
+
+  constructor(private tun: KnxTransport, ia: string, private secure?: SecureSession, timeouts: Partial<DeviceTimeouts> = {}) {
     this.dst = iaToNum(ia);
+    this.timeouts = { ...DEVICE_TIMEOUTS, ...timeouts };
     tun.onCemi = (src, dst, tpdu, isGroup) => this.onCemi(src, dst, tpdu, isGroup);
   }
   private get me() { return this.tun.assignedIa; }
@@ -282,9 +292,9 @@ export class KnxDevice {
   }
 
   // Next non-control (data) frame during Sync; skips the device's T_ACK.
-  private rawNext(ms = 3000): Promise<Buffer> {
+  private rawNext(): Promise<Buffer> {
     return new Promise((res, rej) => {
-      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, ms);
+      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, this.timeouts.syncResponseMs);
       const pump = () => {
         while (this.rawInbox?.length) {
           const f = this.rawInbox.shift()!;
@@ -323,7 +333,7 @@ export class KnxDevice {
     for (let i = 0; i < tries; i++) {
       this.unauthentic = 0;
       rejectedAfterAck = false;
-      if (i > 0) await new Promise((r) => setTimeout(r, 200));
+      if (i > 0) await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
       // The waiters are registered before the send, the device's timeouts start after it: over UDP
       // the send resolves on the tunnelling ACK, and a late ACK must not eat the device's time.
       let ackTimeout = (): void => undefined;
@@ -354,8 +364,8 @@ export class KnxDevice {
         if (i < tries - 1) continue;
         throw e;
       }
-      setTimeout(ackTimeout, 1500);
-      setTimeout(respTimeout, 2000);
+      setTimeout(ackTimeout, this.timeouts.ackMs);
+      setTimeout(respTimeout, this.timeouts.responseMs);
       const acked = await ackP;
       if (!acked && !closedByDevice) continue;
       if (acked && !expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
@@ -871,7 +881,7 @@ export class KnxDevice {
       // restart and kept running would discard as a repetition and so look rebooted.
       this.seq = (this.seq + 1) & 0x0f;
     }
-    const timer = setTimeout(() => take(null), 2000);
+    const timer = setTimeout(() => take(null), this.timeouts.restartAnswerMs);
     const r = await answer;
     clearTimeout(timer);
     if (r === null) { this.respResolve = null; return false; }

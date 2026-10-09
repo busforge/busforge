@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice, SYNC_GAP_MS } from "../src/device.ts";
+import { KnxDevice, SYNC_GAP_MS, type DeviceTimeouts } from "../src/device.ts";
 import { SecureSession } from "../src/secureSession.ts";
 import { parseApdu, APCI } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
@@ -9,7 +9,10 @@ import type { KnxTransport } from "../src/transport.ts";
 // each byte is derived in a comment from the frame.ts encodings:
 //   numbered data octet0 = 0x40 | seq<<2 | apci[9:8];  octet1 = apci[7:0] | low6data
 //   T_ACK               = 0xc2 | seq<<2
-const DEV = 0x120b; // 1.2.11 = (1<<12)|(2<<8)|11
+const DEV = 0x110b; // 1.1.11 = (1<<12)|(1<<8)|11
+// The scripted transport answers inside the send or not at all, so a device timeout only ever measures
+// a silence: the bus timeouts shrink to milliseconds, in the order they have on the bus.
+const FAST: DeviceTimeouts = { ackMs: 15, responseMs: 20, retryGapMs: 1, syncResponseMs: 30, restartAnswerMs: 20 };
 
 class FakeTransport implements KnxTransport {
   assignedIa = 0x1101; // 1.1.1 (tunnel-assigned source)
@@ -41,7 +44,7 @@ const answersNoMaxApdu = (tun: FakeTransport, p: ReturnType<typeof parseApdu>): 
 describe("KnxDevice request machine (frame level)", () => {
   test("happy propRead: numbered read seq 0, device T_ACKs the response, value skips the 4-byte echo", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
@@ -68,7 +71,7 @@ describe("KnxDevice request machine (frame level)", () => {
   test("an optional property the device does not implement (count 0) reads as absent, not as a value", async () => {
     for (const [answer, expected] of [[[0x43, 0xd6, 0x00, 0x09, 0x00, 0x01, 0x07], null], [[0x43, 0xd6, 0x00, 0x09, 0x10, 0x01, 0x12], "12"]] as const) {
       const tun = new FakeTransport();
-      const dev = new KnxDevice(tun, "1.2.11");
+      const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
       tun.handler = (tpdu) => {
         if (ignorable(tpdu)) return;
         const p = parseApdu(tpdu);
@@ -83,13 +86,13 @@ describe("KnxDevice request machine (frame level)", () => {
 
     test("retransmission: an unACKed request is resent byte-identically (same seq) after the ACK timeout", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     let reads = 0;
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
       if (p.apci !== APCI.PROPERTY_READ) return;
-      if (++reads === 1) return; // swallow attempt 1: no T_ACK -> device must retransmit after 1.5 s
+      if (++reads === 1) return; // swallow attempt 1: no T_ACK -> device must retransmit after the ACK timeout
       tun.reply([0xc2 | (p.seq << 2)]);
       // PROPERTY_RESPONSE seq 0 (see derivation above), value = single byte 01
       tun.reply([0x43, 0xd6, 0x00, 0x0b, 0x10, 0x01, 0x01]);
@@ -102,11 +105,11 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(dataFrames.length).toBe(2);
     expect(dataFrames[0].toString("hex")).toBe("43d5000b1001"); // seq 0 (derived in the happy test)
     expect(dataFrames[1].toString("hex")).toBe("43d5000b1001"); // same seq, same bytes
-  }, 10000);
+  });
 
   test("sequence numbers wrap at 15 (4-bit T-sequence): 17 writes carry seq 0..15,0", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
@@ -129,7 +132,7 @@ describe("KnxDevice request machine (frame level)", () => {
 
   test("memWrite verify:true rejects when the read-back differs from what was written", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
@@ -149,7 +152,7 @@ describe("KnxDevice request machine (frame level)", () => {
 
   test("deviceDescriptor: descriptor bytes 07 b0 resolve to MV-07B0", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
@@ -175,7 +178,7 @@ describe("KnxDevice request machine (frame level)", () => {
     const ourSession = new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV });
     // Constructing it IS the point: KnxDevice installs itself as tun.onCemi, and that is what
     // tun.reply() below drives. The instance is never touched directly.
-    new KnxDevice(tun, "1.2.11", ourSession);
+    new KnxDevice(tun, "1.1.11", ourSession, FAST);
     // The paired far side (the device) that produces the secured response.
     const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
     const wrapped = farSide.wrapManagement(Buffer.from("0340abcd", "hex"), 5); // T-seq 5
@@ -202,7 +205,7 @@ describe("KnxDevice request machine (frame level)", () => {
     const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
     const tun = new FakeTransport();
     const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
-    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }));
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }), FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const seq = (tpdu[0] >> 2) & 0x0f;
@@ -216,7 +219,7 @@ describe("KnxDevice request machine (frame level)", () => {
   test("secure: answers that fail authentication after an acknowledged request fail as rejected", async () => {
     const { dev } = secureFake((tun, seq, far) => { const f = far.wrapManagement(Buffer.from("0340abcd", "hex"), seq); f[f.length - 1] ^= 1; tun.reply([...f]); });
     expect(await code(dev.deviceDescriptor())).toBe("SECURE_ANSWER_REJECTED");
-  }, 30_000);
+  });
 
   test("secure: a replayed answer followed by silence is not answering, not a key problem", async () => {
     let earlier: Buffer | null = null;
@@ -226,12 +229,12 @@ describe("KnxDevice request machine (frame level)", () => {
     });
     await dev.deviceDescriptor();
     expect(await code(dev.deviceDescriptor())).toBe("DEVICE_NOT_ANSWERING");
-  }, 30_000);
+  });
 
   test("secure: a garbled frame on a request that was never acknowledged is not answering", async () => {
     const { dev } = secureFake((tun, seq, far) => { const f = far.wrapManagement(Buffer.from("0340abcd", "hex"), seq); f[f.length - 1] ^= 1; tun.reply([...f]); }, false);
     expect(await code(dev.deviceDescriptor())).toBe("DEVICE_NOT_ANSWERING");
-  }, 30_000);
+  });
 
   // The device answers the tool key write under the new key (ETS capture, Jung 400021SE).
   test("secure: the tool key write is sent once under the old key and its answer taken under the new one", async () => {
@@ -239,7 +242,7 @@ describe("KnxDevice request machine (frame level)", () => {
     const tun = new FakeTransport();
     const farOld = new SecureSession({ toolKey: oldKey, src: DEV, dst: tun.assignedIa });
     const farNew = new SecureSession({ toolKey: newKey, src: DEV, dst: tun.assignedIa });
-    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: oldKey, src: tun.assignedIa, dst: DEV }));
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey: oldKey, src: tun.assignedIa, dst: DEV }), FAST);
     const inner: string[] = [];
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
@@ -256,13 +259,13 @@ describe("KnxDevice request machine (frame level)", () => {
 
   test("secure: an unanswered tool key write is not retried", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: Buffer.alloc(16, 0xfd), src: tun.assignedIa, dst: DEV }));
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey: Buffer.alloc(16, 0xfd), src: tun.assignedIa, dst: DEV }), FAST);
     let sent = 0;
     tun.handler = (tpdu) => { if (!ignorable(tpdu)) sent++; };
     const err = await dev.writeToolKey(Buffer.alloc(16, 0x11)).catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("DEVICE_NOT_ANSWERING");
     expect(sent).toBe(1);
-  }, 10_000);
+  });
 
   // A device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores
   // it (Jung 400021SE, 2026-09-28): the restart, and the master reset, go through the session.
@@ -270,7 +273,7 @@ describe("KnxDevice request machine (frame level)", () => {
     const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
     const tun = new FakeTransport();
     tun.handler = () => { /* a rebooting device answers nothing */ };
-    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }));
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey, src: tun.assignedIa, dst: DEV }), FAST);
     await dev.restart();
     await dev.masterReset();
     const farSide = new SecureSession({ toolKey, src: DEV, dst: tun.assignedIa });
@@ -279,17 +282,17 @@ describe("KnxDevice request machine (frame level)", () => {
     const inner = (f: Buffer) => { const r = farSide.unwrap(f); if (r.status !== "ok") throw new Error(r.status); return ((r.apdu[0] & 0x03) << 8) | r.apdu[1]; };
     expect(inner(restart)).toBe(APCI.RESTART);
     expect(inner(reset) & 0x3fe).toBe(APCI.RESTART);
-  }, 10_000);
+  });
 
   // A secure device drops a Sync request it cannot authenticate without answering, so silence is
   // what a wrong tool key (or a device not in secure mode) looks like; the error has to say so.
   test("secure: a Sync nobody answers fails with a coded error", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11", new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst: DEV, serial: Buffer.alloc(6, 2) }));
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst: DEV, serial: Buffer.alloc(6, 2) }), FAST);
     tun.handler = () => { /* silence */ };
     const err = await dev.connect().catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("SECURE_SYNC_NO_RESPONSE");
-  }, 10_000); // the Sync waits 3 s for an answer
+  });
 
   // The Jung 400021SE ignores a Sync request less than about a second after the previous one to it
   // (docs/findings.md §21). A second session to the same device keeps the gap; another device does not wait.
@@ -308,14 +311,14 @@ describe("KnxDevice request machine (frame level)", () => {
     };
     tun.handler = answerSyncs(tun);
     const t0 = Date.now();
-    await new KnxDevice(tun, "1.1.113", session(A)).connect().catch(() => undefined);
+    await new KnxDevice(tun, "1.1.113", session(A), FAST).connect().catch(() => undefined);
     target = B;
-    await new KnxDevice(tun, "1.1.114", session(B)).connect().catch(() => undefined);
+    await new KnxDevice(tun, "1.1.114", session(B), FAST).connect().catch(() => undefined);
     target = A;
     // Over a second transport, as the server opens one per operation: the gap still holds.
     const tun2 = new FakeTransport();
     tun2.handler = answerSyncs(tun2);
-    await new KnxDevice(tun2, "1.1.113", session(A)).connect().catch(() => undefined);
+    await new KnxDevice(tun2, "1.1.113", session(A), FAST).connect().catch(() => undefined);
     expect(syncs.map((x) => x.dst)).toEqual([A, B, A]);
     expect(syncs[0].t - t0).toBeLessThan(200);
     expect(syncs[1].t - syncs[0].t).toBeLessThan(200); // another device: no wait
@@ -336,7 +339,7 @@ describe("KnxDevice request machine (frame level)", () => {
 describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
   const restarted = () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     // A rebooting device answers nothing at all: it is gone, and so is the connection.
     tun.handler = () => { /* silence */ };
     return { tun, dev };
@@ -348,11 +351,11 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     // A_Restart went out as a numbered request (APCI 0x380), and nothing was swallowed.
     const restart = tun.sent.filter((f) => !f[0].toString(2).startsWith("11") && parseApdu(f).apci === APCI.RESTART);
     expect(restart.length).toBeGreaterThan(0);
-  }, 20000);
+  });
 
   test("a device that KEEPS ANSWERING did not reboot, and that is a failure, not a success", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     // The device ACKs and answers the descriptor read: it is still there, still holding the
     // connection, and it has therefore written NOTHING to flash. Reporting this download as done
     // is the exact bug: the caller would then verify against RAM and see everything it expects.
@@ -366,11 +369,11 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
       }
     };
     expect(dev.restart()).rejects.toThrow(/RESTART_IGNORED|did not reboot/);
-  }, 20000);
+  });
 
   test("with requireReboot=false, a device that keeps answering is fine (it persisted at LoadCompleted)", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     // Same device as above: it keeps answering after A_Restart. For firmware that persists at
     // LoadCompleted (the GVS AMMA, hardware-verified across a power cycle), that is not a failure —
     // the configuration is already saved and the device simply does not reboot on A_Restart.
@@ -386,13 +389,13 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     await dev.restart(false); // resolves, does not throw
     // The A_Restart still went out — best-effort, not skipped.
     expect(tun.sent.filter((f) => !f[0].toString(2).startsWith("11") && parseApdu(f).apci === APCI.RESTART).length).toBeGreaterThan(0);
-  }, 20000);
+  });
 
   // The confirmed restart (A_Restart type 1, erase code 1, channel 0), as ETS sends it to the Theben
   // MIX 2: the device answers A_Restart_Response with an error code and its process time, then reboots.
   const confirming = (error: number) => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     tun.handler = (tpdu) => {
       if (ignorable(tpdu)) return;
       const p = parseApdu(tpdu);
@@ -412,15 +415,15 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     expect(sent.map((f) => f.subarray(1).toString("hex"))).toEqual(["810100"]);
     expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.RESTART)).toBe(false);
     expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.DEVICE_DESCRIPTOR_READ)).toBe(false);
-  }, 20000);
+  });
   test("confirmed: an answer with an error code is a refused restart", async () => {
     const { dev } = confirming(1);
     const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
     expect(String(failure)).toMatch(/RESTART_REFUSED|error code 1/);
-  }, 20000);
+  });
   test("confirmed: a device that acknowledges, does not answer and keeps running did not reboot", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     // Transport-correct: a frame with the sequence number it saw last is a repetition, acknowledged
     // and dropped; only a new number is answered.
     let last = -1;
@@ -434,12 +437,12 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     };
     const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
     expect(String(failure)).toMatch(/RESTART_IGNORED|did not reboot/);
-  }, 20000);
+  });
   test("confirmed: no answer at all is a device already gone, proven by its silence", async () => {
     const { tun, dev } = restarted();
     await dev.restart(true, true);
     expect(tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01)).length).toBe(1);
-  }, 20000);
+  });
 
   // The MDT IP Interface/Router as ETS 6 meets it through an MDT IP interface (private corpus
   // captures/mdt-router-ets6log-fulldownload.txt, -partial-name.txt, -partial-name-revert.txt): the device
@@ -448,7 +451,7 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
   // waits for the confirmation rejects with TUNNEL_CON_TIMEOUT after its timeout.
   const conNeverComes = (deviceAcks: boolean, error = 0) => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     const plain = tun.sendCemi.bind(tun);
     tun.sendCemi = async (cemi: Buffer) => {
       const tpdu = Buffer.from(cemi.subarray(9));
@@ -467,17 +470,17 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     const { tun, dev } = conNeverComes(true);
     await dev.restart(true, true);
     expect(tun.sent.filter((f) => !ignorable(f) && parseApdu(f).apci === (APCI.RESTART | 0x01)).length).toBe(1);
-  }, 20000);
+  });
   test("confirmed: without the interface's confirmation the device's answer is still checked", async () => {
     const { dev } = conNeverComes(true, 1);
     const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
     expect(failure).toMatchObject({ code: "RESTART_REFUSED" });
-  }, 20000);
+  });
   // The probe after the restart through an interface that stalls: whether it reached the device is unknown,
   // so its failure is not taken as the device's silence.
   test("a probe the interface never confirms is no proof of the reboot", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     const plain = tun.sendCemi.bind(tun);
     tun.sendCemi = async (cemi: Buffer) => {
       const tpdu = Buffer.from(cemi.subarray(9));
@@ -488,20 +491,20 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     tun.handler = (tpdu) => { if (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.RESTART) tun.reply([0xc2 | (parseApdu(tpdu).seq << 2)]); };
     const failure = await dev.restart().then(() => null, (e: unknown) => e);
     expect(failure).toMatchObject({ code: "TUNNEL_CON_TIMEOUT" });
-  }, 20000);
+  });
   test("confirmed: neither the device's acknowledgement nor the interface's confirmation is still a failed send", async () => {
     const { dev } = conNeverComes(false);
     const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
     expect(failure).toMatchObject({ code: "TUNNEL_CON_TIMEOUT" });
-  }, 20000);
+  });
 
   test("a send the interface refuses PROPAGATES: silence we never caused proves nothing", async () => {
     const tun = new FakeTransport();
-    const dev = new KnxDevice(tun, "1.2.11");
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
     // If the frame never reached the bus, the quiet that follows is OUR failure, not the device's
     // reboot. Swallowing it (the old `catch {}`) is what let a download that wrote nothing be read
     // as a download that saved everything.
     tun.sendCemi = () => Promise.reject(new Error("interface refused the frame"));
     expect(dev.restart()).rejects.toThrow("interface refused the frame");
-  }, 20000);
+  });
 });
