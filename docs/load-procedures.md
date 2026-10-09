@@ -972,19 +972,21 @@ from the device, then `LoadCompleted` 3, the closing steps and the restart
 (`planAbsoluteStructuralFlash`). On System B it is the reallocating bracket below
 (`planRelativeStructuralFlash`), closed like every System B download ([R10, R11](#the-rules-by-level)).
 
-It is **offered** only on the applications in `STRUCTURAL_FLASH_CAPTURED` (`profiles.ts`), each
-tested against an ETS capture of such a download (`tools/etsdiff.test.ts`): the Jung 400021SE and the
-MDT BE-02001.02, whose captures reshape the com-object table, and the Auro presence detector
-`M-0081_A-FE01`, the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S,
-the Theben MIX 2, the Theben DALI-Gateway KNX plus and the MDT BE-06001.02, whose captures revert a
-parameter change and a link change in one download;
-that revert changes link bits, not the com-object set. The list is evidence, not ETS behaviour: an
-application joins it with its capture test. The thelsing/OpenKNX and GVS stacks stay off,
-because the bracket rests on firmware behaviour they are shown not to share (keeping a segment's
-bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX, the
-flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other
-application keeps the full download for such a change (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`). How
-far each offered application is shown on the device is in [status.md](status.md).
+It is the **family's rule**, offered on every application whose full download Busforge can build (it
+authors what the full download authors): ETS runs this bracket for a change of parameters and links on
+both families, tested against its captures in `tools/etsdiff.test.ts` (the Jung 400021SE and the MDT
+BE-02001.02, whose captures reshape the com-object table; the Auro presence detector `M-0081_A-FE01`,
+the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S, the Theben MIX 2,
+the Theben DALI-Gateway KNX plus and the MDT BE-06001.02, whose captures revert a parameter change and a
+link change in one download; on the property-mapped System 7 units the bytes written equal ETS's revert
+exactly, on the Meteodata every byte has ETS's value and every byte ETS changed is written). The
+thelsing/OpenKNX and GVS stacks stay off (`structuralFirmwareOff`, keyed on the firmware's
+manufacturer), because the bracket rests on firmware behaviour they are shown not to share (keeping a
+segment's bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX,
+the flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`); there a change of
+the com-object set takes the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`). Of the parameter
+segments the structural flash writes what the parameter flash writes. How far each offered application
+is shown on the device is in [status.md](status.md).
 
 ```
 System B (one bracket)                      System 7 (one bracket per LSM)

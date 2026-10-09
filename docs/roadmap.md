@@ -13,13 +13,8 @@ depends on is hardware-proven.
   flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
   System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the Auro,
-  Gira, TheLuxa P300, Meteodata 140 S and Theben MIX 2. Each needs its
+  Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
-- **Structural flash on more applications.** It is offered only where its plan is tested against an
-  ETS capture of such a download ([load-procedures.md](load-procedures.md#structural-flash)). The GVS
-  AMMA (persists at every `LoadCompleted`) and OpenKNX/thelsing (whose full download has to write the
-  tables before the parameter image, which the structural bracket does not) stay off for their
-  firmware.
 - **The stamp record on System 7.** With its record (PID 27 stamps) ETS's parameter download of the
   Gira M-0008 writes the changed byte and three unchanged ones before it; the rule behind those three is
   not shown, so Busforge keeps no record on System 7 and writes the whole image there

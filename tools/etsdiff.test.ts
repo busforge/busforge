@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, checkedStamps, relativeParWriteSet, STRUCTURAL_FLASH_CAPTURED, type ImageStamp, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, absoluteBuildInstances, fullDownloadImageCoverage, checkedStamps, relativeParWriteSet, type ImageStamp, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
@@ -282,18 +282,19 @@ corpusDescribe("System B parameter flash against ETS's partial download", () => 
 corpusDescribe("structural flash against ETS's partial download", () => {
   const real = catalogueXml;
 
-  // The applications Busforge offers the structural flash: each one's ETS capture of such a download is
-  // tested in this file (this suite, and "structural flash of the revert" in each application's suite).
-  test("the applications offered the structural flash are exactly those tested against an ETS capture of one", () => {
-    expect([...STRUCTURAL_FLASH_CAPTURED].sort()).toEqual([
-      "M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
-      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471", "M-0048_A-9071-20-F258",
-    ].sort());
-    for (const id of STRUCTURAL_FLASH_CAPTURED) {
+  // The structural flash is the family's rule: offered on every application tested against an ETS capture of one
+  // (this suite, and "structural flash of the revert" in each application's suite), and off on the two firmware
+  // stacks shown not to take its bracket (GVS, thelsing/OpenKNX), whose own captures it is therefore not held to.
+  test("the structural flash follows the family rule: on every captured application, off on the GVS and OpenKNX firmware", () => {
+    const captured = ["M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
+      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471", "M-0048_A-9071-20-F258"];
+    for (const id of captured) {
       const file = listCatalogue().find((f) => f.startsWith(id))!;
       expect([id, classify(parseAppConfig(catalogueXml(file))).capabilities().structuralFlash]).toEqual([id, true]);
     }
-  });
+    expect(classify(parseAppConfig(catalogueXml("M-0085_A-0072-30-69AA.xml.gz"))).capabilities().structuralFlash).toBe(false);
+    expect(classify(parseAppConfig(gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"))).capabilities().structuralFlash).toBe(false);
+  }, 30_000); // builds the OpenKNX application (3.4 s alone, 8.4 s in a loaded check)
 
   test("MDT BE-02001.02: ETS's bracket set, and Busforge writes exactly the bytes ETS changed, with ETS's values", () => {
     const xml = real("M-0083_A-00B6-32-9642.xml.gz");
@@ -313,7 +314,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     expect(unseen).toEqual([0x4001, 0x4002]);
     before.set(0x4001, 0x11).set(0x4002, 0x38);
     const current = new Map(images.map((w) => [w.address, Buffer.from(Array.from({ length: w.image.length }, (_, i) => before.get(w.address + i)!))]));
-    const { plan, lsms } = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current);
+    const { plan, lsms } = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances);
     const ours = new Map<number, number>();
     for (const st of plan) if (st.op === "writeMem") st.bytes.forEach((b, i) => ours.set(st.address + i, b));
     const changedByEts = [...ets].filter(([a, b]) => before.get(a) !== b);
@@ -677,7 +678,7 @@ function system7StructuralFlash(o: {
     if (b === undefined) throw new Error(`the unit's byte at ${(w.address + i).toString(16)} is not known`);
     return b;
   }))]));
-  return planAbsoluteStructuralFlash(o.cfg, images, o.proc, current);
+  return planAbsoluteStructuralFlash(o.cfg, images, o.proc, current, true, absoluteBuildInstances(o.cfg, o.params, instances));
 }
 // What a System 7 unit holds: every segment's template, its own individual address in the address
 // table, then the bytes of each download in order.
@@ -690,10 +691,12 @@ function unitMemory(cfg: ReturnType<typeof parseAppConfig>, ia: number, ...downl
   return m;
 }
 // The structural flash against the revert: ETS's steps (verify mode aside), every byte Busforge writes
-// with ETS's value, and every byte ETS changes on the unit written by Busforge. ETS also writes bytes
-// the unit already holds (every parameter-covered byte); Busforge writes what differs.
+// with ETS's value, and every byte ETS changes on the unit written by Busforge; against ETS's wire exactly
+// ETS's bytes.
 // `etsImage`: ETS's image from its log, where ETS reads the unit and leaves out on the wire what it
 // already holds (Meteodata 140 S); the steps are then compared without their writes.
+// Against ETS's wire the bytes are ETS's exactly; against ETS's logged image (a read-compare unit) every byte
+// written has ETS's value and every byte ETS changed is written.
 function expectRevertForm(plan: LoadPlan, file: string, ia: number, device: Map<number, number>, etsImage?: Map<number, number>) {
   const steps = (x: string[]) => (etsImage ? x.filter((s) => s !== "write") : x);
   expect(steps(planSteps(plan))).toEqual(steps(etsImage ? captureSteps(file, ia) : withoutVerifyMode(captureSteps(file, ia))));
@@ -703,6 +706,7 @@ function expectRevertForm(plan: LoadPlan, file: string, ia: number, device: Map<
   const changed = [...ets].filter(([a, b]) => device.get(a) !== b);
   expect(changed.length).toBeGreaterThan(0);
   expect(changed.filter(([a]) => !ours.has(a))).toEqual([]);
+  if (!etsImage) expect([file, [...ours.keys()].sort((x, y) => x - y)]).toEqual([file, [...ets.keys()].sort((x, y) => x - y)]);
 }
 
 // ETS 6 full download of the ABB US/U 4.2 (M-0002_A-A001-13-63C2, MV-0701, PreferPartialDownloadIfApplicationLoaded)

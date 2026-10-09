@@ -364,8 +364,7 @@ export function absoluteStructuralImages(
 // one bracket set and one restart. Both group tables unloaded and written as the group-address flash writes
 // them (planSystem7TableBrackets), then the application loaded without unloading or declaring it, the
 // com-object table to its counted entries and the parameter bytes written, completed, the steps that close
-// the download, the restart. Of the parameter segments only the bytes that differ from the device are
-// written, as the parameter flash writes them (ETS writes every parameter-covered byte).
+// the download, the restart. Of the parameter segments the bytes the parameter flash writes (parWriteSet).
 // `current`: what the device holds at each image's address, at the image's length.
 // `concerned`: every load-state machine the plan loads, for the load-state check.
 export function planAbsoluteStructuralFlash(
@@ -373,7 +372,8 @@ export function planAbsoluteStructuralFlash(
   images: AbsStructuralImage[],
   procedure: LoadProcedures,
   current: ReadonlyMap<number, Buffer>,
-  requireReboot = true,
+  requireReboot: boolean,
+  moduleInstances: ModuleInstance[], // the instances the images were built with, for the bytes a parameter covers
 ): AbsStructuralFlashPlan {
   const g = app.groupTables;
   const at = (id: string | undefined) => app.absoluteSegments.find((x) => x.id === id)?.address;
@@ -396,20 +396,38 @@ export function planAbsoluteStructuralFlash(
   const paramWrites: LoadStep[] = [];
   let changedBytes = 0;
   const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
-  for (const w of images.filter((x) => !tableIds.has(x.id))) {
+  // The parameter bytes, as the parameter flash writes them (parWriteSet): those that differ from the
+  // device, and on a property-mapped mask, once any does, every byte a parameter covers in every parameter
+  // segment, a covered byte no parameter owns with the device's value and checked back as such.
+  const params = images.filter((x) => !tableIds.has(x.id)).map((w) => {
     const have = current.get(w.address);
     if (!have || have.length !== w.image.length) {
       throw new ProductError("PARAM_SEGMENT_NOT_READ", `the device's ${w.id} was not read in full (${have?.length ?? 0} of ${w.image.length} B); refusing to write its shared bytes without the bits it holds`);
     }
     const image = Buffer.from(w.image.map((b, i) => mergeOwnedBits(have[i], b, w.owned[i])));
-    const write = w.owned.map((own, i) => own !== 0 && have[i] !== image[i]);
+    return { w, image, differing: w.owned.map((own, i) => own !== 0 && have[i] !== image[i]) };
+  });
+  const anyDiffers = params.some((x) => x.differing.some(Boolean));
+  for (const { w, image, differing } of params) {
+    let write = differing, verify = w.verify;
+    if (anyDiffers && parWriteSet(app) === "parameterBytes") {
+      const cov = parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true });
+      if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${w.id} has a type of no known width, so the bytes ETS's download writes there cannot be told; refusing to guess`);
+      const outside = differing.flatMap((d, i) => (d && !cov[i] ? [i] : []));
+      if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${w.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
+      write = cov;
+      verify = w.verify.map((v, i) => (cov[i] && !w.owned[i] ? 0xff : v));
+    }
     const runs = runsFromMask(image, w.address, write);
     if (!runs.length) continue;
+    // A segment without a change that the procedure does not load with the application is left out, as
+    // the parameter flash leaves it out.
+    if (!differing.some(Boolean) && lsmByAddress.get(w.address) !== APP_LSM) continue;
     if (lsmByAddress.get(w.address) !== APP_LSM) {
-      throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `segment ${w.id} differs from the device but the load procedure does not load it with the application (load-state machine ${APP_LSM}); refusing a partial write`);
+      throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `segment ${w.id} is to be written but the load procedure does not load it with the application (load-state machine ${APP_LSM}); refusing a partial write`);
     }
-    changedBytes += write.filter(Boolean).length;
-    segments.push({ id: w.id, address: w.address, lsm: APP_LSM, image, verify: w.verify });
+    changedBytes += differing.filter(Boolean).length;
+    segments.push({ id: w.id, address: w.address, lsm: APP_LSM, image, verify });
     paramWrites.push(...runs.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.bytes })));
   }
   for (const w of [...tables.writes, ...comObjWrites]) {

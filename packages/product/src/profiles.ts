@@ -251,27 +251,15 @@ const HOLD_APPLICATION_ON_GA_FLASH = new Set<number>([0x0004]);
 export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLICATION_ON_GA_FLASH.has(appManufacturer(app));
 
 // The structural flash (one bracket set over the application, the com-object table and both group
-// tables, findings.md §28) follows the family's rule on every application; it is offered only on the
-// applications whose ETS capture of such a download it is tested against (tools/etsdiff.test.ts,
-// "structural flash"): the revert of a parameter and a link change in one download, and for the first
-// two a change that reshapes the com-object table. Every other application takes the full download for
-// such a change, or ETS. This is evidence, not ETS behaviour: an entry is added with its capture test.
-// Two firmware stacks stay off regardless, hardware-shown not to take the bracket: thelsing/OpenKNX
-// loses a download whose tables follow a long parameter write (planSystemBFullDownload), the GVS stack
-// (persist at LoadCompleted) failed its next flash after an extra LoadCompleted.
-export const STRUCTURAL_FLASH_CAPTURED: readonly string[] = [
-  "M-0004_A-7072-21-99A7", // Jung 400021SE
-  "M-0083_A-00B6-32-9642", // MDT BE-02001.02
-  "M-0083_A-00B4-32-3919", // MDT BE-06001.02
-  "M-0081_A-FE01-11-75D9", // Auro presence detector
-  "M-0008_A-10D7-11-2783", // Gira Tastsensor 3 Komfort
-  "M-0048_A-107E-12-5B58", // Theben TheLuxa P300
-  "M-0048_A-140C-14-EB70", // Theben Meteodata 140 S
-  "M-0048_A-493B-21-B471", // Theben MIX 2
-  "M-0048_A-9071-20-F258", // Theben DALI-Gateway KNX plus
-];
-const structuralFlashCaptured = (app: AppConfig): boolean =>
-  STRUCTURAL_FLASH_CAPTURED.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
+// tables, findings.md §28) is the family's rule, offered on every application its planner runs: ETS runs
+// that bracket for a change of parameters and links on both families (the reverts of the Auro
+// M-0081_A-FE01, Gira M-0008, Theben TheLuxa P300, Meteodata 140 S, MIX 2 and DALI-Gateway, the MDT
+// BE-06001.02, and the com-object-table reshaping downloads of the Jung 400021SE and MDT BE-02001.02,
+// each tested in tools/etsdiff.test.ts). Two firmware stacks stay off, hardware-shown not to take the
+// bracket: thelsing/OpenKNX loses a download whose tables follow a long parameter write
+// (planSystemBFullDownload, SETTLE_BEFORE_RESTART), the GVS stack (PERSIST_ON_LOAD_COMPLETED) failed its
+// next flash after an extra LoadCompleted.
+const structuralFirmwareOff = (app: AppConfig): boolean => !closesAtOnce(app) || persistsOnLoadCompleted(app);
 
 // Firmware that persists its download on a timer after the last memory write and must be left alone
 // before the restart, on a fresh connection (thelsing/OpenKNX, see planSystemBFullDownload). Every other
@@ -840,7 +828,7 @@ export class SystemBProfile extends DeviceProfile {
     return {
       readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
-      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashCaptured(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
+      structuralFlash: hasParamSegment && !!this.cfg && !structuralFirmwareOff(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
   }
 
@@ -1014,7 +1002,7 @@ export class SystemBProfile extends DeviceProfile {
     // Busforge also wants the three tables LOADED and the application segment at this application's
     // size (its memory-control block, PID 27); a unit that is not, which no capture shows ETS on, gets
     // the full form, which rewrites every object. So do the two firmware stacks hardware-shown not to
-    // take the structural bracket this form is made of (STRUCTURAL_FLASH_CAPTURED above).
+    // take the structural bracket this form is made of (structuralFirmwareOff).
     if (proc.preferPartialIfLoaded && closesAtOnce(this.requireCfg("full download")) && !persistsOnLoadCompleted(this.requireCfg("full download"))) {
       const cfg = this.requireCfg("full download");
       const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
@@ -1527,11 +1515,12 @@ export class System7Profile extends DeviceProfile {
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
-    const canStructure = canAuthor && !!this.cfg && structuralFlashCaptured(this.cfg) && this.cfg.groupTables.comObjectSegment !== undefined && this.cfg.loadProcedures.style === "ProductProcedure";
+    const canStructure = canAuthor && !!this.cfg && !structuralFirmwareOff(this.cfg) && this.cfg.groupTables.comObjectSegment !== undefined && this.cfg.loadProcedures.style === "ProductProcedure";
     const refused = this.operationRefusals();
     return {
       readParams: true, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
-      fullDownload: this.fullDownloadOffered() && !refused.fullDownload, structuralFlash: canStructure && !refused.flashParams,
+      // The structural flash authors what the full download authors, so it is offered only where that can be built.
+      fullDownload: this.fullDownloadOffered() && !refused.fullDownload, structuralFlash: canStructure && !refused.flashParams && !refused.flashLinks && this.fullDownloadOffered() && !refused.fullDownload,
     };
   }
 
@@ -1796,7 +1785,7 @@ export class System7Profile extends DeviceProfile {
       read += r.image.length;
     }
     // The closing restart is held to what the parameter flash proves on these devices.
-    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg));
+    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances);
     const loaded = await allLoaded(dev, concerned, memMapped);
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {

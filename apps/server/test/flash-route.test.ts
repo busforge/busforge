@@ -338,17 +338,19 @@ corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural
     } finally { structureImpl = realStructure; }
   });
 
-  test("param flash, System B application without a capture of the structural flash -> USE_DOWNLOAD, and no flash runs", async () => {
+  // The structural flash is the family's rule, so a System B application without a capture of it gets it too.
+  test("param flash, System B application without a capture of the structural flash -> the structural flash, not the surgical one", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, m0162);
     setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_B, "1");
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
-    structureImpl = async () => { throw new Error("the structural flash must not be reached"); };
+    let reached = false;
+    structureImpl = async () => { reached = true; return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x", structural: true }; };
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))!;
-      expect(res.status).toBe(400);
-      expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
-    } finally { structureImpl = realStructure; }
+      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
+      expect(res.status).toBe(200);
+      expect(reached).toBe(true);
+    } finally { structureImpl = realStructure; paramFlashImpl = realParamFlash; }
   });
 
   test("the GA flash is routed the same way: an L3-changing param runs the structural flash", async () => {
