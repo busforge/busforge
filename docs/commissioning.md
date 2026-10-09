@@ -196,7 +196,7 @@ telegrams away from where it happened. There are two equivalent guarantees:
   with what actually landed. Some applications ask for it explicitly
   (`LdCtrlWriteRelMem Verify="true"`), and ETS enables it with a read-modify-write on the
   device object before a download. The **System B full download** takes that route: it switches
-  verify mode on as its first step and off as its last, and every table and every sparse
+  verify mode on as its first step and off as its last, and every table and every
   parameter run is echo-checked as it is written instead of being read back
   (`planSystemBFullDownload`). No other path enables it.
 

@@ -203,7 +203,7 @@ test("relParamFillByte reads the LSM-4 fill the full download must honor", () =>
 test("the segment fill value is accepted (0 and 255), not blocked: the full download honors it", () => {
   // Fill=0 (zero the segment) always worked. Fill=255 (0xFF, erased-flash) is what the GVS AMMA
   // declares, and used to block the whole download; it is now executed, with the byte threaded into
-  // the allocation and the sparse image write (relParamFillByte + planSystemBFullDownload).
+  // the allocation and the bytes the full download leaves to it (relParamFillByte + planSystemBFullDownload).
   expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4", Mode: "0", Fill: "0" }), "relative").kind).toBe("executed");
   expect(assessParStep(step("LdCtrlRelSegment", { LsmIdx: "4", Mode: "0", Fill: "255" }), "relative").kind).toBe("executed");
 });

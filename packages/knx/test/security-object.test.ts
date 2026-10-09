@@ -103,7 +103,7 @@ describe("where the security object sits in a System B plan", () => {
   const ops = (plan: { op: string; event?: number; lsm?: number }[]) => plan.map((st) => st.op === "securityLsm" ? `sec${st.event}` : st.lsm !== undefined ? `${st.op}${st.lsm}` : st.op);
 
   test("full download: unloaded with the other objects, loaded after every memory write and before the app id stamp", () => {
-    const tables = { params: Buffer.alloc(24, 1), comObj: Buffer.alloc(4), addr: Buffer.alloc(4), assoc: Buffer.alloc(2), programId: Buffer.alloc(5) };
+    const tables = { params: Buffer.alloc(24, 1), paramsInImage: new Array<number>(24).fill(0xff), comObj: Buffer.alloc(4), addr: Buffer.alloc(4), assoc: Buffer.alloc(2), programId: Buffer.alloc(5) };
     const plain = ops(planSystemBFullDownload(tables));
     const secured = ops(planSystemBFullDownload(tables, 0, true, [], sec));
     expect(secured.indexOf("sec4")).toBe(plain.indexOf("unload1") + 1);

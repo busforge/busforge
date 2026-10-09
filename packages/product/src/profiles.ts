@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -279,6 +279,27 @@ const structuralFlashCaptured = (app: AppConfig): boolean =>
 // that close it (Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway captures).
 const SETTLE_BEFORE_RESTART = new Set<number>([0x00fa]);
 const closesAtOnce = (app: AppConfig): boolean => !SETTLE_BEFORE_RESTART.has(appManufacturer(app));
+
+// The bytes of the parameter segment ETS's image of a full download holds, per byte non-zero: a segment
+// that declares a <Data> default image is imaged whole, or where it declares a <Mask> the bytes the mask
+// marks and those a parameter owns; a segment without <Data> holds only the bytes a parameter owns.
+// ETS's own log lists exactly these (MIX 2 and the MDT IP Interface/Router: whole with <Data>; the
+// OpenKNX RaumController and the Theben DALI-Gateway: the owned bytes, without <Data>), and its wire of
+// the Jung 400021SE (<Data> and <Mask>) and the GVS AMMA (<Data>) fits no other. A mask of another length
+// than the segment, or marking single bits, and a <Data> shorter than it are refused: no capture shows one.
+export function fullDownloadImageCoverage(app: AppConfig, owned: ReadonlyArray<number>): number[] {
+  const seg = app.segments.find((x) => x.lsm === LSM);
+  if (!seg || seg.data.length === 0) return [...owned];
+  if (seg.data.length !== owned.length) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares ${seg.data.length} bytes of <Data> for ${owned.length}; the ETS captures show <Data> over the whole segment only, refusing to guess which bytes it writes`);
+  }
+  const mask = seg.mask;
+  if (!mask) return owned.map(() => 0xff);
+  if (mask.length !== owned.length || mask.some((b) => b !== 0 && b !== 0xff)) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `segment ${seg.id} declares a <Mask> of ${mask.length} bytes for ${owned.length}, or one that marks single bits; the ETS captures show whole-byte masks over the whole segment only, refusing to guess which bytes it writes`);
+  }
+  return owned.map((o, i) => (mask[i] || o ? 0xff : 0));
+}
 
 // An IP interface serves its tunnelling connections from individual addresses outside the parameter
 // image and the load procedure (MaxTunnelingUserEntries of them, the project's AdditionalAddresses).
@@ -803,8 +824,15 @@ export class SystemBProfile extends DeviceProfile {
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
     refuseTunnelingEntries(cfg);
-    // What the mask wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the GVS
-    // AMMA). Threaded into the plan so the allocation and the sparse image write agree with it.
+    // What the application wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the
+    // GVS AMMA). Threaded into the plan so the allocation and the bytes left out agree with it. Every
+    // captured application declares the filled allocation (Mode 1) for its full download, and an
+    // application declaring no allocation gets it with fill 0. No capture shows what ETS writes into
+    // an unfilled one.
+    const mode = relParamFullMode(proc);
+    if (mode !== undefined && mode !== "1") {
+      throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${mode}; no ETS capture shows which bytes a download writes into a segment allocated so`);
+    }
     const fillByte = relParamFillByte(proc);
     const { target, comObj, addr, assoc, security } = this.systemBImages(cfg, ctx);
 
@@ -815,7 +843,7 @@ export class SystemBProfile extends DeviceProfile {
     // The mask's full download unloads the PEI program first (MV-07B0 Load ap1); the application's
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
-      params: target.bytes, comObj, addr, assoc, programId: programIdStamp(cfg),
+      params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
     }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg)), proc.secureEnabled), proc, "full");
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 

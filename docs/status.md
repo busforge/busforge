@@ -143,9 +143,10 @@ What each row does not show:
   changed and reverted) and group-address flash (one link added and removed) ran on that unit through
   a logging proxy, each `verified`: ETS's load controls on the wire, the group-address flash's bytes
   equal to ETS's, and the read after each restart equal to the reference (after the added link, equal
-  to the unit after ETS's group-address download). Where Busforge still differs from ETS: the full
-  download writes some zero bytes the allocation's fill already holds and leaves out one that ETS
-  writes; the parameter flash writes every owned byte, where ETS writes only the changed one; the
+  to the unit after ETS's group-address download). Its full download writes exactly the bytes of ETS's
+  full download (`tools/etsdiff.test.ts`); that write set has not run on the device ([Known
+  unproven](#known-unproven)). Where Busforge still differs from ETS: the parameter flash writes
+  every owned byte, where ETS writes only the changed one; the
   device gets a settle and a reconnect before the restart, where ETS restarts at once. In this
   firmware (thelsing/knx with OpenKNX Common) a surgical flash and a full download take the same path,
   and the flash reads back only after the restart, because the firmware returns the old flash
@@ -265,8 +266,9 @@ What each row does not show:
   parameter download, its group-address flash the tables of ETS's group-address download
   (`tools/etsdiff.test.ts`). All three ran on each unit through a logging proxy, each `verified`: ETS's
   load controls, the PID 27 reads and the confirmed restart on the wire, the parameter and table bytes
-  ETS wrote written with the same values. The full download leaves out runs of zeros the allocation's
-  fill already holds, which ETS also sends. Of the full download's bytes only the download marker
+  ETS wrote written with the same values. The full download writes exactly ETS's bytes; that write set
+  has not run on the units ([Known unproven](#known-unproven)).
+  Of the full download's bytes only the download marker
   differed from the unit, so the transfer of changed bytes is shown by the two flashes (one parameter
   and one link each, changed and reverted). The reverts are Busforge's parameter and group-address
   flash, where ETS reverts both in one structural bracket; their bytes equal ETS's revert. Each unit
@@ -362,6 +364,10 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **The System B full download's write set has run on no device.** It writes exactly the bytes ETS's
+  full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); every
+  hardware run of a System B full download (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway,
+  Jung 400021SE, GVS AMMA) wrote a wider set of the same values, which leaves the unit the same.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, records in [evidence/reference/](evidence/reference/)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA and the Jung 400021SE, every segment

@@ -145,12 +145,21 @@ function orderedSteps(lp: LoadProcedures): LdStep[] {
 // The byte the device is asked to pre-fill the parameter segment (LSM 4) with, from the full
 // download's LdCtrlRelSegment step. Most System B devices declare 0 (zero the segment); some declare
 // 255 (0xFF, the erased-flash state). The full download must allocate with this value AND treat it as
-// the "already there" byte when sparsing the image, or the un-written regions read back wrong. 0 when
-// the procedure declares no relative parameter allocation (the safe default, and the historical one).
+// the "already there" byte when choosing the bytes it writes, or the un-written regions read back
+// wrong. 0 when the procedure declares no relative parameter allocation.
 export function relParamFillByte(lp: LoadProcedures): number {
-  const rel = flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlRelSegment");
-  const seg = rel.find((s) => s.attrs.LsmIdx === "4") ?? rel.find((s) => s.attrs.LsmIdx === undefined);
+  const seg = relParamFullSegment(lp);
   return seg ? Number(seg.attrs.Fill ?? 0) & 0xff : 0;
+}
+// The allocation Mode the full download's LdCtrlRelSegment of the parameter segment declares ("1" =
+// pre-filled with Fill, "0" = not), undefined when the procedure declares none.
+export function relParamFullMode(lp: LoadProcedures): string | undefined {
+  const seg = relParamFullSegment(lp);
+  return seg ? seg.attrs.Mode ?? "0" : undefined;
+}
+function relParamFullSegment(lp: LoadProcedures): LdStep | undefined {
+  const rel = flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlRelSegment");
+  return rel.find((s) => s.attrs.LsmIdx === "4") ?? rel.find((s) => s.attrs.LsmIdx === undefined);
 }
 
 // ---- typed attribute accessors (the fields the executor reads) ----
@@ -385,7 +394,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?:
           return { kind: "blocked", detail: `${step.verb} targets LSM ${step.attrs.LsmIdx}; the System B par download only allocates the parameter segment (LSM 4)` };
         }
         // The fill VALUE (0 = zero the segment, 255 = 0xFF/erased-flash, ...) is honored: the full
-        // download reads it here (relParamFillByte) and both the allocation and the sparse image
+        // download reads it here (relParamFillByte) and both the allocation and the image
         // write use it, so the un-written regions read back as the fill and the device's own segment
         // CRC still proves the whole image. Only a non-default allocation MODE stays unmodeled.
         if ((step.attrs.Mode ?? "0") !== "0") {

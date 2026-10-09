@@ -11,7 +11,7 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // application (the same fixture readstate/loadproc tests use). downloadFull is the riskiest write
 // in the repo: it AUTHORS the com-object table a virgin device has none of, and the firmware
 // validates nothing it is handed, so the ONLY proof is the read-back afterwards. The building
-// blocks (planSystemBFullDownload, buildComObjectTable, sparseRuns, the CRC codec) are locked
+// blocks (planSystemBFullDownload, buildComObjectTable, fillAllocatedRuns, the CRC codec) are locked
 // elsewhere; here the subject is the orchestration: the refusal gates, the backup-before-unload
 // ordering, the implausible-count / segment-size refusals (Finding 5), and CRITICALLY that a CRC
 // matching NEITHER convention forces the full segment read-back rather than passing on the CRC.
