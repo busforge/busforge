@@ -420,8 +420,8 @@ export function planAbsoluteStructuralFlash(
     }
     const runs = runsFromMask(image, w.address, write);
     if (!runs.length) continue;
-    // A segment without a change that the procedure does not load with the application is left out, as
-    // the parameter flash leaves it out.
+    // A segment without a change that the procedure does not load with the application (load-state machine
+    // 3, the only one this bracket loads) is left out; a changed one there is refused below.
     if (!differing.some(Boolean) && lsmByAddress.get(w.address) !== APP_LSM) continue;
     if (lsmByAddress.get(w.address) !== APP_LSM) {
       throw new ProductError("FLASH_SEGMENT_UNPLACEABLE", `segment ${w.id} is to be written but the load procedure does not load it with the application (load-state machine ${APP_LSM}); refusing a partial write`);
