@@ -130,6 +130,20 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
   });
 }
 
+// Data bytes per memory write in a plain session, as ETS 6 sizes them: the shorter of the device's and the
+// interface's maximum APDU ("NegotiateMaxApduLength -> 210, restricted by ByInterface" on an MDT IP
+// Interface/Router announcing 210; "-> 55, restricted by ByTargetDevice" on a Theben MIX 2) less the
+// write's own octets, 5 for A_MemoryExtended_Write (205 data bytes on that interface, the OpenKNX
+// captures), 3 for A_Memory_Write (52 on the Theben DALI-Gateway's 55), the latter capped at its 6-bit
+// count. Where the interface announces nothing (a USB interface, or an IP one that does not answer the
+// extended search), the path limit stays: 32 extended (EXT_WRITE_CHUNK, the knob above caps only that
+// case), 12 classic.
+export function writeChunks(deviceMax: number | null, interfaceMax: number | null): { classic: number; ext: number } {
+  if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite };
+  const n = Math.min(deviceMax, interfaceMax);
+  return { classic: Math.max(1, Math.min(63, n - 3)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)) };
+}
+
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
 export const RESTART_MASTER = 0x01;
@@ -486,6 +500,14 @@ export class KnxDevice {
   // acknowledges it on the transport layer and never answers, and ETS writes it with A_Memory_Write.
   private extendedMemory: boolean | undefined;
   setExtendedMemoryServices(on: boolean): void { this.extendedMemory = on; }
+  // The interface's maximum APDU as it announces it (KnxTransport.queryMaxApdu), asked once per device,
+  // before the first load-state event of a plan that writes (runLoadPlan) or else at the first memory
+  // write; null where it announces none or cannot be asked. With the device's it sizes the memory writes
+  // (writeChunks).
+  private interfaceApdu: Promise<number | null> | undefined;
+  interfaceMaxApdu(): Promise<number | null> {
+    return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
+  }
   // Whether memWrite uses the confirmed extended write on this device. The load runner asks before
   // its first load-state event, where ETS reads the property too (right after the descriptor).
   async writesConfirmed(): Promise<boolean> {
@@ -726,12 +748,13 @@ export class KnxDevice {
     // mid-bracket (see memWriteExtended); `verify` and `echo` apply to the classic write only.
     if (await this.writesConfirmed()) {
       const maxApdu = (await this.maxApduLength())!;
-      const chunk = Math.min(transferChunks(maxApdu, this.secure !== undefined).extWrite, opts.chunk ?? Infinity);
+      const path = this.secure !== undefined ? transferChunks(maxApdu, true).extWrite : writeChunks(maxApdu, await this.interfaceMaxApdu()).ext;
+      const chunk = Math.min(path, opts.chunk ?? Infinity);
       return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }
     assertAddressable(addr, data.length, "memory write");
     if (this.secure !== undefined) transferChunks(null, true); // refuses: no secured write fits a standard frame
-    const chunk = opts.chunk ?? 12;
+    const chunk = opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).classic;
     const total = Math.ceil(data.length / chunk);
     let done = 0;
     for (let pos = 0; pos < data.length; ) {

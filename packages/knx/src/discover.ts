@@ -55,3 +55,17 @@ export function searchInterfaces(timeoutMs = 3000): Promise<GatewayInfo[]> {
     });
   });
 }
+
+// The maximum local APDU length of a SEARCH_RESPONSE(_EXTENDED) body (HPAI, then DIBs), from its Extended
+// Device Information DIB (type 0x08: medium status, reserved, maximum local APDU length, device
+// descriptor); null without one, or with a length of 0.
+export function extendedDeviceMaxApdu(body: Buffer): number | null {
+  if (body.length < 8) return null;
+  for (let at = body[0]; at + 2 <= body.length && body[at] >= 2;) {
+    const len = body[at];
+    if (body[at + 1] === 0x08 && len >= 6 && at + 6 <= body.length) { const n = body.readUInt16BE(at + 4); return n > 0 ? n : null; }
+    at += len;
+  }
+  return null;
+}
+

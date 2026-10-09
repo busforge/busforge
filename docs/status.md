@@ -370,6 +370,10 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **Memory writes sized by the interface's maximum APDU have run on no device.** Busforge asks an IP
+  interface for it before each device session, as ETS does, and writes up to the shorter of the
+  device's and the interface's (205 data bytes behind an interface announcing 210); the hardware runs
+  wrote at most 32-byte extended and 12-byte classic chunks.
 - **The stamp record has run on no device.** The System B parameter flash keeps ETS's record of the
   last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
   `tools/etsdiff.test.ts` against every captured pair); reading the stamps before the flash and the

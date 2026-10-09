@@ -153,7 +153,10 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
   let unread: Error | undefined;
   for (let i = 0; i < plan.length; i++) {
     const step = plan[i];
-    if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") confirmed = await dev.writesConfirmed();
+    if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") {
+      confirmed = await dev.writesConfirmed();
+      await dev.interfaceMaxApdu?.(); // asked here, outside the bracket, not at the first write inside it
+    }
     opts.onStep?.(i, step, plan.length);
     switch (step.op) {
       case "connect": await dev.connect(); break;
