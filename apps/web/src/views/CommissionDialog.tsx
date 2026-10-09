@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Download, Loader2, RadioTower, RefreshCw }
 import { useTranslation } from "react-i18next";
 import { api, type AssignIaResult, type Device, type DeviceConfigView, type FlashResult } from "../api.ts";
 import { UntestedNotice, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
+import { ConfirmedOnlyNote } from "@/components/ConfirmedOnlyNote.tsx";
 import { untestedOps } from "../lib/untested.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -17,10 +18,6 @@ interface DownloadState { checking: boolean; dry: FlashResult | null; running: b
 const freshScan = (): ScanState => ({ running: false, devices: null, error: null });
 const freshAssign = (): AssignState => ({ running: false, result: null, error: null });
 const freshDownload = (): DownloadState => ({ checking: false, dry: null, running: false, done: null, error: null });
-
-// The bytes of a verified write the device does not give back when read, resting on its write
-// confirmation alone (FlashResult.confirmedOnly).
-const confirmedOnlyBytes = (r: FlashResult) => (r.kind === "flashed" && r.confirmedOnly ? r.confirmedOnly.reduce((n, x) => n + x.length, 0) : 0);
 
 // Commission a device onto the bus: scan for programming mode, assign the
 // project's individual address to the ONE device in programming mode, then run
@@ -146,7 +143,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}{confirmedOnlyBytes(dl.done) > 0 && <span className="text-amber-600 dark:text-amber-400" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", { bytes: confirmedOnlyBytes(dl.done) })}</span>}</span>
+        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}<ConfirmedOnlyNote result={dl.done} /></span>
         : <span data-testid="commission-fail">{line(warnIcon, t("commission.doneUnverified"), "err")}</span>;
     }
     if (dl.error) return <span data-testid="commission-fail">{line(warnIcon, errMsg(t, dl.error), "err")}</span>;

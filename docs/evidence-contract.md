@@ -16,7 +16,7 @@ separately, and none of them implies another.
 
 | Axis | Question | Typical method | What it does **not** show |
 |---|---|---|---|
-| **transfer** | Does the device hold exactly what Busforge wrote (or read what Busforge expects)? | owned-byte read-back after the operation; for a byte the device does not give back, its confirmation of the extended write ([load-procedures.md](load-procedures.md#the-rules-by-level), the result's `confirmedOnly`) | that those bytes encode the intended configuration |
+| **transfer** | Does the device hold exactly what Busforge wrote (or read what Busforge expects)? | owned-byte read-back after the operation; for a byte the device does not give back, its confirmation of the extended write ([load-procedures.md](load-procedures.md#the-rules-by-level), the result's `confirmedOnly`) | that those bytes encode the intended configuration; for `confirmedOnly` bytes, what the device stored (the confirmation is per chunk and carries no value) |
 | **reference** | Are Busforge's bytes the right ones? | byte comparison with an ETS capture, or with a device another tool commissioned | that the device acts on them |
 | **behaviour** | Does the device act as configured? | an independent witness connection observes the device on the bus | that it keeps doing so after a power loss |
 | **persistence** | Does the configuration survive? | restart or bus power cycle, then read back or observe again | anything about correctness |

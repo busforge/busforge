@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { KnxDevice, APCI, apdu, parseApdu, tpAck, type KnxTransport } from "@busforge/knx";
 import { confirmedMatch } from "@busforge/product";
 
 // The read-back check that accepts a byte the device does not give back on its write confirmation.
@@ -52,5 +53,44 @@ describe("confirmedMatch", () => {
   });
   test("a read-back shorter than the mask is not verified", () => {
     expect(confirmedMatch(back.subarray(0, 3), want, mask, AT, wrote, before)).toBeNull();
+  });
+
+  // The confirmation is per chunk, from the device's return code: a chunk it answers with any other code
+  // stops the write and is not logged, so a byte in it is never accepted, even one reading FF before and after.
+  describe("on a device's own write answers", () => {
+    // Answers each extended write [code, addr(3)], with code 1 for a chunk starting at `rejectAt`.
+    class ExtWriteUnit implements KnxTransport {
+      assignedIa = 0x0001;
+      onCemi: KnxTransport["onCemi"] = null;
+      onClosed: KnxTransport["onClosed"] = null;
+      constructor(private readonly rejectAt?: number) {}
+      async connect() {}
+      async disconnect() {}
+      async sendCemi(cemi: Buffer) {
+        const p = parseApdu(cemi.subarray(9));
+        if (p.control || p.apci !== APCI.MEMORY_EXT_WRITE) return;
+        const addr = (p.data[1] << 16) | (p.data[2] << 8) | p.data[3];
+        this.onCemi?.(0x110b, this.assignedIa, tpAck(p.seq), false);
+        const head = Buffer.from([addr === this.rejectAt ? 0x01 : 0x00, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff]);
+        this.onCemi?.(0x110b, this.assignedIa, apdu(p.seq, APCI.MEMORY_EXT_WRITE_RESP, head), false);
+      }
+    }
+    const write = async (rejectAt?: number) => {
+      const dev = new KnxDevice(new ExtWriteUnit(rejectAt), "1.1.11");
+      const err = await dev.memWriteExtended(AT, want.subarray(0, 3), { chunk: 1 }).then(() => null, (e: Error) => e);
+      return { err, log: dev.confirmedWrites() };
+    };
+
+    test("every chunk answered with code 0: the field rests on the confirmation", async () => {
+      const { err, log } = await write();
+      expect(err).toBeNull();
+      expect(confirmedMatch(back, want, mask, AT, log, before)).toEqual([{ address: AT + 1, length: 2 }]);
+    });
+    test("a chunk the device rejects stops the write, and its byte is not covered though it reads FF before and after", async () => {
+      const { err, log } = await write(AT + 2);
+      expect(err?.message).toMatch(/rejected an extended write/);
+      expect(log.map((c) => c.address)).toEqual([AT, AT + 1]);
+      expect(confirmedMatch(back, want, mask, AT, log, before)).toBeNull();
+    });
   });
 });

@@ -145,6 +145,16 @@ describe("TaskQueue", () => {
     expect(q.list("p1")[0]).toMatchObject({ state: "done", outcome: { kind: "flashed", verified: true } });
   });
 
+  test("carries the bytes a verified write rests on the write confirmation alone", async () => {
+    const q = new TaskQueue(() => 0);
+    const confirmedOnly = [{ address: 0x4028, length: 20 }];
+    await q.enqueue({ ...meta("d1"), kind: "flash-params" }, async () => ({ kind: "flashed", verified: true, diffBytes: 3, confirmedOnly }));
+    expect(q.list("p1")[0].outcome).toEqual({ kind: "flashed", verified: true, confirmedOnly });
+    // A write the read-back showed whole carries none.
+    await q.enqueue({ ...meta("d2"), kind: "flash-params" }, async () => ({ kind: "flashed", verified: true }));
+    expect(q.list("p1")[1].outcome).toEqual({ kind: "flashed", verified: true });
+  });
+
   test("scopes listed tasks to the project", async () => {
     const q = new TaskQueue(() => 0);
     await q.enqueue({ ...meta("d1"), projectId: "p1" }, async () => undefined);
@@ -303,6 +313,15 @@ describe("SqliteTaskStore", () => {
     gate.resolve();
     await q.wait(task.id);
     expect(s.get(task.id)).toMatchObject({ state: "done", result: { diffBytes: 3 }, outcome: { kind: "flashed", verified: true }, finishedAt: 5 });
+  });
+
+  test("a stored write keeps the bytes that rest on the write confirmation alone", async () => {
+    const { store: s } = store();
+    const q = new TaskQueue(() => 5, undefined, s);
+    const confirmedOnly = [{ address: 0x4028, length: 20 }];
+    const task = q.submit({ ...meta("d1"), kind: "flash-params", writes: true }, async () => ({ kind: "flashed", verified: true, diffBytes: 3, confirmedOnly }));
+    await q.wait(task.id);
+    expect(s.get(task.id)?.outcome).toEqual({ kind: "flashed", verified: true, confirmedOnly });
   });
 
   test("a failed adoption rolls back with the task record", async () => {

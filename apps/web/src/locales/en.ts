@@ -832,7 +832,7 @@ const en = {
     dlDownloading: "Downloading the full image… the device restarts, this takes a while.",
     dlDoneVerified: "Downloaded and verified ({{bytes}} bytes written).",
     dlDoneUnverified: "Downloaded but read-back did not verify. Check the device.",
-    confirmedOnly: "{{bytes}} byte(s) the device does not give back when read; they rest on its write confirmation alone.",
+    confirmedOnly: "{{bytes}} byte(s) at {{ranges}} the device does not give back when read; they rest on its write confirmation alone.",
     download: "Download",
   },
   monitor: {

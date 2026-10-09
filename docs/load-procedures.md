@@ -401,11 +401,16 @@ Meteodata 140 S) get no verify mode either.
 back.** After the restart it reads every owned byte and compares it with what it wrote. A byte that
 reads otherwise is accepted on the device's write confirmation alone, as ETS accepts it, only where
 all of this holds: the operation wrote exactly that value there with the confirmed extended write and the device
-answered that chunk with return code `00`; the byte reads `FF` before the operation and after it, as
+answered that chunk with return code `00` (a chunk answered with any other code, or for another
+address, stops the write and confirms nothing); the byte reads `FF` before the operation and after it, as
 a device returns a byte it does not give back; and some other byte the operation changed reads back
 as written, so the write landed. A device that lost or reverted the whole write shows no such byte
 and is not verified; a byte that reads data (an old value, a third value) is a mismatch. An operation
-that changes nothing but such a field shows nothing landed and ends unverified. The result names these bytes (`confirmedOnly`) and the UI shows their count. The rule is
+that changes nothing but such a field shows nothing landed and ends unverified. The confirmation is
+per chunk and carries no value: a device that answers `00` and keeps nothing of a byte reading `FF`
+is accepted there, as ETS accepts it. The result names these bytes (`confirmedOnly`), the task API
+carries them, and the flash and commission dialogs name their count and device addresses in the
+warning colour beside the success line. The rule is
 the write service's, KNX-wide, not a list of products: the MDT IP Interface/Router reads its web
 interface password field as `FF` after a confirmed write of it. It applies to the parameter flash (System B and System 7), the
 System B structural flash and the partial form of the full download, which read the segment before

@@ -82,7 +82,9 @@ Read-back means our built image was compared byte-for-byte against the device's 
 `verified` write proves that read-back for every owned byte, except the bytes a device written with
 the confirmed extended write does not give back: those rest on its write confirmation alone, are named
 in the result (`confirmedOnly`) and are accepted only under the conditions in
-[load-procedures.md](load-procedures.md#the-rules-by-level). The MDT IP Interface/Router has (device notes below).
+[load-procedures.md](load-procedures.md#the-rules-by-level): the device answered the chunk holding them
+with return code `00`, which says it took the chunk, not what it stored. The MDT IP Interface/Router has
+such a field (device notes below).
 Bus behaviour means the device was observed acting on the bus through an independent witness
 connection, which is the only check that catches a byte-perfect flash of a semantically wrong
 value.
