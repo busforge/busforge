@@ -253,7 +253,9 @@ What each row does not show:
   its `LdCtrlTaskCtrl1` (Address 18155, Count 1) as `33 04 00 46 EB 01` and zeros, the tables
   re-declared as one region
   ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)). ETS reads its image and
-  writes only the bytes that differ; Busforge writes the whole image and reads it back. Its full
+  writes only the bytes that differ; so does Busforge, its writes equal to ETS's in the three captured
+  downloads (`tools/etsdiff.test.ts`; four bytes of the group-address download, which ETS wrote without
+  reading, taken as the segment's `<Data>`); the hardware runs wrote the whole image. Its full
   download and group-address flash equal ETS's logged images byte for byte, its parameter flash the
   two bytes ETS wrote (`tools/etsdiff.test.ts`). All three ran on the unit through a logging proxy,
   each `verified`, ETS's load-control sequence exact on the wire and every byte ETS wrote written with

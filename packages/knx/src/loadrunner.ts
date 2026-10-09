@@ -99,7 +99,28 @@ export interface RunOpts {
   memMappedLsms?: boolean;
   // The answer to each readProp step.
   onRead?: (obj: number, pid: number, start: number, data: Buffer) => void;
+  // Read the memory of every writeMem step first and write only the bytes that differ, as ETS writes
+  // a memory-mapped mask (MV-0700/0701, differingRuns).
+  readCompare?: boolean;
   // re-read pause after restart is the caller's concern; the runner just fires restart
+}
+
+// What ETS writes of `want` on a memory-mapped System 7 device, against what the device holds (`have`,
+// read at the same address): it reads the run in blocks of `block` bytes (one A_Memory_Read each) and
+// writes, per block, the span from its first to its last differing byte, the equal bytes inside it
+// included (its "optimistic write"; ABB US/U 4.2: block 0x6D00 read, 0x6D01-0x6D0B written with four
+// equal bytes in it; Theben Meteodata 140 S: of a 1893-byte full download two bytes).
+export function differingRuns(address: number, want: Buffer, have: Buffer, block: number): { address: number; bytes: Buffer }[] {
+  if (have.length !== want.length) throw new Error(`read ${have.length} of ${want.length} bytes at 0x${address.toString(16)} before writing them; refusing to compare against a partial read`);
+  if (!Number.isInteger(block) || block < 1) throw new Error(`a read block of ${block} bytes`);
+  const runs: { address: number; bytes: Buffer }[] = [];
+  for (let at = 0; at < want.length; at += block) {
+    const end = Math.min(at + block, want.length);
+    let first = -1, last = -1;
+    for (let i = at; i < end; i++) if (want[i] !== have[i]) { if (first < 0) first = i; last = i; }
+    if (first >= 0) runs.push({ address: address + first, bytes: Buffer.from(want.subarray(first, last + 1)) });
+  }
+  return runs;
 }
 
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
@@ -186,7 +207,13 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         } catch (e) { unread ??= e instanceof Error ? e : new KnxError("PROPERTY_READ_EMPTY", String(e)); }
         break;
       }
-      case "writeMem": await dev.memWrite(step.address, step.bytes, { verify: true }); break;
+      case "writeMem": {
+        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); break; }
+        const block = await dev.classicReadChunk();
+        const have = await dev.memRead(step.address, step.bytes.length, block);
+        for (const r of differingRuns(step.address, step.bytes, have, block)) await dev.memWrite(r.address, r.bytes, { verify: true });
+        break;
+      }
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
       case "verifyMode": if (!confirmed) await dev.setVerifyMode(step.on); break;
       // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of

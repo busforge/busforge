@@ -302,8 +302,17 @@ a segment ETS loads afresh carries the bytes its `<Mask>` marks and every byte a
 (the whole segment without a mask); a data segment written into the loaded application carries
 exactly the bytes a parameter covers, with or without `<Mask>`, and a segment no parameter covers
 gets none (the ABB US/U 4.2's code segment `AS-4600` and its `AS-6F10`). On the memory-mapped masks
-ETS reads the unit first and sends only the bytes that differ from it (Meteodata, ABB); Busforge's
-full download writes the whole image and reads it back.
+ETS reads the unit first and sends only what differs from it (Meteodata, ABB); so does Busforge
+(`readCompare`, `differingRuns`): it reads each run in A_Memory_Read blocks (12 bytes on a 15-octet APDU)
+and writes, per block, the span from the first to the last differing byte, equal bytes inside the span
+included (ABB: block `0x6D00` read, `0x6D01-0x6D0B` written with four equal bytes in it). Every memory
+write of a download on such a mask goes so: full download, parameter, group-address and structural
+flash. Once a run differs entirely ETS stops reading it and writes the rest ("Giving up optimistice
+write after 36 of 36 mismatched bytes"); Busforge reads on, which writes the same bytes wherever the
+rest differs too; how many mismatches make ETS give up is not shown, and in the Meteodata's
+group-address download the four bytes ETS wrote unread are taken as the segment's `<Data>`. The blocks
+are ETS's on a unit with a 15-octet APDU, the only kind captured. `tools/etsdiff.test.ts` pins these
+writes against the captures; the hardware runs on the Meteodata and the ABB wrote the whole image.
 
 **Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): on a
 memory-mapped mask (MV-0700/0701) the bytes that differ from the unit, which ETS reads first
@@ -355,8 +364,8 @@ written. A classic `A_Memory_Write` has no confirmation to rest on: its own read
 the check.
 
 **Where Busforge departs from ETS, on every rule.** It switches on no verify mode on System 7 and
-reads every write back instead; it keeps no stamps, so on System 7 it writes the whole image where ETS
-leaves out what its stamps or (in a full download) its read of the unit say the device holds (on System B it reads the unit
+reads every write back instead; it keeps no stamps, so on a property-mapped System 7 mask it writes the
+whole image where ETS leaves out what its stamps say the device holds (on System B it reads the unit
 and sends what R16 selects); it reads the load state after its own
 load-state writes; and its full download reads the unit's program id first and refuses another
 application.
@@ -634,9 +643,9 @@ The image is 1893 bytes, not differential by stamps. ETS reads every block of it
 writes only the bytes that differ ("Giving up optimistice write after 36 of 36 mismatched bytes", group-address download, where
 nothing matches): on a device that already holds the configuration its full download writes two bytes,
 `0x4000` (the address table's count, which the unit resets when LSM 1 is declared) and the download
-marker `0x4800`. Busforge plans exactly ETS's image with ETS's values (`tools/etsdiff.test.ts`, "Theben
-Meteodata 140 S") and writes all of it, reading it back after the restart: the same departure as on the
-Gira. ETS writes `0x41FF-0x4200`, non-FF `<Data>` of `AS-4000` behind the tables (past what the
+marker `0x4800`. Busforge plans exactly ETS's image with ETS's values and, reading and comparing as ETS
+does, writes the same two bytes (`tools/etsdiff.test.ts`, "Theben Meteodata 140 S"; its group-address
+download and revert likewise), reading the image back after the restart. ETS writes `0x41FF-0x4200`, non-FF `<Data>` of `AS-4000` behind the tables (past what the
 address table can hold); the Gira and the TheLuxa have non-FF `<Data>` behind their tables too, and
 ETS writes none of it: theirs lie inside what the tables can grow to, the Meteodata's past it
 ([R6](#the-rules-by-level)). Busforge writes such bytes by that rule in the full download; its group-address downloads leave them out. The com-object
@@ -982,10 +991,9 @@ restart
 - **What is verified.** After the restart: the parameter segment as the parameter flash checks it
   (on System 7 the restored template bytes too), the three tables and the security object whole,
   and every load-state machine the flash concerns LOADED again (on System B the application too).
-- **Where it differs from ETS.** Of the parameter segments ETS writes every byte a parameter covers;
-  Busforge writes fewer (only what differs from the device), never other ones. On the memory-mapped
-  Meteodata ETS reads the unit first and leaves out what it holds, so there the steps are compared
-  without their writes and Busforge's bytes against ETS's logged image.
+- **Where it differs from ETS.** Of the parameter segments ETS writes every byte a parameter covers on a
+  property-mapped mask; the structural flash writes fewer (only what differs from the device), never
+  other ones. On a memory-mapped mask both read the unit first and write what differs.
 - **The window a failure leaves.** On System B the bracket unloads the application and the security
   object before the first write. A flash cut off inside it leaves the device without a running
   application, and a secured device without its group keys, until the flash is repeated or a full

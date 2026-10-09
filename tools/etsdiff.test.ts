@@ -3,7 +3,7 @@ import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, type LoadPlan } from "../packages/knx/src/index.ts";
+import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
 import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, STRUCTURAL_FLASH_CAPTURED, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
@@ -631,6 +631,33 @@ const etsLog = (file: string) => {
   return { steps, image, removed: removed ? Number(removed[1]) : 0 };
 };
 
+// What a memory-mapped unit held before ETS wrote it: every byte of an A_Memory_Response the unit sent before
+// ETS's first write to that byte (ETS reads each block of its image first there).
+// `before`: what the unit held where ETS read nothing (its state after the earlier downloads).
+function heldBeforeWrite(file: string, ia: number, before: Map<number, number> = new Map()): Map<number, number> {
+  const held = new Map<number, number>(before), written = new Set<number>();
+  for (const l of captureText(file).split("\n")) {
+    const m = l.match(/\| ([0-9a-fA-F]+)\s*$/);
+    const fr = m && l.includes("TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.tpdu.length < 4) continue;
+    const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1], n = t[1] & 0x3f, at = t.readUInt16BE(2);
+    if (l.includes("BRIDGE->ETS") && fr.src === ia && (apci & 0x3c0) === 0x240) t.subarray(4, 4 + n).forEach((b, i) => { if (!written.has(at + i)) held.set(at + i, b); });
+    if (l.includes("ETS->BRIDGE") && fr.dst === ia && (apci & 0x3c0) === 0x280) for (let i = 0; i < n; i++) written.add(at + i);
+  }
+  return held;
+}
+// The bytes a plan's memory writes send with read-compare (differingRuns) against what the unit held, read in
+// blocks of 12 bytes (A_Memory_Read on a 15-octet APDU, as ETS reads these devices).
+function readCompared(plan: LoadPlan, held: Map<number, number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const st of plan) {
+    if (st.op !== "writeMem") continue;
+    const have = Buffer.from(Array.from(st.bytes, (_, i) => { const v = held.get(st.address + i); if (v === undefined) throw new Error(`no read of 0x${(st.address + i).toString(16)} before ETS's writes`); return v; }));
+    for (const r of differingRuns(st.address, st.bytes, have, 12)) r.bytes.forEach((b, i) => out.set(r.address + i, b));
+  }
+  return out;
+}
+
 // Busforge's System 7 structural flash of the change an ETS revert capture reverses: ETS reverted a
 // parameter change and a link change in one partial download, which is the one bracket set ETS runs for
 // a change of both (docs/load-procedures.md, "The structural flash"). `device`: what the unit held before
@@ -711,6 +738,9 @@ corpusDescribe("ABB US/U 4.2 (M-0002_A-A001-13-63C2) full download on a loaded u
     const wire = new Map([...memoryImage(parseCapture(captureText(FILE), ia).writes)].filter(([a]) => a < 0x0104 || a >= 0x0104 + 11));
     expect(wire.size).toBeGreaterThan(0);
     expect([...wire].filter(([a, b]) => ours.get(a) !== b)).toEqual([]);
+    // Read and compared against what the unit held, Busforge's writes are exactly ETS's.
+    const held = heldBeforeWrite(FILE, ia);
+    expect([...readCompared(build().plan, held)].sort(([a], [b]) => a - b)).toEqual([...wire].sort(([a], [b]) => a - b));
   });
 
   test("Busforge's partial form: ETS's steps, its writes aside", () => {
@@ -1457,6 +1487,13 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect(sorted(ours)).toEqual(sorted(fullLog.image));
   });
 
+  // ETS reads each block of its image first and writes the bytes that differ; so does Busforge on this mask.
+  test("full download: read and compared, exactly the bytes ETS writes", () => {
+    const ours = readCompared(full().plan, heldBeforeWrite(FULL, ia));
+    expect(sorted(ours)).toEqual(sorted(wire(FULL)));
+    expect(sorted(ours).map(([a, b]) => `${a.toString(16)}=${b.toString(16)}`)).toEqual(["4000=14", "4800=aa"]);
+  });
+
   test("ETS's log: the declared full steps in their declared order, the table segments re-declared", () => {
     const declared = flattenSteps(proc, "full");
     expect(fullLog.steps.map((s) => s.verb)).toEqual(declared.map((s) => s.verb));
@@ -1465,8 +1502,8 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
   });
 
   test("full download: what ETS's image holds besides the tables, the com-object table's segment and the masked parameter bytes", () => {
-    // ETS reads its whole image and writes what differs (the wire holds 0x4000 and the 0x4800 marker);
-    // Busforge writes the whole image and reads it back. Not differential by stamps: no bytes removed.
+    // ETS reads its whole image and writes what differs (the wire holds 0x4000 and the 0x4800 marker), as
+    // Busforge does (readCompared above). Not differential by stamps: no bytes removed.
     expect(fullLog.removed).toBe(0);
     expect(span(new Map([...fullLog.image].filter(([a]) => a < 0x4400)))).toEqual(["4000-4000", "4003-404f", "41ff-4200"]);
     expect(span(new Map([...fullLog.image].filter(([a]) => a >= 0x4400 && a < 0x4800)))).toEqual(["4400-47bd"]);
@@ -1516,6 +1553,10 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect(sorted(ours)).toEqual(sorted(log.image));
     expect(span(ours)).toEqual(["4000-4000", "4003-4053", "4400-46ea"]);
     expect(span(comObjWrites.flatMap((w) => Array.from(w.image, (_, i) => w.address + i)))).toEqual(["4400-46ea"]);
+    // Read and compared, the bytes on the wire are ETS's.
+    // Where neither ETS read nor a download wrote, the unit holds the segment's <Data>.
+    const template = new Map(cfg.absoluteSegments.flatMap((sg) => Array.from(sg.data, (b, i) => [sg.address + i, b] as [number, number])));
+    expect(sorted(readCompared(plan, heldBeforeWrite(LINKS, ia, new Map([...template, ...fullLog.image]))))).toEqual(sorted(wire(LINKS)));
     // Object 23's config byte gains the linked bit, nothing else in the table changes.
     const cfgByte = comObjSeg.address + 3 + 23 * 4 + 2;
     expect([heldComObj[cfgByte - comObjSeg.address], ours.get(cfgByte)]).toEqual([0x4b, 0x4f]);
@@ -1533,6 +1574,8 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const tablesOf = (m: Map<number, number>) => new Map([...m].filter(([a]) => a < 0x4800));
     expect(sorted(ours)).toEqual(sorted(tablesOf(revertLog.image)));
     expect(span(ours)).toEqual(["4000-4000", "4003-404f", "4400-46ea"]);
+    const revertWire = new Map([...wire(REVERT)].filter(([a]) => a < 0x4800));
+    expect(sorted(readCompared(plan, heldBeforeWrite(REVERT, ia, new Map([...fullLog.image, ...linksLog.image]))))).toEqual(sorted(revertWire));
     // The revert's parameter bytes: the parameter flash writes the one byte back with the marker.
     const before = Buffer.from(onUnit);
     before[4] = 1;
