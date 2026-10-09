@@ -313,16 +313,18 @@ Meteodata 140 S) get no verify mode either.
 **Busforge reads back, and takes a write confirmation only where the device does not give a byte
 back.** After the restart it reads every owned byte and compares it with what it wrote. A byte that
 reads otherwise is accepted on the device's write confirmation alone, as ETS accepts it, only where
-all of this holds: the operation wrote it with the confirmed extended write and the device answered
-with return code `00` for exactly that value; the byte reads the same as before the operation; and
-some other byte the operation changed reads back as written, so the write landed. A device that lost
-or reverted the whole write shows no such byte and is not verified; a byte reading a third value is
-a mismatch. The result names these bytes (`confirmedOnly`) and the UI shows their count. The rule is
+all of this holds: the operation wrote exactly that value there with the confirmed extended write and the device
+answered that chunk with return code `00`; the byte reads `FF` before the operation and after it, as
+a device returns a byte it does not give back; and some other byte the operation changed reads back
+as written, so the write landed. A device that lost or reverted the whole write shows no such byte
+and is not verified; a byte that reads data (an old value, a third value) is a mismatch. An operation
+that changes nothing but such a field shows nothing landed and ends unverified. The result names these bytes (`confirmedOnly`) and the UI shows their count. The rule is
 the write service's, KNX-wide, not a list of products: the MDT IP Interface/Router reads its web
-interface password field as `FF` after a confirmed write of it. It applies to the parameter flash, the
-structural flash and the partial form of the full download, which read the segment before writing it;
+interface password field as `FF` after a confirmed write of it. It applies to the parameter flash (System B and System 7), the
+System B structural flash and the partial form of the full download, which read the segment before
+writing it; the System 7 structural flash is strict;
 a full download in the declared form reads nothing first, so every byte there must read back as
-written. A classic write has no confirmation to rest on: its own read-back (or verify-mode echo) is
+written. A classic `A_Memory_Write` has no confirmation to rest on: its own read-back (or verify-mode echo) is
 the check.
 
 **Where Busforge departs from ETS, on every rule.** It switches on no verify mode on System 7 and

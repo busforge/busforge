@@ -75,6 +75,33 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(res.verified).toBe(true);
     }, 30_000);
 
+    // Written with the confirmed extended write (the log KnxDevice keeps), and one owned byte it stores
+    // but always reads as FF: a field it does not give back.
+    test("a field the device does not give back verifies on the write confirmation, after a retried read-back", async () => {
+      const k = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.verify[i] === 0xff && target.bytes[i] !== 0xff);
+      expect(k).toBeGreaterThan(0);
+      const dev = seeded();
+      dev.mem.set(BASE, target.bytes[0] ^ 0xff); // a real change that lands
+      let log: { address: number; bytes: Buffer }[] = [];
+      dev.confirmedWrites = () => log as never;
+      dev.clearConfirmedWrites = () => { log = []; };
+      const write = dev.memWrite.bind(dev);
+      dev.memWrite = async (addr: number, data: Buffer) => { await write(addr, data); log.push({ address: addr, bytes: Buffer.from(data) }); };
+      let failOnce = true;
+      const read = dev.memRead.bind(dev);
+      dev.memRead = async (addr: number, len: number) => {
+        if (dev.writes > 0 && failOnce) { failOnce = false; throw Object.assign(new Error("no reliable response"), { code: "DEVICE_NOT_ANSWERING" }); }
+        const b = await read(addr, len);
+        if (addr <= BASE + k && BASE + k < addr + len) b[BASE + k - addr] = 0xff;
+        return b;
+      };
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      expect(failOnce).toBe(false);
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(res.verified).toBe(true);
+      expect(res.confirmedOnly).toEqual([{ address: BASE + k, length: 1 }]);
+    }, 30_000);
+
     test("LSM 4 Loading: the bracket runs and leaves it LOADED", async () => {
       const dev = seeded();
       dev.state.set(4, STATE.LOADING);

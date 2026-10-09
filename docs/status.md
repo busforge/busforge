@@ -124,8 +124,9 @@ What each row does not show:
     changes the same bytes as ETS's parameter downloads (it sends every owned byte, ETS only the
     differing ones; `tools/etsdiff.test.ts`); it has not run on the device, since a secured session
     needs the project's tool key. Its web interface password field reads `FF` after ETS's confirmed
-    write of it; a Busforge write would verify that field on the write confirmation alone
-    (`confirmedOnly`), shown in tests on a mock unit only.
+    write of it; a Busforge write that also changes another byte would verify that field on the
+    write confirmation alone (`confirmedOnly`), one that changes nothing else ends unverified, and the
+    field always counts as a difference in the preview: shown in tests on a mock unit only.
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
     parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
     shows a text parameter; a read-back leaves those fields out.

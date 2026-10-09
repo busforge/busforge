@@ -765,18 +765,18 @@ export class KnxDevice {
     }
     return out;
   }
-  // Not read back: on thelsing/OpenKNX (RP2040) a memory write lands in a RAM buffer of the flash
-  // erase block and a memory read returns the flash itself until the block is committed (at the
-  // bracket's restart, or when a write moves to another block), so a read straight after the write
-  // shows the old bytes (house OpenKNX RaumController, 2026-09-27). ETS reads nothing back either.
-  // The per-chunk return code and the caller's read-back after the restart are the proof.
   // Every chunk the device confirmed with return code 0 since the last clearConfirmedWrites, with the
-  // bytes it confirmed. ETS takes this confirmation as the check of a `Verify="true"` write on a device
+  // bytes it was sent (the answer carries a return code and the address, no data). ETS takes this confirmation as the check of a `Verify="true"` write on a device
   // written with A_MemoryExtended_Write (MDT IP Interface/Router: no verify mode, no read, only
   // `MemoryExtended_WriteResponse … ResultCode=E_SUCCESS` per chunk).
   private confirmed: { address: number; bytes: Buffer }[] = [];
   confirmedWrites(): ReadonlyArray<{ address: number; bytes: Buffer }> { return this.confirmed; }
   clearConfirmedWrites(): void { this.confirmed = []; }
+  // Not read back: on thelsing/OpenKNX (RP2040) a memory write lands in a RAM buffer of the flash
+  // erase block and a memory read returns the flash itself until the block is committed (at the
+  // bracket's restart, or when a write moves to another block), so a read straight after the write
+  // shows the old bytes (house OpenKNX RaumController, 2026-09-27). ETS reads nothing back either.
+  // The per-chunk return code and the caller's read-back after the restart are the proof.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
     const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255); // the count is a single request octet

@@ -348,8 +348,9 @@ export interface ConfirmedOnlyRange { address: number; length: number }
 // KnxDevice.confirmedWrites). A byte that reads back otherwise than wanted is accepted on the
 // confirmation alone, as ETS accepts it, only where the device does not give that byte back:
 // - the device confirmed writing exactly the wanted value there in this operation;
-// - it reads there what it read before the operation (`before`), the write made no difference to
-//   what it returns;
+// - it reads FF there, before the operation (`before`) and after it: what a device returns for a
+//   byte it does not give back (MDT IP Interface/Router, its web interface password field). A byte
+//   reading data, the old value of a lost or rejected write, is a mismatch;
 // - and the read-back shows the operation landed: some other byte it changed and wrote reads back as
 //   written. A device that lost or reverted the whole write shows none, and is not verified.
 // Returns null where a byte differs that this does not cover, else the runs resting on the
@@ -368,10 +369,10 @@ export function confirmedMatch(
     if (!m) continue;
     const w = wrote.get(at + i);
     if (!((back[i] ^ want[i]) & m)) {
-      if (w !== undefined && before && ((before[i] ^ want[i]) & m)) landed = true;
+      if (w !== undefined && before && before.length > i && ((before[i] ^ want[i]) & m)) landed = true;
       continue;
     }
-    if (w === undefined || ((w ^ want[i]) & m) || !before || before.length <= i || back[i] !== before[i]) return null;
+    if (w === undefined || ((w ^ want[i]) & m) || !before || before.length <= i || back[i] !== 0xff || before[i] !== 0xff) return null;
     only.push(at + i);
   }
   if (only.length && !landed) return null;

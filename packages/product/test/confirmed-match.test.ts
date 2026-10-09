@@ -26,6 +26,14 @@ describe("confirmedMatch", () => {
   test("a byte that reads a third value, neither written nor held before, is not covered", () => {
     expect(confirmedMatch(Buffer.from([0x11, 0xff, 0x00, 0x07]), want, mask, AT, wrote, before)).toBeNull();
   });
+  test("a byte that reads its old data, a write lost or rejected beside one that landed, is not covered", () => {
+    const old = Buffer.from([0x10, 0x30, 0x31, 0x07]);
+    expect(confirmedMatch(Buffer.from([0x11, 0x30, 0x31, 0x07]), want, mask, AT, wrote, old)).toBeNull();
+  });
+  test("a byte past the end of the before-image is no sign the write landed", () => {
+    const all = [{ address: AT, bytes: want }];
+    expect(confirmedMatch(back, want, mask, AT, all, Buffer.from([0x11, 0xff, 0xff]))).toBeNull();
+  });
   test("without the segment as read before the operation nothing is covered", () => {
     expect(confirmedMatch(back, want, mask, AT, wrote, null)).toBeNull();
   });
