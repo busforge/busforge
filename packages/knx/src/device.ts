@@ -199,6 +199,11 @@ export class KnxDevice {
   private seq = 0;
   private ackResolve: (() => void) | null = null;
   private respResolve: ((p: ParsedApdu) => void) | null = null;
+  // Sequence number of the last numbered data frame taken from the device on this connection. A frame
+  // with the same number is the device repeating it because our T_ACK did not reach it (the interface
+  // answers L_Data.con negative): it is acknowledged again and dropped, never taken as the answer to
+  // the request now in flight.
+  private lastRxSeq: number | null = null;
   private peerClosed: (() => void) | null = null;
   // During the Sync handshake, raw frames are diverted here (the Sync response is not
   // a normal secure data frame, so it bypasses the request machinery).
@@ -230,12 +235,19 @@ export class KnxDevice {
       if (inner.status === "invalid") { this.unauthentic++; return; }
       if (inner.status === "replay") { this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {}); return; }
       p = parseApdu(inner.apdu);
+    } else if (outer.seq === this.lastRxSeq) {
+      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      return;
     }
-    this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => this.respResolve?.(p)).catch(() => {});
+    // Taken only once our T_ACK is out: a frame whose T_ACK failed to send is not delivered, and the
+    // device's repetition of it is then the only copy, which has to get through.
+    const plain = !this.secure;
+    this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
   }
 
   async connect() {
     this.seq = 0;
+    this.lastRxSeq = null;
     this.maxApdu = undefined;
     await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
@@ -532,7 +544,11 @@ export class KnxDevice {
         const a = addr + pos;
         const tail = Buffer.from([(a >> 8) & 0xff, a & 0xff]);
         const r = await this.request((s) => apdu(s, APCI.MEMORY_READ, tail, want), true);
-        data = r!.data.subarray(2); // skip echoed address
+        if (r!.apci !== APCI.MEMORY_RESPONSE) throw serviceMismatch("a memory read", r!.apci, APCI.MEMORY_RESPONSE);
+        if (r!.data.length < 2 || r!.data.readUInt16BE(0) !== a) {
+          throw new KnxError("MEMORY_RESPONSE_MISMATCH", `a memory read of 0x${a.toString(16)} was answered for ${r!.data.length < 2 ? "no address" : `0x${r!.data.readUInt16BE(0).toString(16)}`}`);
+        }
+        data = r!.data.subarray(2);
         if (data.length >= want) { data = data.subarray(0, want); break; }
         if (want === 1) throw new KnxError("DEVICE_READ_REFUSED", `memRead: device refused byte @0x${a.toString(16)}`);
         want = Math.max(1, want >> 1); // shrink to fit within the device read boundary

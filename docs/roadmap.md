@@ -54,6 +54,10 @@ depends on is hardware-proven.
 
 ## Verification
 
+- **Echo checks on every management answer.** A memory read refuses an answer for another address,
+  and a repeated data frame is dropped at the transport layer. `propRead` and `deviceDescriptor` still
+  take any answer of the right sequence: a late answer to an abandoned earlier request would be taken
+  as theirs. Check the echoed object, PID and start, and the service, as `propReadIfPresent` does.
 - **Turn the ETS-capture diff into a live read-back gate.** `our image == ETS` can only be checked
   where a captured ETS download exists. Diffing the built image against the device itself, with the
   segment base the device assigned, would catch that class of bug without a capture.

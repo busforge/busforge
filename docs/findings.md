@@ -186,6 +186,12 @@ Connection-oriented KNX management on top of the tunnel. What matters on a busy 
 - On a device data response: **send our `T_ACK` first, then** release the waiter. If the next
   request goes out before our ACK, the device ignores it.
 - Increment the 4-bit sequence per transaction.
+- A device data frame with the sequence number of the one taken last is a **repetition**: the
+  device sends it again when our `T_ACK` did not reach the bus (the interface answers the
+  L_Data.con negative). Acknowledge it again and drop it. Taken as the answer to the request now in
+  flight, it hands that request another request's bytes: a Theben DALI-Gateway repeated its answer
+  for one memory block, and a read that took it would have stored that block one block further on.
+  A memory read also refuses an answer for another address than the one asked.
 
 Short per-operation timeouts (about 1.5 s) so a lost ACK fails fast and the **whole
 procedure** is retried on a fresh connection (idempotent when writing identical content),
