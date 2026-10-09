@@ -114,6 +114,9 @@ export interface RunOpts {
   // Read the memory of every writeMem step first and write only the bytes that differ, as ETS writes
   // a memory-mapped mask (MV-0700/0701, differingRuns).
   readCompare?: boolean;
+  // The bytes each memory write of a writeMem step puts on the bus: the step's bytes, or with
+  // `readCompare` the runs that differed.
+  onWritten?: (bytes: number) => void;
   // re-read pause after restart is the caller's concern; the runner just fires restart
 }
 
@@ -224,10 +227,10 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       }
       case "writeMem": {
         if (step.opens) open.add(step.opens);
-        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); if (step.closes) open.delete(step.closes); break; }
+        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); opts.onWritten?.(step.bytes.length); if (step.closes) open.delete(step.closes); break; }
         const block = await dev.classicReadChunk();
         const have = await dev.memRead(step.address, step.bytes.length, block);
-        for (const r of differingRuns(step.address, step.bytes, have, block)) await dev.memWrite(r.address, r.bytes, { verify: true });
+        for (const r of differingRuns(step.address, step.bytes, have, block)) { await dev.memWrite(r.address, r.bytes, { verify: true }); opts.onWritten?.(r.bytes.length); }
         if (step.closes) open.delete(step.closes);
         break;
       }

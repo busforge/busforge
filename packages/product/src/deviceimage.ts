@@ -426,3 +426,35 @@ function colorBits(app: AppConfig, typeId: string): number | undefined {
   const t = app.types.get(typeId);
   return t?.kind === "TypeColor" && (t.colorSpace === "RGB" || t.colorSpace === "HSV") ? 24 : undefined;
 }
+
+// The colour parameters with memory that a configuration activates, by ParameterRef id, with their values.
+export function activeColorValues(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[]): Map<string, string> {
+  const model = toAppModel(app, { includeUnions: true, instances });
+  const out = new Map<string, string>();
+  for (const [refId, v] of buildDeviceConfig(app, values, undefined, instances).imageValues) {
+    const ref = model.refs.get(refId);
+    const p = ref ? model.params.get(ref.paramId) : undefined;
+    if (p?.offset !== undefined && app.types.get(p.typeId)?.base === "Color") out.set(refId, v);
+  }
+  return out;
+}
+
+// No ETS download captured holds a colour parameter in use, so how ETS encodes a colour into memory is not
+// shown, and no image path writes one (encode()). An operation that would have to write a colour refuses
+// instead of leaving the device's bytes as they are and reporting the new colour programmed:
+//  - a parameter or structural flash, when a colour in use differs from the configuration the device was
+//    last programmed with, or comes into use (`base` given);
+//  - a full download, for any colour in use (`base` absent): it knows no configuration the device holds,
+//    and would leave there either the segment's <Data> (a segment loaded afresh) or the unit's bytes (a
+//    segment written into the loaded application), neither shown to be the colour.
+export function refuseColorWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
+  const now = activeColorValues(app, values, instances);
+  const before = base ? activeColorValues(app, base.values, base.instances) : new Map<string, string>();
+  const written = [...now].filter(([ref, v]) => !base || before.get(ref)?.toUpperCase() !== v.toUpperCase()).map(([ref]) => ref);
+  if (!written.length) return;
+  const what = base
+    ? `this flash writes the device's parameters, and ${written.length} colour parameter(s) among them changed or came into use (e.g. ${written[0]})`
+    : `the configuration has ${written.length} colour parameter(s) in use (e.g. ${written[0]}), which a full download writes`;
+  throw new ProductError("PARAM_COLOR_UNSUPPORTED",
+    `${what}; no ETS download shows how a colour is encoded in the device's memory, so Busforge cannot write it. Refusing rather than leaving the device's colour unchanged; apply the colour with ETS`);
+}

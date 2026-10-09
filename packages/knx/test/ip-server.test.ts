@@ -91,7 +91,7 @@ async function serve(addresses?: number[]): Promise<Rig> {
   const bus = new FakeBus();
   const clock = { t: 1_000_000 };
   const server = new KnxIpServer({
-    transport: bus,
+    maxApdu: 40, transport: bus,
     addresses,
     createSocket: () => sock,
     createTcpListener: noopTcpListener,
@@ -166,7 +166,7 @@ describe("KnxIpServer: connection management", () => {
     expect(body[body.length - 1]).toBe(0x03); // the CRD names the device-management connection type
   });
 
-  test("answers a device-management property read (Device Object PID 56 = max APDU), not VOID", async () => {
+  test("answers a device-management property read (Device Object PID 56 = the path's max APDU), not VOID", async () => {
     const { sock } = await serve();
     sock.deliver(connectReq(0x02, 0x03), CLIENT); // device management
     await tick();
@@ -181,7 +181,11 @@ describe("KnxIpServer: connection management", () => {
     expect(cemi[0]).toBe(0xfb);        // M_PropRead.con
     expect(cemi[4]).toBe(0x38);        // PID 56
     expect(cemi[5] >> 4).toBe(1);      // number-of-elements 1 (a success, NOT the NoE=0 that aborts ETS)
-    expect([...cemi.subarray(7)]).toEqual([0x00, 0xfe]); // 254
+    expect([...cemi.subarray(7)]).toEqual([0x00, 40]); // the path limit the server was given
+  });
+
+  test("refuses a maximum APDU length a frame cannot have", () => {
+    for (const maxApdu of [14, 255, 40.5]) expect(() => new KnxIpServer({ maxApdu, transport: new FakeBus(), createSocket: () => new FakeSocket() })).toThrow(/maximum APDU length/);
   });
 
   test("answers the additional-individual-addresses array read (count at index 0, address at index 1)", async () => {
@@ -226,7 +230,7 @@ describe("KnxIpServer: connection management", () => {
     const logs: string[] = [];
     const sock = new FakeSocket();
     const clock = { t: 1_000_000 };
-    const server = new KnxIpServer({ transport: new FakeBus(), createSocket: () => sock, createTcpListener: noopTcpListener, now: () => clock.t, log: (m) => logs.push(m) });
+    const server = new KnxIpServer({ maxApdu: 40, transport: new FakeBus(), createSocket: () => sock, createTcpListener: noopTcpListener, now: () => clock.t, log: (m) => logs.push(m) });
     await server.start();
     sock.deliver(connectReq(), CLIENT);
     await tick();
@@ -399,7 +403,7 @@ describe("KnxIpServer: client -> bus", () => {
     const propRead = Buffer.from([0xfc, 0x00, 0x08, 0x01, 0x34, 0x10, 0x01]);
 
     const sock = rig.sock;
-    const server = new KnxIpServer({ transport: rig.bus, createSocket: () => sock, createTcpListener: noopTcpListener, now: () => rig.clock.t, log: (m) => notes.push(m) });
+    const server = new KnxIpServer({ maxApdu: 40, transport: rig.bus, createSocket: () => sock, createTcpListener: noopTcpListener, now: () => rig.clock.t, log: (m) => notes.push(m) });
     await server.start();
     sock.clear();
     sock.deliver(connectReq(), CLIENT);
@@ -663,7 +667,7 @@ describe("KnxIpServer: refusals", () => {
   test("refuses to start on an interface whose address it does not know", async () => {
     const bus = new FakeBus();
     bus.assignedIa = 0; // the interface never told us
-    const server = new KnxIpServer({ transport: bus, createSocket: () => new FakeSocket() });
+    const server = new KnxIpServer({ maxApdu: 40, transport: bus, createSocket: () => new FakeSocket() });
 
     let refusal: unknown;
     try { await server.start(); } catch (e) { refusal = e; }

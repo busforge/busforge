@@ -5,7 +5,7 @@ import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase } from "../src/db/deviceparams.ts";
+import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase, getImageStamps } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
@@ -281,6 +281,52 @@ corpusDescribe("POST /flash-ga: link baseline adoption is gated on verified", ()
     expect(task).toMatchObject({ state: "done", result: { verified: true }, baselineCommitted: true });
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).links.has(LINK_KEY)).toBe(false);
+  });
+});
+
+// ETS's record of the last download that wrote the parameters (ImageStamp): a verified download or parameter
+// flash replaces it with its closing reads, an unverified one and a group-address flash leave it, a verified
+// operation that keeps none clears it, and it lives in the database, so the parameter flash after a server
+// restart compares against it.
+corpusDescribe("the stamp record across the flash routes and a server restart", () => {
+  const stamps = (crc: string) => [{ obj: 4, element: 1, hex: `0000002a00ff${crc}` }];
+  const withStamps = (verified: boolean, crc?: string): FlashResult => ({ ...flashed(verified), ...(crc ? { stamps: stamps(crc) } : {}) } as FlashResult);
+
+  test("adopted on a verified commit, kept otherwise, read back by the next parameter flash after a restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "busforge-stamps-"));
+    tmps.push(dir);
+    const open = () => createState({ dbPath: join(dir, "busforge.db"), dataDir: dir, now: () => 1000 });
+    const state = open();
+    const { projectId, deviceId } = await mdtProject(state);
+    const record = (st: AppState) => getImageStamps(st.db, projectId, deviceId);
+    expect(record(state)).toBeUndefined();
+
+    downloadImpl = async () => withStamps(true, "aaaa");
+    await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/download`));
+    expect(record(state)).toEqual(stamps("aaaa"));
+
+    // A second server process on the same database: the record is there, and the parameter flash gets it.
+    const restarted = open();
+    let seen: unknown;
+    setDeviceParam(restarted.db, projectId, deviceId, MDT_PARAM_REF, "1");
+    paramFlashImpl = async (opts) => { seen = opts.stampRecord; return withStamps(true, "bbbb"); };
+    await programmed(restarted, post(restarted, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(seen).toEqual(stamps("aaaa"));
+    expect(record(restarted)).toEqual(stamps("bbbb"));
+
+    setDeviceParam(restarted.db, projectId, deviceId, MDT_PARAM_REF, "2");
+    paramFlashImpl = async () => withStamps(false, "cccc");
+    await programmed(restarted, post(restarted, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(record(restarted)).toEqual(stamps("bbbb"));
+
+    setDeviceLink(restarted.db, projectId, deviceId, MDT_LINK_KEY, [0x040b]);
+    gaFlashImpl = async () => withStamps(true, "dddd");
+    await programmed(restarted, post(restarted, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+    expect(record(restarted)).toEqual(stamps("bbbb"));
+
+    paramFlashImpl = async () => withStamps(true);
+    await programmed(restarted, post(restarted, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+    expect(record(restarted)).toBeUndefined();
   });
 });
 

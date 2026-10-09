@@ -157,6 +157,9 @@ export interface KnxIpServerOptions {
   // Handing out more addresses is only safe if they are free on that line; that is the operator's
   // call, so it is an explicit option and not a guess.
   addresses?: number[];
+  // The longest APDU the path behind this server carries (Device Object PID 56). ETS sends at most
+  // min(this, the device's own) per frame, so more than the interface carries loses the frames above it.
+  maxApdu: number;
   name?: string;
   port?: number;
   serialNumber?: Buffer;
@@ -168,6 +171,7 @@ export interface KnxIpServerOptions {
 
 export class KnxIpServer {
   private transport: KnxTransport;
+  private readonly maxApdu: number;
   // Why the interface is gone, while it is; null while it serves. See interfaceLost.
   private down: string | null = null;
   private readonly addresses: number[];
@@ -207,6 +211,8 @@ export class KnxIpServer {
   constructor(opts: KnxIpServerOptions) {
     this.transport = opts.transport;
     this.addresses = opts.addresses?.length ? [...opts.addresses] : [opts.transport.assignedIa];
+    if (!Number.isInteger(opts.maxApdu) || opts.maxApdu < 15 || opts.maxApdu > 254) throw new Error(`maximum APDU length ${opts.maxApdu} is outside 15..254`);
+    this.maxApdu = opts.maxApdu;
     this.name = (opts.name ?? "Busforge Bridge").slice(0, 29);
     this.port = opts.port ?? KNXPORT;
     this.serialNumber = opts.serialNumber ?? Buffer.alloc(6);
@@ -569,7 +575,7 @@ export class KnxIpServer {
   private propValue(objType: number, _objInst: number, pid: number, start: number, ne: number): Buffer | null {
     const u16 = (n: number) => Buffer.from([(n >> 8) & 0xff, n & 0xff]);
     if (objType === 0) { // Device Object
-      if (pid === 56) return u16(254);          // PID_MAX_APDULENGTH (required; interface-discretionary)
+      if (pid === 56) return u16(this.maxApdu); // PID_MAX_APDULENGTH (required): the path's limit
       if (pid === 83) return u16(0x07b0);       // PID_DEVICE_DESCRIPTOR / mask version (required; any valid mask)
       if (pid === 1) return u16(0);             // PID_OBJECT_TYPE
       if (pid === 11) return Buffer.from(this.serialNumber); // PID_SERIAL_NUMBER (6 B)
