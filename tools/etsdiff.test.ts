@@ -286,7 +286,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
   test("the applications offered the structural flash are exactly those tested against an ETS capture of one", () => {
     expect([...STRUCTURAL_FLASH_CAPTURED].sort()).toEqual([
       "M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
-      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471",
+      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471", "M-0048_A-9071-20-F258",
     ].sort());
     for (const id of STRUCTURAL_FLASH_CAPTURED) {
       const file = listCatalogue().find((f) => f.startsWith(id))!;

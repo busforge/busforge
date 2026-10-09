@@ -241,6 +241,7 @@ export const STRUCTURAL_FLASH_CAPTURED: readonly string[] = [
   "M-0048_A-107E-12-5B58", // Theben TheLuxa P300
   "M-0048_A-140C-14-EB70", // Theben Meteodata 140 S
   "M-0048_A-493B-21-B471", // Theben MIX 2
+  "M-0048_A-9071-20-F258", // Theben DALI-Gateway KNX plus
 ];
 const structuralFlashCaptured = (app: AppConfig): boolean =>
   STRUCTURAL_FLASH_CAPTURED.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
