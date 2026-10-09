@@ -119,6 +119,8 @@ class MockDevice {
   async tableAddr(obj: number) { return obj === 1 ? this.segAddr(this.cfg.groupTables.addressSegment) : this.segAddr(this.cfg.groupTables.associationSegment); }
   async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
   async writesConfirmed() { return false; }
+  confirmedWrites() { return []; }
+  clearConfirmedWrites() {}
   async authorizeFreeKey() { return 0; } // the level the Gira granted ETS's free key
   async memWrite(addr: number, data: Buffer) { this.writes++; data.forEach((b, i) => this.mem.set(addr + i, b)); }
   programId = Buffer.alloc(0);

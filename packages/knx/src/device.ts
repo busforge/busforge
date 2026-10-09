@@ -770,6 +770,13 @@ export class KnxDevice {
   // bracket's restart, or when a write moves to another block), so a read straight after the write
   // shows the old bytes (house OpenKNX RaumController, 2026-09-27). ETS reads nothing back either.
   // The per-chunk return code and the caller's read-back after the restart are the proof.
+  // Every chunk the device confirmed with return code 0 since the last clearConfirmedWrites, with the
+  // bytes it confirmed. ETS takes this confirmation as the check of a `Verify="true"` write on a device
+  // written with A_MemoryExtended_Write (MDT IP Interface/Router: no verify mode, no read, only
+  // `MemoryExtended_WriteResponse … ResultCode=E_SUCCESS` per chunk).
+  private confirmed: { address: number; bytes: Buffer }[] = [];
+  confirmedWrites(): ReadonlyArray<{ address: number; bytes: Buffer }> { return this.confirmed; }
+  clearConfirmedWrites(): void { this.confirmed = []; }
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
     const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255); // the count is a single request octet
@@ -789,6 +796,7 @@ export class KnxDevice {
       if (d[0] !== 0x00) throw new KnxError("FLASH_VERIFY_MISMATCH", `the device rejected an extended write to 0x${a.toString(16)} with code 0x${d[0].toString(16)}`);
       const echoedAt = (d[1] << 16) | (d[2] << 8) | d[3];
       if (echoedAt !== a) throw new KnxError("FLASH_VERIFY_MISMATCH", `the device confirmed an extended write to 0x${echoedAt.toString(16)} for a write to 0x${a.toString(16)}; refusing to take that as proof`);
+      this.confirmed.push({ address: a, bytes: Buffer.from(slice) });
       pos += n;
       opts.onProgress?.(++done, total);
     }

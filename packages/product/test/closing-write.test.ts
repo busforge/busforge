@@ -29,6 +29,8 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     async restart() { this.log.push("restart"); }
     async setVerifyMode() {}
     async writesConfirmed() { return false; }
+    confirmedWrites() { return []; }
+    clearConfirmedWrites() {}
     async tableAddr(obj: number) { return A[obj] ?? 0; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async memWrite(addr: number, data: Buffer) { this.log.push("mem"); for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }

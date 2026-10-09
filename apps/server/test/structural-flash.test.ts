@@ -31,6 +31,8 @@ corpusDescribe("the structural flash against real applications", () => {
     async tableAddr(obj: number) { return this.addr.get(obj) ?? 0; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async writesConfirmed() { return false; }
+    confirmedWrites() { return []; }
+    clearConfirmedWrites() {}
     async memWrite(addr: number, data: Buffer) { this.writes.push({ addr, len: data.length }); for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
     async propRead(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);

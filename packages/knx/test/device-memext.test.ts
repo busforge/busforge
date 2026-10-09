@@ -113,6 +113,19 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(Buffer.from(Array.from({ length: 40 }, (_, i) => tun.mem.get(0x3774 + i)!)).equals(data)).toBe(true);
   });
 
+  test("each chunk the device confirms is logged with its bytes; a rejected one is not, and clearing empties the log", async () => {
+    const dev = new KnxDevice(new FakeExtTransport({ maxApdu: 20 }), "1.1.11");
+    const data = Buffer.from(Array.from({ length: 20 }, (_, i) => i + 1));
+    await dev.memWrite(0x3774, data, { verify: false });
+    expect(dev.confirmedWrites()).toEqual([{ address: 0x3774, bytes: data.subarray(0, 15) }, { address: 0x3774 + 15, bytes: data.subarray(15) }]);
+    dev.clearConfirmedWrites();
+    expect(dev.confirmedWrites()).toEqual([]);
+    const refused = new KnxDevice(new FakeExtTransport({ badCode: true }), "1.1.11");
+    const err = await refused.memWriteExtended(0x15000, Buffer.from([1, 2, 3])).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/rejected an extended write/);
+    expect(refused.confirmedWrites()).toEqual([]);
+  });
+
   // thelsing/OpenKNX answers a memory read from flash while the write still sits in its RAM
   // erase-block buffer, so a read-back before the restart shows the old bytes. ETS reads nothing
   // back; neither does the confirmed write, even when a caller asks for verify or an echo.

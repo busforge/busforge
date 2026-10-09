@@ -300,6 +300,31 @@ persists at `LoadCompleted`, so a restart need not prove a reboot), `HOLD_APPLIC
 `SETTLE_BEFORE_RESTART` (thelsing/OpenKNX: the full download settles on a fresh connection before
 the restart, instead of R11's restart at once). They are described [below](#the-flash-bracket-and-why-it-is-tight).
 
+**How ETS checks a write, by write service.** On a device written with the classic `A_Memory_Write`
+(one that does not declare `PID_MAX_APDU_LENGTH`, System B and System 7 alike: Auro, Gira, MDT
+BE-02001.02 and BE-06001.02, Theben TheLuxa P300 and DALI-Gateway) ETS reads object 0 PID 14 and writes
+it back with bit `04` set right before its first memory write, in every capture of such a download,
+and takes the device's echo of each write. On a device that declares the property it writes with the
+confirmed `A_MemoryExtended_Write` and switches on no verify mode in any capture (GVS AMMA, Jung
+400021SE, Theben MIX 2, OpenKNX, MDT IP Interface/Router): the device's answer to each chunk, a return
+code, is the check. Neither reads memory back. The memory-mapped System 7 masks (ABB US/U 4.2, Theben
+Meteodata 140 S) get no verify mode either.
+
+**Busforge reads back, and takes a write confirmation only where the device does not give a byte
+back.** After the restart it reads every owned byte and compares it with what it wrote. A byte that
+reads otherwise is accepted on the device's write confirmation alone, as ETS accepts it, only where
+all of this holds: the operation wrote it with the confirmed extended write and the device answered
+with return code `00` for exactly that value; the byte reads the same as before the operation; and
+some other byte the operation changed reads back as written, so the write landed. A device that lost
+or reverted the whole write shows no such byte and is not verified; a byte reading a third value is
+a mismatch. The result names these bytes (`confirmedOnly`) and the UI shows their count. The rule is
+the write service's, KNX-wide, not a list of products: the MDT IP Interface/Router reads its web
+interface password field as `FF` after a confirmed write of it. It applies to the parameter flash, the
+structural flash and the partial form of the full download, which read the segment before writing it;
+a full download in the declared form reads nothing first, so every byte there must read back as
+written. A classic write has no confirmation to rest on: its own read-back (or verify-mode echo) is
+the check.
+
 **Where Busforge departs from ETS, on every rule.** It switches on no verify mode on System 7 and
 reads every write back instead; it keeps no stamps, so on System 7 it writes the whole image where ETS
 leaves out what its stamps or its read of the unit say the device holds (on System B it reads the unit

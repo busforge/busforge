@@ -28,6 +28,8 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
     async restart() {}
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff; return b; }
     async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
+    confirmedWrites() { return []; }
+    clearConfirmedWrites() {}
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
       this.writes.push({ addr, len: data.length });
       for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);

@@ -25,6 +25,10 @@ const runFlash = (t: FlashTarget, projectId: string, deviceId: string, onTask: (
 interface Part { dry: FlashResult | null; done: FlashResult | null; error: unknown; checking: boolean; flashing: boolean; }
 const freshPart = (): Part => ({ dry: null, done: null, error: null, checking: false, flashing: false });
 
+// The bytes of a verified write the device does not give back when read, resting on its write
+// confirmation alone (FlashResult.confirmedOnly).
+const confirmedOnlyBytes = (r: FlashResult) => (r.kind === "flashed" && r.confirmedOnly ? r.confirmedOnly.reduce((n, x) => n + x.length, 0) : 0);
+
 // Program a device over the bus. Handles one or both targets (parameter memory via the
 // device's load procedure, and/or the group address + association tables). With both, it
 // previews each, then flashes only the targets that actually differ, sequentially, each with
@@ -186,7 +190,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (p.done) {
       if (p.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>; // raced to in-sync between preview and write
       return p.done.verified
-        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-part-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}</span>
+        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-part-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.doneVerified", { bytes: p.done.diffBytes })}{confirmedOnlyBytes(p.done) > 0 && <span className="text-muted-foreground" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", { bytes: confirmedOnlyBytes(p.done) })}</span>}</span>
         : <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {t("flash.doneUnverified")}</span>;
     }
     if (p.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
@@ -203,7 +207,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-dl-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.dlDoneVerified", { bytes: dl.done.diffBytes })}</span>
+        ? <span className="flex items-center gap-2 text-ok" data-testid="flash-dl-ok"><CheckCircle2 className="size-4 shrink-0" /> {t("flash.dlDoneVerified", { bytes: dl.done.diffBytes })}{confirmedOnlyBytes(dl.done) > 0 && <span className="text-muted-foreground" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", { bytes: confirmedOnlyBytes(dl.done) })}</span>}</span>
         : <span className="flex items-center gap-2 text-destructive" data-testid="flash-dl-fail"><AlertTriangle className="size-4 shrink-0" /> {t("flash.dlDoneUnverified")}</span>;
     }
     if (dl.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-dl-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, dl.error)}</span>;

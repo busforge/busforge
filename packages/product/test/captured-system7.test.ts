@@ -24,6 +24,8 @@ class GiraDevice {
   async authorizeFreeKey() { return this.level; }
   async restart() { this.ops.push("restart"); }
   async writesConfirmed() { return false; }
+  confirmedWrites() { return []; }
+  clearConfirmedWrites() {}
   async tableAddr(obj: number) { return this.tableRef.get(obj) ?? 0; }
   async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0)); }
   async memWrite(addr: number, data: Buffer) {

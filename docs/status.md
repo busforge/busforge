@@ -77,7 +77,11 @@ All hardware verification is on **twisted pair**.
 
 ## Devices driven on real hardware
 
-Read-back means our built image was compared byte-for-byte against the device's own memory.
+Read-back means our built image was compared byte-for-byte against the device's own memory. A
+`verified` write proves that read-back for every owned byte, except the bytes a device written with
+the confirmed extended write does not give back: those rest on its write confirmation alone, are named
+in the result (`confirmedOnly`) and are accepted only under the conditions in
+[load-procedures.md](load-procedures.md#the-rules-by-level). No device has run a write that needed them.
 Bus behaviour means the device was observed acting on the bus through an independent witness
 connection, which is the only check that catches a byte-perfect flash of a semantically wrong
 value.
@@ -119,7 +123,9 @@ What each row does not show:
     byte, text fields and the defaults of inactive parameters included, and its parameter flash
     changes the same bytes as ETS's parameter downloads (it sends every owned byte, ETS only the
     differing ones; `tools/etsdiff.test.ts`); it has not run on the device, since a secured session
-    needs the project's tool key.
+    needs the project's tool key. Its web interface password field reads `FF` after ETS's confirmed
+    write of it; a Busforge write would verify that field on the write confirmation alone
+    (`confirmedOnly`), shown in tests on a mock unit only.
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
     parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
     shows a text parameter; a read-back leaves those fields out.

@@ -18,6 +18,10 @@ const freshScan = (): ScanState => ({ running: false, devices: null, error: null
 const freshAssign = (): AssignState => ({ running: false, result: null, error: null });
 const freshDownload = (): DownloadState => ({ checking: false, dry: null, running: false, done: null, error: null });
 
+// The bytes of a verified write the device does not give back when read, resting on its write
+// confirmation alone (FlashResult.confirmedOnly).
+const confirmedOnlyBytes = (r: FlashResult) => (r.kind === "flashed" && r.confirmedOnly ? r.confirmedOnly.reduce((n, x) => n + x.length, 0) : 0);
+
 // Commission a device onto the bus: scan for programming mode, assign the
 // project's individual address to the ONE device in programming mode, then run
 // the full download (application id + parameters + com-object table + group
@@ -142,7 +146,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}</span>
+        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}{confirmedOnlyBytes(dl.done) > 0 && <span className="text-muted-foreground" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", { bytes: confirmedOnlyBytes(dl.done) })}</span>}</span>
         : <span data-testid="commission-fail">{line(warnIcon, t("commission.doneUnverified"), "err")}</span>;
     }
     if (dl.error) return <span data-testid="commission-fail">{line(warnIcon, errMsg(t, dl.error), "err")}</span>;

@@ -26,12 +26,15 @@ corpusDescribe("System B full download on a unit holding the application (mock u
   const base = images(new Map(), []);
   const mcbEntry = (size: number, control: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size, 0); b[4] = control; b[5] = 0x33; return b; };
 
-  interface UnitOpts { programId?: Buffer; states?: Partial<Record<number, number>>; appMcb?: Buffer[]; comObjControl?: number; onRestart?: (mem: Map<number, number>) => void }
+  // `confirmed`: the unit is written with the confirmed extended write (it keeps the log KnxDevice keeps);
+  // `hidden`: addresses it stores but always reads as FF, a field it does not give back.
+  interface UnitOpts { programId?: Buffer; states?: Partial<Record<number, number>>; appMcb?: Buffer[]; comObjControl?: number; onRestart?: (mem: Map<number, number>) => void; confirmed?: boolean; hidden?: Set<number> }
   class MockUnit {
     mem = new Map<number, number>();
     state = new Map<number, number>();
     events: string[] = [];
     writes: number[] = []; // every memory address written
+    log: { address: number; bytes: Buffer }[] = [];
     constructor(readonly o: UnitOpts = {}) {
       const put = (at: number, b: Buffer) => b.forEach((x, i) => this.mem.set(at + i, x));
       put(AT[OBJ.APP], base.target.bytes);
@@ -47,11 +50,14 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     async deviceDescriptor() { return "MV-07B0"; }
     async tableAddr(obj: number) { return AT[obj] ?? 0; }
     async writesConfirmed() { return false; }
+    confirmedWrites() { return this.log; }
+    clearConfirmedWrites() { this.log = []; }
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
-    async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0xff)); }
+    async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => (this.o.hidden?.has(addr + i) ? 0xff : this.mem.get(addr + i) ?? 0xff))); }
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
       data.forEach((b, i) => { this.mem.set(addr + i, b); this.writes.push(addr + i); });
+      if (this.o.confirmed) { this.log.push({ address: addr, bytes: Buffer.from(data) }); return; }
       if (opts.verify && !(await this.memRead(addr, data.length)).equals(data)) throw new Error("verify mismatch");
     }
     async propRead(obj: number, pid: number, start = 1) {
@@ -111,17 +117,20 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     expect(unit.events.some((e) => e.endsWith(":3"))).toBe(false);
   }, 30_000);
 
-  test("a parameter change: the application reloaded, only its changed bytes written, the program id stamped", async () => {
-    // A parameter whose value changes the image: the first owned, verified byte's parameter, found by trying.
-    const want = (p: Map<string, string>) => buildRelativeSegmentTarget(cfg, p, 4, { ownIdleUnionDefaults: true })!.bytes;
-    let params: Map<string, string> | undefined;
+  // A parameter whose value changes the image: the first owned, verified byte's parameter, found by trying.
+  const want = (p: Map<string, string>) => buildRelativeSegmentTarget(cfg, p, 4, { ownIdleUnionDefaults: true })!.bytes;
+  const changedParams = () => {
     for (const ref of cfg.refs.keys()) {
       for (const v of ["1", "2", "0"]) {
         const p = new Map([[ref, v]]);
-        try { if (!want(p).equals(base.target.bytes)) { params = p; break; } } catch { /* not placeable */ }
+        try { if (!want(p).equals(base.target.bytes)) return p; } catch { /* not placeable */ }
       }
-      if (params) break;
     }
+    return undefined;
+  };
+
+  test("a parameter change: the application reloaded, only its changed bytes written, the program id stamped", async () => {
+    const params = changedParams();
     expect(params).toBeDefined();
     const changed = [...want(params!)].map((b, i) => (b !== base.target.bytes[i] ? AT[OBJ.APP] + i : -1)).filter((a) => a >= 0);
     const unit = new MockUnit();
@@ -146,6 +155,37 @@ corpusDescribe("System B full download on a unit holding the application (mock u
       expect(unit.events).toContain("unload:4");
     }
   }, 120_000);
+
+  // A verified byte the parameter change leaves alone and that is not FF in the image: the field the unit
+  // does not give back.
+  const hiddenField = (params: Map<string, string>) => {
+    const changed = want(params);
+    const i = base.target.verify.findIndex((v, k) => v && base.target.bytes[k] !== 0xff && changed[k] === base.target.bytes[k]);
+    expect(i).toBeGreaterThanOrEqual(0);
+    return AT[OBJ.APP] + i;
+  };
+
+  test("a confirmed-write unit that does not give a field back: verified on the write confirmation for exactly those bytes", async () => {
+    const params = changedParams()!;
+    const at = hiddenField(params);
+    const res = await run(new MockUnit({ confirmed: true, hidden: new Set([at]) }), params);
+    expect(res.verified).toBe(true);
+    expect(res.confirmedOnly).toEqual([{ address: at, length: 1 }]);
+    // Every byte read back as written: nothing rests on the confirmation.
+    expect((await run(new MockUnit({ confirmed: true }), params)).confirmedOnly).toBeUndefined();
+  }, 30_000);
+
+  test("the write confirmation does not stand in for a read-back that shows nothing of the write landed", async () => {
+    // The project unchanged: the field the unit does not give back is the only byte written in the segment.
+    const at = hiddenField(changedParams()!);
+    expect((await run(new MockUnit({ confirmed: true, hidden: new Set([at]) }))).verified).toBe(false);
+  }, 30_000);
+
+  test("a unit written without confirmation that does not give a field back fails at the write's own read-back", async () => {
+    const params = changedParams()!;
+    const err = await run(new MockUnit({ hidden: new Set([hiddenField(params)]) }), params).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/verify mismatch/);
+  }, 30_000);
 
   test("verify: a parameter byte the unit loses on the restart is caught", async () => {
     const flip = base.target.verify.findIndex(Boolean);

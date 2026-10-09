@@ -340,6 +340,50 @@ export function verifyMaskedBytes(back: Buffer, want: Buffer, mask: ReadonlyArra
   return true;
 }
 
+// Bytes of a read-back that rest on the device's write confirmation alone: device addresses, in runs.
+export interface ConfirmedOnlyRange { address: number; length: number }
+
+// verifyMaskedBytes for a read-back taken at device address `at` after an operation that wrote with
+// the confirmed extended write (`confirmed`: the chunks the device answered with return code 0, see
+// KnxDevice.confirmedWrites). A byte that reads back otherwise than wanted is accepted on the
+// confirmation alone, as ETS accepts it, only where the device does not give that byte back:
+// - the device confirmed writing exactly the wanted value there in this operation;
+// - it reads there what it read before the operation (`before`), the write made no difference to
+//   what it returns;
+// - and the read-back shows the operation landed: some other byte it changed and wrote reads back as
+//   written. A device that lost or reverted the whole write shows none, and is not verified.
+// Returns null where a byte differs that this does not cover, else the runs resting on the
+// confirmation alone (empty when every byte reads back as wanted).
+export function confirmedMatch(
+  back: Buffer, want: Buffer, mask: ReadonlyArray<number | boolean>, at: number,
+  confirmed: ReadonlyArray<{ address: number; bytes: Buffer }>, before: Buffer | null,
+): ConfirmedOnlyRange[] | null {
+  if (back.length < mask.length) return null;
+  const wrote = new Map<number, number>();
+  for (const c of confirmed) c.bytes.forEach((b, i) => wrote.set(c.address + i, b));
+  const only: number[] = [];
+  let landed = false;
+  for (let i = 0; i < mask.length; i++) {
+    const m = mask[i] === true ? 0xff : mask[i] === false ? 0 : (mask[i] as number);
+    if (!m) continue;
+    const w = wrote.get(at + i);
+    if (!((back[i] ^ want[i]) & m)) {
+      if (w !== undefined && before && ((before[i] ^ want[i]) & m)) landed = true;
+      continue;
+    }
+    if (w === undefined || ((w ^ want[i]) & m) || !before || before.length <= i || back[i] !== before[i]) return null;
+    only.push(at + i);
+  }
+  if (only.length && !landed) return null;
+  const runs: ConfirmedOnlyRange[] = [];
+  for (const a of only) {
+    const last = runs.at(-1);
+    if (last && last.address + last.length === a) last.length++;
+    else runs.push({ address: a, length: 1 });
+  }
+  return runs;
+}
+
 // Verify a relative flash: owned bytes minus Access="None" markers (the `verify` mask).
 export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
   return verifyMaskedBytes(back, target.bytes, target.verify);

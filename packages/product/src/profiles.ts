@@ -1,6 +1,6 @@
 import { KnxDevice, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
@@ -372,10 +372,12 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // boundary (baseline reset), which is exactly the fake-green class this codebase bans.
 // `structural`: the result of a structural flash (flashStructure), which covers the parameters and
 // the group tables together.
+// `confirmedOnly`: the bytes of a verified flash the device does not give back when read, verified by
+// its write confirmation alone (confirmedMatch); absent when the read-back shows every byte.
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
-  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string }
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[] }
 ) & { structural?: true };
 
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
@@ -390,7 +392,9 @@ interface FlashOp {
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
   write: () => Promise<void>;                     // the model-specific download (device restarts after)
-  verify: () => Promise<boolean>;                 // post-restart read-back comparison
+  // Post-restart read-back comparison. A byte it accepts on the device's write confirmation alone goes
+  // into `confirmedOnly` (see confirmedOnlyMatch).
+  verify: (confirmedOnly: ConfirmedOnlyRange[]) => Promise<boolean>;
   // A load-state machine this operation concerns is not LOADED (an interrupted earlier write left it
   // Loading, say), so equal bytes are no proof the device runs them. "rewrite": the bracket always
   // covers it, so run it even without a diff and let it finish the load. "refuse": the plan brackets
@@ -437,10 +441,26 @@ async function runFlashOp(
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
+  dev.clearConfirmedWrites();
   await op.write();
   await reconnectAfterRestart(dev);
-  const verified = await verifyAfterRestart(dev, op.verify);
-  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup };
+  const confirmedOnly: ConfirmedOnlyRange[] = [];
+  const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
+  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}) };
+}
+
+// The read-back check of a segment read at `at` against the bytes it should hold, accepting the bytes
+// the device does not give back where this operation's confirmed writes cover them (confirmedMatch).
+// `before`: the segment as read before the operation, null where the operation did not read it (then
+// every byte has to read back as written). The accepted runs are added to `confirmedOnly` once the
+// returned check is the one the verify settles on (see settledMatch).
+function confirmedOnlyMatch(dev: KnxDevice, at: number, want: Buffer, mask: ReadonlyArray<number | boolean>, before: Buffer | null) {
+  return (back: Buffer) => confirmedMatch(back, want, mask, at, dev.confirmedWrites(), before);
+}
+function settledMatch(runs: ConfirmedOnlyRange[] | null, confirmedOnly: ConfirmedOnlyRange[]): boolean {
+  if (runs === null) return false;
+  confirmedOnly.push(...runs);
+  return true;
 }
 
 const structural = async (r: Promise<FlashResult>): Promise<FlashResult> => ({ ...(await r), structural: true });
@@ -1020,22 +1040,24 @@ export class SystemBProfile extends DeviceProfile {
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
       ],
       write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
-      verify: async () => {
+      verify: async (confirmedOnly) => {
         ctx.onProgress?.("verify");
         const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
-        const { ok } = await verifySettled(
+        const verifyAt = await dev.tableAddr(LSM);
+        const match = confirmedOnlyMatch(dev, verifyAt, params, paramMask, verifyAt === paramsAt ? current : null);
+        const { value, ok } = await verifySettled(
           async () => ({
             app: await lsmState(dev, OBJ.APP_PROGRAM),
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
-            back: await dev.memRead(await dev.tableAddr(LSM), params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
+            back: await dev.memRead(verifyAt, params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
             tables: await readGroupTables(dev),
             sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
           }),
-          ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && verifyMaskedBytes(back, params, paramMask)
+          ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(back) !== null
             && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
-        return ok;
+        return ok && settledMatch(match(value.back), confirmedOnly);
       },
     });
   }
@@ -1132,14 +1154,15 @@ export class SystemBProfile extends DeviceProfile {
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
       // target (minus Access="None" markers the device re-stamps), the rest against the read before
       // the flash, because only the owned bytes were written and the device had to keep the others.
-      verify: async () => {
+      verify: async (confirmedOnly) => {
         const verifyAddr = await dev.tableAddr(LSM);
         const mask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
-        const { ok } = await verifySettled(
+        const match = confirmedOnlyMatch(dev, verifyAddr, image, mask, verifyAddr === addr ? current : null);
+        const { value, ok } = await verifySettled(
           () => dev.memRead(verifyAddr, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
-          (back) => verifyMaskedBytes(back, image, mask),
+          (back) => match(back) !== null,
         );
-        return ok;
+        return ok && settledMatch(match(value), confirmedOnly);
       },
     });
   }
@@ -1311,22 +1334,24 @@ export class SystemBProfile extends DeviceProfile {
       // Every byte of the parameter segment is checked as the parameter flash checks it, the three
       // tables and the security object whole, and the application and the three tables must be
       // LOADED again after the restart.
-      verify: async () => {
+      verify: async (confirmedOnly) => {
         ctx.onProgress?.("verify");
         const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
-        const { ok } = await verifySettled(
+        const verifyAt = await dev.tableAddr(LSM);
+        const match = confirmedOnlyMatch(dev, verifyAt, image, paramMask, verifyAt === paramsAt ? current : null);
+        const { value, ok } = await verifySettled(
           async () => ({
             app: await lsmState(dev, OBJ.APP_PROGRAM),
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
-            params: await dev.memRead(await dev.tableAddr(LSM), image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
+            params: await dev.memRead(verifyAt, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
             tables: await readGroupTables(dev),
             sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
           }),
-          ({ app, tablesLoaded, params, tables, sec }) => app === STATE.LOADED && tablesLoaded && verifyMaskedBytes(params, image, paramMask)
+          ({ app, tablesLoaded, params, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(params) !== null
             && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
-        return ok;
+        return ok && settledMatch(match(value.params), confirmedOnly);
       },
     }));
   }
@@ -1485,16 +1510,17 @@ export class System7Profile extends DeviceProfile {
         // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
         await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), changedBytes); } });
       },
-      verify: async () => {
+      verify: async (confirmedOnly) => {
         for (const t of targets) {
           // Verify only user-facing owned bytes (t.verify). Access="None" device-internal markers
           // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
           // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
-          const { ok } = await verifySettled(
+          const match = confirmedOnlyMatch(dev, t.address, t.bytes, t.verify, current.get(t.id) ?? null);
+          const { value, ok } = await verifySettled(
             () => dev.memRead(t.address, t.size, undefined, (d, n) => ctx.onProgress?.("verify", d, n)),
-            (back) => verifyMaskedBytes(back, t.bytes, t.verify),
+            (back) => match(back) !== null,
           );
-          if (!ok) return false;
+          if (!ok || !settledMatch(match(value), confirmedOnly)) return false;
         }
         return true;
       },

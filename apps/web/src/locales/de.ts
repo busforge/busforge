@@ -817,6 +817,7 @@ const de: Messages = {
     dlDownloading: "Lade das vollständige Abbild… das Gerät startet neu, das dauert eine Weile.",
     dlDoneVerified: "Heruntergeladen und verifiziert ({{bytes}} Bytes geschrieben).",
     dlDoneUnverified: "Heruntergeladen, aber das Zurücklesen war nicht erfolgreich. Prüfe das Gerät.",
+    confirmedOnly: "{{bytes}} Byte(s) gibt das Gerät beim Lesen nicht zurück; sie beruhen allein auf seiner Schreibquittung.",
     download: "Download",
   },
   monitor: {
