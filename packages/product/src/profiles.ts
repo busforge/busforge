@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures } from "./loadproc.ts";
+import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -251,27 +251,15 @@ const HOLD_APPLICATION_ON_GA_FLASH = new Set<number>([0x0004]);
 export const holdsApplicationOnGaFlash = (app: AppConfig): boolean => HOLD_APPLICATION_ON_GA_FLASH.has(appManufacturer(app));
 
 // The structural flash (one bracket set over the application, the com-object table and both group
-// tables, findings.md §28) follows the family's rule on every application; it is offered only on the
-// applications whose ETS capture of such a download it is tested against (tools/etsdiff.test.ts,
-// "structural flash"): the revert of a parameter and a link change in one download, and for the first
-// two a change that reshapes the com-object table. Every other application takes the full download for
-// such a change, or ETS. This is evidence, not ETS behaviour: an entry is added with its capture test.
-// Two firmware stacks stay off regardless, hardware-shown not to take the bracket: thelsing/OpenKNX
-// loses a download whose tables follow a long parameter write (planSystemBFullDownload), the GVS stack
-// (persist at LoadCompleted) failed its next flash after an extra LoadCompleted.
-export const STRUCTURAL_FLASH_CAPTURED: readonly string[] = [
-  "M-0004_A-7072-21-99A7", // Jung 400021SE
-  "M-0083_A-00B6-32-9642", // MDT BE-02001.02
-  "M-0083_A-00B4-32-3919", // MDT BE-06001.02
-  "M-0081_A-FE01-11-75D9", // Auro presence detector
-  "M-0008_A-10D7-11-2783", // Gira Tastsensor 3 Komfort
-  "M-0048_A-107E-12-5B58", // Theben TheLuxa P300
-  "M-0048_A-140C-14-EB70", // Theben Meteodata 140 S
-  "M-0048_A-493B-21-B471", // Theben MIX 2
-  "M-0048_A-9071-20-F258", // Theben DALI-Gateway KNX plus
-];
-const structuralFlashCaptured = (app: AppConfig): boolean =>
-  STRUCTURAL_FLASH_CAPTURED.some((id) => String(app.id) === id || String(app.id).startsWith(`${id}-`));
+// tables, findings.md §28) is the family's rule, offered on every application its planner runs: ETS runs
+// that bracket for a change of parameters and links on both families (the reverts of the Auro
+// M-0081_A-FE01, Gira M-0008, Theben TheLuxa P300, Meteodata 140 S, MIX 2 and DALI-Gateway, the MDT
+// BE-06001.02, and the com-object-table reshaping downloads of the Jung 400021SE and MDT BE-02001.02,
+// each tested in tools/etsdiff.test.ts). Two firmware stacks stay off, hardware-shown not to take the
+// bracket: thelsing/OpenKNX loses a download whose tables follow a long parameter write
+// (planSystemBFullDownload, SETTLE_BEFORE_RESTART), the GVS stack (PERSIST_ON_LOAD_COMPLETED) failed its
+// next flash after an extra LoadCompleted.
+const structuralFirmwareOff = (app: AppConfig): boolean => !closesAtOnce(app) || persistsOnLoadCompleted(app);
 
 // Firmware that persists its download on a timer after the last memory write and must be left alone
 // before the restart, on a fresh connection (thelsing/OpenKNX, see planSystemBFullDownload). Every other
@@ -426,8 +414,60 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
-  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[] }
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; stamps?: ImageStamp[] }
 ) & { structural?: true };
+
+// One element of a load-state machine's memory-control block (PID 27: size, CRC control, access, CRC),
+// as the closing reads of a download that wrote the application's parameters returned it: ETS's record of
+// that download (LdCtrlLoadImageProp). `stamps` on a flashed result: the record of this download; absent
+// where the operation keeps none.
+export interface ImageStamp { obj: number; element: number; hex: string }
+const MCB_ELEMENT_BYTES = 8;
+function stampCollector(): { stamps: ImageStamp[]; onRead: (obj: number, pid: number, start: number, data: Buffer) => void } {
+  const stamps: ImageStamp[] = [];
+  return {
+    stamps,
+    onRead: (obj, pid, start, data) => {
+      if (pid !== PID.MCB_TABLE) return;
+      if (data.length === 0 || data.length % MCB_ELEMENT_BYTES !== 0) throw new ProductError("STAMP_UNREADABLE", `object ${obj} answered its memory-control block from element ${start} with ${data.length} bytes, not whole 8-byte elements`);
+      for (let k = 0; (k + 1) * MCB_ELEMENT_BYTES <= data.length; k++) stamps.push({ obj, element: start + k, hex: data.subarray(k * MCB_ELEMENT_BYTES, (k + 1) * MCB_ELEMENT_BYTES).toString("hex") });
+    },
+  };
+}
+// ETS's stamp check before a parameter download: it reads the stamps of the objects that hold the
+// application (not the two group tables) and takes its differential download only where every one equals
+// its record of its last download that wrote the parameters ("Differential Image Stamp does not match,
+// falling back" otherwise: Theben MIX 2, whose firmware clears its download marker after the restart; a
+// group-address download leaves the record as it was, Gira M-0008's revert).
+// The unit's stamps as read now, null where the record holds none to compare.
+// Only the regions ETS sends differentially count: their CRC-control byte (element byte 4) is 0. A region
+// with another control byte is written whole whatever its stamp says (Theben DALI-Gateway: its com-object
+// table, control 1, changed by a group-address download, and ETS's next parameter download still
+// differential; Theben MIX 2, control 0 throughout, falls back).
+export const checkedStamps = (record: ImageStamp[] | undefined): ImageStamp[] =>
+  (record ?? []).filter((r) => r.obj !== OBJ.ADDR_TABLE && r.obj !== OBJ.ASSOC_TABLE && Buffer.from(r.hex, "hex")[4] === 0);
+// `read`: every element of the record's application objects as the unit answers now, the checked ones and
+// the others, so the regions of a segment are laid out from all of its elements.
+async function currentStamps(dev: KnxDevice, record: ImageStamp[] | undefined): Promise<{ equal: boolean; read: ImageStamp[] } | null> {
+  const checked = checkedStamps(record);
+  if (!checked.length) return null;
+  const read: ImageStamp[] = [];
+  for (const r of (record ?? []).filter((x) => x.obj !== OBJ.ADDR_TABLE && x.obj !== OBJ.ASSOC_TABLE)) {
+    const v = await dev.propRead(r.obj, PID.MCB_TABLE, r.element);
+    if (v.length !== MCB_ELEMENT_BYTES) throw new ProductError("STAMP_UNREADABLE", `object ${r.obj} answered memory-control-block element ${r.element} with ${v.length} bytes, not 8`);
+    read.push({ obj: r.obj, element: r.element, hex: v.toString("hex") });
+  }
+  return { equal: checked.every((c) => read.find((x) => x.obj === c.obj && x.element === c.element)?.hex === c.hex), read };
+}
+// The owned bytes a System B parameter flash writes: with the unit's stamps equal to the record, those
+// that differ from the unit (`current`), region by region (differentialMask; `regions` as the application
+// declares them, else as the unit's stamps report them); otherwise every owned byte.
+export function relativeParWriteSet(image: Buffer, current: Buffer, owned: ReadonlyArray<number>, mcb: McbWrite[], check: { equal: boolean; read: ImageStamp[] } | null): ReadonlyArray<number> {
+  if (!check?.equal) return owned;
+  const unitRegions = check.read.filter((x) => x.obj === LSM).sort((a, b) => a.element - b.element)
+    .map((x) => { const b = Buffer.from(x.hex, "hex"); return { size: b.readUInt32BE(0), control: b[4] }; });
+  return differentialMask(changedOwned(image, current, owned), owned, declaredMcbRegions(mcb) ?? (unitRegions.length ? unitRegions : null));
+}
 
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
 // device's current state and computed the diff. The profile supplies only the
@@ -454,6 +494,8 @@ interface FlashOp {
   loadIncomplete?: "rewrite" | "refuse";
   // Written even where every byte compared is equal: the operation writes state it does not read.
   alwaysWrite?: boolean;
+  // Filled by `write` with the closing stamp reads of a download that writes the parameters (ImageStamp).
+  stamps?: ImageStamp[];
 }
 
 // A device that has just rebooted can still be starting its application and drop management frames
@@ -501,7 +543,7 @@ async function runFlashOp(
   await reconnectAfterRestart(dev);
   const confirmedOnly: ConfirmedOnlyRange[] = [];
   const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
-  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}) };
+  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
 }
 
 // The read-back check of a segment read at `at` against the bytes it should hold, accepting the bytes
@@ -576,6 +618,9 @@ export interface ParamFlashCtx extends WriteGate {
   dryRun: boolean;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
+  // The stamps of the device's last download that wrote its parameters (ImageStamp), the record ETS
+  // keeps; absent where there is none.
+  stampRecord?: ImageStamp[];
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
 // because the com-object table it writes has to agree with the association table it writes.
@@ -790,7 +835,7 @@ export class SystemBProfile extends DeviceProfile {
     return {
       readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
-      structuralFlash: hasParamSegment && !!this.cfg && structuralFlashCaptured(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
+      structuralFlash: hasParamSegment && !!this.cfg && !structuralFirmwareOff(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
   }
 
@@ -964,7 +1009,7 @@ export class SystemBProfile extends DeviceProfile {
     // Busforge also wants the three tables LOADED and the application segment at this application's
     // size (its memory-control block, PID 27); a unit that is not, which no capture shows ETS on, gets
     // the full form, which rewrites every object. So do the two firmware stacks hardware-shown not to
-    // take the structural bracket this form is made of (STRUCTURAL_FLASH_CAPTURED above).
+    // take the structural bracket this form is made of (structuralFirmwareOff).
     if (proc.preferPartialIfLoaded && closesAtOnce(this.requireCfg("full download")) && !persistsOnLoadCompleted(this.requireCfg("full download"))) {
       const cfg = this.requireCfg("full download");
       const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
@@ -1025,6 +1070,7 @@ export class SystemBProfile extends DeviceProfile {
       }
     }
 
+    const fullStamps = stampCollector();
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
@@ -1034,8 +1080,9 @@ export class SystemBProfile extends DeviceProfile {
       diffBytes: imageBytes,
       backup: `${ctx.deviceId}-full-${stamp}`,
       backups,
+      stamps: fullStamps.stamps,
       write: async () => {
-        await runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) });
+        await runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: fullStamps.onRead });
       },
       // The firmware accepts any bytes it is handed (it validates nothing on LoadCompleted), so
       // this read-back is the ONLY thing standing between a wrong table and a device that silently
@@ -1094,6 +1141,7 @@ export class SystemBProfile extends DeviceProfile {
     const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory });
     const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
     const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
+    const partialStamps = stampCollector();
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
@@ -1108,7 +1156,8 @@ export class SystemBProfile extends DeviceProfile {
         { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
       ],
-      write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
+      stamps: partialStamps.stamps,
+      write: () => runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: partialStamps.onRead }),
       verify: async (confirmedOnly) => {
         ctx.onProgress?.("verify");
         const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
@@ -1207,8 +1256,17 @@ export class SystemBProfile extends DeviceProfile {
     const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
-    const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
+    // With the unit's stamps equal to the record, ETS's differential: the owned bytes that differ from the
+    // unit, region by region (differentialMask; the regions as the application declares them, else as the
+    // unit reports them now). Otherwise every owned byte. The record is the stamps of the last download
+    // that wrote the parameters, so when they match the unit holds what that download left and the unit's
+    // read stands for ETS's record of it.
     const loaded = await allLoaded(dev, [LSM]);
+    // An application not LOADED (an interrupted write) takes every owned byte, as ETS's differential is
+    // shown only onto a loaded one.
+    const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord)) : target.owned;
+    const parStamps = stampCollector();
+    const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length,
@@ -1216,10 +1274,11 @@ export class SystemBProfile extends DeviceProfile {
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
+      stamps: parStamps.stamps,
       write: () => runLoadPlan(
         dev,
-        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, image, target.owned, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
-        { onWrite: (d, t) => ctx.onProgress?.("write", d, t) },
+        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, image, written, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
+        { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: parStamps.onRead },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
       // target (minus Access="None" markers the device re-stamps), the rest against the read before
@@ -1388,6 +1447,7 @@ export class SystemBProfile extends DeviceProfile {
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
     const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
+    const structureStamps = stampCollector();
     return structural(runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length + comObj.length + addr.length + assoc.length,
@@ -1402,7 +1462,8 @@ export class SystemBProfile extends DeviceProfile {
         { file: `${prefix}-assoc.bin`, bytes: cur.assoc },
         { file: `${prefix}-addr.bin`, bytes: cur.addr },
       ],
-      write: () => runLoadPlan(dev, closed, { onWrite: (d, t) => ctx.onProgress?.("write", d, t) }),
+      stamps: structureStamps.stamps,
+      write: () => runLoadPlan(dev, closed, { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: structureStamps.onRead }),
       // Every byte of the parameter segment is checked as the parameter flash checks it, the three
       // tables and the security object whole, and the application and the three tables must be
       // LOADED again after the restart.
@@ -1461,11 +1522,12 @@ export class System7Profile extends DeviceProfile {
     const canAuthor = this.canAuthor();
     // The structural flash authors the com-object table from its segment's template, as the full
     // download does on both LSM styles, so it needs the segment the application names for it.
-    const canStructure = canAuthor && !!this.cfg && structuralFlashCaptured(this.cfg) && this.cfg.groupTables.comObjectSegment !== undefined && this.cfg.loadProcedures.style === "ProductProcedure";
+    const canStructure = canAuthor && !!this.cfg && !structuralFirmwareOff(this.cfg) && this.cfg.groupTables.comObjectSegment !== undefined && this.cfg.loadProcedures.style === "ProductProcedure";
     const refused = this.operationRefusals();
     return {
       readParams: true, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
-      fullDownload: this.fullDownloadOffered() && !refused.fullDownload, structuralFlash: canStructure && !refused.flashParams,
+      // The structural flash authors what the full download authors, so it is offered only where that can be built.
+      fullDownload: this.fullDownloadOffered() && !refused.fullDownload, structuralFlash: canStructure && !refused.flashParams && !refused.flashLinks && this.fullDownloadOffered() && !refused.fullDownload,
     };
   }
 
@@ -1730,7 +1792,7 @@ export class System7Profile extends DeviceProfile {
       read += r.image.length;
     }
     // The closing restart is held to what the parameter flash proves on these devices.
-    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg));
+    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances);
     const loaded = await allLoaded(dev, concerned, memMapped);
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {

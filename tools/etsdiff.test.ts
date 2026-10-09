@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, STRUCTURAL_FLASH_CAPTURED, planSystem1Download, MV0012_DEFAULT_LOAD, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase } from "./etsdiff.ts";
@@ -282,18 +282,19 @@ corpusDescribe("System B parameter flash against ETS's partial download", () => 
 corpusDescribe("structural flash against ETS's partial download", () => {
   const real = catalogueXml;
 
-  // The applications Busforge offers the structural flash: each one's ETS capture of such a download is
-  // tested in this file (this suite, and "structural flash of the revert" in each application's suite).
-  test("the applications offered the structural flash are exactly those tested against an ETS capture of one", () => {
-    expect([...STRUCTURAL_FLASH_CAPTURED].sort()).toEqual([
-      "M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
-      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471", "M-0048_A-9071-20-F258",
-    ].sort());
-    for (const id of STRUCTURAL_FLASH_CAPTURED) {
+  // The structural flash is the family's rule: offered on every application tested against an ETS capture of one
+  // (this suite, and "structural flash of the revert" in each application's suite), and off on the two firmware
+  // stacks shown not to take its bracket (GVS, thelsing/OpenKNX), whose own captures it is therefore not held to.
+  test("the structural flash follows the family rule: on every captured application, off on the GVS and OpenKNX firmware", () => {
+    const captured = ["M-0004_A-7072-21-99A7", "M-0083_A-00B6-32-9642", "M-0083_A-00B4-32-3919", "M-0081_A-FE01-11-75D9", "M-0008_A-10D7-11-2783",
+      "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0048_A-493B-21-B471", "M-0048_A-9071-20-F258"];
+    for (const id of captured) {
       const file = listCatalogue().find((f) => f.startsWith(id))!;
       expect([id, classify(parseAppConfig(catalogueXml(file))).capabilities().structuralFlash]).toEqual([id, true]);
     }
-  });
+    expect(classify(parseAppConfig(catalogueXml("M-0085_A-0072-30-69AA.xml.gz"))).capabilities().structuralFlash).toBe(false);
+    expect(classify(parseAppConfig(gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"))).capabilities().structuralFlash).toBe(false);
+  }, 30_000); // builds the OpenKNX application (3.4 s alone, 8.4 s in a loaded check)
 
   test("MDT BE-02001.02: ETS's bracket set, and Busforge writes exactly the bytes ETS changed, with ETS's values", () => {
     const xml = real("M-0083_A-00B6-32-9642.xml.gz");
@@ -313,7 +314,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     expect(unseen).toEqual([0x4001, 0x4002]);
     before.set(0x4001, 0x11).set(0x4002, 0x38);
     const current = new Map(images.map((w) => [w.address, Buffer.from(Array.from({ length: w.image.length }, (_, i) => before.get(w.address + i)!))]));
-    const { plan, lsms } = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current);
+    const { plan, lsms } = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances);
     const ours = new Map<number, number>();
     for (const st of plan) if (st.op === "writeMem") st.bytes.forEach((b, i) => ours.set(st.address + i, b));
     const changedByEts = [...ets].filter(([a, b]) => before.get(a) !== b);
@@ -677,7 +678,7 @@ function system7StructuralFlash(o: {
     if (b === undefined) throw new Error(`the unit's byte at ${(w.address + i).toString(16)} is not known`);
     return b;
   }))]));
-  return planAbsoluteStructuralFlash(o.cfg, images, o.proc, current);
+  return planAbsoluteStructuralFlash(o.cfg, images, o.proc, current, true, absoluteBuildInstances(o.cfg, o.params, instances));
 }
 // What a System 7 unit holds: every segment's template, its own individual address in the address
 // table, then the bytes of each download in order.
@@ -690,10 +691,12 @@ function unitMemory(cfg: ReturnType<typeof parseAppConfig>, ia: number, ...downl
   return m;
 }
 // The structural flash against the revert: ETS's steps (verify mode aside), every byte Busforge writes
-// with ETS's value, and every byte ETS changes on the unit written by Busforge. ETS also writes bytes
-// the unit already holds (every parameter-covered byte); Busforge writes what differs.
+// with ETS's value, and every byte ETS changes on the unit written by Busforge; against ETS's wire exactly
+// ETS's bytes.
 // `etsImage`: ETS's image from its log, where ETS reads the unit and leaves out on the wire what it
 // already holds (Meteodata 140 S); the steps are then compared without their writes.
+// Against ETS's wire the bytes are ETS's exactly; against ETS's logged image (a read-compare unit) every byte
+// written has ETS's value and every byte ETS changed is written.
 function expectRevertForm(plan: LoadPlan, file: string, ia: number, device: Map<number, number>, etsImage?: Map<number, number>) {
   const steps = (x: string[]) => (etsImage ? x.filter((s) => s !== "write") : x);
   expect(steps(planSteps(plan))).toEqual(steps(etsImage ? captureSteps(file, ia) : withoutVerifyMode(captureSteps(file, ia))));
@@ -703,6 +706,7 @@ function expectRevertForm(plan: LoadPlan, file: string, ia: number, device: Map<
   const changed = [...ets].filter(([a, b]) => device.get(a) !== b);
   expect(changed.length).toBeGreaterThan(0);
   expect(changed.filter(([a]) => !ours.has(a))).toEqual([]);
+  if (!etsImage) expect([file, [...ours.keys()].sort((x, y) => x - y)]).toEqual([file, [...ets.keys()].sort((x, y) => x - y)]);
 }
 
 // ETS 6 full download of the ABB US/U 4.2 (M-0002_A-A001-13-63C2, MV-0701, PreferPartialDownloadIfApplicationLoaded)
@@ -1916,8 +1920,8 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
 
   // ETS's parameter download is differential (PreferPartialDownloadIfApplicationLoaded; dali-ets6log-partial-params.txt:
   // "removed 3008 identical bytes"): of its 3009 owned bytes it writes the one that differs from its record of the unit,
-  // 0x530E = 0C (dali-ets-partial-params.log). Busforge's parameter flash writes every owned byte; all but that one
-  // carry the unit's value (docs/roadmap.md, the System B write set).
+  // 0x530E = 0C (dali-ets-partial-params.log). Busforge's parameter flash without a record writes every owned byte, all
+  // but that one with the unit's value; with ETS's record it writes ETS's byte ("the stamp record" below).
   test("parameter flash: the byte ETS changes, with its value, the others as the unit holds them, in ETS's bracket", () => {
     const { ours, plan } = parFlash(changed, held);
     const ets = relImage("dali-ets6log-partial-params.txt").get(4)!;
@@ -2056,7 +2060,8 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
 
   // ETS's parameter download is differential (PreferPartialDownloadIfApplicationLoaded; "removed 2593 identical bytes"):
   // it writes the bytes that differ from its record of the unit, here one telegram at the field's fifth byte. Busforge's
-  // parameter flash writes every owned byte; all but those carry the unit's value (docs/roadmap.md, the System B write set).
+  // parameter flash without a record writes every owned byte, all but those with the unit's value; with the record the bytes
+  // that differ from its read of the unit (the decision is tested in "the stamp record" below).
   for (const [file, from, to, written] of [
     ["mdt-router-ets6log-partial-name.txt", NAME.ets, NAME.to, "hc10" + "\0".repeat(22)],
     ["mdt-router-ets6log-partial-name-revert.txt", NAME.to, NAME.ets, "IP Interface mit IPRouting"],
@@ -2423,4 +2428,81 @@ corpusDescribe("MDT IP Interface Secure (M-0083_A-0138, System 1) against ETS", 
     expect(captureText(LOG)).toContain('<LdCtrlWriteProp ObjType="17" PropId="53" Count="0" Verify="true" />');
     expect(captureText(LOG)).toMatch(/WritePropertyExt\([\d.]+, 17\[0\]\/54, PDT=4, 0\.\.\.0\) failed: Schreiben von PropertyExtended\(17\*1\/54, 0, 1\) fehlgeschlagen: E_ADDRESS_VOID/);
   });
+});
+
+// ETS's record of a download (the PID 27 stamps it reads after the last LoadCompleted) and its check before
+// a parameter download (the stamps it reads first), from its own log. Busforge keeps the same record per
+// device (ImageStamp) and decides as ETS does (checkedStamps, relativeParWriteSet).
+const logStamps = (file: string) => {
+  const opening: ImageStamp[] = [], closing: ImageStamp[] = [];
+  let started = false;
+  for (const l of captureText(file).split(/\r?\n/)) {
+    if (/Executing: <LdCtrl(Unload|Load) /.test(l)) { started = true; closing.length = 0; }
+    const m = l.match(/ReadProperty\([\d.]+, (\d+)\/27, PDT=\d+, (\d+)\.\.\.(\d+)\): ([0-9A-F ]+)$/);
+    if (!m) continue;
+    const data = Buffer.from(m[4].replace(/ /g, ""), "hex");
+    const els = Array.from({ length: Number(m[3]) - Number(m[2]) + 1 }, (_, k) => ({ obj: Number(m[1]), element: Number(m[2]) + k, hex: data.subarray(8 * k, 8 * k + 8).toString("hex") }));
+    (started ? closing : opening).push(...els);
+  }
+  return { opening, closing };
+};
+// What Busforge's check finds, the unit answering what ETS read before the download.
+const stampCheck = (record: ImageStamp[], file: string) => {
+  const read = checkedStamps(record).map((r) => logStamps(file).opening.find((o) => o.obj === r.obj && o.element === r.element) ?? { ...r, hex: "unread" });
+  return { equal: read.every((x, i) => x.hex === checkedStamps(record)[i].hex), read };
+};
+corpusDescribe("the stamp record: ETS's differential parameter download, and its fallback", () => {
+  // [the download that wrote the parameters before, the parameter download], in capture order.
+  const cases: [string, string][] = [
+    ["openknx-ets6log-fulldownload.txt", "openknx-ets6log-partial-params.txt"],
+    ["openknx-ets6log-partial-params.txt", "openknx-ets6log-partial-revert.txt"],
+    ["dali-ets6log-fulldownload.txt", "dali-ets6log-partial-params.txt"],
+    ["dali-ets6log-partial-params.txt", "dali-ets6log-partial-revert.txt"],
+    ["mdt-router-ets6log-fulldownload.txt", "mdt-router-ets6log-partial-name.txt"],
+    ["mdt-router-ets6log-partial-name.txt", "mdt-router-ets6log-partial-name-revert.txt"],
+    ...["hmg6t", "jmg4t", "rmg8t"].flatMap((t): [string, string][] => [[`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-params.txt`], [`mix2-${t}-ets6log-partial-params.txt`, `mix2-${t}-ets6log-partial-revert.txt`]]),
+  ];
+  for (const [before, file] of cases) {
+    test(`${file}: the decision ETS's log names, from the record of ${before}`, () => {
+      const record = logStamps(before).closing;
+      expect(record.length).toBeGreaterThan(0);
+      const ets = captureText(file).includes("Differential Image Stamp does not match") ? "fallback" : etsLog(file).removed > 0 ? "differential" : "neither";
+      expect([file, stampCheck(record, file).equal ? "differential" : "fallback"]).toEqual([file, ets]);
+    });
+  }
+
+  test("Theben DALI-Gateway: with the record, the parameter flash and its revert write ETS's byte and no other", () => {
+    const xml = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz");
+    const cfg = parseAppConfig(xml);
+    const proc = parseLoadProcedures(xml);
+    const fx = JSON.parse(captureText("dali-gateway-unit-fulldownload.json")) as { ia: string; params: [string, string][]; instances: ModuleInstance[]; segments: Record<string, { at: number; hex: string }> };
+    const ref = "M-0048_A-9071-20-F258-O00EF_P-781_R-832";
+    const write = (values: Map<string, string>, held: Buffer, before: string, file: string) => {
+      const target = buildRelativeSegmentTarget(cfg, values, 4, { moduleInstances: fx.instances, ownIdleUnionDefaults: true })!;
+      const { image } = mergeRelativeTarget(held, target);
+      const mask = relativeParWriteSet(image, held, target.owned, declaredMcbWrites(proc, target.size, "par"), stampCheck(logStamps(before).closing, file));
+      return { image, bytes: new Map(ownedRuns(image, mask).flatMap((r) => [...r.bytes].map((b, i) => [0x5000 + r.offset + i, b] as [number, number]))) };
+    };
+    const held = Buffer.from(fx.segments[4].hex, "hex");
+    const par = write(new Map(fx.params).set(ref, "12"), held, "dali-ets6log-fulldownload.txt", "dali-ets6log-partial-params.txt");
+    expect([...par.bytes]).toEqual([...memoryImage(parseCapture(captureText("dali-ets-partial-params.log"), iaToNum(fx.ia)).writes)]);
+    const rev = write(new Map(fx.params), par.image, "dali-ets6log-partial-params.txt", "dali-ets6log-partial-revert.txt");
+    expect([...rev.bytes]).toEqual([...memoryImage(parseCapture(captureText("dali-ets-partial-revert.log"), iaToNum(fx.ia)).writes)].filter(([a]) => a >= 0x5000 && a < 0x5000 + held.length));
+  });
+
+  test("OpenKNX RaumController: with the record, the parameter flash writes ETS's one byte", () => {
+    const xml = gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8");
+    const cfg = parseAppConfig(xml);
+    const proc = parseLoadProcedures(xml);
+    const fx = JSON.parse(captureText("openknx-config.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
+    const full = classify(cfg).planFullDownload(cfg.mask, { ia: fx.ia, params: new Map(fx.params), links: fx.links, proc });
+    const held = full.segments.find((s) => s.lsm === 4)!.image;
+    const values = new Map(fx.params).set("M-00FA_A-A012-55-0000_UP-1000174_R-100017401", "1");
+    const target = buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
+    const { image } = mergeRelativeTarget(held, target);
+    const mask = relativeParWriteSet(image, held, target.owned, declaredMcbWrites(proc, target.size, "par"), stampCheck(logStamps("openknx-ets6log-fulldownload.txt").closing, "openknx-ets6log-partial-params.txt"));
+    const ours = ownedRuns(image, mask).flatMap((r) => [...r.bytes].map((b, i) => [0x54 + r.offset + i, b] as [number, number]));
+    expect(ours).toEqual([...memoryImage(parseCapture(captureText("openknx-ets-partial-params.log"), iaToNum(fx.ia)).writes)]);
+    expect(ours).toEqual([[0x2366, 0x20]]);
+  }, 30_000); // builds the OpenKNX application, as the full-download comparison above (3.4 s alone, 8.4 s in a loaded check)
 });

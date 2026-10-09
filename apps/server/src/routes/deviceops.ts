@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -67,7 +67,7 @@ function linkBaselineIncomplete(db: AppState["db"], projectId: string, deviceId:
 // and a replaced/deleted target must never inherit success from its predecessor.
 async function programSubmission(
   state: AppState, projectId: string, deviceId: string, programmingToken: string, dry: boolean,
-  run: () => Promise<FlashResult>, commit: CommitFn, adopt: () => void, onUnchanged?: () => void,
+  run: () => Promise<FlashResult>, commit: CommitFn, adopt: (result: FlashResult) => void, onUnchanged?: () => void,
 ): Promise<FlashResult> {
   const assertTarget = () => {
     if (getDeviceForFlash(state.db, projectId, deviceId)?.programmingToken !== programmingToken) {
@@ -78,7 +78,7 @@ async function programSubmission(
   const result = await run();
   assertTarget();
   // The commit is the job's last step: a restart that finds it recorded closes the task as done.
-  if (!dry && result.kind === "flashed" && result.verified) commit(result, adopt);
+  if (!dry && result.kind === "flashed" && result.verified) commit(result, () => adopt(result));
   // "unchanged" is a comparison with what the device holds: whatever it covers may be recorded as such.
   if (!dry && result.kind === "unchanged") onUnchanged?.();
   return result;
@@ -178,7 +178,8 @@ function structuralFlash(
         params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides,
         dryRun: dry, onProgress: progress, ...gate,
       });
-    }, commit, () => {
+    }, commit, (result) => {
+      setImageStamps(db, projectId, deviceId, result.kind === "flashed" ? result.stamps : undefined);
       resetParamBase(db, projectId, deviceId, params, unwrittenParamRefs(state, projectId, deviceId, params, modules));
       resetLinkBase(db, projectId, deviceId, resolved.flashedRefIds, submittedLinks);
       keepLinkBaseOnly(db, projectId, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
@@ -582,7 +583,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           ...knxIpOf(db, id, deviceId, dev.ia),
           dryRun: dryDl, onProgress: progress, ...gate,
         });
-      }, commit, () => {
+      }, commit, (result) => {
+        setImageStamps(db, id, deviceId, result.kind === "flashed" ? result.stamps : undefined);
         resetParamBase(db, id, deviceId, dlParams, unwrittenParamRefs(state, id, deviceId, dlParams, dlModules));
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
         keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
@@ -636,9 +638,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           connection: conn, secure,
           params: flashParams, baseParams: flashBase, moduleInstances: flashModules, dataDir: state.dataDir,
           ...knxIpOf(db, id, deviceId, dev.ia),
+          // Read when the job runs, so a download queued before it has left its record.
+          stampRecord: getImageStamps(db, id, deviceId),
           dryRun: dryParams, onProgress: progress, ...gate,
         });
-      }, commit, () => {
+      }, commit, (result) => {
+        setImageStamps(db, id, deviceId, result.kind === "flashed" ? result.stamps : undefined);
         resetParamBase(db, id, deviceId, flashParams, unwrittenParamRefs(state, id, deviceId, flashParams, flashModules));
         if (loadsSecurity) setSecurityBase(state, id, deviceId, flFingerprint);
         if (paramsEndNever) clearNeverProgrammed(db, id, deviceId);

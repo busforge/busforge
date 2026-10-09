@@ -350,6 +350,21 @@ group-address download the four bytes ETS wrote unread are taken as the segment'
 are ETS's on a unit with a 15-octet APDU, the only kind captured. `tools/etsdiff.test.ts` pins these
 writes against the captures; the hardware runs on the Meteodata and the ABB wrote the whole image.
 
+**How long a memory write is** (KNX-wide): ETS asks an IP interface for its maximum APDU before it
+connects (a `SEARCH_REQUEST_EXTENDED` asking for the Extended Device Information DIB; an MDT IP
+Interface/Router announces 210) and writes in chunks of the shorter of the device's (`PID_MAX_APDU_LENGTH`)
+and the interface's, less the write's own octets: 5 for `A_MemoryExtended_Write` (205 data bytes on that
+interface, the OpenKNX RaumController captures), 3 for `A_Memory_Write` (52 on the Theben DALI-Gateway's
+55); its log names which limited it ("restricted by ByInterface", "ByTargetDevice"). Busforge asks the
+same on the open tunnel, once per device, before the first load-state event of a download
+(`KnxIpTunnel.queryMaxApdu`, `writeChunks`). Where the interface announces nothing (a USB interface, an
+IP one that does not answer within a second, Busforge's own KNXnet/IP server, which does not answer the
+extended search), the path limit stays: 32 bytes extended, 12 classic. A frame whose TPDU is longer than
+16 octets goes as an extended frame (control field 1 `0x3C`), as ETS sends it (`0x30`, also through
+Busforge's KNXnet/IP server to its USB interface). A line coupler between interface and device that does
+not pass long frames is not modelled, by ETS or by Busforge. The query and the longer writes have run on
+no device.
+
 **Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): on a
 memory-mapped mask (MV-0700/0701) the bytes that differ from the unit, which ETS reads first
 (Theben Meteodata 140 S); on a property-mapped mask every byte a parameter's memory covers, changed or
@@ -418,14 +433,27 @@ plus and the MDT IP Interface/Router (largest gap bridged 30 bytes, smallest lef
 wire on the Jung 400021SE and the GVS AMMA; `tools/etsdiff.test.ts` pins Busforge's written bytes to
 ETS's for each. The tables are written whole, as ETS writes them.
 
-**The System B parameter flash still writes more than ETS.** It writes every owned byte, where ETS, on
-an application whose closing reads include the parameter segment's stamps (`LdCtrlLoadImageProp`, PID
-27), writes only the bytes that differ from its record of the unit while the stamps it reads before the
-download equal the ones it read after its last one (Theben DALI-Gateway: one byte of 3009; OpenKNX
-RaumController: one of 424; MDT IP Interface/Router), and every byte of its image where they do not
-(Theben MIX 2, whose firmware clears its download marker after the restart, so the stamps never match:
-"Differential Image Stamp does not match"). Every byte only Busforge writes holds the value the unit
-holds already.
+**The System B parameter flash keeps ETS's record and decides as ETS does.** A download that writes the
+parameters reads the stamps its procedure declares after the last LoadCompleted (`LdCtrlLoadImageProp`,
+PID 27); ETS keeps them as its record of that download, and so does Busforge, per device in the server's
+database (`ImageStamp`, `devices.image_stamps`), replaced by every verified full download, parameter
+flash and structural flash, left alone by a group-address flash. Before a parameter download ETS reads
+the stamps again, of every region it sends differentially (the application's objects, CRC-control byte
+0), and where each equals its record it writes only the owned bytes that differ ("Differential
+Download: removed N identical bytes"; Theben DALI-Gateway: one byte of 3009, OpenKNX RaumController: one
+of 424, MDT IP Interface/Router: the changed characters); where one does not, or no record exists, every
+owned byte ("Differential Image Stamp does not match, falling back"; Theben MIX 2, whose firmware clears
+its download marker after the restart, so its stamps never match). A region with another control byte is
+written whole and its stamp does not count (the DALI-Gateway's com-object table, control 1, changed by
+the group-address download between). `checkedStamps` and `relativeParWriteSet` decide so;
+`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes. The record
+over a restart of the server, and the stamp reads on a device, have run on no device. The System 1
+download reads no stamps (ETS's capture of it shows none), so a verified one leaves the device without a
+record.
+
+On System 7 the Gira M-0008 also keeps a record, and with it ETS writes, besides the changed byte and
+the segment without a stamp (`SegFlags="0"`), three unchanged bytes before it (`0x435C-0x435E`); no
+capture shows why, so Busforge keeps no record there and writes the whole image.
 
 ## ETS-captured System 7 downloads
 
@@ -982,19 +1010,21 @@ from the device, then `LoadCompleted` 3, the closing steps and the restart
 (`planAbsoluteStructuralFlash`). On System B it is the reallocating bracket below
 (`planRelativeStructuralFlash`), closed like every System B download ([R10, R11](#the-rules-by-level)).
 
-It is **offered** only on the applications in `STRUCTURAL_FLASH_CAPTURED` (`profiles.ts`), each
-tested against an ETS capture of such a download (`tools/etsdiff.test.ts`): the Jung 400021SE and the
-MDT BE-02001.02, whose captures reshape the com-object table, and the Auro presence detector
-`M-0081_A-FE01`, the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S,
-the Theben MIX 2, the Theben DALI-Gateway KNX plus and the MDT BE-06001.02, whose captures revert a
-parameter change and a link change in one download;
-that revert changes link bits, not the com-object set. The list is evidence, not ETS behaviour: an
-application joins it with its capture test. The thelsing/OpenKNX and GVS stacks stay off,
-because the bracket rests on firmware behaviour they are shown not to share (keeping a segment's
-bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX, the
-flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`). Every other
-application keeps the full download for such a change (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`). How
-far each offered application is shown on the device is in [status.md](status.md).
+It is the **family's rule**, offered on every application whose full download Busforge can build (it
+authors what the full download authors): ETS runs this bracket for a change of parameters and links on
+both families, tested against its captures in `tools/etsdiff.test.ts` (the Jung 400021SE and the MDT
+BE-02001.02, whose captures reshape the com-object table; the Auro presence detector `M-0081_A-FE01`,
+the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S, the Theben MIX 2,
+the Theben DALI-Gateway KNX plus and the MDT BE-06001.02, whose captures revert a parameter change and a
+link change in one download; on the property-mapped System 7 units the bytes written equal ETS's revert
+exactly, on the Meteodata every byte has ETS's value and every byte ETS changed is written). The
+thelsing/OpenKNX and GVS stacks stay off (`structuralFirmwareOff`, keyed on the firmware's
+manufacturer), because the bracket rests on firmware behaviour they are shown not to share (keeping a
+segment's bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX,
+the flash commit a persist-at-LoadCompleted device makes for every `LoadCompleted`); there a change of
+the com-object set takes the full download (`COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`). Of the parameter
+segments the structural flash writes what the parameter flash writes. How far each offered application
+is shown on the device is in [status.md](status.md).
 
 ```
 System B (one bracket)                      System 7 (one bracket per LSM)

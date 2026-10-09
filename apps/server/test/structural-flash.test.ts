@@ -105,11 +105,11 @@ corpusDescribe("the structural flash against real applications", () => {
       expect(kept).toBe(0);
     });
 
-    test("an application without a capture of it is refused before the bus", async () => {
-      const other = parseAppConfig(real("M-0162_A-0004-11-F245.xml.gz")); // not in profiles.ts STRUCTURAL_FLASH_CAPTURED
+    test("a firmware stack shown not to take the bracket is refused before the bus", async () => {
+      const other = parseAppConfig(real("M-0085_A-0072-30-69AA.xml.gz")); // GVS: persists at LoadCompleted (profiles.ts structuralFirmwareOff)
       expect(classify(other).capabilities().structuralFlash).toBe(false);
       const dev = new MockDevice();
-      const err = await classify(other).flashStructure(asDev(dev), "MV-07B0", { ...ctx(changed), appXml: real("M-0162_A-0004-11-F245.xml.gz") }).catch((e: unknown) => e);
+      const err = await classify(other).flashStructure(asDev(dev), "MV-07B0", { ...ctx(changed), appXml: real("M-0085_A-0072-30-69AA.xml.gz") }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(Error);
       expect(dev.writes).toEqual([]);
     });

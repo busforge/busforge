@@ -68,6 +68,10 @@ export class AutoIpTunnel implements KnxTransport {
     t.onClosed = this.onClosed;
   }
 
+  queryMaxApdu(): Promise<number | null> {
+    return this.inner?.queryMaxApdu ? this.inner.queryMaxApdu() : Promise.resolve(null);
+  }
+
   sendCemi(cemi: Buffer): Promise<void> {
     if (!this.inner) throw new Error("AutoIpTunnel.sendCemi called before connect()");
     return this.inner.sendCemi(cemi);

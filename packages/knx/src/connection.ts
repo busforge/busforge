@@ -2,6 +2,7 @@ import dgram from "node:dgram";
 import net from "node:net";
 import { SVC, knxFrame, hpai, hpaiTcp, KNXPORT, CEMI, KnxIpStreamParser } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
+import { extendedDeviceMaxApdu } from "./discover.ts";
 import { KnxError } from "./errors.ts";
 
 // 3/8/2 §5.4: a tunnelling client sends a CONNECTIONSTATE_REQUEST every 60 s and expects a
@@ -86,6 +87,8 @@ export class KnxIpTunnel implements KnxTransport {
   private createTcpSocket: () => TcpSocket = realTcpSocket;
   channel = 0;
   assignedIa = 0;
+  // How long queryMaxApdu waits for its answer; an instance field so a test can shorten it.
+  private searchTimeoutMs = 1000;
   private txSeq = 0;
   // Counts connects: a heartbeat loop of an earlier channel stops once a later connect began.
   private generation = 0;
@@ -335,6 +338,20 @@ export class KnxIpTunnel implements KnxTransport {
   // and fully user-actionable, so it gets a coded error like the reject/ack-timeout paths. `reject`
   // lets a hard socket error (a Linux ECONNREFUSED) fail the connect at once instead of waiting the
   // full timeout out into a featureless TUNNEL_CONNECT_TIMEOUT.
+  // The interface's maximum APDU, asked as ETS 6 asks it: a SEARCH_REQUEST_EXTENDED on this connection's own
+  // endpoint (the TCP stream, or the tunnel's UDP socket with a NAT-mode HPAI), its search-request parameter
+  // asking for the DIBs 01 02 08 06 (ETS's request over TCP: `0610020b0014 0802000000000000 060401020806`),
+  // and from the answer the Extended Device Information DIB (an MDT IP Interface/Router announces 210). Null
+  // where no answer comes within `searchTimeoutMs` or it carries no such DIB.
+  async queryMaxApdu(): Promise<number | null> {
+    if (this.closed) return null;
+    const answer = this.once((m) => m.length >= 6 && m.readUInt16BE(2) === SVC.SEARCH_RES_EXT, this.searchTimeoutMs, "search");
+    const endpoint = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
+    try { await this.send(knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([endpoint, Buffer.from([0x06, 0x04, 0x01, 0x02, 0x08, 0x06])]))); }
+    catch (e) { answer.catch(() => {}); this.connectResWaiter = null; throw e; }
+    try { return extendedDeviceMaxApdu((await answer).subarray(6)); } catch { return null; }
+  }
+
   private once(match: (m: Buffer) => boolean, ms: number, what: string) {
     return new Promise<Buffer>((resolve, reject) => {
       const timer = setTimeout(() => { this.connectResWaiter = null; reject(new KnxError("TUNNEL_CONNECT_TIMEOUT", `${what} timeout`)); }, ms);

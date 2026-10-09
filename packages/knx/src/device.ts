@@ -136,6 +136,20 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
   });
 }
 
+// Data bytes per memory write in a plain session, as ETS 6 sizes them: the shorter of the device's and the
+// interface's maximum APDU ("NegotiateMaxApduLength -> 210, restricted by ByInterface" on an MDT IP
+// Interface/Router announcing 210; "-> 55, restricted by ByTargetDevice" on a Theben MIX 2) less the
+// write's own octets, 5 for A_MemoryExtended_Write (205 data bytes on that interface, the OpenKNX
+// captures), 3 for A_Memory_Write (52 on the Theben DALI-Gateway's 55), the latter capped at its 6-bit
+// count. Where the interface announces nothing (a USB interface, or an IP one that does not answer the
+// extended search), the path limit stays: 32 extended (EXT_WRITE_CHUNK, the knob above caps only that
+// case), 12 classic.
+export function writeChunks(deviceMax: number | null, interfaceMax: number | null): { classic: number; ext: number } {
+  if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite };
+  const n = Math.min(deviceMax, interfaceMax);
+  return { classic: Math.max(1, Math.min(63, n - 3)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)) };
+}
+
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
 // which then takes an erase code saying how much to throw away.
 export const RESTART_MASTER = 0x01;
@@ -200,6 +214,13 @@ async function waitForSyncGap(dst: number): Promise<void> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 }
 
+// How long a KnxDevice waits for the device, in milliseconds: its T_ACK of a request, the answer to
+// it, the pause before repeating an unanswered request, the answer to a Sync request and the
+// answer to a confirmed restart. Code that talks to a device on the bus takes these; a test whose
+// scripted transport answers at once or never passes shorter ones, so a silence costs it no time.
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000 };
+
 export class KnxDevice {
   private dst: number;
   private seq = 0;
@@ -216,8 +237,11 @@ export class KnxDevice {
   private rawInbox: Buffer[] | null = null;
   private rawNotify: (() => void) | null = null;
 
-  constructor(private tun: KnxTransport, ia: string, private secure?: SecureSession) {
+  private readonly timeouts: DeviceTimeouts;
+
+  constructor(private tun: KnxTransport, ia: string, private secure?: SecureSession, timeouts: Partial<DeviceTimeouts> = {}) {
     this.dst = iaToNum(ia);
+    this.timeouts = { ...DEVICE_TIMEOUTS, ...timeouts };
     tun.onCemi = (src, dst, tpdu, isGroup) => this.onCemi(src, dst, tpdu, isGroup);
   }
   private get me() { return this.tun.assignedIa; }
@@ -288,9 +312,9 @@ export class KnxDevice {
   }
 
   // Next non-control (data) frame during Sync; skips the device's T_ACK.
-  private rawNext(ms = 3000): Promise<Buffer> {
+  private rawNext(): Promise<Buffer> {
     return new Promise((res, rej) => {
-      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, ms);
+      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, this.timeouts.syncResponseMs);
       const pump = () => {
         while (this.rawInbox?.length) {
           const f = this.rawInbox.shift()!;
@@ -329,7 +353,7 @@ export class KnxDevice {
     for (let i = 0; i < tries; i++) {
       this.unauthentic = 0;
       rejectedAfterAck = false;
-      if (i > 0) await new Promise((r) => setTimeout(r, 200));
+      if (i > 0) await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
       // The waiters are registered before the send, the device's timeouts start after it: over UDP
       // the send resolves on the tunnelling ACK, and a late ACK must not eat the device's time.
       let ackTimeout = (): void => undefined;
@@ -360,8 +384,8 @@ export class KnxDevice {
         if (i < tries - 1) continue;
         throw e;
       }
-      setTimeout(ackTimeout, 1500);
-      setTimeout(respTimeout, 2000);
+      setTimeout(ackTimeout, this.timeouts.ackMs);
+      setTimeout(respTimeout, this.timeouts.responseMs);
       const acked = await ackP;
       if (!acked && !closedByDevice) continue;
       if (acked && !expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
@@ -496,6 +520,14 @@ export class KnxDevice {
   // acknowledges it on the transport layer and never answers, and ETS writes it with A_Memory_Write.
   private extendedMemory: boolean | undefined;
   setExtendedMemoryServices(on: boolean): void { this.extendedMemory = on; }
+  // The interface's maximum APDU as it announces it (KnxTransport.queryMaxApdu), asked once per device,
+  // before the first load-state event of a plan that writes (runLoadPlan) or else at the first memory
+  // write; null where it announces none or cannot be asked. With the device's it sizes the memory writes
+  // (writeChunks).
+  private interfaceApdu: Promise<number | null> | undefined;
+  interfaceMaxApdu(): Promise<number | null> {
+    return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
+  }
   // Whether memWrite uses the confirmed extended write on this device. The load runner asks before
   // its first load-state event, where ETS reads the property too (right after the descriptor).
   async writesConfirmed(): Promise<boolean> {
@@ -739,12 +771,13 @@ export class KnxDevice {
     // mid-bracket (see memWriteExtended); `verify` and `echo` apply to the classic write only.
     if (await this.writesConfirmed()) {
       const maxApdu = (await this.maxApduLength())!;
-      const chunk = Math.min(transferChunks(maxApdu, this.secure !== undefined).extWrite, opts.chunk ?? Infinity);
+      const path = this.secure !== undefined ? transferChunks(maxApdu, true).extWrite : writeChunks(maxApdu, await this.interfaceMaxApdu()).ext;
+      const chunk = Math.min(path, opts.chunk ?? Infinity);
       return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }
     assertAddressable(addr, data.length, "memory write");
     if (this.secure !== undefined) transferChunks(null, true); // refuses: no secured write fits a standard frame
-    const chunk = opts.chunk ?? 12;
+    const chunk = opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).classic;
     const total = Math.ceil(data.length / chunk);
     let done = 0;
     for (let pos = 0; pos < data.length; ) {
@@ -884,7 +917,7 @@ export class KnxDevice {
       // restart and kept running would discard as a repetition and so look rebooted.
       this.seq = (this.seq + 1) & 0x0f;
     }
-    const timer = setTimeout(() => take(null), 2000);
+    const timer = setTimeout(() => take(null), this.timeouts.restartAnswerMs);
     const r = await answer;
     clearTimeout(timer);
     if (r === null) { this.respResolve = null; return false; }

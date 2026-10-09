@@ -49,7 +49,8 @@ corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () 
   for (const expected of ["LdCtrlAbsSegment", "LdCtrlRelSegment", "LdCtrlLoad", "LdCtrlLoadCompleted", "LdCtrlLoadImageProp", "LdCtrlWriteProp", "LdCtrlCompareProp", "LdCtrlRestart"]) {
     expect(allVerbs.has(expected)).toBe(true);
   }
-});
+  // Decompresses and parses every corpus catalogue: 1.2 s measured alone, slower by the same factor as its siblings above under a full check.
+}, 30_000);
 
 corpusTest("ProductProcedure is a single self-contained block (M-0081, the proven device)", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0081_A-FE01-11-75D9.xml.gz"));
@@ -177,7 +178,8 @@ corpusTest("every real catalogue application's closing steps can be executed; on
       expect([f, writes.length]).toEqual([f, f.startsWith(GVS) ? 1 : 0]);
     }
   }
-});
+  // Decompresses and parses every corpus catalogue: 0.9 s measured alone, slower by the same factor as its siblings above under a full check.
+}, 30_000);
 
 // ---- par-download step policy ----
 // Every par-applicable step must carry an explicit disposition; anything unmodeled blocks
@@ -275,7 +277,8 @@ corpusTest("par policy over the whole real catalogue: every step is dispositione
     // no step may fall through without a disposition: blocked+skipped+checks+executed
     // is total by construction; this pins that the corpus stays fully assessed.
   }
-});
+  // Decompresses every corpus catalogue and parses it twice: 5.5 s measured in a full check, 2.4 s alone.
+}, 30_000);
 
 corpusTest("the declared MCB entries of a System B full download, as ETS sends them", () => {
   // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the

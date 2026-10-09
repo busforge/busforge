@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { ModuleInstance } from "@busforge/product";
+import type { ModuleInstance, ImageStamp } from "@busforge/product";
 import type { CatalogProduct, DeviceKnxIp } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 
@@ -143,7 +143,7 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, security_base = NULL WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, security_base = NULL, image_stamps = NULL WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
@@ -175,6 +175,17 @@ export function getDeviceForFlash(db: Database, projectId: string, deviceId: str
 // application, parameters, com-object and group tables); a surgical flash or a read-back does not.
 export function clearNeverProgrammed(db: Database, projectId: string, deviceId: string): void {
   db.prepare("UPDATE devices SET never_programmed = 0 WHERE project_id = ? AND instance_id = ?").run(projectId, deviceId);
+}
+
+// The stamps of the device's last verified download that wrote its parameters (ImageStamp), or none.
+export function getImageStamps(db: Database, projectId: string, deviceId: string): ImageStamp[] | undefined {
+  const r = db.prepare("SELECT image_stamps AS s FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId) as { s: string | null } | null;
+  return r?.s ? (JSON.parse(r.s) as ImageStamp[]) : undefined;
+}
+// Every verified download that writes the parameters replaces the record with its own stamps; one that
+// returned none leaves no record.
+export function setImageStamps(db: Database, projectId: string, deviceId: string, stamps: ImageStamp[] | undefined): void {
+  db.prepare("UPDATE devices SET image_stamps = ? WHERE project_id = ? AND instance_id = ?").run(stamps?.length ? JSON.stringify(stamps) : null, projectId, deviceId);
 }
 
 export function getSourceFile(db: Database, projectId: string): string | null {

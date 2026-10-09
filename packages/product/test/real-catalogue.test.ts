@@ -71,7 +71,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         for (const t of app.types.values()) expect(CONFIG_BASES.has(t.base)).toBe(true);
         const model = parseApplication(xml);
         for (const t of model.types.values()) expect(IMAGE_BASES.has(t.base)).toBe(true);
-      });
+      }, 30_000); // the 26.9 MB Jung parsed twice: 3.5 s alone at load 25, several times that while the check runs every workspace at once
 
       test("every UI-exposed param is image-placeable (config/image projections stay in lock-step)", () => {
         // Stage-3 coverage lock (docs/ets-coverage.md). The config view (what the UI
@@ -95,7 +95,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         expect(uiRefs.size).toBeGreaterThan(0); // every real device exposes params; never pass vacuously
         const model = toAppModel(app, { instances });
         expect(unmappedParamRefs(model, uiRefs)).toEqual([]);
-      });
+      }, 30_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
 
       test("the parameter image codec round-trips on the real model (build -> decode is its own inverse)", () => {
         // Round-trip lock (docs/ets-coverage.md stage 3). The flash-verify path builds an
@@ -158,7 +158,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         }
 
         expect(roundTripped).toBeGreaterThan(0); // never vacuous: every real device has placeable params
-      });
+      }, 30_000); // the Jung: 1.5 s alone at load 25, several times that while the check runs every workspace at once
 
       test("every linkable object of the default configuration has a place in the view", () => {
         // The view is what links are resolved against: an object it leaves out loses its links
@@ -182,7 +182,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         }
         if (!app.hasModules) for (const r of unconditional) expect(shownRefs.has(r)).toBe(true);
         if (name.startsWith("M-0048_A-140C")) expect(unconditional.length).toBeGreaterThanOrEqual(7); // the Meteodata's channel-level objects 0-4, 6, 15
-      });
+      }, 30_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
 
       test("the image projection drops module-def and union entries", () => {
         const app = parseAppConfig(xml);
@@ -194,7 +194,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
           expect(src?.moduleDefId).toBeFalsy();
         }
         for (const t of model.types.values()) expect(app.types.get(t.id)?.moduleDefId).toBeFalsy();
-      });
+      }, 30_000); // the Jung parsed twice: 2.8 s alone at load 25, several times that while the check runs every workspace at once
     });
   }
 });
