@@ -16,9 +16,14 @@ depends on is hardware-proven.
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
 - **The stamp record on System 7.** With its record (PID 27 stamps) ETS's parameter download of the
-  Gira M-0008 writes the changed byte and three unchanged ones before it; the rule behind those three is
-  not shown, so Busforge keeps no record on System 7 and writes the whole image there
+  Gira M-0008 writes a changed byte alone (a byte in the middle of `AS-444E`), and the unstamped segment
+  `AS-454E` whole; but a change of `0x435F` brings the three unchanged bytes before it along, every time.
+  The rule behind those three is not shown (next capture: a change of `0x435D`/`0x435E` or of a bit in
+  `0x435C`), so Busforge keeps no record on System 7 and writes the whole image there
   ([load-procedures.md](load-procedures.md#the-rules-by-level)). The unit ends the same.
+- **The System B partial form of the full download under the stamp record.** It writes the owned bytes
+  that differ from the unit's read, without a stamp check; every ETS capture of the partial form ran with
+  matching stamps, so what ETS writes there without a record is not shown. The unit ends the same.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
   field where the application declares `TextParameterZeroTerminate` (the GVS AMMA), and text on
   System 7 applications (the Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until

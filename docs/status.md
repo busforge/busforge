@@ -257,7 +257,9 @@ What each row does not show:
   ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)). ETS reads its image and
   writes only the bytes that differ; so does Busforge, its writes equal to ETS's in the three captured
   downloads (`tools/etsdiff.test.ts`; four bytes of the group-address download, which ETS wrote without
-  reading, taken as the segment's `<Data>`); the hardware runs wrote the whole image. Its full
+  reading, taken as the segment's `<Data>`). The parameter flash ran so on the unit: each planned write
+  read first, the two differing bytes written, `verified`, the wire equal to the plan and to ETS's
+  parameter download; the full download and group-address flash runs wrote the whole image. Its full
   download and group-address flash equal ETS's logged images byte for byte, its parameter flash the
   two bytes ETS wrote (`tools/etsdiff.test.ts`). All three ran on the unit through a logging proxy,
   each `verified`, ETS's load-control sequence exact on the wire and every byte ETS wrote written with
@@ -383,10 +385,11 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
-- **Memory writes sized by the interface's maximum APDU have run on no device.** Busforge asks an IP
-  interface for it before each device session, as ETS does, and writes up to the shorter of the
-  device's and the interface's (205 data bytes behind an interface announcing 210); the hardware runs
-  wrote at most 32-byte extended and 12-byte classic chunks.
+- **Memory writes longer than 32 bytes extended or 12 classic have run on no device.** Busforge asks an
+  IP interface for its maximum APDU before writing, as ETS does, and writes up to the shorter of the
+  device's and the interface's (205 data bytes behind an interface announcing 210). The question and
+  the answer (210) ran on an MDT IP Interface/Router ahead of a Meteodata 140 S parameter flash; that
+  unit declares no maximum APDU, so its writes stayed classic and short.
 - **The stamp record has run on no device.** The System B parameter flash keeps ETS's record of the
   last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
   `tools/etsdiff.test.ts` against every captured pair); reading the stamps before the flash and the
