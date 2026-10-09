@@ -382,14 +382,25 @@ plus and the MDT IP Interface/Router (largest gap bridged 30 bytes, smallest lef
 wire on the Jung 400021SE and the GVS AMMA; `tools/etsdiff.test.ts` pins Busforge's written bytes to
 ETS's for each. The tables are written whole, as ETS writes them.
 
-**The System B parameter flash still writes more than ETS.** It writes every owned byte, where ETS, on
-an application whose closing reads include the parameter segment's stamps (`LdCtrlLoadImageProp`, PID
-27), writes only the bytes that differ from its record of the unit while the stamps it reads before the
-download equal the ones it read after its last one (Theben DALI-Gateway: one byte of 3009; OpenKNX
-RaumController: one of 424; MDT IP Interface/Router), and every byte of its image where they do not
-(Theben MIX 2, whose firmware clears its download marker after the restart, so the stamps never match:
-"Differential Image Stamp does not match"). Every byte only Busforge writes holds the value the unit
-holds already.
+**The System B parameter flash keeps ETS's record and decides as ETS does.** A download that writes the
+parameters reads the stamps its procedure declares after the last LoadCompleted (`LdCtrlLoadImageProp`,
+PID 27); ETS keeps them as its record of that download, and so does Busforge, per device in the server's
+database (`ImageStamp`, `devices.image_stamps`), replaced by every verified full download, parameter
+flash and structural flash, left alone by a group-address flash. Before a parameter download ETS reads
+the stamps again, of every region it sends differentially (the application's objects, CRC-control byte
+0), and where each equals its record it writes only the owned bytes that differ ("Differential
+Download: removed N identical bytes"; Theben DALI-Gateway: one byte of 3009, OpenKNX RaumController: one
+of 424, MDT IP Interface/Router: the changed characters); where one does not, or no record exists, every
+owned byte ("Differential Image Stamp does not match, falling back"; Theben MIX 2, whose firmware clears
+its download marker after the restart, so its stamps never match). A region with another control byte is
+written whole and its stamp does not count (the DALI-Gateway's com-object table, control 1, changed by
+the group-address download between). `checkedStamps` and `relativeParWriteSet` decide so;
+`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes. The record
+over a restart of the server, and the stamp reads on a device, have run on no device.
+
+On System 7 the Gira M-0008 also keeps a record, and with it ETS writes, besides the changed byte and
+the segment without a stamp (`SegFlags="0"`), three unchanged bytes before it (`0x435C-0x435E`); no
+capture shows why, so Busforge keeps no record there and writes the whole image.
 
 ## ETS-captured System 7 downloads
 

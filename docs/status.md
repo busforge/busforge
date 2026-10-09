@@ -137,8 +137,8 @@ What each row does not show:
   equal to ETS's, and the read after each restart equal to the reference (after the added link, equal
   to the unit after ETS's group-address download). Its full download writes exactly the bytes of ETS's
   full download (`tools/etsdiff.test.ts`); that write set has not run on the device ([Known
-  unproven](#known-unproven)). Where Busforge still differs from ETS: the parameter flash writes
-  every owned byte, where ETS writes only the changed one; the
+  unproven](#known-unproven)). Its parameter flash, with the stamp record ETS keeps, writes ETS's one
+  byte (`tools/etsdiff.test.ts`). Where Busforge still differs from ETS: the
   device gets a settle and a reconnect before the restart, where ETS restarts at once. In this
   firmware (thelsing/knx with OpenKNX Common) a surgical flash and a full download take the same path,
   and the flash reads back only after the restart, because the firmware returns the old flash
@@ -168,8 +168,10 @@ What each row does not show:
   proves nothing about the device on a bus.
 - **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
-  parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads (it
-  sends every owned byte, ETS only the differing ones; `tools/etsdiff.test.ts`). On a unit, under a
+  parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads
+  (`tools/etsdiff.test.ts`); with the stamp record it writes the bytes that differ from its read of the
+  unit, ETS those that differ from its record, which here also differ where the unit reads a field back
+  other than written (the web interface password). On a unit, under a
   secured session with the project's tool key, through a logging proxy: a parameter flash changing the
   device name was `verified`, its web interface password field (20 bytes, read back as `FF` after any
   write) accepted on the write confirmation alone and named in the result (`confirmedOnly`); a flash
@@ -373,6 +375,10 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **The stamp record has run on no device.** The System B parameter flash keeps ETS's record of the
+  last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
+  `tools/etsdiff.test.ts` against every captured pair); reading the stamps before the flash and the
+  record across a server restart have not run.
 - **The System B full download's write set has run on no device.** It writes exactly the bytes ETS's
   full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); every
   hardware run of a System B full download (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway,
