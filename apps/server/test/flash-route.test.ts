@@ -443,7 +443,7 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     } finally { downloadImpl = realDownload; }
   });
 
-  test("an interface whose family is refused anyway (MV-0012) keeps FULL_DOWNLOAD_UNSUPPORTED", async () => {
+  test("an interface whose family refuses every write anyway (MV-0012) keeps its family's SYSTEM1_LOAD_UNCAPTURED", async () => {
     const a0138 = catalogueXml("M-0083_A-0138-21-F18E-O0072.xml.gz");
     expect(a0138).toContain('MaxTunnelingUserEntries="4"');
     const state = freshState();
@@ -452,7 +452,7 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     try {
       const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download`))!;
       expect(res.status).toBe(400);
-      expect(((await res.json()) as any).error.code).toBe("FULL_DOWNLOAD_UNSUPPORTED");
+      expect(((await res.json()) as any).error.code).toBe("SYSTEM1_LOAD_UNCAPTURED");
     } finally { downloadImpl = realDownload; }
   });
 

@@ -110,14 +110,14 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true });
   });
 
-  test("System 1 (MV-0012 / BCU1) device: recognised but unsupported, every aspect false", () => {
-    // MV-0012 carries an AbsoluteSegment and used to be misrouted into the System 7 path,
-    // silently decoding its group tables in the wrong format. It must resolve to unsupported.
+  test("System 1 (MV-0012 / BCU1) device: its own profile, read only", () => {
+    // MV-0012 carries an AbsoluteSegment and must not be routed into the System 7 path, whose group
+    // tables have another format. It resolves to the System 1 profile, which reads and writes nothing.
     const cfg = realApp("M-0083_A-0138-21-F18E-O0072.xml.gz"); // mask MV-0012
     expect(cfg.mask).toBe("MV-0012");
     const profile = classify(cfg);
-    expect(profile.constructor.name).toBe("UnsupportedProfile");
-    expect(profile.capabilities()).toEqual({ readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
+    expect(profile.constructor.name).toBe("System1Profile");
+    expect(profile.capabilities()).toEqual({ readParams: true, readLinks: true, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
   });
 });
 
@@ -1038,19 +1038,18 @@ describe("device configuration", () => {
     }
   }, 20_000); // parses the 26.9 MB Jung application twice (config view, flash job): about 0.85 s alone, several seconds while the check runs every workspace at once
 
-  corpusTest("flash-ga on a recognised-but-unimplemented family refuses with GA_FLASH_UNSUPPORTED", async () => {
-    // Real M-0083 A-0138 app: mask MV-0012 (System 1 / BCU1) -> UnsupportedProfile, flashLinks
-    // false. The write guard must refuse with its OWN code (not the read-side
-    // GROUP_TABLE_UNREADABLE), so the message can say "recognised family, GA programming not
-    // implemented" instead of the old, now-false "likely an absolute-segment device".
+  // The write guard refuses with a write code of its own (not the read-side GROUP_TABLE_UNREADABLE): the
+  // family's where it gives one (System 1, MV-0012), GA_FLASH_UNSUPPORTED for a family recognised but not
+  // implemented (the same application relabelled to System 2, MV-0020).
+  for (const [mask, want] of [["MV-0012", "SYSTEM1_GROUP_TABLES_UNCAPTURED"], ["MV-0020", "GA_FLASH_UNSUPPORTED"]]) corpusTest(`flash-ga on ${mask} refuses with ${want}`, async () => {
     const state = freshState();
     const { projectId, deviceId } = await importConfig(state);
-    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-0138-21-F18E-O0072.xml.gz"), "M-TEST_A-1"]);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [realAppXml("M-0083_A-0138-21-F18E-O0072.xml.gz").replace('MaskVersion="MV-0012"', `MaskVersion="${mask}"`), "M-TEST_A-1"]);
     const conn = (await (await handleApi(req("/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }) }), state))!.json()) as any;
     await handleApi(req(`/api/projects/${projectId}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga`, { method: "POST" }), state))!;
     expect(res.status).toBe(400);
-    expect(((await res.json()) as any).error?.code).toBe("GA_FLASH_UNSUPPORTED");
+    expect(((await res.json()) as any).error?.code).toBe(want);
   });
 
   test("importGaps lists devices whose application program is absent and counts unresolved links", () => {

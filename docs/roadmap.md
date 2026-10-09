@@ -46,8 +46,13 @@ depends on is hardware-proven.
   procedures is executed; a procedure with image-property stamps the engine cannot compute is
   refused (`LOAD_STEP_UNSUPPORTED`).
 - **Property-based loading** for devices that expose an object model instead of a memory image,
-  and the fixed-EEPROM models of **System 1 / System 2**. Both are recognised and refused today; each
-  is a generic, mask-keyed capability, not per-device code.
+  and the fixed-EEPROM model of **System 2**. Both are recognised and refused today; each is a
+  generic, mask-keyed capability, not per-device code.
+- **Writing System 1 devices.** Read-back works; the parameter, group-address and full download are
+  refused until ETS captures of the MDT IP Interface Secure show what ETS writes besides the mask's
+  load procedure: the bytes its `<Mask>` leaves out (its IP settings and name) and any properties.
+  The unit is an IP interface whose restart drops the tunnels it serves, the capture's own included,
+  so it is captured over another access path. The group tables with entries are not decoded.
 - **Time a large MV-0705 download against the stop grace period.** The 30-minute
   `stop_grace_period` ([deployment.md](deployment.md)) has been measured only against small MV-0705
   images.
@@ -98,8 +103,6 @@ depends on is hardware-proven.
 
 What the collector ([raw-acquisition.md](raw-acquisition.md#implementation)) does not attempt yet:
 
-- **The memory of a BCU1-mask device under a secure session.** The plan reads the maximum APDU
-  length first; no device has been asked yet.
 - **Compare a package with a read-back** of the same System B and M112 device, as the control case.
 - **System 300 variant plans**, **discovery by `PID_IO_LIST`** on MV-2920, and **coupler filter
   tables** (needs a capture of a tool reading one).

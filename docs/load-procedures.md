@@ -25,7 +25,7 @@ A device is flashable only when both are handled.
 | --- | --- | --- |
 | **ProductProcedure** | one self-contained `<LoadProcedure>`, every `LdCtrl` step inline | **executed directly** from the XML (absolute-segment devices) |
 | **MergedProcedure** | `<LoadProcedure MergeId="n">` fragments merged into the management model's base at merge points, selected per operation by a step's `AppliesTo` (`full`/`par`; `all`, and `auto`, the schema default when the attribute is absent, apply to both) | the base is model knowledge (System B); the proven relative path embodies the `par` base, parameterized by the fragments |
-| **DefaultProcedure** | nothing in the XML, hardcoded by mask version (legacy BCU1/2) | **explicit gap**: refused, not crashed |
+| **DefaultProcedure** | nothing in the XML, fixed by mask version in the master data (legacy BCU1/2) | **explicit gap**: refused, not crashed; for System 1 the MV-0012 procedure is carried as data and names what a write would cover (below) |
 
 ## What the engine does
 
@@ -189,7 +189,18 @@ Surveyed from the real catalogue (`parseLoadProcedures` plus the coverage test i
 ProductProcedure and MergedProcedure of the catalogue fixtures except one class, refused:
 
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
-  gap named in the styles table above.
+  gap named in the styles table above. For System 1 the master data's MV-0012 Load procedure is
+  carried as data (`packages/product/src/system1.ts`): it stops the application (run error
+  `0x010D` = 00), sets the address table to the device's own address only (`0x0116` = 01), writes
+  `0x0100`, `0x0104`-`0x010C`, `0x010E`-`0x0115` and `0x0119`-`0x01FE` from the image, clears
+  `0x00CE`-`0x00DF`, writes `0x0116` from the image, restarts the application (`0x010D` = FF) and
+  restarts the device; it declares only `all`, so a parameter download is the same procedure. Its
+  image is not the application's `<Data>` throughout: a unit ETS programmed holds the application's
+  own id and PEI type at `0x0104`-`0x0107` and `0x0109`, where the template carries another. Its
+  `0x0119`-`0x01FE` run covers bytes the application's `<Mask>` may leave out (on the MDT IP Interface
+  Secure its IP settings and name), and no ETS capture shows what ETS writes there or which properties
+  it writes besides; the parameter and full download are refused (`SYSTEM1_LOAD_UNCAPTURED`), the
+  group-address flash too (`SYSTEM1_GROUP_TABLES_UNCAPTURED`).
 
 The System 7 **group-address flash** writes the address and association tables (objects 1 and 2)
 and, where the application names the com-object table's segment, the linked bits in it (object 3).

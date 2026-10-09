@@ -214,17 +214,18 @@ reads, no scan unless the device answers a first property description.
 
 | | |
 |---|---|
-| Devices | No real BCU1 is backed by a device or capture. The MDT IP Interface Secure declares MV-0012 in its product data and answers plain reads with descriptor `0xFFFF`; under its secure session it reports `0x0012` (see [The MV-0012 IP interface](#the-mv-0012-ip-interface)). Its memory is not read. An IP interface that reports a BCU1 mask need not hold a BCU1 memory layout. |
+| Devices | One device: the MDT IP Interface Secure declares MV-0012 in its product data and answers plain reads with descriptor `0xFFFF`; under its secure session it reports `0x0012`, answers PID 56 with 210, and its plan ran to its end: `0x0060` and the 256 bytes at `0x0100` in 8 secured requests (see [The MV-0012 IP interface](#the-mv-0012-ip-interface)). No other BCU1 is backed by a device or capture. |
 | Discovery | Descriptor, then one property read: PID 56 of object 0 (maximum APDU length), before the memory step. BCU1 has no interface objects and declares no `AuthorizeLevels`, so no authorize, no other property read, no scan: requests the device does not implement are answered by silence and cost a timeout each (Calimero notes the same for descriptor type 2). PID 56 is the exception because the one known device with this mask, an IP interface, answers secured property reads, and without a maximum APDU no secured memory read fits (see [The MV-0012 IP interface](#the-mv-0012-ip-interface)); a real BCU1 is not expected to answer it (inferred), which costs one unanswered request with its retries (a few seconds) and a reopened link, and does not count towards closing the device off. Without a usable value (absent, unanswered, answered malformed or with a failed MAC) a plain session reads in 12-byte chunks and a secured one refuses its memory step, and the record says how the PID 56 read ended; a secured session also refuses it when the declared length is too short for a secured memory read. |
 | Range derivation | The master data places everything in memory: manufacturer id `0x0104` (1 byte), application id `0x0104` (4 bytes), PEI type `0x0109`, hardware config `0x010C`, run error `0x010D`, association table pointer `0x0111`, group object table pointer `0x0112`, group address table `0x0116`, individual address `0x0117`, run status and programming mode `0x0060`. The pointers are one byte with the flavour `Ptr_StandardMemory100`; that the table then sits at `0x0100 + pointer` is read from the flavour's name (inferred). |
-| Plan | PID 56 of object 0, then `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060`; that it also holds the application's parameters is inferred. 256 bytes in 12-byte chunks, or in chunks sized to the maximum APDU the device declares. Then the tables at their pointers if a pointer leads outside that window. |
+| Plan | PID 56 of object 0, then `0x0060` (1 byte), then `0x0100` to `0x01FF`, the EEPROM segment every BCU1 mask declares (256 bytes, read access `Configuration`), which holds every resource above except `0x0060` and, on the MDT IP Interface Secure, the application's parameters at the offsets its product data gives. 256 bytes in 12-byte chunks, or in chunks sized to the maximum APDU the device declares. Then the tables at their pointers if a pointer leads outside that window. |
 | Credentials | None. |
 | Stop | A pointer outside `0x0100` to `0x01FF` is recorded and not followed (inferred: on BCU1 it would be a corrupt table). |
 
 The table layouts behind the flavours (`AddressTable_Bcu1`, `AssociationTable_Bcu1`,
-`GroupObjectTable_Bcu11`) are named by the master data but not described in it; decoding them is
-later work. The raw bytes are what the package carries. **No BCU1 vector exists yet**: every BCU1
-statement here comes from the master data, none from a device.
+`GroupObjectTable_Bcu11`) are named by the master data but not described in it. The read-back
+decodes only their empty form (address table count 1, association table count 0, the form the MDT IP
+Interface Secure holds); tables with entries are later work. The raw bytes are what the package
+carries. **No BCU1 vector exists yet.**
 
 ### System 2, BCU2 (MV-0020, MV-0021, MV-0025)
 
@@ -439,14 +440,19 @@ answer as `refused` with the raw answer (`memReadPartial`, spy tests in
 ### The MV-0012 IP interface
 
 The MDT IP Interface Secure reports MV-0012 under its secure session, and the collector runs the
-BCU1 plan for it. Its memory step is refused before any memory request is sent when no maximum APDU
+BCU1 plan for it. It answers PID 56 of object 0 with 210, and its memory then reads in full under the
+secure session. The memory step is refused before any memory request is sent when no maximum APDU
 length is known: a secured request carries 13 octets of framing (SCF, sequence, MAC, the secure APCI), and a
 classic memory read, with its count and address, then exceeds the 15 octets of a standard frame. The
 standard-frame bound is Busforge's assumption, and this device exceeds it: its secured descriptor
 response is 16 octets, and a secured property read of its serial (PID 11 of object 0) is 18 octets
-and answered. So it has an object 0 and takes secured requests longer than a standard frame; whether
-it answers PID 56 (the same request shape as the serial read), and whether its memory then reads, is
-not shown ([roadmap.md](roadmap.md#raw-acquisition)).
+and answered. So it has an object 0 and takes secured requests longer than a standard frame.
+
+Its EEPROM segment holds, besides the application's parameters, bytes the application's `<Mask>`
+leaves out: the application id and PEI type ETS wrote (`0x0104`-`0x0109`, from the application's
+manufacturer, number, version and `PeiType`, not from its `<Data>`), the individual address, and in
+`0x013E`-`0x0171` the unit's IP settings (assignment method, address, subnet mask, gateway) and its
+friendly name, which the project sets as device properties, not parameters.
 
 The BCU1 plan therefore reads PID 56 of object 0 before its memory step, and a refused memory step
 names its cause: "the device declares no maximum APDU length" only when the device answered PID 56
@@ -454,7 +460,7 @@ with element count 0; "no maximum APDU length is known" with the read's outcome 
 closed, malformed, which includes an answer whose MAC fails) when the read gave no value; "this plan
 does not read PID 56 of object 0" for a plan that does not ask it (the probing plan of an unknown
 mask, the memory-only coupler plans); and the declared length when it is too short for a secured
-memory read. Shown by tests against a simulated device only.
+memory read. The causes are shown by tests against a simulated device only.
 
 ## Diagnostic package
 

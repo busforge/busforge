@@ -22,7 +22,7 @@ import { ApiError } from "./errors.ts";
 
 // Re-exported for the routes/tests; their home is the product layer.
 export {
-  classify, classifyByMask, DeviceProfile, SystemBProfile, System7Profile, UnsupportedProfile,
+  classify, classifyByMask, DeviceProfile, SystemBProfile, System7Profile, System1Profile, UnsupportedProfile,
   reconnectAfterRestart, verifySettled,
   type FlashResult, type DeviceReadback, type DeviceCapabilities, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type ReadStateCtx,
 } from "@busforge/product";
