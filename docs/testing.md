@@ -18,6 +18,7 @@ describes the machinery, not the claims.
 | Round-trip lock | same file, "the parameter image codec round-trips" | `build → decode` is its own inverse on every real fixture, so a codec cannot silently lose or shift a value | That the encoding matches the device's reading of it |
 | Doc lock | `apps/server/test/device-support-doc.test.ts` (needs the [private corpus](#the-private-corpus)) | [device-support.md](device-support.md) stays in sync with the mask registry: a new or changed mask fails the suite until the table is updated | Anything about hardware |
 | Server route tests | `apps/server/test` | Endpoint contracts, the task queue, and above all the **refusals**: flash guards, stale com-object tables, unsupported profiles, secure devices | That a permitted write lands correctly on a device |
+| Capture comparison | `tools/etsdiff.test.ts` (needs the [private corpus](#the-private-corpus)) | **Reference**: the bytes and services Busforge plans for a device equal what ETS wrote to that device in a capture, byte for byte | Wire behaviour no capture holds: timing, restarts, link handling |
 | Hardware smoke | `tools/smoke` | That busforge places the intended bytes on a real device **and** that the device acts on them | Only what it was run against |
 
 Everything except the last row runs offline and is bundled in the gate:
@@ -93,6 +94,20 @@ catalogue, a capture) privately to the issue or pull request, and a maintainer a
 The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
 `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
+
+## When a change needs a hardware run
+
+A device that took ETS's download is the hardware proof of ETS's bytes. Once the capture
+comparison pins that Busforge plans exactly those bytes for that device, running Busforge's
+download on the device again shows nothing new. So:
+
+- **A changed plan whose result a capture comparison pins** (write set, table layout, image bytes)
+  needs no bench or house run. The comparison is the proof.
+- **A hardware run is needed only for what no capture can show**: a service, timing, restart or
+  link behaviour the captures do not hold; a device or application without a capture; a claim on
+  the behaviour or persistence axes that has never been shown for that product.
+- **Missing reference? Take a capture**, then compare offline. Do not put a device into an
+  artificial state only to reproduce a capture's starting point.
 
 ## Taking a capture
 
