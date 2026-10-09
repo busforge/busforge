@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, planAbsoluteParFlash, planRelativeParFlash, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, planRelativeParFlash, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -20,7 +20,7 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
     expect(unplaceable).toEqual([]);
   });
 
-  test("one changed owned byte -> minimal proven LSM3 bracket", () => {
+  test("one changed owned byte -> the LSM3 bracket writing every parameter-covered byte, as ETS does", () => {
     const firstOwned = as4200.owned.findIndex((o) => o);
     expect(firstOwned).toBeGreaterThanOrEqual(0);
     // device differs from our image at exactly one owned byte
@@ -32,14 +32,14 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
     expect(changedBytes).toBe(1);
     expect(segments).toEqual([{ id: as4200.id, address: 16896, lsm: 3, changed: 1 }]);
     expect(unplaceable).toEqual([]);
-    // exactly the LSM bracket (no connect/disconnect, the caller owns the connection):
-    // load(3), writeMem(1 byte @ owned addr), loadCompleted(3), restart
-    expect(plan).toEqual([
-      { op: "load", lsm: 3 },
-      { op: "writeMem", address: 16896 + firstOwned, bytes: Buffer.from([as4200.bytes[firstOwned]]) },
-      { op: "loadCompleted", lsm: 3 },
-      { op: "restart", requireReboot: true },
-    ]);
+    // exactly the LSM bracket (no connect/disconnect, the caller owns the connection): load(3), the runs of
+    // the bytes a parameter covers (parWriteSet, the changed one with our value), loadCompleted(3), restart
+    const covered = parameterMemoryBytes(app, as4200.id, as4200.size)!;
+    const writes = plan.filter((s) => s.op === "writeMem") as { address: number; bytes: Buffer }[];
+    const written = new Map(writes.flatMap((w) => [...w.bytes].map((b, i) => [w.address + i - 16896, b] as [number, number])));
+    expect([...written.keys()]).toEqual(covered.flatMap((c, i) => (c ? [i] : [])));
+    expect(written.get(firstOwned)).toBe(as4200.bytes[firstOwned]);
+    expect(plan.filter((s) => s.op !== "writeMem")).toEqual([{ op: "load", lsm: 3 }, { op: "loadCompleted", lsm: 3 }, { op: "restart", requireReboot: true }]);
   });
 
   test("changed UNOWNED byte is never written", () => {

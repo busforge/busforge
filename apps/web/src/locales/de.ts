@@ -221,6 +221,7 @@ const de: Messages = {
     FULL_DOWNLOAD_UNSUPPORTED: "Die Erstinbetriebnahme dieses Geräts wird noch nicht unterstützt: sein Speichermodell hat einen vollständigen Download noch nie überstanden, deshalb lehnt Busforge ab, statt es halb zu beschreiben.",
     COM_OBJECT_SIZE_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Datenpunktgröße an, die Busforge nicht als KNX-Value-Field-Type ausdrücken kann. Eine geratene Größe wird nicht geschrieben.",
     COM_OBJECT_TABLE_EMPTY: "Diese Applikation deklariert keine Kommunikationsobjekte, es gibt also keine Objekttabelle zu schreiben.",
+    PARAM_SEGMENT_UNKNOWN: "Ein Parameter dieser Applikation hat einen Typ ohne bekannte Breite. Busforge kann daher nicht bestimmen, welche Bytes der Parameterdownload von ETS schreibt, und schreibt nicht.",
     PARAM_SEGMENT_NOT_READ: "Busforge konnte ein Parametersegment des Geräts nicht vollständig lesen. Es kann daher nicht bestimmen, welche Bits eines geteilten Bytes erhalten bleiben müssen, und schreibt nicht.",
     FLASH_UNVERIFIED_LINK_DOWN: "Das Schreiben ist durchgelaufen und das Gerät hat den Neustart bestätigt, aber die Verbindung zur Schnittstelle kam nicht rechtzeitig zurück, um es zurückzulesen. Das Schreiben ist nicht verifiziert; bitte das Gerät auslesen.",
     MEMORY_SERVICES_UNDECIDED: "Das Gerät meldet lange Telegramme, und es ist nicht bekannt, ob seine Applikation den erweiterten Speicher-Schreibzugriff annimmt. Busforge schreibt deshalb nicht.",

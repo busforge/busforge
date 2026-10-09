@@ -76,6 +76,11 @@ export function buildAbsoluteSegmentImages(
   return buildAbsoluteSegmentTargets(app, values, opts).map(({ id, address, size, bytes }) => ({ id, address, size, bytes }));
 }
 
+// The module instances an absolute build places parameters for: the project's set when given, else the
+// allocators' for a from-scratch device.
+export const absoluteBuildInstances = (app: AppConfig, values: Map<string, string>, moduleInstances?: ModuleInstance[]): ModuleInstance[] =>
+  moduleInstances?.length ? moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
+
 export function buildAbsoluteSegmentTargets(
   app: AppConfig,
   values: Map<string, string>,
@@ -85,7 +90,7 @@ export function buildAbsoluteSegmentTargets(
   // for a from-scratch device so its channel parameters are placed at the same offsets
   // ETS would compute. Threaded into BOTH the image model (to materialise the per-instance
   // params) and the config view (to resolve which of them are active).
-  const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
+  const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
   const model = toAppModel(app, { includeUnions: true, instances });
   // Effective value of every parameter reached in the active dynamic tree, keyed by
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
@@ -400,14 +405,24 @@ export function wholeBytes(verify: ReadonlyArray<number>, markers: ReadonlyArray
 // Which bytes of an absolute segment some parameter's memory location covers, every parameter of the
 // segment whether active or not (union members and module-instance parameters included). Null when a
 // parameter there has a type of no known width, so the bytes it covers cannot be told.
-export function parameterMemoryBytes(app: AppConfig, segId: string, size: number, opts: { moduleInstances?: ModuleInstance[] } = {}): boolean[] | null {
+// `colorWidth`: count a TypeColor parameter in the RGB or the HSV space as three bytes, for the set of bytes
+// a parameter download writes with the device's own values (no image path encodes a colour).
+export function parameterMemoryBytes(app: AppConfig, segId: string, size: number, opts: { moduleInstances?: ModuleInstance[]; colorWidth?: boolean } = {}): boolean[] | null {
   const model = toAppModel(app, { includeUnions: true, instances: opts.moduleInstances ?? [] });
   const covered = new Array<boolean>(size).fill(false);
   for (const p of model.params.values()) {
     if (p.codeSegment !== segId || p.offset === undefined) continue;
     const t = model.types.get(p.typeId);
-    if (!t || !Number.isFinite(t.sizeInBit) || t.sizeInBit <= 0) return null;
-    for (let b = 0; b < byteWidth(t.sizeInBit, p.bitOffset); b++) if (p.offset + b < size) covered[p.offset + b] = true;
+    const bits = t && Number.isFinite(t.sizeInBit) && t.sizeInBit > 0 ? t.sizeInBit : opts.colorWidth ? colorBits(app, p.typeId) : undefined;
+    if (!bits) return null;
+    for (let b = 0; b < byteWidth(bits, p.bitOffset); b++) if (p.offset + b < size) covered[p.offset + b] = true;
   }
   return covered;
+}
+// A TypeColor declares no SizeInBit; its memory is three bytes in the RGB and the HSV space, the bytes
+// ETS's image of the MDT BE-06001.02 parameter download lists for its RGBColor and HSV parameters. Other
+// spaces have no width shown by a capture. The image build encodes no colour, so a colour is never owned.
+function colorBits(app: AppConfig, typeId: string): number | undefined {
+  const t = app.types.get(typeId);
+  return t?.kind === "TypeColor" && (t.colorSpace === "RGB" || t.colorSpace === "HSV") ? 24 : undefined;
 }
