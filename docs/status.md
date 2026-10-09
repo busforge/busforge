@@ -123,8 +123,10 @@ What each row does not show:
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
   - **MDT IP Interface/Router**: its parameter image equals ETS's image of its full download byte for
     byte, text fields and the defaults of inactive parameters included, and its parameter flash
-    changes the same bytes as ETS's parameter downloads (it sends every owned byte, ETS only the
-    differing ones; `tools/etsdiff.test.ts`); it has not run on the device, since a secured session
+    changes the same bytes as ETS's parameter downloads (`tools/etsdiff.test.ts`); with the stamp record
+    it writes the bytes that differ from its read of the unit, ETS those that differ from its record,
+    which on this unit also differ where it reads a field back other than written (its web interface
+    password); it has not run on the device, since a secured session
     needs the project's tool key. Its web interface password field reads `FF` after ETS's confirmed
     write of it; a Busforge write that also changes another byte would verify that field on the
     write confirmation alone (`confirmedOnly`), one that changes nothing else ends unverified, and the
@@ -145,8 +147,8 @@ What each row does not show:
   equal to ETS's, and the read after each restart equal to the reference (after the added link, equal
   to the unit after ETS's group-address download). Its full download writes exactly the bytes of ETS's
   full download (`tools/etsdiff.test.ts`); that write set has not run on the device ([Known
-  unproven](#known-unproven)). Where Busforge still differs from ETS: the parameter flash writes
-  every owned byte, where ETS writes only the changed one; the
+  unproven](#known-unproven)). Its parameter flash, with the stamp record ETS keeps, writes ETS's one
+  byte (`tools/etsdiff.test.ts`). Where Busforge still differs from ETS: the
   device gets a settle and a reconnect before the restart, where ETS restarts at once. In this
   firmware (thelsing/knx with OpenKNX Common) a surgical flash and a full download take the same path,
   and the flash reads back only after the restart, because the firmware returns the old flash
@@ -368,6 +370,10 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **The stamp record has run on no device.** The System B parameter flash keeps ETS's record of the
+  last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
+  `tools/etsdiff.test.ts` against every captured pair); reading the stamps before the flash and the
+  record across a server restart have not run.
 - **The System B full download's write set has run on no device.** It writes exactly the bytes ETS's
   full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); every
   hardware run of a System B full download (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway,

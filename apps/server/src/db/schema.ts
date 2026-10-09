@@ -454,6 +454,12 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id, seq)
   );
   `,
+  // The image stamps (PID 27 memory-control-block elements) a device reported at the end of the last
+  // verified download that wrote its parameters, JSON [{obj, element, hex}], the record ETS keeps of
+  // that download (@busforge/product ImageStamp). NULL: no record.
+  `
+  ALTER TABLE devices ADD COLUMN image_stamps TEXT;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

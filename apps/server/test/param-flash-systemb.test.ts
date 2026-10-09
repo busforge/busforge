@@ -16,11 +16,16 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
   const params = new Map<string, string>();
   const target = buildRelativeSegmentTarget(cfg, params, 4, { ownIdleUnionDefaults: true })!;
   const BASE = 0x4000;
+  // One memory-control-block region over the whole segment, CRC control 0, then access and CRC.
+  const STAMP = `${target.size.toString(16).padStart(8, "0")}00ff00aa`;
+  const other = (ctl: string, crc: string) => `${target.size.toString(16).padStart(8, "0")}${ctl}ff${crc}`;
 
   class MockDevice {
     mem = new Map<number, number>();
     state = new Map<number, number>([[1, STATE.LOADED], [2, STATE.LOADED], [3, STATE.LOADED], [4, STATE.LOADED]]);
     writes = 0;
+    written = new Set<number>();
+    stamp = STAMP; // what PID 27 answers, element 1 of every object
     async connect() {}
     async disconnect() {}
     async deviceDescriptor() { return "MV-07B0"; }
@@ -31,12 +36,12 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
-    async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
-    async propRead(obj: number, pid: number) { if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
+    async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) { this.mem.set(addr + i, data[i]); this.written.add(addr + i); } }
+    async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     async propReadIfPresent() { return null; }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
-    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: pid === 27 ? Buffer.concat(Array.from({ length: count }, () => Buffer.from(this.stamp, "hex"))) : Buffer.alloc(8 * count) }; }
     async propWrite(obj: number, pid: number, data: Buffer) {
       if (pid === 5) { const ev = data[0]; if (ev === LSM.LOAD) this.state.set(obj, STATE.LOADING); else if (ev === LSM.LOAD_COMPLETED) this.state.set(obj, STATE.LOADED); else if (ev === LSM.UNLOAD) this.state.set(obj, STATE.UNLOADED); }
       return Buffer.alloc(0);
@@ -49,6 +54,35 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     for (let i = 0; i < target.size; i++) dev.mem.set(BASE + i, target.bytes[i]);
     return dev;
   }
+
+  // ETS's record (ImageStamp): with the unit's stamps equal to it the flash writes only the owned bytes that
+  // differ; with another stamp, or no record, every owned byte. The result carries the closing reads.
+  describe("System B parameter flash and the stamp record", () => {
+    const run = async (record: { obj: number; element: number; hex: string }[] | undefined) => {
+      const dev = seeded();
+      const k = target.owned.findIndex((m) => m === 0xff);
+      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      return { dev, res, k };
+    };
+    const owned = target.owned.filter((m) => m !== 0).length;
+    test("stamps equal to the record: only the byte that differs", async () => {
+      const { dev, res, k } = await run([{ obj: 4, element: 1, hex: STAMP }]);
+      expect([...dev.written]).toEqual([BASE + k]);
+      expect(res.verified).toBe(true);
+      expect(res.stamps?.some((st) => st.obj === 4 && st.hex === STAMP)).toBe(true);
+    }, 30_000);
+    test("a stamp other than the record: every owned byte", async () => {
+      expect((await run([{ obj: 4, element: 1, hex: other("00", "00bb") }])).dev.written.size).toBe(owned);
+    }, 30_000);
+    test("no record: every owned byte", async () => {
+      expect((await run(undefined)).dev.written.size).toBe(owned);
+    }, 30_000);
+    test("a region whose control byte is not 0 does not count: no check, every owned byte", async () => {
+      expect((await run([{ obj: 4, element: 1, hex: other("01", "00aa") }])).dev.written.size).toBe(owned);
+    }, 30_000);
+  });
 
   describe("System B parameter flash on a device whose bytes already match", () => {
     test("LSM 4 LOADED: unchanged, nothing written", async () => {

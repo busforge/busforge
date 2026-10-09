@@ -327,7 +327,7 @@ export function setDeviceAddress(db: Database, projectId: string, deviceId: stri
   if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const taken = db.query("SELECT name FROM devices WHERE project_id = ? AND ia = ? AND instance_id != ?").get(projectId, ia, deviceId) as { name: string } | null;
   if (taken) throw new ApiError("IA_TAKEN", `${ia} is already used by "${taken.name}" in this project`);
-  db.prepare("UPDATE devices SET ia = ? WHERE project_id = ? AND instance_id = ?").run(ia, projectId, deviceId);
+  db.prepare("UPDATE devices SET ia = ?, image_stamps = NULL WHERE project_id = ? AND instance_id = ?").run(ia, projectId, deviceId);
   return { id: deviceId, ia };
 }
 
