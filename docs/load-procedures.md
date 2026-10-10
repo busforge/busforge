@@ -985,9 +985,13 @@ What Busforge does besides: it reads the load states back after its load-state w
 download writes the parameter bytes ETS writes ([the rules](#the-rules-by-level)); after a restart the
 device did not answer it probes the device into its reboot, and after every restart it reads the device
 back on a new connection. ETS reads PID 7 before each segment. Reads aside, the wire of each download is
-ETS's. Only on thelsing/OpenKNX firmware does the full
-download settle for 8 s on a fresh connection before the restart instead of closing at once
-(`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)).
+ETS's, with two exceptions kept on purpose. A System B full download writes the three tables before the
+parameter segment, where ETS writes the parameter segment first: a thelsing/OpenKNX device lost its
+configuration when its tables followed a long parameter write. And only on thelsing/OpenKNX firmware
+does the full download settle for 8 s on a fresh connection before the restart instead of closing at
+once (`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)). No capture shows
+either loss with ETS's order and timing, since ETS writes the parameter segment sparsely; matching ETS
+here needs a run on a thelsing/OpenKNX unit with a large parameter write, a power cycle and a read.
 
 ETS reverts a parameter change and a link change made together in one partial download with the
 structural bracket (unload 4, 3, 2, 1, every object reallocated without fill, [Structural
