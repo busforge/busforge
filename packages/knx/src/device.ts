@@ -218,8 +218,18 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // it, the pause before repeating an unanswered request, the answer to a Sync request and the
 // answer to a confirmed restart. Code that talks to a device on the bus takes these; a test whose
 // scripted transport answers at once or never passes shorter ones, so a silence costs it no time.
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000 };
+// restartProofMs: after a negatively confirmed A_Restart, how long from the device's last frame to us a
+// T_Disconnect still counts as its reboot (restart(), proveUnconfirmedRestart). It stays well below the
+// 6 s after which a device closes an idle transport connection by itself.
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000 };
+
+// A failure of the link between this tool and the interface (KNXnet/IP tunnel, USB), or one without a
+// code: it says nothing about the device.
+function isLinkFailure(e: unknown): boolean {
+  const code = (e as { code?: unknown }).code;
+  return typeof code !== "string" || code.startsWith("TUNNEL_") || code.startsWith("USB_");
+}
 
 export class KnxDevice {
   private dst: number;
@@ -246,15 +256,20 @@ export class KnxDevice {
   }
   private get me() { return this.tun.assignedIa; }
 
-  private onCemi(src: number, _dst: number, tpdu: Buffer, isGroup: boolean) {
+  private onCemi(src: number, dst: number, tpdu: Buffer, isGroup: boolean) {
     if (isGroup || src !== this.dst) return;
     // T_Connect/T_Disconnect from the device: unnumbered control frames, never acknowledged and
-    // never an answer. A T_Disconnect ends the request in flight.
-    if ((tpdu[0] & 0xc0) === 0x80) { if ((tpdu[0] & 0x03) === 0x01) this.peerClosed?.(); return; }
+    // never an answer. A T_Disconnect to us ends the request in flight; one to another tool's
+    // address is about that tool's connection, not ours.
+    if ((tpdu[0] & 0xc0) === 0x80) {
+      if ((tpdu[0] & 0x03) === 0x01 && dst === this.me) { this.peerClosedAt = Date.now(); this.peerClosed?.(); }
+      return;
+    }
+    if (dst === this.me) this.lastFromDeviceAt = Date.now();
     if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
     const outer = parseApdu(tpdu);
     if (outer.control) {
-      if (outer.seq === this.seq) { if ((tpdu[0] & 0x03) === 0x03) this.nakSeen = true; this.ackResolve?.(); }
+      if (outer.seq === this.seq) { if ((tpdu[0] & 0x03) === 0x03) this.nakSeen = true; else this.ackSeen = true; this.ackResolve?.(); }
       return;
     }
     // For a secure session the data frame is a wrapped secure APDU: ACK the outer
@@ -528,9 +543,13 @@ export class KnxDevice {
   // write; null where it announces none or cannot be asked. With the device's it sizes the memory writes
   // (writeChunks).
   private interfaceApdu: Promise<number | null> | undefined;
-  // Whether the device answered a request with T_NAK (it is there, but refused the sequence number);
-  // read by restart() after its probe.
+  // How the device took restart()'s probe on the transport layer: T_NAK (there, refused the sequence
+  // number) or T_ACK (there, took it). Either shows it still holds the connection.
   private nakSeen = false;
+  private ackSeen = false;
+  // When the device last sent us a frame, and when it closed our connection (T_Disconnect to us).
+  private lastFromDeviceAt: number | null = null;
+  private peerClosedAt: number | null = null;
   interfaceMaxApdu(): Promise<number | null> {
     return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
   }
@@ -999,40 +1018,73 @@ export class KnxDevice {
     // it and disconnects without probing (captures/mdt-router-ets6log-{fulldownload,partial-name,
     // partial-name-revert}.txt). A probe would also go out while an interface that is itself
     // restarting, or serving a unit that is, takes no frame (an MDT IP router behind its sibling).
-    // An A_Restart (plain or confirmed) the interface confirmed negatively (see sendRestart) is proven
-    // like one no answer came for: the device must go silent here, and must come back for the
-    // operation's read after the restart. A device that keeps answering then is never taken as
-    // restarted, not even where requireReboot is false: nothing shows the frame reached it.
+    // An A_Restart (plain or confirmed) the interface confirmed negatively (see sendRestart) has its own
+    // proof (proveUnconfirmedRestart).
     let unconfirmed: boolean;
+    const sentAt = Date.now();
     if (confirmed) {
       const sent = await this.sendConfirmedRestart();
       if (sent.answered) return;
       unconfirmed = sent.unconfirmed;
     } else unconfirmed = !(await this.sendRestart());
+    if (unconfirmed) return this.proveUnconfirmedRestart(sentAt);
     try {
-      this.nakSeen = false;
+      this.nakSeen = false; this.ackSeen = false;
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch (e) {
-      // A link to the interface that stalled or closed says nothing about the device: whether the
-      // probe reached it is unknown, so it is no proof of the reboot.
-      const code = (e as { code?: string }).code;
-      if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
-      // A device that refused the probe with T_NAK is there on this connection: after an unconfirmed
-      // restart it never saw the frame and still expects the restart's sequence number. A rebooted
-      // device has no connection, and answers with T_Disconnect or not at all.
-      if (unconfirmed && this.nakSeen) {
-        throw new KnxError("RESTART_IGNORED",
-          "the interface confirmed A_Restart negatively and the device refused the next frame on the same connection (T_NAK): it never received the restart");
+      // A failure of the link to the interface says nothing about the device: whether the probe
+      // reached it is unknown, so it is no proof of the reboot.
+      if (isLinkFailure(e)) throw e;
+      // T_NAK or T_ACK without an answer: the device is still there on this connection.
+      if ((this.nakSeen || this.ackSeen) && requireReboot) {
+        throw new KnxError("RESTART_IGNORED", `the device ${this.nakSeen ? "refused" : "acknowledged"} the probe after A_Restart on the same connection (T_${this.nakSeen ? "NAK" : "ACK"}): it is still there and did not reboot`);
       }
       return;                        // gone. It restarted, and it wrote its flash on the way out.
-    }
-    if (unconfirmed) {
-      throw new KnxError("RESTART_IGNORED",
-        "the interface confirmed A_Restart negatively and the device kept answering on the same connection: nothing shows the restart reached it");
     }
     if (!requireReboot) return;      // this firmware persisted at LoadCompleted; a live device is fine
     throw new KnxError("RESTART_IGNORED",
       "the device kept answering on the same connection after A_Restart: it did not reboot, so it never wrote its configuration to flash and would come back factory-fresh at the next power-down");
+  }
+
+  // After a negatively confirmed A_Restart nothing shows the frame arrived, and an unacknowledged or
+  // unanswered probe shows nothing either: a device that stops acknowledging for a while without
+  // rebooting looks the same. So the probe goes out on the same connection, one try at a time, until
+  // the device itself decides: T_Disconnect to us means it rebooted (it lost the connection with it);
+  // an answer, T_ACK or T_NAK means it is still there on the connection (RESTART_IGNORED, whatever
+  // requireReboot says). A probe that fails, on the bus or on the link to the interface, decides
+  // nothing. A device closes an idle connection by itself 6 s after the last frame it took, so the
+  // T_Disconnect counts only when it arrived within restartProofMs of the device's last frame to us
+  // (the acknowledgement of the frame before the restart), or of the restart where there was none.
+  // Without the device's decision by then the restart is not proven (RESTART_UNPROVEN).
+  private async proveUnconfirmedRestart(sentAt: number): Promise<void> {
+    const deadline = Math.min(this.lastFromDeviceAt ?? sentAt, sentAt) + this.timeouts.restartProofMs;
+    const unproven = () => new KnxError("RESTART_UNPROVEN",
+      `the interface confirmed A_Restart negatively, and within ${this.timeouts.restartProofMs} ms of the device's last frame it neither closed the connection nor answered on it: whether it restarted, and so stored its configuration, is not proven`);
+    this.peerClosedAt = null;
+    // The probe keeps its sequence number until the device takes one, so a T_ACK or T_NAK that arrives
+    // after a probe's negative confirmation (the interface's repetitions keep the bus busy before it)
+    // still belongs to the probe: the flags are cleared once and read before every try.
+    this.nakSeen = false; this.ackSeen = false;
+    const present = () => new KnxError("RESTART_IGNORED",
+      `the interface confirmed A_Restart negatively and the device ${this.nakSeen ? "refused (T_NAK)" : "acknowledged (T_ACK)"} the next frame on the same connection: it never restarted`);
+    for (;;) {
+      if (this.nakSeen || this.ackSeen) throw present();
+      try {
+        await this.request((sq) => apdu(sq, APCI.DEVICE_DESCRIPTOR_READ), true, 1);
+        throw new KnxError("RESTART_IGNORED",
+          "the interface confirmed A_Restart negatively and the device kept answering on the same connection: nothing shows the restart reached it");
+      } catch (e) {
+        const code = (e as { code?: string }).code;
+        if (code === "RESTART_IGNORED") throw e;
+        if (code === "DEVICE_CLOSED_CONNECTION") {
+          if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
+          throw unproven();
+        }
+        if (this.nakSeen || this.ackSeen) throw present();
+      }
+      if (Date.now() >= deadline) throw this.nakSeen || this.ackSeen ? present() : unproven();
+      await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
+    }
   }
 
   // Factory-reset the device over the bus (A_Restart with RestartType = MasterReset and an erase

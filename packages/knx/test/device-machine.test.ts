@@ -13,7 +13,7 @@ import { KnxError } from "../src/errors.ts";
 const DEV = 0x110b; // 1.1.11 = (1<<12)|(1<<8)|11
 // The scripted transport answers inside the send or not at all, so a device timeout only ever measures
 // a silence: the bus timeouts shrink to milliseconds, in the order they have on the bus.
-const FAST: DeviceTimeouts = { ackMs: 15, responseMs: 20, retryGapMs: 1, syncResponseMs: 30, restartAnswerMs: 20 };
+const FAST: DeviceTimeouts = { ackMs: 15, responseMs: 20, retryGapMs: 1, syncResponseMs: 30, restartAnswerMs: 20, restartProofMs: 150 };
 
 class FakeTransport implements KnxTransport {
   assignedIa = 0x1101; // 1.1.1 (tunnel-assigned source)
@@ -401,12 +401,12 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
   // the unit's startup telegrams 2 s later; ETS goes on). Such a restart counts as sent and unconfirmed.
   const isRestart = (tpdu: Buffer) => !ignorable(tpdu) && (parseApdu(tpdu).apci & ~0x01) === APCI.RESTART;
   const negativeOnRestart = (tun: FakeTransport) => { tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : null); };
-  test("a negative L_Data.con on A_Restart, then silence: the restart is proven by the silence, sent once", async () => {
+  test("a negative L_Data.con on A_Restart, then silence: not proven, the restart sent once", async () => {
     const { tun, dev } = restarted();
     negativeOnRestart(tun);
-    await dev.restart();
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_UNPROVEN");
     expect(tun.sent.filter(isRestart).length).toBe(1);
-    expect(tun.sent.some((f) => !ignorable(f) && parseApdu(f).apci === APCI.DEVICE_DESCRIPTOR_READ)).toBe(true);
   });
   test("a negative L_Data.con on A_Restart and a device that keeps answering: not restarted, even with requireReboot=false", async () => {
     const tun = new FakeTransport();
@@ -458,11 +458,108 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) tun.reply([0x81]); };
     await dev.restart();
   });
-  test("a negative L_Data.con on the confirmed restart, then silence: proven by the silence as well", async () => {
+  test("a negative L_Data.con on the confirmed restart, then silence: not proven", async () => {
     const { tun, dev } = restarted();
     negativeOnRestart(tun);
-    await dev.restart(true, true);
+    const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_UNPROVEN");
     expect(tun.sent.filter(isRestart).length).toBe(1);
+  });
+  test("a negative L_Data.con on the restart and on every probe: not proven, for plain and confirmed", async () => {
+    for (const confirmed of [false, true]) {
+      const { tun, dev } = restarted();
+      tun.failSend = (tpdu) => (ignorable(tpdu) ? null : "BUS_SEND_FAILED");
+      const failure = await dev.restart(true, confirmed).then(() => null, (e: unknown) => e);
+      expect([confirmed, (failure as { code?: string } | null)?.code]).toEqual([confirmed, "RESTART_UNPROVEN"]);
+    }
+  });
+  test("after a negatively confirmed restart, a T_Disconnect to another tool's address is no proof", async () => {
+    const { tun, dev } = restarted();
+    negativeOnRestart(tun);
+    tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) tun.onCemi?.(DEV, 0x11fe, Buffer.from([0x81]), false); };
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_UNPROVEN");
+  });
+  test("after a negatively confirmed restart, a T_Disconnect later than the window is the device's idle timeout, no proof", async () => {
+    // The probe goes out inside the window and is still waiting for its acknowledgement when the
+    // device's T_Disconnect arrives, after the window.
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, { ...FAST, ackMs: 200, responseMs: 200, restartProofMs: 30 });
+    negativeOnRestart(tun);
+    tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) setTimeout(() => tun.reply([0x81]), 80); };
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_UNPROVEN");
+  });
+  test("after a negatively confirmed restart, a T_Disconnect inside the window, during a probe, is the proof", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, { ...FAST, ackMs: 200, responseMs: 200, restartProofMs: 150 });
+    negativeOnRestart(tun);
+    tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) setTimeout(() => tun.reply([0x81]), 80); };
+    await dev.restart();
+  });
+  test("a T_NAK that arrives after the probe's negative confirmation still counts: RESTART_IGNORED", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+    tun.failSend = (tpdu) => (ignorable(tpdu) ? null : "BUS_SEND_FAILED");
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu) || isRestart(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) setTimeout(() => tun.reply([0xc3 | (p.seq << 2)]), 0);
+    };
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_IGNORED");
+  });
+  test("a T_ACK without an answer on the probe: the device is still there, RESTART_IGNORED after either confirmation", async () => {
+    for (const negative of [false, true]) {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+      if (negative) negativeOnRestart(tun);
+      tun.handler = (tpdu) => {
+        if (ignorable(tpdu)) return;
+        const p = parseApdu(tpdu);
+        if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) tun.reply([0xc2 | (p.seq << 2)]); // T_ACK, never an answer
+      };
+      const failure = await dev.restart().then(() => null, (e: unknown) => e);
+      expect([negative, (failure as { code?: string } | null)?.code]).toEqual([negative, "RESTART_IGNORED"]);
+    }
+  });
+  test("a link failure on every probe after a negatively confirmed restart: not proven", async () => {
+    for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
+      const { tun, dev } = restarted();
+      tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ ? code : null);
+      const failure = await dev.restart().then(() => null, (e: unknown) => e);
+      expect([code, (failure as { code?: string } | null)?.code]).toEqual([code, "RESTART_UNPROVEN"]);
+    }
+  });
+  test("a link failure on the probe after a positively confirmed restart is that error, never a proof", async () => {
+    for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
+      const { tun, dev } = restarted();
+      tun.failSend = (tpdu) => (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ ? code : null);
+      const failure = await dev.restart().then(() => null, (e: unknown) => e);
+      expect([code, (failure as { code?: string } | null)?.code]).toEqual([code, code]);
+    }
+  });
+  test("a T_NAK on the probe after a positively confirmed restart: the device is still there, RESTART_IGNORED", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) tun.reply([0xc3 | (p.seq << 2)]);
+    };
+    const failure = await dev.restart().then(() => null, (e: unknown) => e);
+    expect((failure as { code?: string } | null)?.code).toBe("RESTART_IGNORED");
+  });
+  test("a negatively confirmed restart, unanswered probes, then T_Disconnect from the device: proven", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+    let probes = 0;
+    tun.failSend = (tpdu) => (isRestart(tpdu) || (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes < 3) ? "BUS_SEND_FAILED" : null);
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu) || isRestart(tpdu)) return;
+      if (parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && ++probes > 3) tun.reply([0x81]);
+    };
+    await dev.restart();
   });
   test("a negative L_Data.con on the confirmed restart, no answer and a device that keeps answering: not restarted", async () => {
     const tun = new FakeTransport();

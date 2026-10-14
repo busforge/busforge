@@ -179,7 +179,12 @@ What each row does not show:
   read, and the unit sends it after every restart. The bus voltage held through every unload and restart
   of ETS's and Busforge's downloads. The unit restarts before its L2 acknowledgement of `A_Restart`, so the
   interface confirms that frame negatively, for ETS and Busforge alike
-  ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)).
+  ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)). Those runs
+  took the restart's silence as its proof. Under the current proof, which needs the device's own
+  `T_Disconnect` after a negatively confirmed restart, the unit's downloads end `RESTART_UNPROVEN`: after
+  its reboot it acknowledges the probes on layer 2 and drops them without a transport answer. The writes
+  and the unit's state are as before (a parameter flash there and back, then a read equal to the earlier
+  final read); the closing proof is what is missing.
 - **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
   parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads

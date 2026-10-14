@@ -22,8 +22,14 @@ depends on is hardware-proven.
   does ([status.md](status.md#known-unproven)).
 - **A T_NAK from the device counts as its T_ACK.** `KnxDevice` takes any transport control frame with
   the request's sequence number as the acknowledgement, so a refused frame waits out the response
-  timeout and is repeated instead of failing at once. The restart's proof does not depend on it (its
-  probe after a negatively confirmed restart runs on a new connection).
+  timeout and is repeated instead of failing at once. `KnxDevice.restart()` notes a T_NAK on its probe
+  separately and takes it as the device still being there (`RESTART_IGNORED`, or accepted where the
+  firmware persists at `LoadCompleted` and the restart was confirmed).
+- **The restart's proof over UDP.** Over a KNXnet/IP tunnel on UDP Busforge does not see the
+  interface's `L_Data.con`, so a restart that never reached the bus takes the positive row of
+  [the restart's proof](load-procedures.md#a-negative-confirmation-of-the-restart-frame), where an
+  unanswered probe proves the reboot. Open decision: wait for the confirmation over UDP too, or prove
+  every restart there as an unconfirmed one.
 - **The stamp record on System 7.** With its record (PID 27 stamps) ETS's parameter download of the
   Gira M-0008 writes a changed byte alone (a byte in the middle of `AS-444E`), and the unstamped segment
   `AS-454E` whole; but a change of `0x435F` brings the three unchanged bytes before it along, every time.

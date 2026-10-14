@@ -1141,14 +1141,32 @@ confirmed (`81 01 00`):
 
 | Confirmation of the `A_Restart` frame | What `KnxDevice.restart()` does |
 |---|---|
-| positive | as above: silence proves the reboot (or the device's answer, for the confirmed restart) |
-| negative (`BUS_SEND_FAILED`) | counts as sent, unconfirmed: a confirmed restart the device answers with code 0 is proven by that answer; otherwise the device must be gone on the probe (no answer, or `T_Disconnect`); one that answers it, or refuses it with `T_NAK` (it never saw the restart and still expects its sequence number), is `RESTART_IGNORED`, even where a live device is otherwise accepted |
-| a failure of the link to the interface on the restart frame | error |
+| positive | one probe on the same connection: no answer, or a `T_Disconnect` to us, proves the reboot (for the confirmed restart also the device's answer with code 0); an answer, `T_ACK` or `T_NAK` is `RESTART_IGNORED` (accepted where the firmware persists at `LoadCompleted`); a failure of the link to the interface (KNXnet/IP or USB) is that error, never a proof |
+| negative (`BUS_SEND_FAILED`) | a confirmed restart the device answers with code 0 is proven by that answer. Otherwise the probe repeats on the same connection, one try at a time and without a new `T_Connect`, until the device decides: a `T_Disconnect` to us proves the reboot (it lost the connection with it); an answer, `T_ACK` or `T_NAK` is `RESTART_IGNORED`, even where a live device is otherwise accepted. A probe nobody acknowledged (`BUS_SEND_FAILED`), one left unanswered, or a failed link decides nothing: a device that stops acknowledging for a while without rebooting looks the same. A device closes an idle connection by itself 6 s after the last frame it took, so the `T_Disconnect` counts only when it arrived within 4 s (`restartProofMs`) of the device's last frame to us; without the device's decision by then the restart is `RESTART_UNPROVEN` |
+| no frame through the link to the interface | error |
 
-The device must then come back: every operation reconnects across the restart and reads the
-device again (`runFlashOp`: `reconnectAfterRestart`, then the verify read), so a device that
-never returns fails there. A negative confirmation of any other frame stays an error, except on the
-probe, where a rebooting device's missing acknowledgement is what the reboot looks like.
+After a proven restart every operation reconnects and reads the device again (`runFlashOp`:
+`reconnectAfterRestart`, then the verify read), so a device that never returns fails there.
+
+Limits of this proof:
+
+- Over a KNXnet/IP tunnel on UDP Busforge takes the frame as sent on the interface's tunnelling
+  acknowledgement and never sees the `L_Data.con`, so a restart there always takes the positive row.
+- A `T_Disconnect` is taken from the device's address to ours. Behind the Busforge bridge every
+  channel's point-to-point traffic goes out from the interface's one address, so another client's
+  connection to the same device shares it.
+- A device that never saw the restart gets the probe with a sequence number it does not expect. The
+  stacks seen answer it with `T_NAK`; one answering with `T_Disconnect` would be taken for a reboot.
+- A device that drops a frame on a connection it no longer has, without a `T_Disconnect`, never
+  proves a negatively confirmed restart: the MEAN WELL power supply acknowledges the probes on layer 2
+  after its reboot and answers none of them.
+- A device whose connection was already closed (it lost the `T_Connect` before the restart) answers
+  every probe with `T_Disconnect`, as a rebooted one does, and ignores the restart.
+- A plan that pauses and opens the link again right before the restart (the thelsing/OpenKNX settle)
+  leaves the device's last frame to us older than the window, so a negatively confirmed restart there
+  is never proven.
+- A KNX-USB interface whose own address could not be read gives the device no address of ours to send
+  its `T_Disconnect` to, so a negatively confirmed restart there is never proven.
 
 ### The deferred save is armed by the unload and refreshed by writes
 
