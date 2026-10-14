@@ -286,8 +286,8 @@ corpusDescribe("POST /flash-ga: link baseline adoption is gated on verified", ()
 
 // ETS's record of the last download that wrote the parameters (ImageStamp): a verified download or parameter
 // flash replaces it with its closing reads, an unverified one and a group-address flash leave it, a verified
-// operation that keeps none clears it, and it lives in the database, so the parameter flash after a server
-// restart compares against it.
+// operation that keeps none clears it, and it lives in the database, so the parameter flash and the
+// group-address flash after a server restart compare against it.
 corpusDescribe("the stamp record across the flash routes and a server restart", () => {
   const stamps = (crc: string) => [{ obj: 4, element: 1, hex: `0000002a00ff${crc}` }];
   const withStamps = (verified: boolean, crc?: string): FlashResult => ({ ...flashed(verified), ...(crc ? { stamps: stamps(crc) } : {}) } as FlashResult);
@@ -320,8 +320,10 @@ corpusDescribe("the stamp record across the flash routes and a server restart", 
     expect(record(restarted)).toEqual(stamps("bbbb"));
 
     setDeviceLink(restarted.db, projectId, deviceId, MDT_LINK_KEY, [0x040b]);
-    gaFlashImpl = async () => withStamps(true, "dddd");
+    let seenGa: unknown;
+    gaFlashImpl = async (opts) => { seenGa = opts.stampRecord; return withStamps(true, "dddd"); };
     await programmed(restarted, post(restarted, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+    expect(seenGa).toEqual(stamps("bbbb"));
     expect(record(restarted)).toEqual(stamps("bbbb"));
 
     paramFlashImpl = async () => withStamps(true);

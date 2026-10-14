@@ -182,7 +182,10 @@ export function appId(manufacturer: number, appNumber: number, version: number):
 // wire order, which the plan tests pin.
 // `security`: a Data Secure device's group keys and per-object flags follow its links, so they are
 // reloaded in the same bracket, the way a secured full download does it (planSecurityObjectLoad).
-export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer }, requireReboot = true, holdApplication = false, security?: SecurityObjectTables): LoadPlan {
+// `comObjKept`: the com-object table goes into the table the device keeps across the reallocation, only
+// the bytes `owned` marks (a mask per byte), as long as the table stays at `keptAt`; one the allocation
+// moved is written whole (writeSegmentOwned). Absent: the table is written whole.
+export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj: Buffer; comObjKept?: { owned: ReadonlyArray<number>; keptAt: number } }, requireReboot = true, holdApplication = false, security?: SecurityObjectTables): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   return [
     ...(holdApplication ? [{ op: "load", lsm: P, assert: false } as LoadStep] : []),
@@ -191,7 +194,9 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length },
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length },
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length },
-    { op: "writeSegment", lsm: C, bytes: tables.comObj },
+    tables.comObjKept
+      ? { op: "writeSegmentOwned", lsm: C, image: tables.comObj, owned: tables.comObjKept.owned, keptAt: tables.comObjKept.keptAt }
+      : { op: "writeSegment", lsm: C, bytes: tables.comObj },
     { op: "writeSegment", lsm: A, bytes: tables.assoc },
     { op: "writeSegment", lsm: D, bytes: tables.addr },
     ...(security ? planSecurityObjectLoad(security) : []),

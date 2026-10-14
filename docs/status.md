@@ -96,7 +96,7 @@ value.
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, survives a restart | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, ETS's bracket, one parameter changed and reverted (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle; ETS's bracket (see below) | hardware: in service in a real installation, driving light, fan and temperature |
-| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware | not proven | not proven | hardware: the cyclic-send interval change took effect on the bus |
+| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware, ETS's bracket; with the record of a Busforge download only the changed byte (see below) | hardware, add and remove, ETS's bracket and table lengths (see below) | hardware, onto a unit running its application, ETS's bracket and image, bus voltage kept through every unload and restart | hardware: the cyclic-send interval change took effect on the bus; a flashed link answers a read |
 | Theben HMG 6 T heating actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben JMG 4 T blind actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben RMG 8 T switch actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
@@ -119,8 +119,6 @@ What each row does not show:
   - **Auro M-0081_A-FE01, Theben TheLuxa P300, Theben Meteodata 140 S**: the full download runs the
     declared form onto a unit that does not hold the application too; no capture or run shows that case.
   - **Auro, Gira, Meteodata, Theben HMG 6 T and RMG 8 T (MIX 2), ABB US/U 4.2, MEAN WELL power supply**: the structural flash is offered.
-  - **MEAN WELL power supply**: the System B rules (PEI unload, closing reads, restart at once, ETS's
-    association order) apply; it has run no write under them.
   - **Theben DALI gateway**: the full download onto a unit that does not hold the application (the
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
@@ -168,6 +166,20 @@ What each row does not show:
   brackets), the gateway sends its failure object as set, and does not send it cleared after the
   restart: a read returns the cleared value. The DCA-replacement plugin renders committed fixtures and
   proves nothing about the device on a bus.
+- **MEAN WELL KNX power supply `M-0162_A-0004-11-F245`** (System B, the line's power supply). ETS 6 was
+  captured running a restart, a group-address, a parameter, a revert and a full download; Busforge's plans
+  equal them (`tools/etsdiff.test.ts`). ETS reads the two parameters the application keeps in properties
+  (object 0 PID 25 and PID 78) and writes neither; no Busforge plan writes them. On a unit running its
+  application, through a logging proxy over a KNX-USB interface on the line, each `verified`: the full
+  download (every byte ETS's full download writes, the same addresses and values), a parameter flash and
+  its revert (with the record of the Busforge full download, the one changed byte), and a group-address
+  flash adding and removing a link (ETS's bracket and table lengths; the com-object table whole, as ETS
+  writes it when its record's download did not write that table; the differential form, after a record
+  whose download wrote the table, is capture-tested only). The added address answered a group
+  read, and the unit sends it after every restart. The bus voltage held through every unload and restart
+  of ETS's and Busforge's downloads. The unit restarts before its L2 acknowledgement of `A_Restart`, so the
+  interface confirms that frame negatively, for ETS and Busforge alike
+  ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)).
 - **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
   parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads
@@ -333,8 +345,7 @@ What each row does not show:
   of inactive parameters, which ETS's full download writes as zero. A read-back match is not a flash
   round-trip.
 - **Offered, never driven.** Some applications are offered writes because their declared procedure
-  is covered, and those writes have no hardware evidence on the product: the MEAN WELL power supply (`M-0162_A-0004-11-F245`) for its group-address flash,
-  full download and structural flash.
+  is covered, and those writes have no hardware evidence on the product: the MEAN WELL power supply (`M-0162_A-0004-11-F245`) for its structural flash.
 - **Sibling products on a proven mask are individually unproven.** A mask proven on one product
   means the memory model and load procedure are right, not that another product on that mask has
   been driven.
@@ -395,15 +406,19 @@ report a device family as working on the strength of a passing test suite.
   IP interface for its maximum APDU before writing, as ETS does, and writes up to the shorter of the
   device's and the interface's (205 data bytes behind an interface announcing 210). The question and
   the answer (210) ran on an MDT IP Interface/Router ahead of a Meteodata 140 S parameter flash; that
-  unit declares no maximum APDU, so its writes stayed classic and short.
-- **The stamp record has run on no device.** The System B parameter flash keeps ETS's record of the
+  unit declares no maximum APDU, so its writes stayed classic and short. The Busforge bridge over a
+  KNX-USB interface does not answer that question over TCP; ETS asks it the interface's PID 56 with a
+  cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets 40, Busforge does not ask that way and
+  writes 12 bytes there.
+- **The stamp record has run on one device.** The System B parameter flash keeps ETS's record of the
   last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
-  `tools/etsdiff.test.ts` against every captured pair); reading the stamps before the flash and the
-  record across a server restart have not run.
-- **The System B full download's write set has run on no device.** It writes exactly the bytes ETS's
-  full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); every
-  hardware run of a System B full download (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway,
-  Jung 400021SE, GVS AMMA) wrote a wider set of the same values, which leaves the unit the same.
+  `tools/etsdiff.test.ts` against every captured pair); on the MEAN WELL power supply, after a Busforge
+  full download, it wrote the one changed byte. The record across a server restart has not run.
+- **The System B full download's write set has run on one device.** It writes exactly the bytes ETS's
+  full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); on the MEAN WELL
+  power supply the bytes written equal ETS's. The earlier hardware runs of a System B full download
+  (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway, Jung 400021SE, GVS AMMA) wrote a wider set
+  of the same values, which leaves the unit the same.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, records in [evidence/reference/](evidence/reference/)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA and the Jung 400021SE, every segment

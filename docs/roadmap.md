@@ -15,6 +15,15 @@ depends on is hardware-proven.
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
+- **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
+  `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
+  object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).
+  Busforge writes 12 bytes there. Either the bridge answers the search over TCP, or Busforge asks as ETS
+  does ([status.md](status.md#known-unproven)).
+- **A T_NAK from the device counts as its T_ACK.** `KnxDevice` takes any transport control frame with
+  the request's sequence number as the acknowledgement, so a refused frame waits out the response
+  timeout and is repeated instead of failing at once. The restart's proof does not depend on it (its
+  probe after a negatively confirmed restart runs on a new connection).
 - **The stamp record on System 7.** With its record (PID 27 stamps) ETS's parameter download of the
   Gira M-0008 writes a changed byte alone (a byte in the middle of `AS-444E`), and the unstamped segment
   `AS-454E` whole; but a change of `0x435F` brings the three unchanged bytes before it along, every time.
@@ -102,6 +111,11 @@ depends on is hardware-proven.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
+- **A System B group-address download onto an unchanged com-object table.** With a record whose
+  download wrote the table and equal stamps, ETS leaves out the table's identical bytes; whether it
+  then still unloads, reallocates and completes the table with no byte written is not captured, so
+  Busforge writes the table whole there (`relativeComObjWriteSet`). Next capture: a link moved from one
+  group address to another on an already linked object, right after a full download.
 - **The full download of the Steinel M-008E and the Auro `M-0081_A-FF31`.** Both are refused for
   their segments (a parameter segment without `<Data>`, a `<Mask>` of a form no capture shows); each
   needs an ETS full-download capture before it is lifted

@@ -253,7 +253,10 @@ export class KnxDevice {
     if ((tpdu[0] & 0xc0) === 0x80) { if ((tpdu[0] & 0x03) === 0x01) this.peerClosed?.(); return; }
     if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
     const outer = parseApdu(tpdu);
-    if (outer.control) { if (outer.seq === this.seq) this.ackResolve?.(); return; }
+    if (outer.control) {
+      if (outer.seq === this.seq) { if ((tpdu[0] & 0x03) === 0x03) this.nakSeen = true; this.ackResolve?.(); }
+      return;
+    }
     // For a secure session the data frame is a wrapped secure APDU: ACK the outer
     // numbered frame, then deliver the decrypted inner APDU. A failed MAC is dropped
     // (the request times out and can re-sync) rather than surfaced as fake data. A
@@ -525,6 +528,9 @@ export class KnxDevice {
   // write; null where it announces none or cannot be asked. With the device's it sizes the memory writes
   // (writeChunks).
   private interfaceApdu: Promise<number | null> | undefined;
+  // Whether the device answered a request with T_NAK (it is there, but refused the sequence number);
+  // read by restart() after its probe.
+  private nakSeen = false;
   interfaceMaxApdu(): Promise<number | null> {
     return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
   }
@@ -889,17 +895,31 @@ export class KnxDevice {
       opts.onProgress?.(++done, total);
     }
   }
-  // Send A_Restart and nothing else: the caller observes the reboot itself. NOT swallowed: every
-  // reboot proof reads the device's SILENCE as "it rebooted", so a frame the interface never accepted
-  // must not reach one; that silence would mean nothing at all.
-  async sendRestart(): Promise<void> {
-    await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
+  // Send A_Restart and nothing else: the caller observes the reboot itself. Every failure of the link
+  // is thrown: every reboot proof reads the device's SILENCE as "it rebooted", so a frame the
+  // interface never took must not reach one; that silence would mean nothing at all.
+  // The one exception is a negative L_Data.con for this frame (BUS_SEND_FAILED): on TP a device that
+  // reboots at once on A_Restart sends no L2 acknowledgement, so the interface confirms the frame
+  // negatively although it arrived, and ETS goes on (private corpus captures/meanwell-ets-restart.log
+  // CON-NEG with the unit's startup telegrams 2 s later; meanwell-ets6log-restart.txt "Restart_con ...
+  // C"). Such a restart counts as sent but unconfirmed: false. Any other negative con stays an error.
+  async sendRestart(): Promise<boolean> {
+    try {
+      await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
+    } catch (e) {
+      if ((e as { code?: string }).code !== "BUS_SEND_FAILED") throw e;
+      this.seq = (this.seq + 1) & 0x0f;
+      return false;
+    }
     this.seq = (this.seq + 1) & 0x0f;
+    return true;
   }
-  // True when the device answered the restart with error code 0; false when it gave no answer.
-  private async sendConfirmedRestart(): Promise<boolean> {
+  // answered: the device answered the restart with error code 0. unconfirmed: the interface confirmed
+  // the frame negatively (see sendRestart), which counts as sent, not as an error.
+  private async sendConfirmedRestart(): Promise<{ answered: boolean; unconfirmed: boolean }> {
     let take: (p: ParsedApdu | null) => void = () => undefined;
     const answer = new Promise<ParsedApdu | null>((res) => { take = res; });
+    let unconfirmed = false;
     try {
       // One try, waiting for the transport acknowledgement only: a second restart to a device that
       // is already rebooting is not sent. The answer is taken by a waiter set up before the send.
@@ -911,7 +931,8 @@ export class KnxDevice {
       await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); }, true);
     } catch (e) {
       const code = (e as { code?: string }).code;
-      if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION") { this.respResolve = null; throw e; }
+      if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "BUS_SEND_FAILED") { this.respResolve = null; throw e; }
+      unconfirmed = code === "BUS_SEND_FAILED";
       // Unacknowledged, the frame still counts as sent, as the basic restart's does: the probe in
       // restart() must not go out with the restart's sequence number, which a device that took the
       // restart and kept running would discard as a repetition and so look rebooted.
@@ -920,14 +941,14 @@ export class KnxDevice {
     const timer = setTimeout(() => take(null), this.timeouts.restartAnswerMs);
     const r = await answer;
     clearTimeout(timer);
-    if (r === null) { this.respResolve = null; return false; }
+    if (r === null) { this.respResolve = null; return { answered: false, unconfirmed }; }
     if (r.apci !== (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER) || r.data.length < 3) {
       this.respResolve = null;
       throw new KnxError("RESTART_REFUSED", `the confirmed restart was answered with service 0x${r.apci.toString(16)} ${r.data.toString("hex")}, not an A_Restart_Response`);
     }
     if (r.data[0] !== 0) { this.respResolve = null; throw new KnxError("RESTART_REFUSED", `the device refused the confirmed restart with error code ${r.data[0]}`); }
     this.respResolve = null;
-    return true;
+    return { answered: true, unconfirmed };
   }
 
 
@@ -978,16 +999,36 @@ export class KnxDevice {
     // it and disconnects without probing (captures/mdt-router-ets6log-{fulldownload,partial-name,
     // partial-name-revert}.txt). A probe would also go out while an interface that is itself
     // restarting, or serving a unit that is, takes no frame (an MDT IP router behind its sibling).
-    if (confirmed && await this.sendConfirmedRestart()) return;
-    if (!confirmed) await this.sendRestart();
+    // An A_Restart (plain or confirmed) the interface confirmed negatively (see sendRestart) is proven
+    // like one no answer came for: the device must go silent here, and must come back for the
+    // operation's read after the restart. A device that keeps answering then is never taken as
+    // restarted, not even where requireReboot is false: nothing shows the frame reached it.
+    let unconfirmed: boolean;
+    if (confirmed) {
+      const sent = await this.sendConfirmedRestart();
+      if (sent.answered) return;
+      unconfirmed = sent.unconfirmed;
+    } else unconfirmed = !(await this.sendRestart());
     try {
+      this.nakSeen = false;
       await this.deviceDescriptor(); // rebooting firmware must NOT answer
     } catch (e) {
       // A link to the interface that stalled or closed says nothing about the device: whether the
       // probe reached it is unknown, so it is no proof of the reboot.
       const code = (e as { code?: string }).code;
       if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
+      // A device that refused the probe with T_NAK is there on this connection: after an unconfirmed
+      // restart it never saw the frame and still expects the restart's sequence number. A rebooted
+      // device has no connection, and answers with T_Disconnect or not at all.
+      if (unconfirmed && this.nakSeen) {
+        throw new KnxError("RESTART_IGNORED",
+          "the interface confirmed A_Restart negatively and the device refused the next frame on the same connection (T_NAK): it never received the restart");
+      }
       return;                        // gone. It restarted, and it wrote its flash on the way out.
+    }
+    if (unconfirmed) {
+      throw new KnxError("RESTART_IGNORED",
+        "the interface confirmed A_Restart negatively and the device kept answering on the same connection: nothing shows the restart reached it");
     }
     if (!requireReboot) return;      // this firmware persisted at LoadCompleted; a live device is fine
     throw new KnxError("RESTART_IGNORED",

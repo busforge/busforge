@@ -68,7 +68,7 @@ verified on hardware. Every other bracket keeps the asserting default.
 | --- | --- |
 | `planRelativeParFlash` | the System B parameter bracket: unload, load, alloc (no fill), write the bytes holding an owned bit (the whole image if the allocation moved the segment), stamp the app id, load-completed, restart; the read-back checks the whole segment ([findings.md](findings.md) §14) |
 | `planAbsoluteParFlash` | the surgical absolute-segment bracket: per LSM that owns a changed segment, load, write the changed owned runs, load-completed, then restart |
-| `planSystemBGaFlash` | the three group tables (com-object, address, association) rewritten in one bracket |
+| `planSystemBGaFlash` | the three group tables (com-object, address, association) rewritten in one bracket; the com-object table, where the device keeps it, with the bytes R16 selects against the stamp record (`relativeComObjWriteSet`) |
 | `planSystem7GaFlash` | the System 7 group tables as ETS's partial download writes them: both tables unloaded and declared where the rules put them, the com-object table in the application's load bracket without unloading or declaring it, the closing steps, the restart |
 | `planRelativeStructuralFlash` | a System B change that alters the com-object table: application, com-object table, association and address table (and the security object) in one bracket, reallocated without fill, see [Structural flash](#structural-flash) |
 | `planAbsoluteStructuralFlash` | the same on System 7: the group-address flash's table brackets, then the application loaded without unloading or declaring it, the com-object table and the parameter bytes that differ from the device, the closing steps, one restart |
@@ -323,15 +323,15 @@ which device is in [status.md](status.md).
 | R5 | **Where the group tables go**: with dynamic tables the two declared table segments are one region, the address table's segment exactly as long as the table and the association table's directly behind it with the rest; otherwise each table in the segment its load-state machine declares. In the full, the group-address and the structural download alike (`tablePlacement`) | catalogue | `ApplicationProgram@DynamicTableManagement` | `"true"`: Gira, TheLuxa, Meteodata; `"false"`: Auro, MDT BE-02001.02, MDT BE-06001.02, ABB |
 | R6 | **A table segment's `<Data>` that no table can reach** (non-FF bytes past 3 + 2 × MaxEntries of the address table, 1 + 2 × MaxEntries of the association table, marked by the segment's `<Mask>` where it declares one) is written by the full download; inside that capacity the segment is table area and only the built table is written; the group-address download writes none of it (`tableSegmentData`) | catalogue | `<Data>`, `<Mask>`, `AddressTable@MaxEntries`, `AssociationTable@MaxEntries` | Meteodata (bytes 511-512 of `AS-4000` written); Gira and TheLuxa (non-FF `<Data>` inside the capacity, not written) |
 | R7 | **The device's own individual address** (address-table bytes 1-2) is never written by a download, whatever the `<Mask>` says | family System 7 | the table layout | Auro, Gira, TheLuxa, Meteodata, MDT BE-02001.02, MDT BE-06001.02 |
-| R8 | **The association order**: each object's first link (by object number), then the further links by object number and group index (`associations`) | KNX-wide | none (the table build) | System 7: Gira, TheLuxa, Meteodata; System B: Theben MIX 2 (three products), Theben DALI-Gateway. No capture contradicts it (elsewhere every object has one link) |
-| R9 | **The System B full download first unloads the PEI program** (LSM 5), an error there ignored; not its partial form (R1) | family System B | the MV-07B0 master data's `Load ap1` (wrapped in `LdCtrlMapError`) | Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway, OpenKNX RaumController |
-| R10 | **The closing restart** is the confirmed restart (A_Restart type 1, erase code 1, channel 0: `81 01 00`) where the application runs ETS's secure procedure variant, the plain A_Restart otherwise (System B, `withConfirmedRestart`) | catalogue | `ApplicationProgram@IsSecureEnabled="true"` | confirmed: Theben MIX 2, Jung 400021SE, GVS AMMA; plain: Theben DALI-Gateway |
-| R11 | **Every declared `LdCtrlLoadImageProp`** is a read of the property (PID 27) after the last `LoadCompleted`, in every download, as many elements per request as one response carries on the device (its maximum APDU length); the restart follows on the same connection at once ([closing steps](#the-closing-steps-run-as-declared)) | KNX-wide (load procedure) | `LdCtrlLoadImageProp` | Gira (one element per request), Theben MIX 2, Jung 400021SE (two in one request), GVS AMMA, Theben DALI-Gateway |
+| R8 | **The association order**: each object's first link (by object number), then the further links by object number and group index (`associations`) | KNX-wide | none (the table build) | System 7: Gira, TheLuxa, Meteodata; System B: Theben MIX 2 (three products), Theben DALI-Gateway, MEAN WELL power supply. No capture contradicts it (elsewhere every object has one link) |
+| R9 | **The System B full download first unloads the PEI program** (LSM 5), an error there ignored; not its partial form (R1) | family System B | the MV-07B0 master data's `Load ap1` (wrapped in `LdCtrlMapError`) | Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway, OpenKNX RaumController, MEAN WELL power supply |
+| R10 | **The closing restart** is the confirmed restart (A_Restart type 1, erase code 1, channel 0: `81 01 00`) where the application runs ETS's secure procedure variant, the plain A_Restart otherwise (System B, `withConfirmedRestart`) | catalogue | `ApplicationProgram@IsSecureEnabled="true"` | confirmed: Theben MIX 2, Jung 400021SE, GVS AMMA; plain: Theben DALI-Gateway, MEAN WELL power supply |
+| R11 | **Every declared `LdCtrlLoadImageProp`** is a read of the property (PID 27) after the last `LoadCompleted`, in every download, as many elements per request as one response carries on the device (its maximum APDU length); the restart follows on the same connection at once ([closing steps](#the-closing-steps-run-as-declared)) | KNX-wide (load procedure) | `LdCtrlLoadImageProp` | Gira (one element per request), Theben MIX 2, Jung 400021SE (two in one request), GVS AMMA, Theben DALI-Gateway, MEAN WELL power supply |
 | R12 | **A declared `LdCtrlWriteProp` to a property other than PID 27** after the last `LoadCompleted` is written as declared, at its place before the restart, its echo checked where `Verify="true"` | KNX-wide (load procedure) | `LdCtrlWriteProp` | GVS AMMA (full and partial download); no other fixture declares one |
 | R13 | **Config bit `0x80` of a System 7 com-object table entry** is the configured object's update flag ([device-memory-model.md](device-memory-model.md#mv-0705-layout-manufacturer-template-plus-overlay)) | family System 7 | `ComObject@UpdateFlag` (the resolved flags) | TheLuxa (object 116), Meteodata (objects 9, 13 and more), MDT BE-06001.02 (objects 36, 39); the Gira, Auro, MDT BE-02001.02 and ABB comparisons pass with it |
 | R14 | **Parameters the configuration does not show**: where the application says so, ETS leaves out an inactive parameter every placement of which lies in a branch of an evaluated `choose` that was not taken; its bytes keep the allocation fill in a full download and are not in a parameter download. So a parameter a change activated keeps, after that change is reverted, the value the change wrote: neither tool writes it once it is inactive again, and only a full download that reallocates with fill clears it. Elsewhere such a parameter is written at its parameter default, not at a value the project still stores for it (System B, `buildRelativeSegmentTarget`) | catalogue | `<Options DownloadInvisibleParameters="None">` | Theben MIX 2 (it shows the difference), Jung 400021SE (declares it, its captures unchanged by it); without it the GVS AMMA's downloads write the defaults, the MEAN WELL power supply reads back with them, and the MDT IP Interface/Router's full download writes the defaults of inactive texts and flags its project holds other values for |
-| R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products, the Theben DALI-Gateway and the MDT BE-06001.02 |
-| R16 | **What a differential download sends into a segment the unit keeps**, region by region of the segment's memory-control block (PID 27): where the region's CRC-control byte is 0, the bytes that differ from the unit; where it is not 0, past the regions, or on a segment that reports none, every byte the image carries. The application's regions are the ones it declares (its `LdCtrlWriteProp` to PID 27), the com-object table's the ones the unit reports. ETS compares against its own record of the last download, Busforge against the unit it reads, so the two send the same bytes whenever that record equals the unit (`differentialMask`). The verify reads the whole segment back and checks every owned bit against the configuration and every other bit against the unit's read, except the `Access="None"` bytes the device sets itself | KNX-wide (System B) | the memory-control block's CRC-control byte | Jung 400021SE: the application's 7700-byte region (control 0) only where it changed, its declared one-byte region (control 1) in every download, the com-object table (control 0) only when it changed, one byte; Theben DALI-Gateway: the com-object table (control 1) whole although unchanged, the application (control 0) unchanged and not reloaded; OpenKNX RaumController parameter downloads: the application (control 0) differential, the com-object table (no memory-control block) whole |
+| R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products, the Theben DALI-Gateway, the MDT BE-06001.02 and the MEAN WELL power supply |
+| R16 | **What a differential download sends into a segment the unit keeps**, region by region of the segment's memory-control block (PID 27): where the region's CRC-control byte is 0, the bytes that differ from the unit; where it is not 0, past the regions, or on a segment that reports none, every byte the image carries. The application's regions are the ones it declares (its `LdCtrlWriteProp` to PID 27), the com-object table's the ones the unit reports. It holds for the partial form of the full download, the parameter download and the group-address download (whose com-object table is a segment the unit keeps). ETS compares against its own record of the last download, Busforge against the unit it reads, so the two send the same bytes whenever that record equals the unit (`differentialMask`). The verify reads the whole segment back and checks every owned bit against the configuration and every other bit against the unit's read, except the `Access="None"` bytes the device sets itself | KNX-wide (System B) | the memory-control block's CRC-control byte | Jung 400021SE: the application's 7700-byte region (control 0) only where it changed, its declared one-byte region (control 1) in every download, the com-object table (control 0) only when it changed, one byte; Theben DALI-Gateway: the com-object table (control 1) whole although unchanged, the application (control 0) unchanged and not reloaded; OpenKNX RaumController parameter downloads: the application (control 0) differential, the com-object table (no memory-control block) whole; MEAN WELL power supply group-address download: the com-object table (control 0) one byte, the record's stamps equal and its download a full one |
 
 **Which bytes of a data segment**, the rule behind R1 and R2 ([below](#which-bytes-ets-writes)):
 a segment ETS loads afresh carries the bytes its `<Mask>` marks and every byte a parameter covers
@@ -434,7 +434,8 @@ with fewer than 31 bytes between them, bytes outside the image counted; a fill r
 bytes or more, the fill before the first and after the last such byte and every byte outside the image
 are left to the allocation (`fullDownloadImageCoverage`, `fillAllocatedRuns`). Shown by ETS's own image
 and wire on the OpenKNX RaumController, the three Theben MIX 2 products, the Theben DALI-Gateway KNX
-plus and the MDT IP Interface/Router (largest gap bridged 30 bytes, smallest left out 31), and by its
+plus, the MDT IP Interface/Router and the MEAN WELL power supply (largest gap bridged 30 bytes, smallest
+left out 31), and by its
 wire on the Jung 400021SE and the GVS AMMA; `tools/etsdiff.test.ts` pins Busforge's written bytes to
 ETS's for each. The tables are written whole, as ETS writes them.
 
@@ -451,7 +452,24 @@ owned byte ("Differential Image Stamp does not match, falling back"; Theben MIX 
 its download marker after the restart, so its stamps never match). A region with another control byte is
 written whole and its stamp does not count (the DALI-Gateway's com-object table, control 1, changed by
 the group-address download between). `checkedStamps` and `relativeParWriteSet` decide so;
-`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes. The record
+`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes.
+
+ETS's group-address download takes the same decision on the same stamps, and so does Busforge's
+group-address flash for the com-object table (`relativeComObjWriteSet`). ETS's differential compares with
+its image of the download its record comes from, so it leaves out com-object bytes only where that
+download wrote the table (a full download; a parameter download's image holds none of it). Busforge's
+record marks the objects its download wrote (`ImageStamp.written`: every object for a full download and a
+structural flash, the application for a parameter flash). Where the record's download wrote the table and
+the stamps equal the record, the flash writes the bytes of the table that differ from the unit, region by
+region (R16); otherwise the table whole. The MEAN WELL power supply's group-address download, on a record
+older than the captures, found the stamps equal and wrote one byte of its 74-byte table ("removed 73
+identical bytes"); the Theben MIX 2's found its application's stamp changed and wrote the table whole
+("does not match"); in the MEAN WELL's revert, stamps equal to the parameter download's record, ETS wrote
+the application's one changed byte and the com-object table whole. The group tables go whole either way.
+A group-address download leaves the record as it was, so the MEAN WELL's parameter download after it
+found the com-object table's stamp changed and fell back to every owned byte. A differential that selects
+no byte of the table (a link moved to another address only) writes the table whole: no capture shows
+ETS's group-address download onto an unchanged com-object table. The record
 over a restart of the server, and the stamp reads on a device, have run on no device. The System 1
 download reads no stamps (ETS's capture of it shows none), so a verified one leaves the device without a
 record.
@@ -1111,6 +1129,26 @@ Not every firmware works that way. Some persist at `LoadCompleted` and never go 
 is opt-in per manufacturer and only for firmware where it was hardware-verified
 (`PERSIST_ON_LOAD_COMPLETED` in `profiles.ts`, proven by a power-cycle test). The default
 stays strict.
+
+#### A negative confirmation of the restart frame
+
+A device that reboots at once on `A_Restart` sends no L2 acknowledgement for it, so a TP
+interface confirms the frame negatively (`L_Data.con` with the error bit, `BUS_SEND_FAILED`)
+although it arrived. ETS gets the same negative confirmation and goes on (MEAN WELL
+KNX-40E-1280D: the restart frame `CON-NEG`, the unit's startup telegrams about 2 s later,
+ETS6.log `Restart_con … C`). This is a KNX-level rule for the restart frame only, plain and
+confirmed (`81 01 00`):
+
+| Confirmation of the `A_Restart` frame | What `KnxDevice.restart()` does |
+|---|---|
+| positive | as above: silence proves the reboot (or the device's answer, for the confirmed restart) |
+| negative (`BUS_SEND_FAILED`) | counts as sent, unconfirmed: a confirmed restart the device answers with code 0 is proven by that answer; otherwise the device must be gone on the probe (no answer, or `T_Disconnect`); one that answers it, or refuses it with `T_NAK` (it never saw the restart and still expects its sequence number), is `RESTART_IGNORED`, even where a live device is otherwise accepted |
+| a failure of the link to the interface on the restart frame | error |
+
+The device must then come back: every operation reconnects across the restart and reads the
+device again (`runFlashOp`: `reconnectAfterRestart`, then the verify read), so a device that
+never returns fails there. A negative confirmation of any other frame stays an error, except on the
+probe, where a rebooting device's missing acknowledgement is what the reboot looks like.
 
 ### The deferred save is armed by the unload and refreshed by writes
 

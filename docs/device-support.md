@@ -214,7 +214,10 @@ application is refused (`SYSTEM1_LOAD_UNCAPTURED`), see [Known gaps](#known-gaps
   application carries such a parameter, ETS reads PID 78 and writes nothing to it, and so in the ETS
   captures of the Gira M-0008 (full download, partial parameter and links downloads, revert): one
   read of PID 78 each, no write, and so in the ETS captures of the Theben MIX 2's three products (full,
-  parameter, links and revert downloads). For the other applications no capture shows what ETS does.
+  parameter, links and revert downloads). In the ETS captures of the MEAN WELL power supply (full,
+  parameter, links and revert downloads) ETS reads PID 25 and PID 78 once each and writes neither; the
+  image of each download that writes the parameters lists PID 25 at the parameter's value (`0x1040`) where the unit answers `0x1044`, and the
+  download goes on. For the other applications no capture shows what ETS does.
 - **Devices that expose an object model instead of a memory image** (some IP interfaces answer an
   opaque device descriptor and offer no readable parameter model) have no read or program path
   yet.

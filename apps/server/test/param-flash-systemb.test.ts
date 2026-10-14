@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { KnxDevice, LSM, STATE } from "@busforge/knx";
-import { parseAppConfig, buildRelativeSegmentTarget } from "@busforge/product";
+import { parseAppConfig, buildRelativeSegmentTarget, parseLoadProcedures } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -25,7 +25,8 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     state = new Map<number, number>([[1, STATE.LOADED], [2, STATE.LOADED], [3, STATE.LOADED], [4, STATE.LOADED]]);
     writes = 0;
     written = new Set<number>();
-    stamp = STAMP; // what PID 27 answers, element 1 of every object
+    stamp = STAMP; // what PID 27 answers, element 1 of every object without its own in `stamps`
+    stamps = new Map<number, string>();
     async connect() {}
     async disconnect() {}
     async deviceDescriptor() { return "MV-07B0"; }
@@ -37,11 +38,11 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) { this.mem.set(addr + i, data[i]); this.written.add(addr + i); } }
-    async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
+    async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     async propReadIfPresent() { return null; }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
-    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: pid === 27 ? Buffer.concat(Array.from({ length: count }, () => Buffer.from(this.stamp, "hex"))) : Buffer.alloc(8 * count) }; }
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: pid === 27 ? Buffer.concat(Array.from({ length: count }, () => Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"))) : Buffer.alloc(8 * count) }; }
     async propWrite(obj: number, pid: number, data: Buffer) {
       if (pid === 5) { const ev = data[0]; if (ev === LSM.LOAD) this.state.set(obj, STATE.LOADING); else if (ev === LSM.LOAD_COMPLETED) this.state.set(obj, STATE.LOADED); else if (ev === LSM.UNLOAD) this.state.set(obj, STATE.UNLOADED); }
       return Buffer.alloc(0);
@@ -81,6 +82,57 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     }, 30_000);
     test("a region whose control byte is not 0 does not count: no check, every owned byte", async () => {
       expect((await run([{ obj: 4, element: 1, hex: other("01", "00aa") }])).dev.written.size).toBe(owned);
+    }, 30_000);
+  });
+
+  // The group-address flash decides the com-object table the same way (relativeComObjWriteSet): with the unit's
+  // stamps equal to a record whose download wrote the table, the bytes of the table that differ (one region, CRC
+  // control 0); otherwise the table whole. Linking the unlinked object 2 changes its flags byte, as in ETS's group-address download of this
+  // application (tools/etsdiff.test.ts).
+  describe("System B group-address flash and the stamp record", () => {
+    const tables = (links: { comObjNum: number; gaRaws: number[] }[]) => {
+      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.20", params, links, proc: parseLoadProcedures(xml) });
+      return (lsm: number) => b.segments.find((s) => s.lsm === lsm)!.image;
+    };
+    const unlinked = tables([]), linked = tables([{ comObjNum: 2, gaRaws: [0x7ffa] }]);
+    const COMOBJ = `${unlinked(3).length.toString(16).padStart(8, "0")}00ff00cc`;
+    const run = async (record: { obj: number; element: number; hex: string; written?: true }[] | undefined, comObjStamp = COMOBJ, tablesState: number = STATE.LOADED) => {
+      const dev = seeded();
+      dev.stamps.set(3, comObjStamp);
+      dev.state.set(3, tablesState);
+      for (const lsm of [1, 2, 3]) unlinked(lsm).forEach((b, i) => dev.mem.set(0x100 * lsm + i, b));
+      const res = await classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links: [{ comObjNum: 2, gaRaws: [0x7ffa] }], stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(res.verified).toBe(true);
+      for (const lsm of [1, 2, 3]) expect([lsm, Buffer.from(Array.from(linked(lsm), (_, i) => dev.mem.get(0x100 * lsm + i)!)).equals(linked(lsm))]).toEqual([lsm, true]);
+      return [...dev.written].filter((a) => a >= 0x300 && a < 0x300 + linked(3).length).map((a) => a - 0x300);
+    };
+    const record = [{ obj: 3, element: 1, hex: COMOBJ, written: true as const }, { obj: 4, element: 1, hex: STAMP, written: true as const }];
+    const differing = Array.from(linked(3), (_, i) => i).filter((i) => linked(3)[i] !== unlinked(3)[i]);
+    test("the change links object 2: one byte of the com-object table differs", () => {
+      expect(differing).toEqual([4]);
+    });
+    test("stamps equal to the record: only the com-object byte that differs", async () => {
+      expect(await run(record)).toEqual(differing);
+    }, 30_000);
+    test("the application's stamp other than the record: the com-object table whole", async () => {
+      expect((await run([record[0], { obj: 4, element: 1, hex: other("00", "00bb") }])).length).toBe(linked(3).length);
+    }, 30_000);
+    test("no record: the com-object table whole", async () => {
+      expect((await run(undefined)).length).toBe(linked(3).length);
+    }, 30_000);
+    test("a record of a parameter flash, which did not write the table: the com-object table whole", async () => {
+      expect((await run([{ obj: 3, element: 1, hex: COMOBJ }, record[1]])).length).toBe(linked(3).length);
+    }, 30_000);
+    test("a com-object region whose control byte is not 0: the com-object table whole", async () => {
+      const ctl1 = `${COMOBJ.slice(0, 8)}01${COMOBJ.slice(10)}`;
+      expect((await run([{ ...record[0], hex: ctl1 }, record[1]], ctl1)).length).toBe(linked(3).length);
+    }, 30_000);
+    test("a com-object table not LOADED: the table whole", async () => {
+      expect((await run(record, COMOBJ, STATE.LOADING)).length).toBe(linked(3).length);
+    }, 30_000);
+    test("a stamp the unit does not give as 8 bytes: the table whole, not a refusal", async () => {
+      expect((await run(record, "0000004a00ff")).length).toBe(linked(3).length);
     }, 30_000);
   });
 

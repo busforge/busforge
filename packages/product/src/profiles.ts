@@ -421,16 +421,18 @@ export type FlashResult = (
 // as the closing reads of a download that wrote the application's parameters returned it: ETS's record of
 // that download (LdCtrlLoadImageProp). `stamps` on a flashed result: the record of this download; absent
 // where the operation keeps none.
-export interface ImageStamp { obj: number; element: number; hex: string }
+// `written`: the download wrote that object's segment, so its image held it (a parameter flash writes only the
+// application's).
+export interface ImageStamp { obj: number; element: number; hex: string; written?: true }
 const MCB_ELEMENT_BYTES = 8;
-function stampCollector(): { stamps: ImageStamp[]; onRead: (obj: number, pid: number, start: number, data: Buffer) => void } {
+function stampCollector(wrote: readonly number[]): { stamps: ImageStamp[]; onRead: (obj: number, pid: number, start: number, data: Buffer) => void } {
   const stamps: ImageStamp[] = [];
   return {
     stamps,
     onRead: (obj, pid, start, data) => {
       if (pid !== PID.MCB_TABLE) return;
       if (data.length === 0 || data.length % MCB_ELEMENT_BYTES !== 0) throw new ProductError("STAMP_UNREADABLE", `object ${obj} answered its memory-control block from element ${start} with ${data.length} bytes, not whole 8-byte elements`);
-      for (let k = 0; (k + 1) * MCB_ELEMENT_BYTES <= data.length; k++) stamps.push({ obj, element: start + k, hex: data.subarray(k * MCB_ELEMENT_BYTES, (k + 1) * MCB_ELEMENT_BYTES).toString("hex") });
+      for (let k = 0; (k + 1) * MCB_ELEMENT_BYTES <= data.length; k++) stamps.push({ obj, element: start + k, hex: data.subarray(k * MCB_ELEMENT_BYTES, (k + 1) * MCB_ELEMENT_BYTES).toString("hex"), ...(wrote.includes(obj) ? { written: true as const } : {}) });
     },
   };
 }
@@ -464,9 +466,28 @@ async function currentStamps(dev: KnxDevice, record: ImageStamp[] | undefined): 
 // declares them, else as the unit's stamps report them); otherwise every owned byte.
 export function relativeParWriteSet(image: Buffer, current: Buffer, owned: ReadonlyArray<number>, mcb: McbWrite[], check: { equal: boolean; read: ImageStamp[] } | null): ReadonlyArray<number> {
   if (!check?.equal) return owned;
-  const unitRegions = check.read.filter((x) => x.obj === LSM).sort((a, b) => a.element - b.element)
+  return differentialMask(changedOwned(image, current, owned), owned, declaredMcbRegions(mcb) ?? unitMcbRegions(check.read, LSM));
+}
+// The com-object table bytes a System B group-address flash writes into the table the unit keeps: where the record's
+// download wrote the table (`record`, ImageStamp.written) and the unit's stamps equal the record, those that differ from
+// the unit (`current`), region by region of the table's memory-control block as the unit reports it (differentialMask);
+// otherwise the whole table. ETS's group-address download decides so: it compares with its image of the download its
+// record comes from. MEAN WELL KNX-40E-1280D: after a full download, stamps equal, one region of CRC control 0, the one
+// byte that differs; its revert, the record from a parameter download whose image held no com-object table, the table
+// whole; Theben MIX 2: its application's stamp changed since the record, the table whole.
+// A differential that selects no byte goes whole as well: no capture shows ETS's group-address download onto an
+// unchanged com-object table (docs/roadmap.md).
+export function relativeComObjWriteSet(comObj: Buffer, current: Buffer, record: ImageStamp[] | undefined, check: { equal: boolean; read: ImageStamp[] } | null): number[] {
+  const whole = new Array<number>(comObj.length).fill(0xff);
+  if (!check?.equal || !record?.some((r) => r.obj === OBJ.COMOBJ_TABLE && r.written)) return whole;
+  const mask = differentialMask(differingBytes(comObj, current), whole, unitMcbRegions(check.read, OBJ.COMOBJ_TABLE));
+  return mask.some((m) => m !== 0) ? mask : whole;
+}
+// An object's memory-control-block regions as the unit's stamps report them, in element order; null where none was read.
+function unitMcbRegions(read: ImageStamp[], obj: number): McbRegion[] | null {
+  const regions = read.filter((x) => x.obj === obj).sort((a, b) => a.element - b.element)
     .map((x) => { const b = Buffer.from(x.hex, "hex"); return { size: b.readUInt32BE(0), control: b[4] }; });
-  return differentialMask(changedOwned(image, current, owned), owned, declaredMcbRegions(mcb) ?? (unitRegions.length ? unitRegions : null));
+  return regions.length ? regions : null;
 }
 
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
@@ -691,6 +712,9 @@ export interface GaFlashCtx extends WriteGate {
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
   persistBackups: PersistBackups;
+  // As ParamFlashCtx.stampRecord: with the unit's stamps equal to it, the com-object table goes differentially
+  // (relativeComObjWriteSet). A group-address flash leaves the record as it was.
+  stampRecord?: ImageStamp[];
 }
 
 // A change that alters the com-object table, written without a full download: the parameters, the
@@ -1086,7 +1110,7 @@ export class SystemBProfile extends DeviceProfile {
       }
     }
 
-    const fullStamps = stampCollector();
+    const fullStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
@@ -1157,7 +1181,7 @@ export class SystemBProfile extends DeviceProfile {
     const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory });
     const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
     const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
-    const partialStamps = stampCollector();
+    const partialStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("full download").loadProcedures.extendedMemoryServices,
       imageBytes,
@@ -1282,7 +1306,7 @@ export class SystemBProfile extends DeviceProfile {
     // An application not LOADED (an interrupted write) takes every owned byte, as ETS's differential is
     // shown only onto a loaded one.
     const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord)) : target.owned;
-    const parStamps = stampCollector();
+    const parStamps = stampCollector([LSM]);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
@@ -1363,6 +1387,16 @@ export class SystemBProfile extends DeviceProfile {
     const appBefore = await lsmState(dev, OBJ.APP_PROGRAM);
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const tablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]);
+    // The com-object table goes into the one the unit keeps, differentially where the unit's stamps equal the record, as
+    // ETS's group-address download decides it; a table not LOADED (an interrupted write) goes whole.
+    // A stamp the unit does not give as 8 bytes counts as unequal: the whole table is the form without the check.
+    const check = await currentStamps(dev, ctx.stampRecord).catch((e: unknown) => {
+      if (e instanceof ProductError && e.code === "STAMP_UNREADABLE") return null;
+      throw e;
+    });
+    const comObjKept = tablesLoaded
+      ? { owned: relativeComObjWriteSet(comObj, cur.comObj, ctx.stampRecord, check), keptAt: await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table") }
+      : undefined;
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: addr.length + assoc.length + comObj.length,
@@ -1390,7 +1424,7 @@ export class SystemBProfile extends DeviceProfile {
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
         // The steps the application closes every download with (closingSteps) close this one too.
-        await runLoadPlan(dev, withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), cfg.loadProcedures.secureEnabled), cfg.loadProcedures, "grp")); // rebuilt L3 carries the correct comm flags for the new link set
+        await runLoadPlan(dev, withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj, comObjKept }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), cfg.loadProcedures.secureEnabled), cfg.loadProcedures, "grp")); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1465,7 +1499,7 @@ export class SystemBProfile extends DeviceProfile {
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
     const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
-    const structureStamps = stampCollector();
+    const structureStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     return structural(runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length + comObj.length + addr.length + assoc.length,

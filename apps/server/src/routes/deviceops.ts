@@ -534,6 +534,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules, comObjectOverrides: gaOverrides,
           connection: conn, dataDir: state.dataDir, ...tables.ctx,
+          // Read when the job runs, so a download queued before it has left its record.
+          stampRecord: getImageStamps(db, id, deviceId),
           dryRun: dryGa, onProgress: progress, ...gate,
         });
       }, commit, () => {
