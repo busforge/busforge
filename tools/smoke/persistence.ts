@@ -12,14 +12,20 @@ import type { ConfigView } from "./client.ts";
 
 export interface RebootObservation { rebooted: boolean; detail: string }
 
-// "answered": the device replied. "silent": the device did not reply (DEVICE_NOT_ANSWERING). Any other
-// failure is thrown by the probe.
-export type ProbeOutcome = "answered" | "silent";
+// "answered": the device replied. "silent": the device did not reply (DEVICE_NOT_ANSWERING).
+// "unacknowledged": the interface reported that no device acknowledged the probe (BUS_SEND_FAILED). Any
+// other failure is thrown by the probe.
+export type ProbeOutcome = "answered" | "silent" | "unacknowledged";
 
-// `restart` sends A_Restart and nothing else, and throws when the interface did not take the frame.
+// `restart` sends A_Restart and nothing else, throws when the interface did not take the frame, and
+// returns whether the interface confirmed it (KnxDevice.sendRestart): a device that reboots at once
+// sends no L2 acknowledgement, so the confirmation can be negative although the frame arrived. After a
+// confirmed restart an unacknowledged probe counts as silence. After an unconfirmed one it does not: a
+// device that stops acknowledging for a while without rebooting would show the same on the restart and
+// on the probes, so only probes the device left unanswered count, two in a row.
 // `probe` opens a fresh connection and asks for the device descriptor.
 export async function observeReboot(
-  restart: () => Promise<void>,
+  restart: () => Promise<boolean>,
   probe: () => Promise<ProbeOutcome>,
   opts: { windowMs?: number; intervalMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<RebootObservation> {
@@ -30,17 +36,23 @@ export async function observeReboot(
   // A device that is already silent would turn its own absence into a "reboot".
   if ((await probe()) !== "answered") return { rebooted: false, detail: "the device did not answer before the restart" };
   const start = now();
-  await restart();
+  const confirmed = await restart();
+  const silentNeeded = confirmed ? 1 : 2;
+  const note = confirmed ? "" : " (A_Restart confirmed negatively)";
   let silentAt: number | null = null;
+  let silentRun = 0;
   while (now() - start < windowMs) {
     const outcome = await probe();
-    if (outcome === "silent" && silentAt === null) silentAt = now() - start;
-    if (outcome === "answered" && silentAt !== null) return { rebooted: true, detail: `silent ${silentAt} ms after A_Restart, answering again after ${now() - start} ms` };
+    if (outcome === "silent" || (confirmed && outcome === "unacknowledged")) {
+      silentRun++;
+      if (silentRun >= silentNeeded && silentAt === null) silentAt = now() - start;
+    } else silentRun = 0;
+    if (outcome === "answered" && silentAt !== null) return { rebooted: true, detail: `silent ${silentAt} ms after A_Restart, answering again after ${now() - start} ms${note}` };
     await sleep(intervalMs);
   }
   return silentAt === null
-    ? { rebooted: false, detail: `the device never went silent within ${windowMs} ms of A_Restart` }
-    : { rebooted: false, detail: `the device went silent after A_Restart and did not answer again within ${windowMs} ms` };
+    ? { rebooted: false, detail: `the device never went silent${confirmed ? "" : " on two probes in a row"} within ${windowMs} ms of A_Restart${note}` }
+    : { rebooted: false, detail: `the device went silent after A_Restart and did not answer again within ${windowMs} ms${note}` };
 }
 
 // After the reboot, the server's read-back must cover parameters and links and show neither differing

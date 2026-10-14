@@ -6,7 +6,8 @@ import type { ConfigView } from "./client.ts";
 // first entry is the pre-restart probe.
 const scripted = (seq: ProbeOutcome[]) => { let i = 0; return async () => seq[Math.min(i++, seq.length - 1)]; };
 const clock = () => { let t = 0; return { now: () => (t += 50), sleep: async () => undefined, windowMs: 1_000 }; };
-const noop = async () => undefined;
+const noop = async () => true; // a restart the interface confirmed
+const unconfirmed = async () => false; // a restart the interface confirmed negatively
 
 describe("observeReboot", () => {
   test("silence after the restart, then an answer, is a reboot", async () => {
@@ -25,9 +26,33 @@ describe("observeReboot", () => {
 
   test("a device that is silent before the restart proves nothing, and is not restarted", async () => {
     let sent = false;
-    const r = await observeReboot(async () => { sent = true; }, scripted(["silent", "answered"]), clock());
+    const r = await observeReboot(async () => { sent = true; return true; }, scripted(["silent", "answered"]), clock());
     expect(r).toMatchObject({ rebooted: false, detail: expect.stringContaining("before the restart") });
     expect(sent).toBe(false);
+  });
+
+  test("a negatively confirmed restart: one silent probe is not enough, it could be a lost probe", async () => {
+    const r = await observeReboot(unconfirmed, scripted(["answered", "silent", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: false, detail: expect.stringContaining("confirmed negatively") });
+  });
+
+  test("a negatively confirmed restart: silent on two probes in a row, then an answer, is a reboot", async () => {
+    const r = await observeReboot(unconfirmed, scripted(["answered", "silent", "silent", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: true, detail: expect.stringContaining("confirmed negatively") });
+  });
+
+  test("a negatively confirmed restart: silent probes that are not in a row do not count", async () => {
+    const r = await observeReboot(unconfirmed, scripted(["answered", "silent", "answered", "silent", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: false });
+  });
+
+  test("a confirmed restart: an unacknowledged probe counts as silence", async () => {
+    expect(await observeReboot(noop, scripted(["answered", "unacknowledged", "answered"]), clock())).toMatchObject({ rebooted: true });
+  });
+
+  test("a negatively confirmed restart: unacknowledged probes are no silence, whatever their number", async () => {
+    const r = await observeReboot(unconfirmed, scripted(["answered", "unacknowledged", "unacknowledged", "unacknowledged", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: false });
   });
 
   test("a restart the interface refused is not swallowed", async () => {

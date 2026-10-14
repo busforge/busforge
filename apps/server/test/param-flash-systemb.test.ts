@@ -37,6 +37,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
+    async setVerifyMode() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) { this.mem.set(addr + i, data[i]); this.written.add(addr + i); } }
     async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     async propReadIfPresent() { return null; }
@@ -133,6 +134,45 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     }, 30_000);
     test("a stamp the unit does not give as 8 bytes: the table whole, not a refusal", async () => {
       expect((await run(record, "0000004a00ff")).length).toBe(linked(3).length);
+    }, 30_000);
+  });
+
+  // Which objects an operation's record marks as written (ImageStamp.written) decides the next group-address
+  // flash: the com-object table goes differentially only after a record whose download wrote it. A download
+  // that writes every segment (the full download and the structural flash) marks
+  // all four; the parameter flash only the application; the group-address flash keeps no record.
+  describe("which objects each operation's record marks as written", () => {
+    const writtenObjs = (stamps: { obj: number; written?: true }[] | undefined) =>
+      stamps === undefined ? undefined : [...new Set(stamps.filter((st) => st.written).map((st) => st.obj))].sort((a, b) => a - b);
+    const links = [{ comObjNum: 2, gaRaws: [0x7ffa] }];
+    const loadedUnit = () => {
+      const dev = seeded();
+      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.20", params, links: [], proc: parseLoadProcedures(xml) });
+      for (const lsm of [1, 2, 3]) b.segments.find((sg) => sg.lsm === lsm)!.image.forEach((v, i) => dev.mem.set(0x100 * lsm + i, v));
+      return dev;
+    };
+    test("full download: all four objects", async () => {
+      const res = await classify(cfg).downloadFull(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
+    }, 30_000);
+    test("parameter flash: the application only", async () => {
+      const dev = loadedUnit();
+      const k = target.owned.findIndex((m) => m === 0xff);
+      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(writtenObjs(res.stamps)).toEqual([4]);
+    }, 30_000);
+    test("group-address flash: no record", async () => {
+      const res = await classify(cfg).flashGroupTables(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(writtenObjs(res.stamps)).toBeUndefined();
+    }, 30_000);
+    test("structural flash: all four objects", async () => {
+      const res = await classify(cfg).flashStructure(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
     }, 30_000);
   });
 

@@ -92,15 +92,20 @@ async function rebootOnBench(host: string, ia: string, mask: string, creds: Cred
   await tun.connect();
   try {
     const before = await readLoadStates(tun, ia, mask, creds);
-    const restart = async () => { const dev = deviceOn(tun, ia, creds); await dev.connect(); await dev.sendRestart(); await dev.disconnect(); };
+    const restart = async () => { const dev = deviceOn(tun, ia, creds); await dev.connect(); const confirmed = await dev.sendRestart(); await dev.disconnect(); return confirmed; };
     // Only the device's own silence is "silent"; an interface or tunnel error is thrown. On a secure
-    // device a rebooting device leaves the Sync unanswered, which is the same silence; an interface
+    // device a rebooting device leaves the Sync unanswered, which is the same silence. An interface
     // that confirms every frame (the bench's KNX-USB stick behind the bridge) reports a device that
-    // does not acknowledge as BUS_SEND_FAILED, while the device just answered the probe before.
+    // does not acknowledge as BUS_SEND_FAILED: "unacknowledged", which observeReboot takes as silence
+    // only after a restart the interface confirmed.
     const probe = async (): Promise<ProbeOutcome> => {
       const dev = deviceOn(tun, ia, creds);
       try { await dev.connect(); await dev.deviceDescriptor(); return "answered"; }
-      catch (e) { if (e instanceof KnxError && (e.code === "DEVICE_NOT_ANSWERING" || e.code === "BUS_SEND_FAILED" || (creds && e.code === "SECURE_SYNC_NO_RESPONSE"))) return "silent"; throw e; }
+      catch (e) {
+        if (e instanceof KnxError && (e.code === "DEVICE_NOT_ANSWERING" || (creds && e.code === "SECURE_SYNC_NO_RESPONSE"))) return "silent";
+        if (e instanceof KnxError && e.code === "BUS_SEND_FAILED") return "unacknowledged";
+        throw e;
+      }
       finally { await dev.disconnect(); }
     };
     const reboot = await observeReboot(restart, probe);
