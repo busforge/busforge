@@ -178,11 +178,15 @@ What each row does not show:
   device name was `verified`, its web interface password field (20 bytes, read back as `FF` after any
   write) accepted on the write confirmation alone and named in the result (`confirmedOnly`); a flash
   that changes nothing but that field ends unverified, as nothing readable shows it landed. The field
-  always counts as a difference in the preview. Every restart of the unit makes an MDT IP interface
-  beside it stop serving its tunnels for up to a minute and then drop them; Busforge opens its link
-  again, and a secured session refuses a link that comes back under another individual address
-  (`TUNNEL_ADDRESS_CHANGED`), so such a flash is written and restarted but not verified by Busforge:
-  shown once, the unit read back under a secured session afterwards held the planned image.
+  always counts as a difference in the preview. Over a direct bus connection (a USB interface behind
+  Busforge's bridge), the name changed and changed back to the project's value were each `verified`,
+  the password field named on the write confirmation both times, and a read under a secured session
+  afterwards found the unit at the project's configuration. Every restart of the unit makes an MDT IP
+  interface beside it stop serving its tunnels for up to a minute and then drop them; Busforge opens
+  its link again, and a secured session refuses a link that comes back under another individual
+  address (`TUNNEL_ADDRESS_CHANGED`), so a flash through that interface is written and restarted but
+  not verified by Busforge: shown once, the unit read back under a secured session afterwards held the
+  planned image.
 - **MDT Universal Interface 6-fold BE-06001.02 `M-0083_A-00B4-32-3919`** (MV-0705, module device).
   ETS 6 was captured running a full, a parameter, a group-address and a revert download; Busforge's
   plans equal them (`tools/etsdiff.test.ts`). On a unit, through a logging proxy, each `verified`: the
