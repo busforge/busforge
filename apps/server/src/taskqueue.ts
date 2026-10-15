@@ -58,17 +58,18 @@ export interface Task {
 // ("flashed" | "dryRun" | "unchanged" | ...), `verified` is whether the device was read back and
 // agreed. Both are optional: a read returns neither. `confirmedOnly`: the bytes of a verified write
 // that rest on the device's write confirmation alone (FlashResult.confirmedOnly), so the list does not
-// read as a full read-back what was not one.
-export interface TaskOutcome { kind?: string; verified?: boolean; confirmedOnly?: { address: number; length: number }[] }
+// read as a full read-back what was not one. `restartUnproven`: the device holds the bytes after the
+// restart, but did not show that it restarted and stored them (FlashResult.restartUnproven).
+export interface TaskOutcome { kind?: string; verified?: boolean; confirmedOnly?: { address: number; length: number }[]; restartUnproven?: true }
 
 export const outcomeOf = (r: unknown): TaskOutcome | null => {
   if (!r || typeof r !== "object") return null;
-  const o = r as { kind?: unknown; verified?: unknown; confirmedOnly?: unknown };
+  const o = r as { kind?: unknown; verified?: unknown; confirmedOnly?: unknown; restartUnproven?: unknown };
   const kind = typeof o.kind === "string" ? o.kind : undefined;
   const verified = typeof o.verified === "boolean" ? o.verified : undefined;
   if (kind === undefined && verified === undefined) return null;
   const confirmedOnly = Array.isArray(o.confirmedOnly) && o.confirmedOnly.length ? o.confirmedOnly as TaskOutcome["confirmedOnly"] : undefined;
-  return { kind, verified, ...(confirmedOnly ? { confirmedOnly } : {}) };
+  return { kind, verified, ...(confirmedOnly ? { confirmedOnly } : {}), ...(o.restartUnproven === true ? { restartUnproven: true as const } : {}) };
 };
 
 // Report progress from inside a job: a phase label plus optional done/total counters
@@ -270,7 +271,7 @@ export class TaskQueue {
         // all about the hardware it drives, and a download that failed left no trace anywhere.
         const ms = (task.finishedAt ?? 0) - (task.startedAt ?? 0);
         const confirmedOnly = task.outcome?.confirmedOnly?.reduce((n, r) => n + r.length, 0);
-        const extra = task.outcome ? ` ${task.outcome.kind ?? "?"}${task.outcome.verified === undefined ? "" : ` verified=${task.outcome.verified}`}${confirmedOnly ? ` confirmedOnly=${confirmedOnly}B` : ""}` : "";
+        const extra = task.outcome ? ` ${task.outcome.kind ?? "?"}${task.outcome.verified === undefined ? "" : ` verified=${task.outcome.verified}`}${confirmedOnly ? ` confirmedOnly=${confirmedOnly}B` : ""}${task.outcome.restartUnproven ? " restartUnproven" : ""}` : "";
         const why = task.error ? ` — ${task.errorCode ?? "error"}: ${task.error}` : "";
         console.log(`[bus] ${task.kind} ${task.ia} (${task.deviceName}) -> ${task.state}${extra} in ${ms}ms${why}`);
       }

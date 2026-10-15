@@ -63,12 +63,14 @@ export async function flashParamsChan(ctx: ChanCtx, label: string): Promise<{ re
     if (dry.kind !== "dryRun") return { result: dry, routed: false, structural: false }; // in sync: nothing to write
     const result = await ctx.client.flashReal(ctx.pid, ctx.did, (p) => ctx.log(`${label} ${p}`));
     if (result.kind !== "flashed" || result.verified !== true) throw new Error(`${label}: not verified (${result.kind}, verified=${result.verified})`);
+    logRestartUnproven(ctx, label, result);
     return { result, routed: false, structural: result.structural === true };
   } catch (e) {
     if (!isStale(e)) throw e;
     ctx.log(`${label}: alters the com-object table → full download (api)`);
     const result = await ctx.client.downloadReal(ctx.pid, ctx.did, (p) => ctx.log(`${label} download ${p}`));
     if (result.kind !== "flashed" || result.verified !== true) throw new Error(`${label}: routed download not verified (${result.kind}, verified=${result.verified})`);
+    logRestartUnproven(ctx, label, result);
     return { result, routed: true, structural: false };
   }
 }
@@ -78,4 +80,10 @@ export async function flashGaChan(ctx: ChanCtx, label: string): Promise<void> {
   if (ctx.channel === "ui") { await ctx.ui!.flash("ga"); return; }
   const r = await ctx.client.flashGaReal(ctx.pid, ctx.did, (p) => ctx.log(`${label} ${p}`));
   if (r.kind !== "flashed" || r.verified !== true) throw new Error(`${label}: flash-ga not verified (${r.kind}, verified=${r.verified})`);
+  logRestartUnproven(ctx, label, r);
+}
+
+// A verified write whose restart the device did not confirm (FlashResult.restartUnproven).
+function logRestartUnproven(ctx: ChanCtx, label: string, r: FlashResult): void {
+  if (r.restartUnproven) ctx.log(`${label}: verified, restart not confirmed by the device (restartUnproven)`);
 }

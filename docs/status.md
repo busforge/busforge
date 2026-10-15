@@ -84,7 +84,10 @@ the confirmed extended write does not give back: those rest on its write confirm
 in the result (`confirmedOnly`) and are accepted only under the conditions in
 [load-procedures.md](load-procedures.md#the-rules-by-level): the device answered the chunk holding them
 with return code `00`, which says it took the chunk, not what it stored. The MDT IP Interface/Router has
-such a field (device notes below).
+such a field (device notes below). A `verified` write whose closing restart the device did not confirm
+carries `restartUnproven` ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)):
+the read-back after the restart shows the bytes, not that the device restarted and stored them for good.
+Under that rule the MEAN WELL power supply's flashes end that way, shown by a test on its recorded restart, not by a run (device notes below).
 Bus behaviour means the device was observed acting on the bus through an independent witness
 connection, which is the only check that catches a byte-perfect flash of a semantically wrong
 value.
@@ -96,7 +99,7 @@ value.
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, survives a restart | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, ETS's bracket, one parameter changed and reverted (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle; ETS's bracket (see below) | hardware: in service in a real installation, driving light, fan and temperature |
-| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware, ETS's bracket; with the record of a Busforge download only the changed byte (see below) | hardware, add and remove, ETS's bracket and table lengths (see below) | hardware, onto a unit running its application, ETS's bracket and image, bus voltage kept through every unload and restart | hardware: the cyclic-send interval change took effect on the bus; a flashed link answers a read |
+| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware, ETS's bracket; with the record of a Busforge download only the changed byte (see below) | hardware, add and remove, ETS's bracket and table lengths (see below) | hardware, onto a unit running its application, ETS's bracket and image, bus voltage kept through every unload and restart; the unit does not confirm its restart, so under the current rule its flashes end `verified` with `restartUnproven`, shown on the recorded sequence by a test, not by a run (see below) | hardware: the cyclic-send interval change took effect on the bus; a flashed link answers a read |
 | Theben HMG 6 T heating actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben JMG 4 T blind actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben RMG 8 T switch actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
@@ -179,12 +182,14 @@ What each row does not show:
   read, and the unit sends it after every restart. The bus voltage held through every unload and restart
   of ETS's and Busforge's downloads. The unit restarts before its L2 acknowledgement of `A_Restart`, so the
   interface confirms that frame negatively, for ETS and Busforge alike
-  ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)). Those runs
-  took the restart's silence as its proof. Under the current proof, which needs the device's own
-  `T_Disconnect` after a negatively confirmed restart, the unit's downloads end `RESTART_UNPROVEN`: after
-  its reboot it acknowledges the probes on layer 2 and drops them without a transport answer. The writes
-  and the unit's state are as before (a parameter flash there and back, then a read equal to the earlier
-  final read); the closing proof is what is missing.
+  ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)). The proof
+  of such a restart needs the device's own `T_Disconnect`, and this unit gives none: after its reboot it
+  acknowledges the probes on layer 2 and drops them without a transport answer, so its restart is
+  unproven. A flash then goes on as ETS does after the same confirmation: it reconnects, reads back and
+  ends `verified` with `restartUnproven`. That outcome is shown on the unit's recorded restart sequence
+  by a test, not by a run of a flash on the unit; the runs on the unit stopped at the unproven restart,
+  their bytes written as planned and a later read equal to the earlier final read. That the unit
+  restarted and stored the bytes is not shown by a flash.
 - **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
   parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads

@@ -54,6 +54,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     clearConfirmedWrites() { this.log = []; }
     extendedMemory: boolean | undefined;
     setExtendedMemoryServices(on: boolean) { this.extendedMemory = on; }
+    acceptUnprovenRestart() {}
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => (this.o.hidden?.has(addr + i) ? 0xff : this.mem.get(addr + i) ?? 0xff))); }

@@ -550,6 +550,14 @@ export class KnxDevice {
   // When the device last sent us a frame, and when it closed our connection (T_Disconnect to us).
   private lastFromDeviceAt: number | null = null;
   private peerClosedAt: number | null = null;
+  // A negatively confirmed A_Restart whose reboot the device did not decide (RESTART_UNPROVEN) is taken
+  // as ETS takes it, sent and gone on, only by a caller that reads the device back after the restart and
+  // reports the gap (a flash: runFlashOp). There restart() records it instead of throwing; every other
+  // restart refuses it. `restartUnproven`: such a restart happened since acceptUnprovenRestart(true).
+  private unprovenRestartAccepted = false;
+  private unprovenRestartSeen = false;
+  acceptUnprovenRestart(on: boolean): void { this.unprovenRestartAccepted = on; this.unprovenRestartSeen = false; }
+  get restartUnproven(): boolean { return this.unprovenRestartSeen; }
   interfaceMaxApdu(): Promise<number | null> {
     return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
   }
@@ -1055,11 +1063,20 @@ export class KnxDevice {
   // nothing. A device closes an idle connection by itself 6 s after the last frame it took, so the
   // T_Disconnect counts only when it arrived within restartProofMs of the device's last frame to us
   // (the acknowledgement of the frame before the restart), or of the restart where there was none.
-  // Without the device's decision by then the restart is not proven (RESTART_UNPROVEN).
+  // Without the device's decision by then the restart is not proven (RESTART_UNPROVEN), and where a
+  // probe failed on the link to the interface, that failure is thrown: whether the probes reached the
+  // device at all is then unknown.
   private async proveUnconfirmedRestart(sentAt: number): Promise<void> {
     const deadline = Math.min(this.lastFromDeviceAt ?? sentAt, sentAt) + this.timeouts.restartProofMs;
-    const unproven = () => new KnxError("RESTART_UNPROVEN",
-      `the interface confirmed A_Restart negatively, and within ${this.timeouts.restartProofMs} ms of the device's last frame it neither closed the connection nor answered on it: whether it restarted, and so stored its configuration, is not proven`);
+    let linkFailure: Error | null = null;
+    const unproven = (): void => {
+      // A T_Disconnect between two probes, inside the window, is the proof as well.
+      if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
+      if (linkFailure !== null) throw linkFailure;
+      if (this.unprovenRestartAccepted) { this.unprovenRestartSeen = true; return; }
+      throw new KnxError("RESTART_UNPROVEN",
+        `the interface confirmed A_Restart negatively, and within ${this.timeouts.restartProofMs} ms of the device's last frame it neither closed the connection nor answered on it: whether it restarted, and so stored its configuration, is not proven`);
+    };
     this.peerClosedAt = null;
     // The probe keeps its sequence number until the device takes one, so a T_ACK or T_NAK that arrives
     // after a probe's negative confirmation (the interface's repetitions keep the bus busy before it)
@@ -1076,13 +1093,18 @@ export class KnxDevice {
       } catch (e) {
         const code = (e as { code?: string }).code;
         if (code === "RESTART_IGNORED") throw e;
+        // A T_ACK or T_NAK before the T_Disconnect: the device still held the connection.
+        if (this.nakSeen || this.ackSeen) throw present();
         if (code === "DEVICE_CLOSED_CONNECTION") {
           if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
-          throw unproven();
+          return unproven();
         }
-        if (this.nakSeen || this.ackSeen) throw present();
+        if (isLinkFailure(e)) linkFailure = e as Error;
       }
-      if (Date.now() >= deadline) throw this.nakSeen || this.ackSeen ? present() : unproven();
+      if (Date.now() >= deadline) {
+        if (this.nakSeen || this.ackSeen) throw present();
+        return unproven();
+      }
       await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
     }
   }

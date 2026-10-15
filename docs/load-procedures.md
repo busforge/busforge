@@ -1142,11 +1142,23 @@ confirmed (`81 01 00`):
 | Confirmation of the `A_Restart` frame | What `KnxDevice.restart()` does |
 |---|---|
 | positive | one probe on the same connection: no answer, or a `T_Disconnect` to us, proves the reboot (for the confirmed restart also the device's answer with code 0); an answer, `T_ACK` or `T_NAK` is `RESTART_IGNORED` (accepted where the firmware persists at `LoadCompleted`); a failure of the link to the interface (KNXnet/IP or USB) is that error, never a proof |
-| negative (`BUS_SEND_FAILED`) | a confirmed restart the device answers with code 0 is proven by that answer. Otherwise the probe repeats on the same connection, one try at a time and without a new `T_Connect`, until the device decides: a `T_Disconnect` to us proves the reboot (it lost the connection with it); an answer, `T_ACK` or `T_NAK` is `RESTART_IGNORED`, even where a live device is otherwise accepted. A probe nobody acknowledged (`BUS_SEND_FAILED`), one left unanswered, or a failed link decides nothing: a device that stops acknowledging for a while without rebooting looks the same. A device closes an idle connection by itself 6 s after the last frame it took, so the `T_Disconnect` counts only when it arrived within 4 s (`restartProofMs`) of the device's last frame to us; without the device's decision by then the restart is `RESTART_UNPROVEN` |
+| negative (`BUS_SEND_FAILED`) | a confirmed restart the device answers with code 0 is proven by that answer. Otherwise the probe repeats on the same connection, one try at a time and without a new `T_Connect`, until the device decides: a `T_Disconnect` to us proves the reboot (it lost the connection with it); an answer, `T_ACK` or `T_NAK` is `RESTART_IGNORED`, even where a live device is otherwise accepted. A probe nobody acknowledged (`BUS_SEND_FAILED`) or one left unanswered decides nothing: a device that stops acknowledging for a while without rebooting looks the same. A device closes an idle connection by itself 6 s after the last frame it took, so the `T_Disconnect` counts only when it arrived within 4 s (`restartProofMs`) of the device's last frame to us; without the device's decision by then the restart is unproven (see below). A probe that failed on the link to the interface leaves open whether any probe reached the device: without a `T_Disconnect` in the window that failure is the error |
 | no frame through the link to the interface | error |
 
-After a proven restart every operation reconnects and reads the device again (`runFlashOp`:
+After the restart every operation reconnects and reads the device again (`runFlashOp`:
 `reconnectAfterRestart`, then the verify read), so a device that never returns fails there.
+
+**An unproven restart in a flash.** A flash (full download, parameter, group-address and structural
+flash alike, all through `runFlashOp`) takes an unproven restart as ETS takes the negative confirmation:
+the restart was sent, the operation goes on. The reconnect and the verify read after it run as after any
+restart and must pass; a flash is `verified` only by them. The result then carries `restartUnproven`,
+and the task API's outcome, the server's bus log line (`restartUnproven`) and the flash and commissioning dialogs
+(a note in the warning colour) name it: the device did not confirm the restart, and whether it stored the
+configuration for good is not proven. Only that case: `RESTART_IGNORED` (an answer, `T_ACK` or `T_NAK` on
+the connection), `RESTART_REFUSED`, a failure of the link to the interface, a device that does not come
+back and a read-back that differs stay failures. A restart outside a flash, which reads nothing back
+after it, refuses an unproven restart with `RESTART_UNPROVEN` (`KnxDevice.acceptUnprovenRestart` is off
+by default).
 
 Limits of this proof:
 
@@ -1159,7 +1171,8 @@ Limits of this proof:
   stacks seen answer it with `T_NAK`; one answering with `T_Disconnect` would be taken for a reboot.
 - A device that drops a frame on a connection it no longer has, without a `T_Disconnect`, never
   proves a negatively confirmed restart: the MEAN WELL power supply acknowledges the probes on layer 2
-  after its reboot and answers none of them.
+  after its reboot and answers none of them, so its restart is unproven; under the rule above its flashes
+  end `verified` with `restartUnproven` (pinned on the recorded sequence by a test, not run on the unit).
 - A device whose connection was already closed (it lost the `T_Connect` before the restart) answers
   every probe with `T_Disconnect`, as a rebooted one does, and ignores the restart.
 - A plan that pauses and opens the link again right before the restart (the thelsing/OpenKNX settle)

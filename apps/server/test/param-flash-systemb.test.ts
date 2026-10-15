@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { KnxDevice, LSM, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, LSM, STATE } from "@busforge/knx";
 import { parseAppConfig, buildRelativeSegmentTarget, parseLoadProcedures } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
@@ -30,7 +30,23 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     async connect() {}
     async disconnect() {}
     async deviceDescriptor() { return "MV-07B0"; }
-    async restart() {}
+    // How the closing restart ends, as KnxDevice.restart decides it: "unproven" is the negatively confirmed
+    // A_Restart the device did not decide (recorded where accepted, RESTART_UNPROVEN otherwise).
+    restartEnds: "proven" | "unproven" | "ignored" = "proven";
+    unprovenAccepted = false;
+    unprovenSeen = false;
+    armed: boolean[] = [];
+    acceptUnprovenRestart(on: boolean) { this.unprovenAccepted = on; this.unprovenSeen = false; this.armed.push(on); }
+    get restartUnproven() { return this.unprovenSeen; }
+    onRestart: () => void = () => {};
+    async restart() {
+      this.onRestart();
+      if (this.restartEnds === "ignored") throw new KnxError("RESTART_IGNORED", "mock: the device kept answering");
+      if (this.restartEnds === "unproven") {
+        if (!this.unprovenAccepted) throw new KnxError("RESTART_UNPROVEN", "mock: not proven");
+        this.unprovenSeen = true;
+      }
+    }
     async tableAddr(obj: number) { return obj === 4 ? BASE : 0x100 * obj; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async writesConfirmed() { return false; }
@@ -174,6 +190,67 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
     }, 30_000);
+  });
+
+  // A negatively confirmed A_Restart the device did not decide (KnxDevice.acceptUnprovenRestart) is taken as
+  // ETS takes it, and named: the flash is verified by its read-back after the restart and carries
+  // restartUnproven. Every operation alike; any other restart failure, a failed read-back or a device that
+  // does not come back stays a failure.
+  describe("a restart the device did not prove", () => {
+    const links = [{ comObjNum: 2, gaRaws: [0x7ffa] }];
+    const changedUnit = () => {
+      const dev = seeded();
+      const k = target.owned.findIndex((m) => m === 0xff);
+      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      return dev;
+    };
+    // The full download writes the application's non-zero runs into a segment its allocation fills with 0,
+    // which this mock does not do: it starts from the image.
+    const ops: [string, (dev: MockDevice) => Promise<unknown>, () => MockDevice][] = [
+      ["full download", (dev) => classify(cfg).downloadFull(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), seeded],
+      ["parameter flash", (dev) => classify(cfg).flashParameters(asDev(dev), "07B0", ctx), changedUnit],
+      ["group-address flash", (dev) => classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), changedUnit],
+      ["structural flash", (dev) => classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), changedUnit],
+    ];
+    for (const [name, op, unitFor] of ops) {
+      test(`${name}: verified, with restartUnproven, and the acceptance closed after it`, async () => {
+        const dev = unitFor();
+        dev.restartEnds = "unproven";
+        const res = await op(dev);
+        expect(res).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true });
+        expect(dev.armed).toEqual([true, false]);
+      }, 30_000);
+      test(`${name}: a proven restart carries no warning`, async () => {
+        const res = await op(unitFor());
+        expect(res).toMatchObject({ kind: "flashed", verified: true });
+        expect((res as { restartUnproven?: unknown }).restartUnproven).toBeUndefined();
+      }, 30_000);
+      test(`${name}: a device that ignored the restart stays RESTART_IGNORED, and the acceptance is closed`, async () => {
+        const dev = unitFor();
+        dev.restartEnds = "ignored";
+        const failure = await op(dev).then(() => null, (e: unknown) => e);
+        expect((failure as { code?: string } | null)?.code).toBe("RESTART_IGNORED");
+        expect(dev.armed).toEqual([true, false]);
+      }, 30_000);
+    }
+    test("a read-back after the unproven restart that differs is not verified", async () => {
+      const dev = changedUnit();
+      dev.restartEnds = "unproven";
+      // The unit loses the written byte on its restart.
+      const k = target.owned.findIndex((m) => m === 0xff);
+      dev.onRestart = () => { dev.mem.set(BASE + k, target.bytes[k] ^ 0xff); };
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      expect(res).toMatchObject({ kind: "flashed", verified: false, restartUnproven: true });
+    }, 30_000);
+    test("a device that does not come back after the unproven restart is a failure", async () => {
+      const dev = changedUnit();
+      dev.restartEnds = "unproven";
+      let restarted = false;
+      dev.onRestart = () => { restarted = true; };
+      dev.deviceDescriptor = async () => { if (restarted) throw new KnxError("DEVICE_NOT_ANSWERING", "mock: gone"); return "MV-07B0"; };
+      const failure = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx).then(() => null, (e: unknown) => e);
+      expect((failure as { code?: string } | null)?.code).toBe("DEVICE_NOT_ANSWERING");
+    }, 60_000);
   });
 
   describe("System B parameter flash on a device whose bytes already match", () => {

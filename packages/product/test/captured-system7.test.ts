@@ -27,6 +27,7 @@ class GiraDevice {
   confirmedWrites() { return []; }
   clearConfirmedWrites() {}
   setExtendedMemoryServices() {}
+  acceptUnprovenRestart() {}
   async tableAddr(obj: number) { return this.tableRef.get(obj) ?? 0; }
   async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0)); }
   async memWrite(addr: number, data: Buffer) {
@@ -280,6 +281,7 @@ class MemMappedDevice {
   confirmedWrites() { return []; }
   clearConfirmedWrites() {}
   setExtendedMemoryServices() {}
+  acceptUnprovenRestart() {}
   async classicReadChunk() { return 12; }
   async memRead(addr: number, len: number, chunk?: number) {
     if (addr < 46825) { this.ops.push(`read ${addr.toString(16)}+${len}/${chunk ?? "-"}`); }

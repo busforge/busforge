@@ -80,7 +80,7 @@ export async function capFullDownload(ctx: CapCtx): Promise<CapabilityResult> {
   if (result.kind !== "flashed" || result.verified !== true) return { ...base, state: "fail", detail: `download ${result.kind}, verified=${result.verified}` };
   if (ctx.spec.device.mask && result.mask && result.mask !== ctx.spec.device.mask) return { ...base, state: "fail", detail: `mask ${result.mask} != ${ctx.spec.device.mask}` };
   const confirmedOnly = result.confirmedOnly?.reduce((n, r) => n + r.length, 0) ?? 0;
-  return { ...base, state: "pass", detail: `downloaded verified, ${result.imageBytes ?? dry.imageBytes ?? "?"}B, mask ${result.mask}${confirmedOnly ? `, ${confirmedOnly}B on the write confirmation alone` : ""}`, evidence: { dry, download: result } };
+  return { ...base, state: "pass", detail: `downloaded verified, ${result.imageBytes ?? dry.imageBytes ?? "?"}B, mask ${result.mask}${confirmedOnly ? `, ${confirmedOnly}B on the write confirmation alone` : ""}${result.restartUnproven ? ", restart not confirmed by the device" : ""}`, evidence: { dry, download: result } };
 }
 
 // flashLinks: link a com-object to a fresh group address, flash the group tables, and require the

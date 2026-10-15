@@ -31,6 +31,7 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
+    acceptUnprovenRestart() {}
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
       this.writes.push({ addr, len: data.length });
       for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);

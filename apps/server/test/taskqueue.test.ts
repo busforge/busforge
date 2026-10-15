@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, spyOn } from "bun:test";
 import { MemoryTaskStore, TaskQueue } from "../src/taskqueue.ts";
 import { ApiError } from "../src/errors.ts";
 import { KnxError } from "@busforge/knx";
@@ -153,6 +153,21 @@ describe("TaskQueue", () => {
     // A write the read-back showed whole carries none.
     await q.enqueue({ ...meta("d2"), kind: "flash-params" }, async () => ({ kind: "flashed", verified: true }));
     expect(q.list("p1")[1].outcome).toEqual({ kind: "flashed", verified: true });
+  });
+
+  test("carries a verified write whose restart is unproven, in the outcome and in the bus log line", async () => {
+    const q = new TaskQueue(() => 0);
+    const lines: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(" ")); });
+    try {
+      await q.enqueue({ ...meta("d1"), kind: "flash-params" }, async () => ({ kind: "flashed", verified: true, diffBytes: 3, restartUnproven: true }));
+      await q.enqueue({ ...meta("d2"), kind: "flash-params" }, async () => ({ kind: "flashed", verified: true, diffBytes: 3, restartUnproven: false }));
+    } finally { log.mockRestore(); }
+    expect(q.list("p1").map((t) => t.outcome)).toEqual([{ kind: "flashed", verified: true, restartUnproven: true }, { kind: "flashed", verified: true }]);
+    const bus = lines.filter((l) => l.startsWith("[bus] flash-params"));
+    expect(bus).toHaveLength(2);
+    expect(bus[0]).toMatch(/-> done flashed verified=true restartUnproven in /);
+    expect(bus[1]).not.toContain("restartUnproven");
   });
 
   test("scopes listed tasks to the project", async () => {

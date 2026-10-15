@@ -21,6 +21,7 @@ export interface FlashResult {
   backup?: string;
   structural?: boolean; // a structural flash: parameters, com-object table and group tables in one write
   confirmedOnly?: { address: number; length: number }[]; // bytes verified on the device's write confirmation alone
+  restartUnproven?: boolean; // verified after a restart the device did not confirm
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }

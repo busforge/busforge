@@ -97,6 +97,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
+    acceptUnprovenRestart() {}
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }

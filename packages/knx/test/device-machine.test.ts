@@ -523,12 +523,15 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
       expect([negative, (failure as { code?: string } | null)?.code]).toEqual([negative, "RESTART_IGNORED"]);
     }
   });
-  test("a link failure on every probe after a negatively confirmed restart: not proven", async () => {
-    for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
+  test("a link failure on the probes after a negatively confirmed restart is that error, never a proof, also where an unproven restart is accepted", async () => {
+    for (const accept of [false, true]) for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
       const { tun, dev } = restarted();
-      tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ ? code : null);
+      dev.acceptUnprovenRestart(accept);
+      // Only the first probe meets the failed link; the rest are left unanswered.
+      let failed = false;
+      tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && !failed ? (failed = true, code) : null);
       const failure = await dev.restart().then(() => null, (e: unknown) => e);
-      expect([code, (failure as { code?: string } | null)?.code]).toEqual([code, "RESTART_UNPROVEN"]);
+      expect([accept, code, (failure as { code?: string } | null)?.code, dev.restartUnproven]).toEqual([accept, code, code, false]);
     }
   });
   test("a link failure on the probe after a positively confirmed restart is that error, never a proof", async () => {
@@ -588,6 +591,157 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     tun.failSend = (tpdu) => (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.PROPERTY_READ ? "BUS_SEND_FAILED" : null);
     const failure = await dev.propRead(0, 11).then(() => null, (e: unknown) => e);
     expect((failure as { code?: string } | null)?.code).toBe("BUS_SEND_FAILED");
+  });
+
+  // A caller that reads the device back after the restart (a flash) takes RESTART_UNPROVEN as ETS takes
+  // a negatively confirmed restart: sent, and goes on. Only that case; every other verdict stands.
+  describe("where an unproven restart is accepted", () => {
+    const outcome = async (dev: KnxDevice, requireReboot = true, confirmed = false) =>
+      dev.restart(requireReboot, confirmed).then(() => "resolved", (e: unknown) => (e as { code?: string }).code ?? String(e));
+
+    test("a negative L_Data.con on the restart, then silence: recorded, not thrown, for plain and confirmed", async () => {
+      for (const confirmed of [false, true]) {
+        const { tun, dev } = restarted();
+        negativeOnRestart(tun);
+        dev.acceptUnprovenRestart(true);
+        expect([confirmed, await outcome(dev, true, confirmed), dev.restartUnproven]).toEqual([confirmed, "resolved", true]);
+        expect(tun.sent.filter(isRestart).length).toBe(1);
+      }
+    });
+    test("not accepted, the same restart is RESTART_UNPROVEN and records nothing", async () => {
+      const { tun, dev } = restarted();
+      negativeOnRestart(tun);
+      dev.acceptUnprovenRestart(true);
+      dev.acceptUnprovenRestart(false);
+      expect([await outcome(dev), dev.restartUnproven]).toEqual(["RESTART_UNPROVEN", false]);
+    });
+    test("arming again clears an earlier unproven restart", async () => {
+      const { tun, dev } = restarted();
+      negativeOnRestart(tun);
+      dev.acceptUnprovenRestart(true);
+      await dev.restart();
+      expect(dev.restartUnproven).toBe(true);
+      dev.acceptUnprovenRestart(true);
+      expect(dev.restartUnproven).toBe(false);
+    });
+    test("a device still running after a negatively confirmed restart stays RESTART_IGNORED", async () => {
+      for (const confirmed of [false, true]) for (const lost of [true, false]) {
+        const tun = new FakeTransport();
+        const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+        keepsRunning(tun, lost);
+        dev.acceptUnprovenRestart(true);
+        expect([confirmed, lost, await outcome(dev, false, confirmed), dev.restartUnproven]).toEqual([confirmed, lost, "RESTART_IGNORED", false]);
+      }
+    });
+    test("a T_ACK without an answer, or a late T_NAK, on the probe stays RESTART_IGNORED", async () => {
+      for (const reply of [0xc2, 0xc3]) {
+        const tun = new FakeTransport();
+        const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+        tun.failSend = (tpdu) => (ignorable(tpdu) ? null : "BUS_SEND_FAILED");
+        tun.handler = (tpdu) => {
+          if (ignorable(tpdu) || isRestart(tpdu)) return;
+          const p = parseApdu(tpdu);
+          if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) setTimeout(() => tun.reply([reply | (p.seq << 2)]), 0);
+        };
+        dev.acceptUnprovenRestart(true);
+        expect([reply, await outcome(dev), dev.restartUnproven]).toEqual([reply, "RESTART_IGNORED", false]);
+      }
+    });
+    test("a positively confirmed restart the device ignores, or a confirmed restart it refuses, stays an error", async () => {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+      tun.handler = (tpdu) => {
+        if (ignorable(tpdu)) return;
+        const p = parseApdu(tpdu);
+        if (p.apci === APCI.RESTART) { tun.reply([0xc2 | (p.seq << 2)]); return; }
+        if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) { tun.reply([0xc2 | (p.seq << 2)]); tun.reply([0x40 | (p.seq << 2) | 0x03, 0x40, 0x07, 0xb0]); }
+      };
+      dev.acceptUnprovenRestart(true);
+      expect([await outcome(dev), dev.restartUnproven]).toEqual(["RESTART_IGNORED", false]);
+      const refusing = confirming(1);
+      refusing.dev.acceptUnprovenRestart(true);
+      expect([await outcome(refusing.dev, true, true), refusing.dev.restartUnproven]).toEqual(["RESTART_REFUSED", false]);
+    });
+    test("a T_Disconnect inside the window is the proof, not a warning", async () => {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+      negativeOnRestart(tun);
+      tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) tun.reply([0x81]); };
+      dev.acceptUnprovenRestart(true);
+      expect([await outcome(dev), dev.restartUnproven]).toEqual(["resolved", false]);
+    });
+
+    test("a T_ACK of the probe, then a T_Disconnect: the device held the connection, RESTART_IGNORED", async () => {
+      for (const accept of [false, true]) {
+        const tun = new FakeTransport();
+        const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+        negativeOnRestart(tun);
+        tun.handler = (tpdu) => {
+          if (ignorable(tpdu) || isRestart(tpdu)) return;
+          const p = parseApdu(tpdu);
+          if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) { tun.reply([0xc2 | (p.seq << 2)]); tun.reply([0x81]); }
+        };
+        dev.acceptUnprovenRestart(accept);
+        expect([accept, await outcome(dev), dev.restartUnproven]).toEqual([accept, "RESTART_IGNORED", false]);
+      }
+    });
+    test("a T_Disconnect between two probes, inside the window, is the proof", async () => {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, { ...FAST, retryGapMs: 100, restartProofMs: 300 });
+      let scheduled = false;
+      tun.failSend = (tpdu) => {
+        if (ignorable(tpdu)) return null;
+        if (!isRestart(tpdu) && !scheduled) { scheduled = true; setTimeout(() => tun.reply([0x81]), 30); }
+        return "BUS_SEND_FAILED";
+      };
+      dev.acceptUnprovenRestart(true);
+      expect([await outcome(dev), dev.restartUnproven]).toEqual(["resolved", false]);
+    });
+    test("a T_Disconnect later than the window is no proof: recorded as unproven", async () => {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, { ...FAST, ackMs: 200, responseMs: 200, restartProofMs: 30 });
+      negativeOnRestart(tun);
+      tun.handler = (tpdu) => { if (!ignorable(tpdu) && !isRestart(tpdu)) setTimeout(() => tun.reply([0x81]), 80); };
+      dev.acceptUnprovenRestart(true);
+      expect([await outcome(dev), dev.restartUnproven]).toEqual(["resolved", true]);
+    });
+    test("a link failure on a later probe is that error too", async () => {
+      for (const at of [1, 2]) {
+        const { tun, dev } = restarted();
+        let probes = 0;
+        tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes++ === at ? "USB_INTERFACE_LOST" : null);
+        dev.acceptUnprovenRestart(true);
+        expect([at, await outcome(dev), dev.restartUnproven, probes > at]).toEqual([at, "USB_INTERFACE_LOST", false, true]);
+      }
+    });
+
+    // The MEAN WELL KNX-40E-1280D's parameter flash over the bench USB stick (private corpus
+    // captures/meanwell-busforge-final2-par-1810.log), on a time scale of 1:10: A_Restart confirmed
+    // negatively; the first probes confirmed negatively too (the unit is rebooting); from +0.68 s every
+    // probe confirmed positively with no transport answer at all (its stack drops frames on the dead
+    // connection without T_Disconnect); its startup telegrams at +2.19 s; no decision within the 4 s window.
+    test("the MEAN WELL power supply's restart, replayed: recorded as unproven where accepted, RESTART_UNPROVEN otherwise", async () => {
+      for (const accept of [true, false]) {
+        const tun = new FakeTransport();
+        const dev = new KnxDevice(tun, "1.1.11", undefined, { ...FAST, restartProofMs: 400 });
+        let sentAt = 0;
+        const cons: string[] = [];
+        tun.failSend = (tpdu) => {
+          if (ignorable(tpdu)) return null;
+          if (isRestart(tpdu)) { sentAt = Date.now(); return "BUS_SEND_FAILED"; }
+          const con = Date.now() - sentAt < 68 ? "BUS_SEND_FAILED" : null;
+          cons.push(con ?? "ok");
+          return con;
+        };
+        tun.handler = () => { /* the unit answers nothing on the old connection */ };
+        setTimeout(() => tun.onCemi?.(DEV, 0x0b02, Buffer.from([0x00, 0x80, 0x0c]), true), 219); // its startup GroupValue_Write
+        dev.acceptUnprovenRestart(accept);
+        expect([accept, await outcome(dev)]).toEqual([accept, accept ? "resolved" : "RESTART_UNPROVEN"]);
+        expect([accept, dev.restartUnproven]).toEqual([accept, accept]);
+        expect(cons).toContain("BUS_SEND_FAILED");
+        expect(cons).toContain("ok");
+      }
+    }, 10_000);
   });
 
   // The confirmed restart (A_Restart type 1, erase code 1, channel 0), as ETS sends it to the Theben

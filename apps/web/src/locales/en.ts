@@ -225,7 +225,7 @@ const en = {
     STAMP_UNREADABLE: "The device answered its memory-control block (the image stamps) in a form Busforge cannot read, so it does not decide which bytes to write.",
     PARAM_SEGMENT_UNKNOWN: "A parameter of this application has a type of no known width, so Busforge cannot tell which bytes ETS's parameter download writes, and does not write.",
     PARAM_SEGMENT_NOT_READ: "Busforge could not read one of the device's parameter segments in full, so it cannot tell which bits of a shared byte it must keep, and does not write.",
-    FLASH_UNVERIFIED_LINK_DOWN: "The write finished and the device confirmed its restart, but the link to the interface did not come back in time to read it back. The write is not verified; read the device back.",
+    FLASH_UNVERIFIED_LINK_DOWN: "The write finished and the device was restarted, but the link to the interface did not come back in time to read it back. The write is not verified; read the device back.",
     MEMORY_SERVICES_UNDECIDED: "The device declares a long telegram, and it is not known whether its application takes the extended memory write, so Busforge does not write to it.",
     DEVICE_MAX_APDU_INVALID: "The device declares a maximum telegram length too short to carry a memory write, so Busforge does not write to it.",
     PROPERTY_EXT_READ_REFUSED: "The device returned no value for a property of one of its interface objects (its security object, or the KNXnet/IP parameter object of an IP interface).",
@@ -834,6 +834,7 @@ const en = {
     dlDoneVerified: "Downloaded and verified ({{bytes}} bytes written).",
     dlDoneUnverified: "Downloaded but read-back did not verify. Check the device.",
     confirmedOnly: "{{bytes}} byte(s) at {{ranges}} the device does not give back when read; they rest on its write confirmation alone.",
+    restartUnproven: "The device did not confirm its restart: the read-back after it matches, but whether the device has stored the configuration for good is not proven.",
     download: "Download",
   },
   monitor: {

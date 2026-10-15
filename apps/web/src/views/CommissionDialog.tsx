@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api, type AssignIaResult, type Device, type DeviceConfigView, type FlashResult } from "../api.ts";
 import { UntestedNotice, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
 import { ConfirmedOnlyNote } from "@/components/ConfirmedOnlyNote.tsx";
+import { RestartUnprovenNote } from "@/components/RestartUnprovenNote.tsx";
 import { untestedOps } from "../lib/untested.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -143,7 +144,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     if (dl.done) {
       if (dl.done.kind !== "flashed") return <span className="text-muted-foreground">{t("flash.inSync")}</span>;
       return dl.done.verified
-        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}<ConfirmedOnlyNote result={dl.done} /></span>
+        ? <span data-testid="commission-ok">{line(okIcon, t("commission.doneVerified", { bytes: dl.done.diffBytes }), "ok")}<ConfirmedOnlyNote result={dl.done} /><RestartUnprovenNote result={dl.done} /></span>
         : <span data-testid="commission-fail">{line(warnIcon, t("commission.doneUnverified"), "err")}</span>;
     }
     if (dl.error) return <span data-testid="commission-fail">{line(warnIcon, errMsg(t, dl.error), "err")}</span>;

@@ -411,10 +411,13 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // the group tables together.
 // `confirmedOnly`: the bytes of a verified flash the device does not give back when read, verified by
 // its write confirmation alone (confirmedMatch); absent when the read-back shows every byte.
+// `restartUnproven`: the interface confirmed the closing A_Restart negatively and the device neither
+// closed the connection nor answered on it (KnxDevice.acceptUnprovenRestart), so `verified` shows the
+// device holds the bytes after the restart, not that it restarted and stored them.
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
-  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; stamps?: ImageStamp[] }
+  | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; restartUnproven?: true; stamps?: ImageStamp[] }
 ) & { structural?: true };
 
 // One element of a load-state machine's memory-control block (PID 27: size, CRC control, access, CRC),
@@ -569,11 +572,17 @@ async function runFlashOp(
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();
   dev.setExtendedMemoryServices(op.extendedMemory);
-  const written = await op.write();
-  await reconnectAfterRestart(dev);
-  const confirmedOnly: ConfirmedOnlyRange[] = [];
-  const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
-  return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
+  // The closing restart may end unproven (KnxDevice.acceptUnprovenRestart): this operation reads the
+  // device back after it and names the gap in the result.
+  dev.acceptUnprovenRestart(true);
+  try {
+    const written = await op.write();
+    const restartUnproven = dev.restartUnproven;
+    await reconnectAfterRestart(dev);
+    const confirmedOnly: ConfirmedOnlyRange[] = [];
+    const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
+    return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(restartUnproven ? { restartUnproven: true as const } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
+  } finally { dev.acceptUnprovenRestart(false); }
 }
 
 // The read-back check of a segment read at `at` against the bytes it should hold, accepting the bytes

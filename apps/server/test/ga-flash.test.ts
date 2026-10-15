@@ -40,6 +40,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
+    acceptUnprovenRestart() {}
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
       for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);
       if (opts.verify) { const back = await this.memRead(addr, data.length); if (!back.equals(data)) throw new Error("verify mismatch"); }

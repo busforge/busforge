@@ -225,7 +225,7 @@ const de: Messages = {
     STAMP_UNREADABLE: "Das Gerät hat seinen Memory-Control-Block (die Image-Stempel) in einer Form beantwortet, die Busforge nicht lesen kann. Busforge entscheidet daher nicht, welche Bytes es schreibt.",
     PARAM_SEGMENT_UNKNOWN: "Ein Parameter dieser Applikation hat einen Typ ohne bekannte Breite. Busforge kann daher nicht bestimmen, welche Bytes der Parameterdownload von ETS schreibt, und schreibt nicht.",
     PARAM_SEGMENT_NOT_READ: "Busforge konnte ein Parametersegment des Geräts nicht vollständig lesen. Es kann daher nicht bestimmen, welche Bits eines geteilten Bytes erhalten bleiben müssen, und schreibt nicht.",
-    FLASH_UNVERIFIED_LINK_DOWN: "Das Schreiben ist durchgelaufen und das Gerät hat den Neustart bestätigt, aber die Verbindung zur Schnittstelle kam nicht rechtzeitig zurück, um es zurückzulesen. Das Schreiben ist nicht verifiziert; bitte das Gerät auslesen.",
+    FLASH_UNVERIFIED_LINK_DOWN: "Das Schreiben ist durchgelaufen und das Gerät wurde neu gestartet, aber die Verbindung zur Schnittstelle kam nicht rechtzeitig zurück, um es zurückzulesen. Das Schreiben ist nicht verifiziert; bitte das Gerät auslesen.",
     MEMORY_SERVICES_UNDECIDED: "Das Gerät meldet lange Telegramme, und es ist nicht bekannt, ob seine Applikation den erweiterten Speicher-Schreibzugriff annimmt. Busforge schreibt deshalb nicht.",
     DEVICE_MAX_APDU_INVALID: "Das Gerät meldet eine maximale Telegrammlänge, die für einen Speicher-Schreibzugriff zu kurz ist. Busforge schreibt deshalb nicht.",
     PROPERTY_EXT_READ_REFUSED: "Das Gerät hat für eine Eigenschaft eines seiner Interface-Objekte keinen Wert geliefert (seines Sicherheitsobjekts oder, bei einem IP-Interface, des KNXnet/IP-Parameterobjekts).",
@@ -834,6 +834,7 @@ const de: Messages = {
     dlDoneVerified: "Heruntergeladen und verifiziert ({{bytes}} Bytes geschrieben).",
     dlDoneUnverified: "Heruntergeladen, aber das Zurücklesen war nicht erfolgreich. Prüfe das Gerät.",
     confirmedOnly: "{{bytes}} Byte(s) bei {{ranges}} gibt das Gerät beim Lesen nicht zurück; sie beruhen allein auf seiner Schreibquittung.",
+    restartUnproven: "Das Gerät hat seinen Neustart nicht bestätigt: das Zurücklesen danach stimmt, ob es die Konfiguration dauerhaft übernommen hat, ist aber nicht belegt.",
     download: "Download",
   },
   monitor: {
