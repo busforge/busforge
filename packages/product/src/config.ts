@@ -48,6 +48,9 @@ export interface CfgParamView {
   defaultValue?: string; // value with no user override (ref/param default), for change detection
   typeLabel?: string; // for control "unsupported": a human label of the datapoint type we can't edit yet
   indent?: number; // ETS IndentLevel of the row within its block (1 or 2)
+  // The parameter has neither a memory nor a property location: the device does not hold it, so no
+  // read-back recovers it (a read-back can only be asked to assume its value).
+  memoryless?: true;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -460,7 +463,7 @@ export function buildDeviceConfig(
     // A float number accepts decimals; the frontend uses step="any" so the browser does
     // not reject a fractional value against an integer step grid.
     const float = type?.base === "Float" || undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display", defaultValue, typeLabel } };
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display", defaultValue, typeLabel, ...(!param.hasMemory && !param.onProperty ? { memoryless: true as const } : {}) } };
   };
 
   // Resolve just the table-relevant facts of a com-object (number with the module

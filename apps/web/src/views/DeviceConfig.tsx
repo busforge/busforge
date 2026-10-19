@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import type { CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
+import type { AssumedValue, CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
 import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "@/lib/paramFormat.ts";
 import { CompatibilityBadge } from "@/components/CompatibilityBadge.tsx";
@@ -32,6 +32,7 @@ import {
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
 import { FlagEditor } from "./FlagEditor.tsx";
+import { AssumeValuesPanel, UnprovenAssumptionsNote, assumeCandidates, assumeList, assumeReducer, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
@@ -139,6 +140,17 @@ export function DeviceConfig() {
   const [addressOpen, setAddressOpen] = useState(false);
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  // What the last read-back of this device left open, and the offer of values to assume; reset when
+  // another device is shown, whose late results the reducer ignores. Keyed by project too: device ids
+  // repeat across projects.
+  const assumeKey = `${projectId}/${deviceId}`;
+  const [assume, dispatchAssume] = useReducer(assumeReducer, assumeKey, initialAssumeState);
+  useEffect(() => dispatchAssume({ type: "device", deviceId: assumeKey }), [assumeKey]);
+  const read = assume.deviceId === assumeKey ? assume.lastRead : null;
+  const assumable = useMemo(() => (view ? assumeCandidates(view) : []), [view]);
+  // The device the page shows now, for read-back callbacks that end after it changed.
+  const shownDevice = useRef(assumeKey);
+  shownDevice.current = assumeKey;
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -195,9 +207,17 @@ export function DeviceConfig() {
       onSuccess: () => { setRevertOpen(false); toast.success(t("device.reverted")); },
       onError: (e) => { setRevertOpen(false); onError(e); },
     });
-  const doReadBack = () =>
-    readBack.mutate(undefined, {
+  const readBackWith = (values?: AssumedValue[]) => {
+    const forDevice = assumeKey, before = view, assumed = !!values?.length;
+    readBack.mutate(values, {
       onSuccess: (v) => {
+        dispatchAssume({ type: "readOk", deviceId: forDevice, sent: values?.map((a) => a.paramRefId) ?? [], result: v, before });
+        if (shownDevice.current !== forDevice) return;
+        if (assumed) {
+          const left = v.readback?.unresolvedObjects ?? [];
+          if (left.length) toast.warning(t("device.assumeTakenUnresolved", { objects: left.join(", ") }));
+          else toast.success(t("device.assumeTaken"));
+        }
         const n = countChanged(v);
         toast.success(n ? t("device.readDrift", { count: n }) : t("device.readNoDrift"));
         // Device associations that mapped to no known com-object are NOT in the baseline;
@@ -208,8 +228,18 @@ export function DeviceConfig() {
         const constants = v.readback?.constantsDiffer ?? [];
         if (constants.length) toast.warning(t("device.readConstantsDiffer", { params: constants.map((c) => c.label).join(", ") }));
       },
-      onError: (e) => toast.error(t("device.readError"), { description: errMsg(t, e) }),
+      onError: (e) => {
+        dispatchAssume({ type: "readFailed", deviceId: forDevice, assumed, error: e });
+        if (!assumed && shownDevice.current === forDevice) toast.error(t("device.readError"), { description: errMsg(t, e) });
+      },
     });
+  };
+  const doReadBack = () => readBackWith();
+  const submitAssumed = () => {
+    const { assume: values, invalid } = assumeList(assumable, assume.choices);
+    if (invalid.length) dispatchAssume({ type: "invalid", names: invalid });
+    else readBackWith(values);
+  };
   const afterFlash = () => {
     void qc.invalidateQueries({ queryKey: qk.project(projectId) });
     void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
@@ -433,12 +463,13 @@ export function DeviceConfig() {
           setParam.mutate({ refId: item.param.refId, value: v }, {
             onError,
             onSuccess: (next) => {
+              dispatchAssume({ type: "paramChanged", deviceId: assumeKey, refId: item.param.refId });
               const n = before ? hiddenAssignedCount(before, next) : 0;
               if (n > 0) toast.info(t("device.gaHidden", { count: n }), { description: t("device.gaHiddenHint") });
             },
           });
         }}
-        onRevert={() => revertParam.mutate(item.param.refId, { onError })}
+        onRevert={() => revertParam.mutate(item.param.refId, { onError, onSuccess: () => dispatchAssume({ type: "paramChanged", deviceId: assumeKey, refId: item.param.refId }) })}
       />
     );
   };
@@ -706,6 +737,15 @@ export function DeviceConfig() {
           <span>{view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")}</span>
         </div>
       )}
+
+      {!!read?.unresolved.length && assumable.length > 0 && (
+        <AssumeValuesPanel
+          candidates={assumable} unresolved={read.unresolved} choices={assume.choices} pending={readBack.isPending} error={assume.error}
+          onChoose={(refId, value) => dispatchAssume({ type: "choose", refId, value })}
+          onSubmit={submitAssumed}
+        />
+      )}
+      {read && <UnprovenAssumptionsNote params={read.unproven} />}
 
       {(gaps.types.length > 0 || gaps.elements.length > 0) && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">

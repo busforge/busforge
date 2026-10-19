@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit } from "./api.ts";
+import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit, type AssumedValue } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -247,7 +247,7 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
   // Read the device's state off the bus and adopt it as the baseline; the
   // refreshed view flags any rows that drift from the project config.
   const readBack = useMutation({
-    mutationFn: () => api.readBackDevice(projectId, deviceId, lang),
+    mutationFn: (assume?: AssumedValue[]) => api.readBackDevice(projectId, deviceId, lang, assume),
     onSuccess,
   });
   // Swap the device's product for a catalog product, migrating its GA links

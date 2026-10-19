@@ -730,3 +730,19 @@ describe("objects outside a shown ParameterBlock", () => {
     expect(() => buildDeviceConfig(parseAppConfig(xml(`<ComObjectRefRef RefId="M-TEST_A-42_O-0_R-0" />`)), new Map())).toThrow(/outside every channel/);
   });
 });
+
+describe("parameters the device does not hold", () => {
+  // The demo application with its Mode parameter's <Memory> removed, and its Level parameter located in
+  // an interface object property instead: the device holds Level, not Mode.
+  const memless = parseAppConfig(xml
+    .replace(/(<Parameter Id="M-TEST_A-1_P-1"[^>]*>)\s*<Memory [^>]*\/>/, "$1")
+    .replace(/(<Parameter Id="M-TEST_A-1_P-2"[^>]*>)\s*<Memory [^>]*\/>/, '$1<Property ObjectIndex="0" PropertyId="51" Offset="0" BitOffset="0" />'));
+
+  test("are marked memoryless in the view; one in memory or in a property is not", () => {
+    const ps = params(buildDeviceConfig(memless, new Map()));
+    const byRef = (r: string) => ps.find((p) => p.param.refId === r)!.param;
+    expect(byRef("M-TEST_A-1_P-1_R-1").memoryless).toBe(true);
+    expect(byRef("M-TEST_A-1_P-2_R-2").memoryless).toBeUndefined();
+    expect(params(buildDeviceConfig(app, new Map())).every((p) => p.param.memoryless === undefined)).toBe(true);
+  });
+});

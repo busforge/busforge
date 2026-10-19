@@ -94,6 +94,8 @@ export interface Task {
   // Whether the server accepts a cancel now: queued, writing nothing, or a write still only reading.
   cancellable: boolean;
 }
+// A value a read-back is asked to assume for a parameter without memory location.
+export interface AssumedValue { paramRefId: string; value: string }
 export const taskActive = (t: Task) => t.state === "queued" || t.state === "running";
 
 export type SnapshotKind = "manual" | "auto";
@@ -109,9 +111,10 @@ export type TelegramSecurity = "decrypted" | "noKey" | "authFailed" | "replay" |
 export interface Telegram { ts: number; src: string; dst: string; dstRaw: number; kind: string; raw: string; security?: TelegramSecurity; }
 
 // Thrown on a non-OK response. `code` is the backend's stable error code (when
-// present) the UI maps to a localized string; `message` is the English fallback.
+// present) the UI maps to a localized string; `message` is the English fallback; `details` the
+// structured facts behind a refusal (e.g. `objects`).
 export class ApiError extends Error {
-  constructor(message: string, public readonly code?: string) {
+  constructor(message: string, public readonly code?: string, public readonly details?: Record<string, unknown>) {
     super(message);
     this.name = "ApiError";
   }
@@ -148,8 +151,8 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const e = (body as { error?: unknown }).error;
     if (e && typeof e === "object") {
-      const { code, message } = e as { code?: string; message?: string };
-      throw new ApiError(message ?? `HTTP ${res.status}`, code);
+      const { code, message, details } = e as { code?: string; message?: string; details?: Record<string, unknown> };
+      throw new ApiError(message ?? `HTTP ${res.status}`, code, details);
     }
     throw new ApiError(typeof e === "string" ? e : `HTTP ${res.status}`);
   }
@@ -393,10 +396,11 @@ export const api = {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
   // Read the device's current configuration off the bus and adopt it as the
-  // baseline; returns the refreshed config view (drifted rows now flagged).
-  readBackDevice: (id: string, deviceId: string, lang?: string): Promise<DeviceConfigView> =>
+  // baseline; returns the refreshed config view (drifted rows now flagged). `assume`: values for
+  // parameters the device does not hold, taken only if the read then shows they hold.
+  readBackDevice: (id: string, deviceId: string, lang?: string, assume?: AssumedValue[]): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/read-back`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang }),
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang, ...(assume?.length ? { assume } : {}) }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   snapshots: (id: string): Promise<SnapshotMeta[]> => fetch(`/api/projects/${id}/snapshots`).then((r) => jsonOrThrow<SnapshotMeta[]>(r)),

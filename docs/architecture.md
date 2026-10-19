@@ -343,6 +343,23 @@ value the other way.
   twice is refused before the bus is reached. A
   link on an object only the project's own values hide resolves once the project takes the device's
   values (**Revert**) and the device is read again.
+- **The device page offers the assumption.** After a read that leaves objects unresolved, the page
+  names their numbers and lists the parameters it shows without a memory or property location (the
+  view marks them `memoryless`; enumerated and whole-number ones, the values the server takes), each
+  "Not assumed" until a value is chosen. An object the project's own values hide resolves by
+  **Revert**, not by an assumption. **Read back with these values** repeats the read with the chosen
+  ones as `assume`; a number that is no whole number within the parameter's range is not sent. The
+  values are taken only if the device's configuration with them places an object for every link the
+  device holds and the dry runs under them find nothing to write; objects still unresolved after
+  that read are named (the project's own values may hide them, or the read may not have placed
+  them). A refusal is shown in the panel with its reason, and for `READBACK_ASSUMPTION_UNRESOLVED`
+  with the objects that still do not resolve; nothing is stored. A taken value the device cannot
+  tell apart from another (`unprovenAssumptions`) is shown as **Assumed, not proven**, named by its
+  parameter, until the user edits or reverts that parameter or a later read assumes it again and
+  proves it; a read that assumes other parameters or none keeps it. The note shows only on this page
+  since that read: after leaving the page or reloading it, the assumed value is no longer marked.
+  The page cannot tell which parameter hides which object: the user chooses from the device's
+  documentation or its ETS project.
 - **It can end "never programmed".** A read of a never-programmed device also reads, in the same
   session, the application id (PID 13 of the application object its mask names) and the load states,
   and runs a parameter and a group-address flash dry run under the baseline it sets (the latter also
