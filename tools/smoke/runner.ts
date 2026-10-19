@@ -257,6 +257,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       revert: () => client.revert(pid, did),
       getConfig: () => client.getConfig(pid, did),
       setParam: (ref, value) => client.setParam(pid, did, ref, value),
+      ensureGa: (ga) => client.ensureGa(pid, ga),
       setLinks: (ref, gas) => client.setLinks(pid, did, ref, gas),
       flashDry: () => client.flashDry(pid, did),
       flashGaDry: () => client.flashGaDry(pid, did),

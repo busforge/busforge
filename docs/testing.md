@@ -278,11 +278,12 @@ fingerprint     read the spec's interface object properties; any mismatch stops 
 adopt           read-back; the project takes the device's values; a second read-back under them must
                 resolve every association; parameter and GA flash dry runs must report unchanged (the
                 server keeps a backup of the device's memory with each); the configuration found is
-                recorded
+                recorded; the parameters in expectParams must hold their expected values
 capabilities    every write capability the product claims has a step in the spec or an `unsafe`
                 reason; readParams and readLinks are claimed; every step's target is checked
 params          parameter flash there, parameter flash back, read-back without drift
-links           GA flash of the unlinked object to the --test-ga address, read-back, witness behaviours,
+links           GA flash of the object to the --test-ga address (an unlinked object, or with addToLinked
+                the address added behind a linked object's own), read-back, witness behaviours,
                 A_Restart + read-back (persistence), GA flash back, read-back without drift
 structural      structural flash there, structural flash back, read-back without drift
 fullDownload    only with --full-download: the configuration found, downloaded, read-back without drift
@@ -326,11 +327,12 @@ export const exampleInService: DeviceSpec = {
   provision: "in-service",
   inService: {
     fingerprint: [
-      { name: "application id", object: 4, pid: 13, expect: "00faa01255" },
+      { name: "application id", object: 4, pid: 13, expect: "00faa01255" },  // System B, see below
       { name: "version", object: 0, pid: 25, expect: "0945" },
     ],
+    expectParams: [{ name: "module type", paramRefId: "…_R-…", value: "6" }], // optional
     param: { paramRefId: "…_R-…", value: "2" },                          // flashParams
-    link: { comObjRefId: "…_O-1_R-…" },                                  // flashLinks
+    link: { comObjRefId: "…_O-1_R-…" },                                  // flashLinks (addToLinked: true for a linked object)
     structural: { paramRefId: "…_R-…", value: "1" },                     // structuralFlash, optional
     fullDownload: true,                                                  // offered, optional
   },
@@ -342,16 +344,31 @@ export const exampleInService: DeviceSpec = {
 
 | Field | Rule |
 |---|---|
-| `inService.fingerprint` | At least one property, `expect` as lower-case hex. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. Use the application id (the PID 13 record) and a firmware version the unit reports (object 0 PID 25 or PID 9; a record with outcome `refused` is a property the unit does not have) |
+| `inService.fingerprint` | The application id and the version property of the mask's family (table below), each `expect` as lower-case hex; further properties may follow. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. A record with outcome `refused` is a property the unit does not have |
+| `inService.expectParams` | Optional. Parameters whose values the device's own configuration must hold once the project has taken it over, each with a `name` for the report and the value as `GET .../config` shows it. A mismatch, or a parameter the configuration does not show, stops the run after the adoption and before the test address is probed or anything is written. For what the fingerprint cannot tell: products that share application, firmware and hardware type (a module-type parameter), or a setting the run relies on staying as it is (an output's download or bus-return behaviour) |
 | Refs | Every `paramRefId` and `comObjRefId` is the full ref as `GET .../config` lists it; a ref that matches only by its end is refused |
 | `inService.param` | A parameter the unit shows, writable, in the parameter image, whose change leaves the com-object table alone (a delay, a threshold, a number; not a channel function or anything that shows or hides objects). `value` must differ from what the unit holds. The run reads the unit's own value and writes it back |
-| `inService.link` | An object the unit holds **unlinked**, with its read flag set when the behaviour is an `output`. The test group address is not in the spec (it belongs to the installation): the operator gives it with `--test-ga=<main/middle/sub>`. It must be unused **in the whole installation**: the linked object may send on it (on every restart, for one), and any device listening there would act on it. The run refuses an address an object of the unit uses, or one on which anything answers a read or sends within 5 s, but it cannot see a device that only listens; checking that is the operator's job. The run refuses a linked object rather than add to or replace a link |
+| `inService.link` | An object the unit holds **unlinked**, or with `addToLinked: true` one it holds **linked**: its own addresses stay and the test address is added behind them, then removed again. The object's read flag (as the application sets it) must be on when a behaviour is an `output`; the run refuses the object otherwise. With `addToLinked` the test address must lie above every address the object holds: an object sends on the address its association table lists first, and in the ETS captures that address is also its lowest ([load-procedures.md](load-procedures.md)), so a lower test address could take its place on a device that sends on the lowest. A device may answer the witness's read on the object's sending address rather than on the address read: the answer, the object's current value, then goes out on the object's own address as for any read of it, and the witness, which accepts only an answer on the test address, fails. The addition is an API edit in both channels (the device page holds one address per object, and choosing one replaces the others); the GA flash itself goes through the channel under test. The test group address is not in the spec (it belongs to the installation): the operator gives it with `--test-ga=<main/middle/sub>`. It must be unused **in the whole installation**: the linked object may send on it (on every restart, for one), and any device listening there would act on it. The run refuses an address an object of the unit uses, or one on which anything answers a read or sends within 5 s, but it cannot see a device that only listens; checking that is the operator's job. The run refuses an object whose links do not match the step (linked without `addToLinked`, unlinked with it) and never replaces a link |
 | `inService.structural` | Only where the product claims `structuralFlash`: a parameter whose change alters the com-object table, and the value to set. The dry run must offer a structural flash |
 | `inService.fullDownload` | `true` offers a full download of the configuration found. It runs only with `--full-download` on the command line; without it the capability is reported `unproven` |
-| `behaviours` | `output` (a GroupValueRead on the test address is answered, optionally with `expectValue`) or `heartbeat` (the object sends on the test address within `windowMs`), on the linked object, without `ga` or `enable`. Empty leaves the link proven to the byte only, which the records state |
+| `behaviours` | `output` (a GroupValueRead on the test address is answered, optionally with `expectValue`) or `heartbeat` (the object sends on the test address within `windowMs`; not with `addToLinked`, since the object sends on its own first address), on the linked object, without `ga` or `enable`. Empty leaves the link proven to the byte only, which the records state |
 | `unsafe` | Every write capability the product claims (`flashParams`, `flashLinks`, `structuralFlash`, `fullDownload`) without a step here, with the reason. The run stops before its first write when one is missing, and when a step names a capability the product does not claim |
 | Steps | At least one of `param`, `link`, `structural`, `fullDownload`. `readParams` and `readLinks` must be claimed by the product (the run takes the configuration over by reading it); they pass on the channel's own read-backs after the steps |
 | `configure`, `fuzz`, `structuralTrigger`, `precondition` | Must be empty or absent; the spec is refused otherwise |
+
+The fingerprint follows the mask's family. The application id is PID 13 of the object the mask's
+master data names for it; the version is the object-0 property the family's units report, while
+they refuse the other:
+
+| Family | Application id | Version | Refused, so not in the spec |
+|---|---|---|---|
+| System 7 | object 3 PID 13 | object 0 PID 9 (firmware revision) | object 0 PID 25 |
+| System B | object 4 PID 13 | object 0 PID 25 (version) | object 0 PID 9 |
+
+The version columns come from read-only collections of MV-0705 and MV-07B0 units; the rule applies
+to the whole family, and a unit of another mask that refuses its version property stops the run at
+the fingerprint, before anything is written. A spec for a mask of another family is refused until
+its rule is added (`FINGERPRINT_RULES` in `inservice.ts`) from a collection of one of its units.
 
 `bun test tools/smoke/inservice.test.ts` checks every registered device-in-service spec against
 these rules, so a spec that breaks one fails `bun run check`.

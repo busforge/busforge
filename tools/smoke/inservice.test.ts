@@ -36,6 +36,7 @@ interface Script {
   busUsesTestGa?: boolean;                   // another device answers on the test address
   placedWithDefaults?: boolean;              // the fresh project shows the catalogue defaults, which hide a linked object
   hiddenEvenUnderOwnConfig?: boolean;        // a link no configuration of the unit places
+  noReadFlag?: boolean;                      // the link step's object has no read flag
 }
 
 function scripted(sc: Script = {}) {
@@ -46,6 +47,8 @@ function scripted(sc: Script = {}) {
   const gaps = () => (sc.hiddenEvenUnderOwnConfig ? 1 : 0) + (project.params[STRUCT] !== device.params[STRUCT] ? 1 : 0);
   let base = { params: { ...device.params }, links: structuredClone(device.links) as Record<string, number[]> };
   let paramFlashes = 0;
+  // The step's object on the device after each GA flash.
+  const objOnDevice: number[][] = [];
   const caps: DeviceCapabilities = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false, ...sc.caps };
   const props: Record<string, string> = { "4/13": "00faa01255", "0/25": "0945", ...sc.props };
   const same = (a: number[] = [], b: number[] = []) => a.length === b.length && a.every((g, i) => g === b[i]);
@@ -56,7 +59,7 @@ function scripted(sc: Script = {}) {
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
       ...Object.keys(project.params).map((refId): CfgItem => ({ kind: "param", param: { refId, name: refId, control: "number", value: project.params[refId], min: 0, max: 16000, changed: project.params[refId] !== base.params[refId] } })),
-      ...Object.keys(project.links).map((refId, i): CfgItem => ({ kind: "comObject", comObject: { refId, number: refId === OBJ ? 1 : 23 + i, name: refId, functionText: "", objectSize: "1 Bit", dpt: "", flags: { read: true, write: false, comm: true, transmit: true, update: false, readOnInit: false }, gaRaw: project.links[refId][0] ?? null, gaRaws: [...project.links[refId]], changed: !same(project.links[refId], base.links[refId]) } })),
+      ...Object.keys(project.links).map((refId, i): CfgItem => ({ kind: "comObject", comObject: { refId, number: refId === OBJ ? 1 : 23 + i, name: refId, functionText: "", objectSize: "1 Bit", dpt: "", flags: { read: !(sc.noReadFlag && refId === OBJ), write: false, comm: true, transmit: true, update: false, readOnInit: false }, gaRaw: project.links[refId][0] ?? null, gaRaws: [...project.links[refId]], changed: !same(project.links[refId], base.links[refId]) } })),
     ];
     return { blocks: [{ id: "b", name: "b", level: 0, items }], hasModules: false, capabilities: caps };
   };
@@ -66,12 +69,13 @@ function scripted(sc: Script = {}) {
       revert: async () => { project.params = { ...base.params }; project.links = structuredClone(base.links); },
       getConfig: async () => view(),
       setParam: async (ref, value) => { project.params[ref] = value; },
+      ensureGa: async () => undefined,
       setLinks: async (ref, gas) => { project.links[ref] = [...gas]; },
       flashDry: async () => (sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
       flashGaDry: async () => (linksDiffer() ? result("dryRun") : result("unchanged")),
       downloadDry: async () => result("dryRun"),
       flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = { ...project.params }; if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
-      flashGaReal: async () => { calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); return result("flashed", { verified: !unverified }); },
+      flashGaReal: async () => { calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
       name: "api",
@@ -91,7 +95,7 @@ function scripted(sc: Script = {}) {
     log: () => undefined,
     settle: async () => undefined,
   };
-  return { io, calls, device, start: structuredClone(device) };
+  return { io, calls, device, start: structuredClone(device), objOnDevice };
 }
 const NO_FULL: InServiceOptions = { fullDownload: false, testGa: GA };
 const WRITES = new Set(["flashParams", "flashLinks", "structuralFlash", "fullDownload", "restart"]);
@@ -258,7 +262,7 @@ describe("the general device-in-service spec", () => {
     expect(problems.some((p) => p.includes("fuzz"))).toBe(true);
     expect(problems.some((p) => p.includes("flashParams has a step and is declared unsafe"))).toBe(true);
     expect(() => planInService(bad, NO_FULL)).toThrow("not fit for a device in service");
-    expect(inServiceProblems({ ...spec, inService: { ...spec.inService!, fingerprint: [{ name: "v", object: 0, pid: 25, expect: "09 45" }] } })).toEqual(['fingerprint v: expect "09 45" is not lower-case hex bytes']);
+    expect(inServiceProblems({ ...spec, inService: { ...spec.inService!, fingerprint: [spec.inService!.fingerprint[0], { name: "v", object: 0, pid: 25, expect: "09 45" }] } })).toEqual(['fingerprint v: expect "09 45" is not lower-case hex bytes']);
   });
 
   test("a link step without the operator's test address stops the run before anything is read", async () => {
@@ -400,5 +404,147 @@ describe("evidence of a device-in-service run", () => {
     expect(records[0].scope.configuration).toBe("the device's own configuration, taken over by read-back, then the flashParams driver's own change");
     expect(records[0].origin).toEqual({ configuredBy: "unknown", reference: "self-written", priorBusforgeWrites: "unknown" });
     expect(JSON.stringify(records)).not.toContain(GA);
+  });
+});
+
+describe("a device in service: the test address added to a linked object", () => {
+  const OWN = gaToNum("2/0/1");
+  const add: DeviceSpec = { ...spec, id: "add", inService: { ...spec.inService!, link: { comObjRefId: OBJ, addToLinked: true } } };
+
+  test("the object keeps its own address while the test address is placed behind it, and holds exactly its own afterwards", async () => {
+    const { io, calls, device, start, objOnDevice } = scripted({ links: { [OBJ]: [OWN] } });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(planned(add, NO_FULL));
+    expect(objOnDevice).toEqual([[OWN, TEST_GA], [OWN]]);
+    expect(device).toEqual(start);
+    expect(r.behaviours.map((b) => b.state)).toEqual(["pass"]);
+    expect(r.capabilities.find((c) => c.capability === "flashLinks")?.detail).toContain("beside its 1 own address(es), own sending address first");
+    const plan = planInService(add, NO_FULL).map((p) => p.text).join("\n");
+    expect(plan).toContain("gets 15/7/250 added behind its own addresses");
+    expect(plan).toContain("lies above every address of the object");
+  });
+
+  // The scripted read-back keeps the project's order, the server's sorts each object's addresses;
+  // the two agree because the test address must lie above the object's own.
+  test("an object with several own addresses keeps all of them, in their order, beside another object's", async () => {
+    const own = [gaToNum("2/0/1"), gaToNum("3/0/1")];
+    const { io, calls, device, start, objOnDevice } = scripted({ links: { [OBJ]: own, [OTHER_OBJ]: [gaToNum("4/0/1")] } });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(planned(add, NO_FULL));
+    expect(objOnDevice).toEqual([[...own, TEST_GA], own]);
+    expect(device).toEqual(start);
+  });
+
+  test("an object the device holds unlinked is refused, since the step was written for a linked one", async () => {
+    const { io, calls } = scripted();
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("capabilities");
+    expect(r.stopped?.detail).toContain("is unlinked on the device");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a test address below one the object holds is refused, so the object keeps sending on its own", async () => {
+    const { io, calls } = scripted({ links: { [OBJ]: [gaToNum("15/7/251")] } });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("capabilities");
+    expect(r.stopped?.detail).toContain("lies below an address object 1 holds");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a link flash that does not verify is undone to the object's own address, never a download", async () => {
+    const { io, calls, device, start, objOnDevice } = scripted({ links: { [OBJ]: [OWN] }, gaFlashUnverified: true });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("flashLinks");
+    expect(calls).not.toContain("fullDownload");
+    expect(objOnDevice.at(-1)).toEqual([OWN]);
+    expect(r.restore?.state).toBe("pass");
+    expect(device).toEqual(start);
+  });
+
+  test("a heartbeat cannot witness an address added behind the object's own", () => {
+    const hb: DeviceSpec = { ...add, behaviours: [{ kind: "heartbeat", label: "hb", comObjRefId: OBJ, windowMs: 1000 }] };
+    expect(inServiceProblems(hb).some((p) => p.includes("sends on its first address only"))).toBe(true);
+  });
+
+  test("an output witness on an object without the read flag is refused before any write", async () => {
+    const { io, calls } = scripted({ noReadFlag: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("capabilities");
+    expect(r.stopped?.detail).toContain("no read flag");
+    expect(writesOf(calls)).toEqual([]);
+  });
+});
+
+describe("a device in service: expected parameter values", () => {
+  const withExpect = (value: string, paramRefId = STRUCT): DeviceSpec => ({ ...spec, id: "expect", inService: { ...spec.inService!, expectParams: [{ name: "module type", paramRefId, value }] } });
+
+  test("a configuration holding the expected values runs as before", async () => {
+    const s = withExpect("1");
+    const { io, calls, device, start } = scripted();
+    const r = await runInService(s, io, NO_FULL);
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(planned(s, NO_FULL));
+    expect(device).toEqual(start);
+    expect(planInService(s, NO_FULL).find((p) => p.phase === "adopt")?.text).toContain("(module type) = 1");
+  });
+
+  test("another value stops the run after the adoption and before the first write or bus probe", async () => {
+    const { io, calls } = scripted();
+    const r = await runInService(withExpect("6"), io, NO_FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toBe("module type: the device holds 1, the spec expects 6: not the unit or configuration this spec was written for");
+    expect(writesOf(calls)).toEqual([]);
+    expect(r.restore).toBeUndefined();
+  });
+
+  test("an expected parameter the configuration does not show, or names only by its end, stops the run", async () => {
+    const missing = scripted();
+    expect((await runInService(withExpect("1", `${STRUCT}9`), missing.io, NO_FULL)).stopped?.detail).toContain("is not visible");
+    const tail = scripted();
+    expect((await runInService(withExpect("1", "UP-3001008_R-300100801"), tail.io, NO_FULL)).stopped?.detail).toContain("give the full ref verbatim");
+    expect(writesOf([...missing.calls, ...tail.calls])).toEqual([]);
+  });
+
+  test("an expected value without a name or value is refused", () => {
+    expect(inServiceProblems(withExpect(""))).toEqual(["expectParams: an entry needs a name, a paramRefId and a value (module type)"]);
+  });
+
+  test("a parameter expected twice is refused", () => {
+    const twice: DeviceSpec = { ...spec, inService: { ...spec.inService!, expectParams: [{ name: "a", paramRefId: STRUCT, value: "1" }, { name: "b", paramRefId: STRUCT, value: "2" }] } };
+    expect(inServiceProblems(twice)).toEqual([`expectParams names ${STRUCT} more than once`]);
+  });
+});
+
+describe("a device in service: the fingerprint each family gives", () => {
+  const system7 = (fingerprint: NonNullable<DeviceSpec["inService"]>["fingerprint"], mask = "MV-0705"): DeviceSpec =>
+    ({ ...spec, device: { ...spec.device, mask }, inService: { ...spec.inService!, fingerprint } });
+  const APP7 = { name: "application id", object: 3, pid: 13, expect: "0081fe0111" };
+
+  test("System 7: the application id on object 3 and the firmware revision (PID 9)", () => {
+    expect(inServiceProblems(system7([APP7, { name: "firmware", object: 0, pid: 9, expect: "06" }]))).toEqual([]);
+  });
+
+  test("System 7: PID 25, which its units refuse, is refused, and so is the application id on another object", () => {
+    expect(inServiceProblems(system7([{ ...APP7, object: 4 }, { name: "version", object: 0, pid: 25, expect: "0945" }]))).toEqual([
+      "the fingerprint lacks the application id: on system-7 it is object 3 PID 13",
+      "the fingerprint lacks the version: on system-7 it is object 0 PID 9",
+      "object 0 PID 25: system-7 units refuse it, the version is object 0 PID 9",
+    ]);
+  });
+
+  test("System B: the application id on object 4 and the version (PID 25); PID 9 is refused", () => {
+    expect(inServiceProblems(spec)).toEqual([]);
+    const withPid9: DeviceSpec = { ...spec, inService: { ...spec.inService!, fingerprint: [...spec.inService!.fingerprint, { name: "firmware", object: 0, pid: 9, expect: "01" }] } };
+    expect(inServiceProblems(withPid9)).toEqual(["object 0 PID 9: system-b units refuse it, the version is object 0 PID 25"]);
+  });
+
+  test("a family without a rule is refused rather than guessed", () => {
+    expect(inServiceProblems(system7([APP7, { name: "firmware", object: 0, pid: 9, expect: "06" }], "MV-0012"))).toEqual([
+      "no fingerprint rule for mask MV-0012 (family system-1); add one to FINGERPRINT_RULES from a read-only collection of a unit",
+    ]);
+    expect(inServiceProblems(system7([APP7], "MV-0700"))).toEqual(["mask MV-0700 declares no interface object carrying the application id, so the fingerprint cannot name the application"]);
   });
 });

@@ -76,14 +76,22 @@ export interface InServiceSpec {
   // Interface object properties read before anything else, each required to hold exactly `expect`
   // (lower-case hex): the application id and a firmware version, so a unit holding another
   // application or firmware stops the run. A unit of the same application and firmware passes it.
+  // Which properties these are follows the mask's family (inservice.ts FINGERPRINT_RULES).
   fingerprint: { name: string; object: number; pid: number; expect: string }[];
+  // Parameter values the device's own configuration must hold once the project has taken it over,
+  // checked before the first write: what tells products apart that share application and firmware
+  // (a module type), or a setting the run relies on staying as it is (an output's download
+  // behaviour). Values as GET .../config shows them.
+  expectParams?: { name: string; paramRefId: string; value: string }[];
   // flashParams: one parameter that leaves the com-object table alone, set to `value`, flashed, set
   // back to the device's own value, flashed again.
   param?: { paramRefId: string; value: string };
-  // flashLinks: one object the device holds unlinked, linked to the test group address the operator
-  // gives the run (--test-ga, an address no object of the device uses), flashed, observed by the
-  // spec's behaviours, restarted for the persistence check, unlinked, flashed again.
-  link?: { comObjRefId: string };
+  // flashLinks: one object linked to the test group address the operator gives the run (--test-ga,
+  // an address no object of the device uses), flashed, observed by the spec's behaviours, restarted
+  // for the persistence check, unlinked, flashed again. The object is one the device holds unlinked;
+  // with `addToLinked` it is one the device holds linked, its own addresses stay, and the test
+  // address is added behind them and removed again.
+  link?: { comObjRefId: string; addToLinked?: true };
   // structuralFlash: one parameter whose change alters the com-object table, written as a structural
   // flash there and back.
   structural?: { paramRefId: string; value: string };
