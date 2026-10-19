@@ -76,6 +76,7 @@ export const CORPUS_FILES: readonly string[] = [
     "mdt-be02001-ets-fulldownload-defaults.log",
     "mdt-be02001-ets-fulldownload-linked.log",
     "mdt-be02001-ets-partial-links.log",
+    "mdt-be02001-ets-partial-sender-high.log",
     "mdt-be02001-ets-partial-structure.log",
     "mdt-ip-secure-unit-memory.json",
     "mdt-router-ets6log-fulldownload.txt",

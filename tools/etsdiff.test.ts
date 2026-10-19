@@ -324,6 +324,53 @@ corpusDescribe("partial downloads with links against ETS", () => {
   }
 });
 
+// ETS 6 partial download onto the MDT BE-02001.02 (System 7, MV-0705) after linking input A's object 0 first to
+// 0/0/21 and then to 0/0/20: a sending address above the object's other address. ETS writes the association of the
+// sending address first, not the lowest group index.
+corpusDescribe("a sending address above the object's other address, against ETS", () => {
+  const app = "M-0083_A-00B6-32-9642.xml.gz", capture = "mdt-be02001-ets-partial-sender-high.log";
+  const [low, high] = [parseGa("0/0/20"), parseGa("0/0/21")];
+  const cfg = () => parseAppConfig(catalogueXml(app));
+  const segmentAt = (id: string | undefined) => cfg().absoluteSegments.find((s) => s.id === id)!.address;
+  const etsImage = () => memoryImage(parseCapture(captureText(capture), deviceOf(capture)).writes);
+  const divergences = (gaRaws: number[]) => {
+    const xml = catalogueXml(app);
+    const c = parseAppConfig(xml), ia = deviceOf(capture);
+    const build = classify(c).planFullDownload(c.mask, { ia: numToIa(ia), params: new Map(), links: [{ comObjNum: 0, gaRaws }], proc: parseLoadProcedures(xml) });
+    const r = compareSegments(build.segments.map((seg) => ({ seg, address: seg.address ?? null, baseSource: "t" })), etsImage(), etsAllocations(parseCapture(captureText(capture), ia)), []);
+    expect(r.segments.reduce((n, s) => n + s.compared, 0)).toBeGreaterThan(0);
+    expect([r.unattributed, r.segments.flatMap((s) => s.etsOnly)]).toEqual([[], []]);
+    return r.segments.flatMap((s) => s.divergences.map((d) => `${s.id.split("_").pop()}+${d.offset}`));
+  };
+
+  test("the capture goes to the bench MDT and holds both addresses", () => {
+    expect(numToIa(deviceOf(capture))).toBe("1.1.56");
+    expect(partialLinkGas(capture, cfg(), 2)).toEqual([low, high]);
+  });
+
+  test("ETS lists the sending address's association first", () => {
+    const at = segmentAt(cfg().groupTables.associationSegment), mem = etsImage();
+    // [count][group index][object]: index 2 is 0/0/21, index 1 is 0/0/20 (the address table is ascending).
+    expect([0, 1, 2, 3, 4].map((o) => mem.get(at + o))).toEqual([2, 2, 0, 1, 0]);
+  });
+
+  test("Busforge's tables for the object's links, sending address first, are every byte ETS wrote; lowest first are not", () => {
+    expect(divergences([high, low])).toEqual([]);
+    // Lowest first swaps the two association entries' group indexes, and nothing else.
+    expect(divergences([low, high])).toEqual(["AS-4201+1", "AS-4201+3"]);
+  });
+
+  test("decoded as a read-back decodes them, the tables ETS wrote give the sending address first", () => {
+    const c = cfg(), mem = etsImage();
+    const addrAt = segmentAt(c.groupTables.addressSegment), assocAt = segmentAt(c.groupTables.associationSegment);
+    // ETS left the unit's own address (bytes 1-2 of the address table) as the unit held it.
+    const ia = deviceOf(capture);
+    const addr = Buffer.from([mem.get(addrAt)!, ia >> 8, ia & 0xff, ...[3, 4, 5, 6].map((o) => mem.get(addrAt + o)!)]);
+    const assoc = Buffer.from([0, 1, 2, 3, 4].map((o) => mem.get(assocAt + o)!));
+    expect(decodeGroupTablesMv0705(addr, assoc)).toEqual([{ comObjNum: 0, gaRaws: [high, low] }]);
+  });
+});
+
 // The same partial downloads, for the System B parameter segment: ETS reallocates it without fill
 // and writes exactly the bytes its parameter model owns. Busforge's parameter flash, merged over the
 // device's segment as the full download left it, must write the same bytes with the same values.
@@ -593,6 +640,14 @@ corpusDescribe("etsdiff --partial evidence", () => {
     const t = target("mdt-be02001-ets-partial-links.log", "M-0083_A-00B6-32-9642.xml.gz", 2);
     const r = await cli([capturePath("mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, t.ia, `--link=0:${t.gas[0]}`, `--link=6:${t.gas[1]}`]);
     expect([r.exitCode, r.records]).toEqual([0, [["flashLinks", "pass"]]]);
+  });
+  test("MDT BE-02001.02: a sending address above the other passes only in that order", async () => {
+    const file = "mdt-be02001-ets-partial-sender-high.log";
+    const [low, high] = target(file, "M-0083_A-00B6-32-9642.xml.gz", 2).gas;
+    const run = (gas: string) => cli([capturePath(file), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, `--ia=${numToIa(deviceOf(file))}`, `--link=0:${gas}`]);
+    const [pass, fail] = [await run(`${high},${low}`), await run(`${low},${high}`)];
+    expect([pass.exitCode, pass.records]).toEqual([0, [["flashLinks", "pass"]]]);
+    expect([fail.exitCode, fail.records]).toEqual([1, [["flashLinks", "fail"]]]);
   });
   test("a configuration ETS did not download fails, and its record says so", async () => {
     const t = target("mdt-be02001-ets-partial-links.log", "M-0083_A-00B6-32-9642.xml.gz", 2);
