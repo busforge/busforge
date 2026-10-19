@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,7 @@ import { CommissionDialog } from "./CommissionDialog.tsx";
 import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
 import { ToolKeyDialog } from "./ToolKeyDialog.tsx";
 import { DiagnosticDialog } from "./DiagnosticDialog.tsx";
+import { ReportDialog } from "./ReportDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -128,6 +129,7 @@ export function DeviceConfig() {
   const [toolKeyOpen, setToolKeyOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const hasChanges = changeTotal(device?.changes) > 0;
   const hasParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param"));
   const hasComObjects = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject"));
@@ -564,6 +566,9 @@ export function DeviceConfig() {
               <DropdownMenuItem onClick={() => setToolKeyOpen(true)} data-testid="tool-key-device">
                 <KeyRound className="size-4" /> {t("toolKey.menu")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setReportOpen(true)} disabled={!device} data-testid="report-device">
+                <MessageSquareWarning className="size-4" /> {t("report.menu")}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -613,6 +618,8 @@ export function DeviceConfig() {
       {device && (
         <DiagnosticDialog key={device.id} open={diagnosticOpen} onOpenChange={setDiagnosticOpen} projectId={projectId} device={device} />
       )}
+
+      {device && <ReportDialog key={device.id} open={reportOpen} onOpenChange={setReportOpen} device={device} />}
 
       {device && (
         <ToolKeyDialog

@@ -1,0 +1,60 @@
+name: Problem or unsupported device
+description: Something went wrong, or Busforge refuses or does not support a device.
+title: "Problem: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. This issue is public. Please do not paste KNX keys or passwords, project files, room or building names, individual addresses, group addresses, IP addresses or recorded bus traffic.
+
+        The fields below can be filled in by Busforge itself (device page, **Report on GitHub**): it fills in only the title, the Busforge version, the product, the application program and any text you typed in its dialog. You review everything here and submit it with your own account.
+
+        **Diagnostic package.** For a device Busforge cannot program, a diagnostic package helps (device page, **Create diagnostic package**). It is cleaned of ids, connection details and the serial number, but the device memory in it is not anonymized and can hold data from your installation. Do not attach it before you have reviewed it. If you would rather not share it publicly, say so below; a maintainer will answer in this issue whether a private way to send it is possible.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - Busforge refuses or does not support this device
+        - Reading or programming a device failed
+        - The device behaves wrongly after programming
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Busforge version
+      description: Shown at the bottom of the start page.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: product
+    attributes:
+      label: Product
+      description: Manufacturer, order number and product id, if a device is involved.
+  - type: input
+    id: application
+    attributes:
+      label: Application program
+      description: The application program id, if a device is involved.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Error messages are welcome; remove addresses and names from them.
+    validations:
+      required: true
+  - type: input
+    id: related
+    attributes:
+      label: Related issues
+      description: Other reports about the same device or problem, for example "#12".
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Private data
+      options:
+        - label: This report contains no keys, passwords, project files, room names or addresses.
+          required: true

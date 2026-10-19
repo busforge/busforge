@@ -1,0 +1,68 @@
+name: Device feedback
+description: Tell us how a device works with Busforge in your installation overall, good or bad.
+title: "Device feedback: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the feedback. This issue is public. Please do not paste KNX keys or passwords, project files, room or building names, individual addresses, group addresses, IP addresses or recorded bus traffic.
+
+        This report is about the device in your use of it overall, over the time you have used it with Busforge, not only about the last operation. Limitations are welcome. A report does not change what Busforge says about the device and is not counted as a vote: the support status in the app and on the compatibility page comes from tests on real hardware only.
+
+        The fields below can be filled in by Busforge itself (device page, **Report on GitHub**): it fills in only the title, the Busforge version, the product, the application program and any text you typed in its dialog. You review everything here and submit it with your own account.
+  - type: dropdown
+    id: overall
+    attributes:
+      label: Overall, how does the device work with Busforge for you?
+      options:
+        - Works for my use
+        - Works, with limitations
+        - Does not work for my use
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Busforge version
+      description: Shown at the bottom of the start page.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: product
+    attributes:
+      label: Product
+      description: Manufacturer, order number and product id.
+    validations:
+      required: true
+  - type: input
+    id: application
+    attributes:
+      label: Application program
+      description: The application program id.
+    validations:
+      required: true
+  - type: textarea
+    id: use
+    attributes:
+      label: What do you use it for?
+      description: What you did with the device in Busforge (read, change parameters, group addresses, full download) and over how long.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Limitations
+      description: What did not work, or only with a workaround. Leave empty if there were none.
+  - type: input
+    id: related
+    attributes:
+      label: Related issues
+      description: Other reports about the same device, for example "#12".
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Private data
+      options:
+        - label: This report contains no keys, passwords, project files, room names or addresses.
+          required: true

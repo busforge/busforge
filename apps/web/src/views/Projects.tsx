@@ -24,6 +24,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ExportDialog } from "@/components/ExportDialog.tsx";
+import { ReportDialog } from "./ReportDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -79,12 +80,16 @@ function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCo
 function VersionFooter() {
   const { t } = useTranslation();
   const { data: v } = useVersion();
+  const [reportOpen, setReportOpen] = useState(false);
   if (!v) return null;
   const built = v.builtAt ? fmtDate(Date.parse(v.builtAt)) : null;
   return (
     <footer className="mt-auto pt-10 text-center font-mono text-[11px] text-muted-foreground/70" title={v.commit !== "unknown" ? `commit ${v.commit}` : undefined}>
       <span className="font-semibold text-muted-foreground">{v.version}</span>
       {built ? <span> · {t("footer.built", { date: built })}</span> : null}
+      <span> · </span>
+      <button type="button" onClick={() => setReportOpen(true)} className="underline-offset-2 hover:text-foreground hover:underline" data-testid="report-app">{t("report.footer")}</button>
+      <ReportDialog open={reportOpen} onOpenChange={setReportOpen} />
     </footer>
   );
 }
