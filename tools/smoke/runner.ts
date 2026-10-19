@@ -13,7 +13,7 @@
 // `bun run check`.
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, resolve, basename, relative, isAbsolute } from "node:path";
-import { Client, ApiError, allParams, allComObjects, type DeviceCapabilities, type FlashResult } from "./client.ts";
+import { Client, ApiError, allParams, allComObjects, flagsMoved, flagsNotRead, type CfgComObjView, type DeviceCapabilities, type FlashResult } from "./client.ts";
 import { Witness } from "./witness.ts";
 import { UiDriver } from "./ui.ts";
 import { makePrng, gaAllocator } from "./generate.ts";
@@ -204,14 +204,17 @@ async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: str
   return out;
 }
 
-// Take the device back to the imported project file's configuration and prove it: parameters and
-// links the run changed are set back to what the import held (every linked address, not only the
-// first), written (a full download when a parameter changed, since one may alter the com-object
-// table; otherwise a GA flash), then the GA flash dry run must find the group tables and security
-// object unchanged and a read-back must show no parameter drift. The parameter flash dry run is not
+// Take the device back to the imported project file's configuration and prove it: parameters, links
+// and com-object flags the run changed are set back to what the import held (every linked address, not
+// only the first), written (a full download when a parameter changed, since one may alter the com-object
+// table; otherwise a GA flash), then a read-back must show no parameter, link or flag drift (the flags
+// read where the product reads them) and the GA flash dry run must find the group tables and security
+// object unchanged. The parameter flash dry run is not
 // used: the Jung changes one byte of its parameter segment outside every parameter after a download.
 // So the ETS project the file came from stays valid for the device.
-async function restoreToImport(client: Client, pid: string, did: string, links: Map<string, number[]>, params: Map<string, string>, log: (m: string) => void, settle: (ms: number) => Promise<void>): Promise<NonNullable<RunResult["restore"]>> {
+interface ImportedState { links: Map<string, number[]>; params: Map<string, string>; flags: Map<string, CfgComObjView["flags"]> }
+async function restoreToImport(client: Client, pid: string, did: string, imported: ImportedState, log: (m: string) => void, settle: (ms: number) => Promise<void>): Promise<NonNullable<RunResult["restore"]>> {
+  const { links, params, flags } = imported;
   try {
     const view = await client.getConfig(pid, did);
     const sameLinks = (a: number[], b: number[]) => a.length === b.length && a.every((g, i) => g === b[i]);
@@ -220,21 +223,27 @@ async function restoreToImport(client: Client, pid: string, did: string, links: 
     const now = allComObjects(await client.getConfig(pid, did));
     const movedLinks = now.filter((c) => !sameLinks(c.gaRaws ?? [], links.get(c.refId) ?? []));
     for (const c of movedLinks) await client.setLinks(pid, did, c.refId, links.get(c.refId) ?? []);
+    const movedFlags = flagsMoved(await client.getConfig(pid, did), flags);
+    for (const c of movedFlags) await client.setFlags(pid, did, c.refId, c.set);
     if (movedParams.length) {
       const r = await client.downloadReal(pid, did, (p) => log(`restore ${p}`));
       if (r.kind !== "flashed" || r.verified !== true) return { state: "fail", detail: `restoring ${movedParams.length} parameter(s): download ${r.kind}, verified=${r.verified}` };
       await settle(3000);
-    } else if (movedLinks.length) {
+    } else if (movedLinks.length || movedFlags.length) {
       const r = await client.flashGaReal(pid, did, (p) => log(`restore ${p}`));
-      if (r.kind !== "flashed" || r.verified !== true) return { state: "fail", detail: `restoring ${movedLinks.length} link(s): flash-ga ${r.kind}, verified=${r.verified}` };
+      if (r.kind !== "flashed" || r.verified !== true) return { state: "fail", detail: `restoring ${movedLinks.length} link(s) and the flags of ${movedFlags.length} object(s): flash-ga ${r.kind}, verified=${r.verified}` };
       await settle(3000);
     }
-    const ga = await client.flashGaDry(pid, did);
+    // The read-back first, so the GA flash dry run compares with what the device holds now.
     const rb = await client.readBack(pid, did, (p) => log(`restore read ${p}`));
     await settle(3000);
-    const drift = allParams(await client.getConfig(pid, did)).filter((p) => p.changed).map((p) => p.refId.split("_").pop());
-    const back = ga.kind === "unchanged" && rb?.paramsRead === true && drift.length === 0;
-    return { state: back ? "pass" : "fail", detail: `${movedParams.length} parameter(s), ${movedLinks.length} object link(s) restored; group tables ${ga.kind}; parameters ${rb?.paramsRead ? `read, ${drift.length ? `drift in ${drift.join(", ")}` : "no drift"}` : "not read"}` };
+    const after = await client.getConfig(pid, did);
+    const ga = await client.flashGaDry(pid, did);
+    const drift = allParams(after).filter((p) => p.changed).map((p) => p.refId.split("_").pop());
+    const objects = allComObjects(after).filter((c) => c.changed || c.flagsChanged).map((c) => c.number);
+    const flagsOpen = rb ? flagsNotRead(after, rb) : "the read-back did not report what it covered";
+    const back = ga.kind === "unchanged" && rb?.paramsRead === true && rb.linksRead === true && drift.length === 0 && objects.length === 0 && flagsOpen === null;
+    return { state: back ? "pass" : "fail", detail: `${movedParams.length} parameter(s), ${movedLinks.length} object link(s), the flags of ${movedFlags.length} object(s) restored; group tables ${ga.kind}; parameters ${rb?.paramsRead ? `read, ${drift.length ? `drift in ${drift.join(", ")}` : "no drift"}` : "not read"}; links and flags ${rb?.linksRead ? (objects.length ? `differ on object(s) ${objects.join(", ")}` : "equal to the file's") : "not read"}${flagsOpen ? `; ${flagsOpen}` : ""}` };
   } catch (e) {
     return { state: "fail", detail: `restore aborted: ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -394,8 +403,9 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       if (allComObjects(view).some((c) => c.gaRaws === undefined)) throw new Stop("setup", "the server's config view carries no gaRaws (an older build); the restore could not see the links it must put back");
       const links = new Map(allComObjects(view).map((c) => [c.refId, c.gaRaws ?? []]));
       const params = new Map(allParams(view).map((p) => [p.refId, p.value]));
+      const flags = new Map(allComObjects(view).map((c) => [c.refId, { ...c.flags }]));
       const [rp, rd] = [pid, did];
-      restoreImported = () => restoreToImport(client, rp, rd, links, params, log, settle);
+      restoreImported = () => restoreToImport(client, rp, rd, { links, params, flags }, log, settle);
     }
     if (ui) { try { await ui.launch(); await ui.gotoDevice(pid, did); } catch (e) { throw new Stop("setup", `UI unavailable (is \`bun run dev:web\` up?): ${e instanceof Error ? e.message : String(e)}`); } }
 

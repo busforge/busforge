@@ -83,6 +83,9 @@ export class Client {
   // Discard the project's edits of the device: parameters and links take the baseline the last
   // read-back set, i.e. what the device holds.
   revert(pid: string, did: string) { return this.call<DeviceConfigView>("POST", `/api/projects/${pid}/devices/${did}/revert`, { lang: "de" }); }
+  // Set a com-object's flags over the application's, per flag (null takes the application's value);
+  // only the bits the device's downloads write are accepted (DeviceConfigView.comObjFlagsEditable).
+  setFlags(pid: string, did: string, comObjRefId: string, flags: Partial<Record<keyof CfgComObjView["flags"], boolean | null>>) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/comobject-flags`, { comObjRefId, flags, lang: "de" }); }
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.submitAndWait<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>(pid, `/api/projects/${pid}/devices/${did}/assign-ia`, "assign-ia"); }
@@ -222,6 +225,23 @@ export function allComObjects(view: DeviceConfigView): CfgComObjView[] {
   const out: CfgComObjView[] = [];
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") out.push(it.comObject);
   return out;
+}
+// Why a read-back left the device's com-object flags open where the product reads them, or null.
+export function flagsNotRead(view: Pick<DeviceConfigView, "readbackSupport">, rb: DeviceReadbackInfo): string | null {
+  if (view.readbackSupport?.flags !== true) return null;
+  if (rb.flagsUnreadable) return `the read-back could not read the device's com-object table: ${rb.flagsUnreadable}`;
+  if (rb.flagsUndecoded?.length) return `the read-back could not take the flags of object(s) ${rb.flagsUndecoded.join(", ")} from the device's com-object table`;
+  if (rb.flagsRead !== true) return "the read-back did not take the flags from the device's com-object table, although the product reads it";
+  return null;
+}
+// The objects whose flags differ from `was` (by refId), each with the flags that set them back.
+export function flagsMoved(view: DeviceConfigView, was: ReadonlyMap<string, CfgComObjView["flags"]>): { refId: string; set: Partial<CfgComObjView["flags"]> }[] {
+  return allComObjects(view).flatMap((c) => {
+    const old = was.get(c.refId);
+    if (!old) return [];
+    const moved = (Object.keys(old) as (keyof CfgComObjView["flags"])[]).filter((f) => c.flags[f] !== old[f]);
+    return moved.length ? [{ refId: c.refId, set: Object.fromEntries(moved.map((f) => [f, old[f]])) }] : [];
+  });
 }
 // The GAs currently linked, as raw numbers, across the whole view.
 export function linkedGaRaws(view: DeviceConfigView): number[] {

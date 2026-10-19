@@ -93,6 +93,48 @@ export class UiDriver {
     throw new Error(`adding ${gaAddress} to object ${comObjNumber}: the editor does not list it behind the object's ${ownCount} own address(es) within 15 s`);
   }
 
+  // Remove the address at `index` from a com-object's list in the device page's editor, after checking
+  // it is the one listed there. Done when the server stored the edit; a refusal stops the run with its
+  // code.
+  async removeGa(comObjNumber: number, gaAddress: string, index: number): Promise<void> {
+    const page = this.req();
+    const row = page.locator(`[data-testid="link-${comObjNumber}-ga-${index}"]`);
+    await row.waitFor({ state: "visible", timeout: 15_000 });
+    if (!new RegExp("(?<![0-9/])" + gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])").test((await row.textContent()) ?? "")) throw new Error(`removing ${gaAddress} from object ${comObjNumber}: the editor lists ${((await row.textContent()) ?? "").trim()} at position ${index}`);
+    await this.stored("/links", () => page.click(`[data-testid="link-${comObjNumber}-remove-${index}"]`), `removing ${gaAddress} from object ${comObjNumber}`);
+  }
+
+  // Set one flag of a com-object in the device page's flag editor (a popover on the object's row). Done
+  // when the server stored the edit; a refusal stops the run with its code. The popover is closed again
+  // so it covers nothing.
+  async setFlag(comObjNumber: number, flag: string, want: boolean): Promise<void> {
+    const page = this.req();
+    const box = page.locator(`[data-testid="flags-${comObjNumber}-${flag}"]`);
+    await page.click(`[data-testid="flags-${comObjNumber}"]`);
+    await box.waitFor({ state: "visible", timeout: 10_000 });
+    try {
+      if ((await box.isChecked()) !== want) await this.stored("/comobject-flags", () => box.click(), `setting the ${flag} flag of object ${comObjNumber}`);
+    } finally {
+      await page.keyboard.press("Escape");
+      await box.waitFor({ state: "detached", timeout: 5_000 }).catch(() => undefined);
+    }
+  }
+
+  // Run an edit and wait for the device page's PUT to `path` it sends; a refused one throws with the
+  // server's error code, which the page itself only shows as a toast.
+  private async stored(path: string, act: () => Promise<void>, what: string): Promise<void> {
+    const page = this.req();
+    const res = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname.endsWith(path), { timeout: 15_000 });
+    res.catch(() => undefined);
+    await act();
+    const r = await res.catch(() => null);
+    if (!r) throw new Error(`${what}: the page sent no edit within 15 s`);
+    if (!r.ok()) {
+      const body = (await r.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+      throw new Error(`${what}: the server refused it (${body?.error?.code ?? r.status()}: ${body?.error?.message ?? ""})`);
+    }
+  }
+
   // Type the address into the open picker's search to filter, then pick the single match. The
   // option label renders both the GA name and its address, so match the address as a substring.
   private async pickGa(gaAddress: string): Promise<void> {

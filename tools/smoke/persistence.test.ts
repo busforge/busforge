@@ -68,11 +68,12 @@ describe("observeReboot", () => {
   });
 });
 
-const view = (over: { paramChanged?: boolean; objChanged?: boolean }): ConfigView => ({
+const view = (over: { paramChanged?: boolean; objChanged?: boolean; flagsChanged?: boolean; readsFlags?: boolean }): ConfigView => ({
   blocks: [{ items: [
     { kind: "param", param: { refId: "P-1", changed: over.paramChanged ?? false } },
-    { kind: "comObject", comObject: { refId: "O-1", number: 1, gaRaw: 0x0901, changed: over.objChanged ?? false } },
+    { kind: "comObject", comObject: { refId: "O-1", number: 1, gaRaw: 0x0901, changed: over.objChanged ?? false, flagsChanged: over.flagsChanged ?? false } },
   ] }],
+  readbackSupport: { params: true, links: true, flags: over.readsFlags ?? false },
 } as unknown as ConfigView);
 const full = { paramsRead: true, linksRead: true, linkGaps: 0 };
 
@@ -90,6 +91,12 @@ describe("judgeRestoredConfig", () => {
     expect(judgeRestoredConfig(view({}), { ...full, paramsRead: false }).state).toBe("fail");
     expect(judgeRestoredConfig(view({}), { ...full, linkGaps: 2 }).state).toBe("fail");
     expect(judgeRestoredConfig(view({}), null).state).toBe("fail");
+  });
+
+  test("where the product reads the com-object table, its flags must be read and equal to the project after the reboot", () => {
+    expect(judgeRestoredConfig(view({ readsFlags: true }), { ...full, flagsRead: true })).toEqual({ state: "pass", detail: "parameters and links and the com-object flags read back equal to the project after the reboot" });
+    expect(judgeRestoredConfig(view({ readsFlags: true, flagsChanged: true }), { ...full, flagsRead: true })).toMatchObject({ state: "fail", detail: expect.stringContaining("flags of object 1") });
+    expect(judgeRestoredConfig(view({ readsFlags: true }), { ...full, flagsRead: false, flagsUnreadable: "COM_OBJECT_TABLE_NOT_LOADED: x" })).toMatchObject({ state: "fail", detail: expect.stringContaining("could not read the device's com-object table") });
   });
 });
 

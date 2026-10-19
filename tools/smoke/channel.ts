@@ -2,7 +2,8 @@
 // Each does the SAME thing over `api` (production endpoints) or `ui` (the real web app in Chromium);
 // the caller picks once and every step follows. A refusal is a real outcome and is thrown, never
 // retried away — that is the regression the smoke framework exists to catch. See /GLOSSARY.md.
-import { ApiError, type Client, type FlashResult } from "./client.ts";
+import { gaToNum } from "../../packages/knx/src/index.ts";
+import { ApiError, type CfgComObjView, type Client, type FlashResult } from "./client.ts";
 import type { UiDriver } from "./ui.ts";
 import type { Channel } from "./spec.ts";
 
@@ -15,6 +16,8 @@ export interface ChanCtx {
   log: (m: string) => void;
   settle: (ms: number) => Promise<void>;
 }
+
+export type ComObjFlag = keyof CfgComObjView["flags"];
 
 const STALE = "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD";
 export const isStale = (e: unknown): boolean =>
@@ -40,6 +43,27 @@ export async function linkChan(ctx: ChanCtx, obj: { refId: string; number: numbe
   await ctx.client.ensureGa(ctx.pid, ga);
   if (ctx.channel === "ui") { await ctx.ui!.gotoDevice(ctx.pid, ctx.did); await ctx.ui!.linkGa(obj.number, ga); }
   else await ctx.client.link(ctx.pid, ctx.did, obj.refId, ga);
+}
+
+// Add a group address behind an object's own (`own`, in link order), so the first stays its sending
+// address: the UI through the device page's address editor, the API by setting the whole list.
+export async function addLinkChan(ctx: ChanCtx, obj: { refId: string; number: number }, ga: string, own: number[]): Promise<void> {
+  await ctx.client.ensureGa(ctx.pid, ga);
+  if (ctx.channel === "ui") { await ctx.ui!.gotoDevice(ctx.pid, ctx.did); await ctx.ui!.addGa(obj.number, ga, own.length); }
+  else await ctx.client.setLinks(ctx.pid, ctx.did, obj.refId, [...own, gaToNum(ga)]);
+}
+
+// Take the address at `index` off an object's list, the others keeping their order.
+export async function removeLinkChan(ctx: ChanCtx, obj: { refId: string; number: number }, ga: string, index: number, now: number[]): Promise<void> {
+  if (ctx.channel === "ui") { await ctx.ui!.gotoDevice(ctx.pid, ctx.did); await ctx.ui!.removeGa(obj.number, ga, index); }
+  else await ctx.client.setLinks(ctx.pid, ctx.did, obj.refId, now.filter((_, i) => i !== index));
+}
+
+// Set one flag of an object as the project gives it: the UI through the device page's flag editor,
+// the API through the flags endpoint. Setting the value the device holds takes the edit back.
+export async function setFlagChan(ctx: ChanCtx, obj: { refId: string; number: number }, flag: ComObjFlag, want: boolean): Promise<void> {
+  if (ctx.channel === "ui") { await ctx.ui!.gotoDevice(ctx.pid, ctx.did); await ctx.ui!.setFlag(obj.number, flag, want); }
+  else await ctx.client.setFlags(ctx.pid, ctx.did, obj.refId, { [flag]: want });
 }
 
 // Flash the parameter segment. Returns whether the change was written as a structural flash (it alters

@@ -204,6 +204,14 @@ independent `read-back` endpoint that decodes on a different path from the flash
 busforge can reliably *place* bytes. It does **not** prove the configuration is correct: a
 wrongly-but-consistently encoded value, a float of the wrong width for example, reads back green.
 
+Where the product's read-back reads the device's com-object table (`readbackSupport.flags`), every
+read-back of the run must take each object's flags from it; the server only warns when it cannot, so
+the run fails instead. `readLinks` names the objects whose flags on the device differ from the
+project's without judging them, as it does for links; the write steps and the persistence check judge. `flashLinks` writes more than one link: after the first address it adds a second behind it
+(the first stays the sending address) and, where the product's downloads write it, turns the object's
+read flag over, both in one GA flash, then takes both back in a second; each write is read back. In
+the `ui` channel this goes through the device page's address and flag editors and the flash dialog.
+
 A **behaviour** check is the correctness proof. The framework configures the function, links its
 com-object to a random group address, flashes, then observes the bus through an independent
 tunnel and requires the device to act:
@@ -256,7 +264,7 @@ behaviours such a run adds:
 |---|---|
 | `securedOutput` behaviour | The witness sends a GroupValueRead encrypted with the address's key; the device's own secured response must open with that key and carry a sequence above any seen before from it. Needs the witness's tunnel address among the address's senders in the project |
 | Robustness | No tool key in the project reports `SECURE_KEY_MISSING`; a different tool key `SECURE_SYNC_NO_RESPONSE`, after which the right key still opens a session; a read-back whose secured answers have a bit flipped reports `SECURE_ANSWER_REJECTED`, one whose answers are an earlier answer delivered again `DEVICE_NOT_ANSWERING`. The last two route the server's read-back through a local pass-through (`tools/smoke/faultproxy.ts`) that changes only the device's secured data answers; a check it never acted on fails |
-| Restore | Parameters and links the run changed are set back to the imported file's, written, and then the GA flash dry run must say `unchanged` and a read-back must show no parameter drift |
+| Restore | Parameters, links and com-object flags the run changed are set back to the imported file's, written, and then a read-back must show no parameter, link or flag drift and the GA flash dry run must say `unchanged` |
 
 The saved connection is matched on host and port (`BUSFORGE_BENCH_HOST`, `BUSFORGE_BENCH_PORT`,
 default 3681), since one host can offer several interfaces.

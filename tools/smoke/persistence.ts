@@ -8,7 +8,7 @@
 // silence followed by an answer. Only the device failing to answer counts as silence; an interface or
 // tunnel error proves nothing about the device and ends the check as a failure.
 import type { DeviceReadbackInfo } from "../../packages/product/src/index.ts";
-import type { ConfigView } from "./client.ts";
+import { flagsNotRead, type ConfigView } from "./client.ts";
 
 export interface RebootObservation { rebooted: boolean; detail: string }
 
@@ -63,12 +63,15 @@ export function judgeRestoredConfig(view: ConfigView, coverage: DeviceReadbackIn
   if (!coverage) return { state: "fail", detail: "the read-back after the reboot did not report what it covered" };
   if (coverage.paramsRead !== true || coverage.linksRead !== true) return { state: "fail", detail: "the read-back after the reboot did not cover both parameters and links" };
   if (coverage.linkGaps > 0) return { state: "fail", detail: `${coverage.linkGaps} association(s) did not resolve after the reboot` };
+  const unread = flagsNotRead(view, coverage);
+  if (unread) return { state: "fail", detail: `after the reboot ${unread}` };
   const items = view.blocks.flatMap((b) => b.items);
   const params = items.flatMap((it) => (it.kind === "param" && it.param.changed ? [it.param.refId] : []));
   const objects = items.flatMap((it) => (it.kind === "comObject" && it.comObject.changed ? [`object ${it.comObject.number}`] : []));
-  const lost = [...params, ...objects];
+  const flags = items.flatMap((it) => (it.kind === "comObject" && it.comObject.flagsChanged ? [`flags of object ${it.comObject.number}`] : []));
+  const lost = [...params, ...objects, ...flags];
   if (lost.length) return { state: "fail", detail: `differs from the project after the reboot: ${lost.slice(0, 5).join(", ")}${lost.length > 5 ? ` and ${lost.length - 5} more` : ""}` };
-  return { state: "pass", detail: "parameters and links read back equal to the project after the reboot" };
+  return { state: "pass", detail: `parameters and links${view.readbackSupport?.flags === true ? " and the com-object flags" : ""} read back equal to the project after the reboot` };
 }
 
 // The load state of each load object (1 = LOADED, 3 = ERROR, ...), null where it could not be read.

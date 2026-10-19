@@ -36,13 +36,13 @@ export interface ObservedRun {
 const METHOD: Record<string, string> = {
   fullDownload: "the server reported the download verified (read-back or device CRC, per profile)",
   flashParams: "each change and its revert reported verified by the server, zero drift on read-back",
-  flashLinks: "the link flash reported verified by the server and the link read back",
+  flashLinks: "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
   structuralFlash: "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
   readParams: "parameter memory read and decoded completely; not compared with a built image",
-  readLinks: "group tables read and decoded, every association resolved; not compared with a built image",
+  readLinks: "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
 };
 const PERSISTS = new Set(["fullDownload", "flashLinks"]);
-const PERSISTENCE_METHOD = "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back";
+const PERSISTENCE_METHOD = "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags";
 const NOT_ASSESSED: AxisResult = { state: "not-assessed" };
 const detail = (d: string) => (d ? { detail: d } : {});
 

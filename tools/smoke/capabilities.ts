@@ -8,11 +8,11 @@
 // What a device claims is read from the product (config.capabilities), never declared here; the
 // runner calls only the drivers for the claimed capabilities and treats a claimed-but-unexercised
 // capability as a hard failure. See docs/testing.md and /GLOSSARY.md.
-import { gaToNum } from "../../packages/knx/src/index.ts";
-import { findComObject, findParam, allComObjects } from "./client.ts";
+import { gaToNum, numToGa } from "../../packages/knx/src/index.ts";
+import { findComObject, findParam, allComObjects, flagsNotRead, type ConfigView } from "./client.ts";
 import type { Channel, DeviceSpec, FuzzPolicy } from "./spec.ts";
 import { pickSweep, type ParamCandidate } from "./generate.ts";
-import { setParamChan, linkChan, flashParamsChan, flashGaChan, type ChanCtx } from "./channel.ts";
+import { setParamChan, linkChan, addLinkChan, removeLinkChan, setFlagChan, flashParamsChan, flashGaChan, type ChanCtx, type ComObjFlag } from "./channel.ts";
 
 export interface CapabilityResult {
   capability: string; // the DeviceCapabilities key
@@ -44,11 +44,16 @@ const config = (ctx: CapCtx) => ctx.client.getConfig(ctx.pid, ctx.did);
 // An independent read-back followed by a fresh config read: the L1 proof that the device holds what
 // we wrote, decoded from the device's own memory (not the value we optimistically stored). The
 // config carries the read's coverage, which GET /config alone never does; absent when it was not
-// reported.
+// reported. Where the product reads the device's com-object table (readbackSupport.flags), a read
+// that did not take every object's flags from it throws: the server only warns about it, and a write
+// of the table after such a read would not know what the device holds.
 async function readBackConfig(ctx: CapCtx) {
   const readback = ctx.channel === "ui" ? await ctx.ui!.readBack() : await ctx.client.readBack(ctx.pid, ctx.did, (p) => ctx.log(`read ${p}`));
   await ctx.settle(3000);
-  return { ...(await config(ctx)), readback: readback ?? undefined };
+  const view = await config(ctx);
+  const why = readback ? flagsNotRead(view, readback) : null;
+  if (why) throw new Error(why);
+  return { ...view, readback: readback ?? undefined };
 }
 
 // ── the five capability drivers ────────────────────────────────────────────
@@ -85,6 +90,10 @@ export async function capFullDownload(ctx: CapCtx): Promise<CapabilityResult> {
 
 // flashLinks: link a com-object to a fresh group address, flash the group tables, and require the
 // device's read-back to carry that GA on that object (the byte-level placement proof for links).
+// Then a second address behind the first, together with the object's read flag turned over where the
+// product's downloads write it and its read-back reads it, in one GA flash, and both taken back in a
+// second: the device page's address and flag editors, the flash dialog with several addresses on an
+// object and a pending flag, each write read back.
 export async function capFlashLinks(ctx: CapCtx): Promise<CapabilityResult> {
   const base = { capability: "flashLinks", channel: ctx.channel };
   const view = await config(ctx);
@@ -101,7 +110,71 @@ export async function capFlashLinks(ctx: CapCtx): Promise<CapabilityResult> {
   if (!after.readback?.linksRead) return { ...base, state: "fail", detail: "the read-back after the link flash did not read the group tables" };
   const co = findComObject(after, target.refId);
   if (!co || co.gaRaw !== gaToNum(ga) || co.changed) return { ...base, state: "fail", detail: `the device does not carry ${ga} on object ${target.number} (project ${co?.gaRaw ?? "none"}, differs from device: ${co?.changed ?? "?"})` };
-  return { ...base, state: "pass", detail: `linked object ${target.number} → ${ga}, verified on read-back`, evidence: { object: target.number, ga } };
+
+  const ga2 = ctx.allocGa();
+  const one = [gaToNum(ga)];
+  const two = [...one, gaToNum(ga2)];
+  const flag: ComObjFlag = "read";
+  const flagStep = (after.comObjFlagsEditable ?? []).includes(flag) && after.readbackSupport?.flags === true;
+  const held = co.flags[flag];
+  // A step that fails leaves the object as the first link left it, in the project and on the device, so
+  // the capabilities and behaviours after it fail on their own merits, not on this step's leftovers.
+  let failed: string | null = null;
+  try {
+    await addLinkChan(ctx, target, ga2, one);
+    if (flagStep) await setFlagChan(ctx, target, flag, !held);
+    await flashGaChan(ctx, "flash-ga second address");
+    const added = holds(await readBackConfig(ctx), target.refId, two, flagStep ? { flag, value: !held } : null);
+    if (added) failed = `after adding ${ga2} behind ${ga}${flagStep ? ` and setting the ${flag} flag ${!held ? "on" : "off"}` : ""} on object ${target.number}: ${added}`;
+    else {
+      await removeLinkChan(ctx, target, ga2, 1, two);
+      if (flagStep) await setFlagChan(ctx, target, flag, held);
+      await flashGaChan(ctx, "flash-ga take back");
+      const back = holds(await readBackConfig(ctx), target.refId, one, flagStep ? { flag, value: held } : null);
+      if (back) failed = `after taking ${ga2}${flagStep ? ` and the ${flag} flag` : ""} back on object ${target.number}: ${back}`;
+    }
+  } catch (e) {
+    failed = e instanceof Error ? e.message : String(e);
+  }
+  if (failed) {
+    // The ui channel's page may still hold the failed step's dialog or picker over it.
+    if (ctx.channel === "ui") await ctx.ui!.gotoDevice(ctx.pid, ctx.did).catch((e: unknown) => ctx.log(`reloading the device page after the failure: ${e instanceof Error ? e.message : String(e)}`));
+    const left = await takeBack(ctx, target.refId, one, flagStep ? { flag, value: held } : null).catch((e: unknown) => `; taking the second address${flagStep ? " and the flag" : ""} back failed too: ${e instanceof Error ? e.message : String(e)}`);
+    return { ...base, state: "fail", detail: `${failed}${left}` };
+  }
+  const flagNote = flagStep ? "" : `; its flags not edited (${after.readbackSupport?.flags === true ? `the downloads do not write the ${flag} flag` : "the read-back does not read the com-object table"})`;
+  return {
+    ...base, state: "pass",
+    detail: `linked object ${target.number} → ${ga}, verified on read-back; ${ga2} added behind it${flagStep ? ` and its ${flag} flag ${!held ? "on" : "off"}` : ""} in one GA flash, taken back in another, each read back${flagNote}`,
+    evidence: { object: target.number, ga, second: ga2, flag: flagStep ? { flag, from: held, to: !held } : null },
+  };
+}
+
+// After a failed step: the object's links and the flag set back in the project, over the API in both
+// channels (the channel under test is what failed), and written with a GA flash where the device holds
+// anything else. Returns a note for the report.
+async function takeBack(ctx: CapCtx, refId: string, gaRaws: number[], flag: { flag: ComObjFlag; value: boolean } | null): Promise<string> {
+  await ctx.client.setLinks(ctx.pid, ctx.did, refId, gaRaws);
+  if (flag) await ctx.client.setFlags(ctx.pid, ctx.did, refId, { [flag.flag]: flag.value });
+  const dry = await ctx.client.flashGaDry(ctx.pid, ctx.did);
+  if (dry.kind !== "dryRun") return "; the object was taken back in the project, the device already held it";
+  const r = await ctx.client.flashGaReal(ctx.pid, ctx.did, (p) => ctx.log(`take back ${p}`));
+  return r.kind === "flashed" && r.verified === true ? "; the object was taken back on the device" : `; taking the object back on the device was not verified (${r.kind})`;
+}
+
+// What the read-back shows wrong about an object after a link flash, or null: its addresses in link
+// order (the first is its sending address), a link or flag the device holds otherwise than the
+// project, and the one flag the run set.
+export function holds(view: ConfigView, refId: string, gaRaws: number[], flag: { flag: ComObjFlag; value: boolean } | null): string | null {
+  if (!view.readback?.linksRead) return "the read-back did not read the group tables";
+  const co = findComObject(view, refId);
+  if (!co) return "the object is not on the device page";
+  const got = co.gaRaws ?? [];
+  if (got.length !== gaRaws.length || got.some((g, i) => g !== gaRaws[i])) return `the project links ${got.map(numToGa).join(", ") || "nothing"}, expected ${gaRaws.map(numToGa).join(", ")}`;
+  if (co.changed) return "the device holds other links than the project";
+  if (flag && co.flags[flag.flag] !== flag.value) return `the ${flag.flag} flag is ${co.flags[flag.flag] ? "on" : "off"}, expected ${flag.value ? "on" : "off"}`;
+  if (co.flagsChanged) return "the device holds other flags than the project";
+  return null;
 }
 
 // flashParams: the surgical single-parameter mutate→verify→revert sweep. For each seeded candidate:
@@ -190,7 +263,12 @@ export async function capReadLinks(ctx: CapCtx): Promise<CapabilityResult> {
   if (!view.readback) return { ...base, state: "fail", detail: "the read-back did not report what it covered" };
   if (view.readback.linksRead !== true) return { ...base, state: "fail", detail: "read-back did not decode the group tables (linksRead=false)" };
   if (view.readback.linkGaps > 0) return { ...base, state: "fail", detail: `${view.readback.linkGaps} association(s) did not resolve to a group address` };
-  return { ...base, state: "pass", detail: "group tables read back and decoded, no gaps" };
+  // Like the links, the flags are read here, not judged: what the device holds against the project is
+  // the write steps' proof (flashLinks, persistence), and a device no step wrote may differ.
+  const flagDrift = allComObjects(view).filter((c) => c.flagsChanged).map((c) => c.number);
+  const flags = view.readbackSupport?.flags !== true ? "the product's read-back does not read the com-object table"
+    : `every object's flags read from the com-object table${flagDrift.length ? `, object(s) ${flagDrift.join(", ")} holding other flags than the project` : ", equal to the project"}`;
+  return { ...base, state: "pass", detail: `group tables read back and decoded, no gaps; ${flags}` };
 }
 
 const short = (ref: string): string => ref.split("_").pop() ?? ref;
