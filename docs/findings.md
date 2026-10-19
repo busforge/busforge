@@ -1004,18 +1004,20 @@ object (evaluating 'kStateSymbol')`, the same on a second `close()`), where Node
 `TUNNEL_CLOSED` without touching the socket, a send waiting for its acknowledgement when the channel
 closes included, and a disconnect of a closed tunnel does nothing.
 
-## 36. ETS lists the sending address first, not the lowest
+## 36. ETS lists the sending address first, and the device sends on it
 
-ETS 6 writes the association of an object's sending address (the first address in the project's
-`Links`, the one its association view marks as sending) before the object's other addresses, also
-where that address has the higher group index. Captured on the MDT BE-02001.02 with object 0 linked
-first to the higher of two addresses: the address table holds both ascending, and the association
-table reads `02 | 02 00 | 01 00`, the higher address's index first. Where every object has one link,
-the captures do not tell this from an order by group index; the other captures with several addresses
-have the sending address at the lowest index ([load-procedures.md](load-procedures.md#the-rules-by-level), R8).
+ETS 6 writes the association of an object's sending address (the address its association view marks
+as sending; "Sendend setzen" moves the mark) before the object's other addresses, whatever its group
+index and whenever it was linked. Captured twice on the MDT BE-02001.02, object 0 with two addresses,
+the address table ascending both times:
 
-That MDT unit acted on the address listed first: after the download's restart it sent its state on
-the higher address, and a GroupValueRead of either address was answered on the higher one. In this
-capture that address is also the higher index and the one linked first, so the run alone does not tell
-those apart. A read-back that sorts an object's addresses loses the order ETS wrote; Busforge keeps the
-first association first.
+| Sending address | Linked | Association table |
+| --- | --- | --- |
+| the higher | first | `02 \| 02 00 \| 01 00`, the higher address's index first |
+| the lower | last, then set as sending | `02 \| 01 00 \| 02 00`, the lower address's index first |
+
+The unit sent on the address listed first both times: after each download's restart object 0 sent its
+state there, and a GroupValueRead of either address was answered there. In both runs the address object
+0 sent on, and answered reads on, was its first association; not its lowest or highest group index,
+and not the order its links were made in. A read-back that sorts an object's addresses loses it;
+Busforge keeps the first association first.

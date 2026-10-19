@@ -460,14 +460,14 @@ report a device family as working on the strength of a passing test suite.
   application (ETS's partial form). Structural flash: the Jung, the MDT BE-02001.02 and the reverts of
   the Auro, Gira, TheLuxa, Meteodata, MIX 2, Theben DALI gateway and MDT BE-06001.02. Everywhere else the read-back proves
   `device == our image` and can never prove `our image == ETS`.
-- **An object whose sending address is not its lowest has been written to no device by Busforge.** On the MDT BE-02001.02 two
-  ETS 6 captures show the order, with the sending address once above and once below the object's
-  other address: ETS writes the sending address's association first, and the unit sent on that address
-  and answered a read of either address on it ([findings.md](findings.md) §36). Busforge's tables for
-  the same links equal every byte ETS wrote, and decoded as a read-back decodes them they name that
-  address first (`tools/etsdiff.test.ts`); no test compares the MDT BE-02001.02's group-address flash
-  sequence with a capture. On other products the order rests on the rule
-  ([load-procedures.md](load-procedures.md#the-rules-by-level), R8).
+- **An object whose sending address is not its lowest has been written to no device by
+  Busforge.** On the MDT BE-02001.02 two ETS 6 captures show the order, with the sending address once
+  above and once below the object's other address: ETS writes the sending address's association
+  first, and the unit sent on that address and answered a read of either address on it
+  ([findings.md](findings.md) §36). Busforge's tables for the same links equal every byte ETS wrote,
+  and decoded as a read-back decodes them they name that address first (`tools/etsdiff.test.ts`); no
+  test compares the MDT BE-02001.02's group-address flash sequence with a capture. On other products
+  the order rests on the rule ([load-procedures.md](load-procedures.md#the-rules-by-level), R8).
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
   and changes only each object's linked bit, as ETS does on both LSM styles. On a device whose table
   another tool left wrong, the other bytes stay wrong. A freshly linked read-capable object and a
