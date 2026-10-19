@@ -161,7 +161,7 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
 //
 // LAYOUT (mask MV-0705): [count: u8][ramEnd: u16 BE] then one 4-byte entry per com-object, entry i is
 // com-object i (0-based, so entry 0 is a real object, not the count): [dataPtr: u16 BE][config: u8][type: u8].
-//   config byte: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit | 0x80 update.
+//   config byte: bits0-1 priority | 0x04 linked and communication on | 0x08 read | 0x10 write | 0x40 transmit | 0x80 update.
 //   (No readOnInit bit, unlike the System B flags byte.) type is the same KNX size code as the
 //   System B entry (sizeCodeForBits): 1 bit -> 0x00, 4 bit -> 0x03, 1 byte -> 0x07, 2 bytes -> 0x08.
 //
@@ -169,7 +169,9 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
 //     config = priority | linked | read | write | transmit | update (0x80) from the resolved flags, as
 //     ETS writes them (TheLuxa P300 object 116 0xCB, Meteodata 140 S objects 9 0x97 and 13 0xCF, MDT
 //     BE-06001.02 objects 36/39 0xD3 for UpdateFlag="Enabled"); type rewritten from the resolved object
-//     size. `linked` = the object carries a group-address link.
+//     size. `linked` = the object carries a group-address link; its 0x04 bit is set only where its
+//     communication flag is on too (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log: ETS keeps
+//     the association of a linked object with communication off and clears the bit).
 //   - Unconfigured objects (every other entry): keep the template entry verbatim, only clear the
 //     linked bit (a stale linked bit in the manufacturer template must not survive).
 export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>): Buffer {
@@ -208,7 +210,7 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
     }
     const f = obj.flags;
     out[cfgOff] =
-      PRIORITY_BITS[obj.priority] | (linked.has(n) ? 0x04 : 0) |
+      PRIORITY_BITS[obj.priority] | (linked.has(n) && f.comm ? 0x04 : 0) |
       (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (f.update ? 0x80 : 0);
     out[cfgOff + 1] = code;
   }
@@ -229,14 +231,14 @@ export function programIdStamp(app: AppConfig): Buffer {
 }
 
 // Group-address flash on System 7: the com-object table the device holds, with only the linked bit
-// (config 0x04) following the links, set on linked objects and cleared on the rest. ETS rewrites L3
+// (config 0x04) following `linked` (linkedBitObjects), set on those objects and cleared on the rest. ETS rewrites L3
 // on a group-address download on both LSM styles (partial-download captures: the whole table on
 // the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device holding a
 // correct table both equal this. `authored`: the objects whose flags or priority the project changed
-// since the device was last written, with the flags it gives them; their read, write and transmit
-// bits and their priority are written as the project gives them, as ETS's group-address download
-// writes a flag change (captures/mdt-be02001-ets-partial-flag-read-{off,on}.log). Every other byte
-// stays as the device holds it. Layout as in buildComObjectTableMv0705.
+// since the device was last written, with the flags it gives them; their read, write, transmit and
+// update bits and their priority are written as the project gives them, as ETS's group-address
+// download writes a flag change (captures/mdt-be02001-ets-partial-flag-{read,update}-{off,on}.log).
+// Every other byte stays as the device holds it. Layout as in buildComObjectTableMv0705.
 export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>, authored?: ReadonlyMap<number, CfgComObjImage>): Buffer {
   if (deviceTable.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table is ${deviceTable.length} B; too short to hold its 3-byte header`);
   const out = Buffer.from(deviceTable);
@@ -251,12 +253,20 @@ export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<num
     const obj = authored?.get(n);
     if (obj) {
       const f = obj.flags;
-      out[at] = (out[at] & ~(0x03 | 0x08 | 0x10 | 0x40)) | PRIORITY_BITS[obj.priority] | (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0);
+      out[at] = (out[at] & ~(0x03 | 0x08 | 0x10 | 0x40 | 0x80)) | PRIORITY_BITS[obj.priority] | (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (f.update ? 0x80 : 0);
     }
     if (linked.has(n)) out[at] |= 0x04;
     else out[at] &= ~0x04;
   }
   return out;
+}
+
+// The objects whose System 7 linked bit (config 0x04) is set: the linked ones whose communication flag
+// is on as `objects` give it (the project's flags over the application's). ETS clears the bit on a
+// linked object with communication off and keeps its association
+// (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log).
+export function linkedBitObjects(linked: ReadonlySet<number>, objects: ReadonlyMap<number, CfgComObjImage>): Set<number> {
+  return new Set([...linked].filter((n) => objects.get(n)?.flags.comm !== false));
 }
 
 // ── A device's own com-object flags (project level) ─────────────────────────
@@ -394,10 +404,8 @@ export function withInstanceOverrides(active: ReadonlyMap<number, CfgComObjImage
 }
 
 // Refuse a write whose com-object table cannot carry an override the project sets: one that changes
-// a flag or the priority the table has no bit for (the System 7 config byte has none for read-on-init,
-// takes its communication bit from the links, and its update bit only from the application: no capture
-// shows ETS writing a project's update override there), or any override where the write
-// does not author the table at all. Writing on would leave the object behaving as the application
+// a flag or the priority the table has no bit for (the System 7 config byte has none for read-on-init),
+// or any override where the write does not author the table at all. Writing on would leave the object behaving as the application
 // says while the project says otherwise.
 export type OverridableBit = keyof ComObjFlags | "priority";
 export function refuseUnwritableOverrides(active: ReadonlyMap<number, CfgComObjImage>, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined, writable: readonly OverridableBit[], where: string): void {

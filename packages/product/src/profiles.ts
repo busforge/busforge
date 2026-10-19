@@ -3,7 +3,7 @@ import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
@@ -1613,8 +1613,9 @@ export class SystemBProfile extends DeviceProfile {
 // use the System-7 layout. Read-back, parameter flash and GA flash are all hardware-verified
 // on twisted-pair (an M-0081 device): identity flash, re-point and revert each byte-matched.
 // The bits of a System 7 com-object config byte a project override can set (buildComObjectTableMv0705):
-// priority, read, write, transmit. Its communication bit follows the links, its update bit the application.
-const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "transmit", "priority"];
+// priority, read, write, transmit, update, and communication, which the linked bit carries on a linked
+// object. The config byte has no read-on-init bit.
+const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "comm", "transmit", "update", "priority"];
 
 export class System7Profile extends DeviceProfile {
   readonly memoryModel = "absolute" as const;
@@ -1830,29 +1831,29 @@ export class System7Profile extends DeviceProfile {
     // download (comobjbuild.ts withLinkedCommFlags). Keeping the device's table would leave a newly
     // linked object silent, so where the application names the table's segment only that bit is
     // changed in the table the device holds, and the table is verified with the group tables.
-    // That bit is the object's communication flag; a project that sets it otherwise than the links do
-    // cannot be written by this flash. An object whose flags the project changed since the device was
-    // last written (comObjectFlagChanges) gets its read, write and transmit bits and its priority as the
-    // project gives them, as ETS's group-address download writes a flag change; its update bit has no
-    // capture, so a change of it is refused. The other bits stay as the device holds them.
+    // The bit is set on a linked object whose communication flag the project leaves on (linkedBitObjects),
+    // on every object, as ETS's group-address download writes the whole table. An object whose flags the
+    // project changed since the device was last written (comObjectFlagChanges) gets its read, write,
+    // transmit and update bits and its priority as the project gives them, as ETS's group-address download
+    // writes a flag change. The other bits stay as the device holds them.
     const flagChanges = ctx.comObjectFlagChanges ?? new Set<number>();
     if (flagChanges.size && !scope.l3) {
       throw new ProductError("COM_OBJECT_OVERRIDE_UNWRITABLE", `the project changed the flags of ${flagChanges.size} communication object(s), and this application names no com-object table segment the group-address flash could write them into`);
     }
     let authored: Map<number, CfgComObjImage> | undefined;
-    if (scope.l3 && (ctx.comObjectOverrides?.size || flagChanges.size)) {
+    let linkedBits = new Set<number>();
+    if (scope.l3) {
       const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
       const active = buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects;
-      refuseUnwritableOverrides(active, ctx.comObjectOverrides,
-        ["read", "write", "transmit", "update", "readOnInit", "priority"], "the group-address flash, which sets only the communication bit from the links");
       const changed = new Map([...(ctx.comObjectOverrides ?? [])].filter(([n]) => flagChanges.has(n)));
       refuseUnwritableOverrides(active, changed, MV0705_OVERRIDABLE, "the group-address flash's System 7 com-object table");
       const withProject = withInstanceOverrides(active, ctx.comObjectOverrides);
-      authored = new Map([...flagChanges].flatMap((n) => { const o = withProject.get(n); return o ? [[n, o] as const] : []; }));
+      linkedBits = linkedBitObjects(new Set(ctx.links.map((l) => l.comObjNum)), withProject);
+      if (flagChanges.size) authored = new Map([...flagChanges].flatMap((n) => { const o = withProject.get(n); return o ? [[n, o] as const] : []; }));
     }
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
-    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum)), authored) } : null;
+    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, linkedBits, authored) } : null;
     const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3);
     // The change is counted over exactly the runs the plan writes, read where it writes them (the address
     // table's own individual address is neither written nor counted); a table the plan moves whose

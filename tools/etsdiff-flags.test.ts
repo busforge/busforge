@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseAppConfig, buildDeviceConfig, buildComObjectTable, withInstanceOverrides, withLinkedCommFlags, placeComObjOverrides } from "../packages/product/src/index.ts";
+import { parseAppConfig, buildDeviceConfig, buildComObjectTable, buildComObjectTableMv0705, withInstanceOverrides, withLinkedCommFlags, linkedBitObjects, placeComObjOverrides } from "../packages/product/src/index.ts";
 import { catalogueXml, captureText } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, memoryImage, captureDevice } from "./etsdiff.ts";
@@ -41,6 +41,62 @@ corpusDescribe("System 7 flag change against ETS's group-address download", () =
     // and the read flag off again, as the project's own override
     const off = withInstanceOverrides(view.imageComObjects, placeComObjOverrides(cfg, view, [{ comObjRefId: ref0, attrs: { ReadFlag: "Disabled" } }]));
     expect(withLinkedCommFlags(ours, new Set(), new Map([[0, off.get(0)!]])).toString("hex")).toBe(held.toString("hex"));
+  });
+});
+
+// The same unit and object, now linked to one group address in the project: its communication flag off
+// and back on, then its update flag on and back off, each written alone by ETS's group-address download.
+// Communication off keeps the object's address and association and clears the object's linked bit
+// (config 0x04): the bit is set where the object is linked and its communication flag is on. Update is
+// config 0x80.
+corpusDescribe("System 7 communication and update flags against ETS's group-address download", () => {
+  const app = "M-0083_A-00B6-32-9642.xml.gz";
+  const cfg = parseAppConfig(catalogueXml(app));
+  const segAt = (id: string | undefined) => cfg.absoluteSegments.find((s) => s.id === id)!;
+  const l3 = segAt(cfg.groupTables.comObjectSegment);
+  const written = (file: string) => memoryImage(parseCapture(captureText(file), captureDevice(captureText(file))).writes);
+  const tableOf = (file: string) => { const m = written(file); return span(m, l3.address, m.get(l3.address)! * 4 + 3); };
+  const assocOf = (file: string) => { const at = segAt(cfg.groupTables.associationSegment).address; const m = written(file); return span(m, at, m.get(at)! * 2 + 1); };
+  const view = buildDeviceConfig(cfg, new Map());
+  const ref0 = view.imageComObjects.get(0)!.refId.replace(`${cfg.id}_`, "");
+  const withProject = (attrs?: Record<string, string>) => withInstanceOverrides(view.imageComObjects, placeComObjOverrides(cfg, view, attrs ? [{ comObjRefId: ref0, attrs }] : []));
+  // The group-address flash's table: the one the unit holds, object 0 linked, its flags as the project
+  // gives them where they changed since the last write.
+  const gaFlash = (held: Buffer, attrs: Record<string, string> | undefined, changed: boolean) => {
+    const objs = withProject(attrs);
+    return withLinkedCommFlags(held, linkedBitObjects(new Set([0]), objs), changed ? new Map([[0, objs.get(0)!]]) : undefined).toString("hex");
+  };
+  const COMM_OFF = { CommunicationFlag: "Disabled" }, UPDATE_ON = { UpdateFlag: "Enabled" };
+  const f = (s: string) => `mdt-be02001-ets-partial-flag-${s}.log`;
+
+  test("ETS writes the whole table; only object 0's config byte changes, by the linked bit and the update bit", () => {
+    const [commOff, commOn, updOn, updOff] = ["comm-off", "comm-on", "update-on", "update-off"].map((s) => tableOf(f(s)));
+    expect([...commOff.keys()].filter((i) => commOff[i] !== commOn[i])).toEqual([3 + 2]);
+    expect([commOff[5], commOn[5]]).toEqual([0x4b, 0x4f]);
+    expect([...updOn.keys()].filter((i) => updOn[i] !== updOff[i])).toEqual([3 + 2]);
+    expect([updOn[5], updOff[5]]).toEqual([0xcf, 0x4f]);
+  });
+
+  test("communication off keeps the object's association", () => {
+    for (const s of ["comm-off", "comm-on", "update-on", "update-off"]) expect(assocOf(f(s)).toString("hex")).toBe("010100");
+  });
+
+  test("the group-address flash writes the communication flag into the linked bit and the update flag into 0x80, as ETS does", () => {
+    expect(gaFlash(tableOf(f("comm-on")), COMM_OFF, true)).toBe(tableOf(f("comm-off")).toString("hex"));
+    expect(gaFlash(tableOf(f("comm-off")), undefined, true)).toBe(tableOf(f("comm-on")).toString("hex"));
+    expect(gaFlash(tableOf(f("comm-on")), UPDATE_ON, true)).toBe(tableOf(f("update-on")).toString("hex"));
+    expect(gaFlash(tableOf(f("update-on")), undefined, true)).toBe(tableOf(f("update-off")).toString("hex"));
+  });
+
+  test("a communication flag the unit already holds off stays off on a linked object, though not changed since the last write", () => {
+    expect(gaFlash(tableOf(f("comm-off")), COMM_OFF, false)).toBe(tableOf(f("comm-off")).toString("hex"));
+  });
+
+  test("the full download's table carries both flags as ETS's group-address download wrote them", () => {
+    for (const [s, attrs] of [["comm-off", COMM_OFF], ["comm-on", undefined], ["update-on", UPDATE_ON], ["update-off", undefined]] as const) {
+      const ets = tableOf(f(s));
+      expect(buildComObjectTableMv0705(l3.data, withProject(attrs), new Set([0])).subarray(0, ets.length).toString("hex")).toBe(ets.toString("hex"));
+    }
   });
 });
 

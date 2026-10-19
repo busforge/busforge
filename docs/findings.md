@@ -316,7 +316,10 @@ bit, and ETS partial downloads after a link change rewrite L3 with the group tab
 styles (MDT BE-02001.02 property-mapped: the whole table; ABB US/U 4.2 memory-mapped: only the
 changed config bytes). Where the application names the L3 segment, the System 7 GA flash reads the
 table the device holds, changes only each object's linked bit and writes L3+L1+L2 in one bracket.
-On a device holding the table its last full download wrote, that is ETS's bytes.
+On a device holding the table its last full download wrote, that is ETS's bytes. The linked bit is
+also the object's communication flag: ETS keeps the address and association of a linked object whose
+communication flag the project sets off, and clears only the bit (MDT BE-02001.02, partial downloads
+of communication off and back on).
 
 **And on System 7 such an object comes alive (MDT BE-02001.02).** Input A set to "switch / toggle
 when closing" gives object 1, "Status for toggle": no read flag, transmit flag, and with the

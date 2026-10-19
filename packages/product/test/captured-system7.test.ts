@@ -197,13 +197,21 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect([dev.tableRef.get(1), dev.tableRef.get(2)]).toEqual([0x4000, at]);
   }, 20_000);
 
-  test("group-address flash: a communication flag the project sets against the links is refused before any write", async () => {
+  // ETS keeps the association of a linked object with communication off and clears its linked bit
+  // (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log).
+  test("group-address flash: a linked object whose communication flag the project changes to off gets no linked bit", async () => {
+    const l3 = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
+    const app0 = buildDeviceConfig(cfg, new Map()).imageComObjects.get(0)!;
+    expect(app0.flags.comm).toBe(true);
+    // a unit holding the flags the baseline records (the application's) for the object, linked
     const dev = new GiraDevice(cfg);
+    const template = dev.mem.get(l3.address + 3 + 2)!;
+    const held = (template & ~0xdf) | { Low: 0b11, High: 0b01, Alert: 0b10 }[app0.priority] | 0x04 | (app0.flags.read ? 0x08 : 0) | (app0.flags.write ? 0x10 : 0) | (app0.flags.transmit ? 0x40 : 0) | (app0.flags.update ? 0x80 : 0);
+    dev.mem.set(l3.address + 3 + 2, held);
     const off = new Map([[0, { flags: { comm: false } }]]);
-    expect(await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: off }).catch((e: unknown) => e))
-      .toMatchObject({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" });
-    expect(dev.ops).toEqual([]);
-  });
+    expect(await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: off, comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
+    expect(dev.mem.get(l3.address + 3 + 2)).toBe(held & ~0x04);
+  }, 20_000);
 
   test("group-address flash: an object whose flags the project changed gets them as the project gives them; the rest stays as the unit holds it", async () => {
     const l3 = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
@@ -219,12 +227,14 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const changed = new GiraDevice(cfg);
     expect(await classify(cfg).flashGroupTables(asDev(changed), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped, comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
     const prio = { Low: 0b11, High: 0b01, Alert: 0b10 }[flipped.get(0)!.priority];
-    expect(config(changed, 0)).toBe((before & ~0x0b) | (app0.flags.read ? 0 : 0x08) | prio | 0x04);
-    // an update flag the project changes has no capture: refused before any write
+    expect(config(changed, 0)).toBe((before & ~0x8b) | (app0.flags.update ? 0x80 : 0) | (app0.flags.read ? 0 : 0x08) | prio | 0x04);
+    // an update flag the project changes: config 0x80 as the project gives it
+    // (captures/mdt-be02001-ets-partial-flag-update-{on,off}.log)
     const upd = new GiraDevice(cfg);
-    expect(await classify(cfg).flashGroupTables(asDev(upd), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: new Map([[0, { flags: { update: !app0.flags.update } }]]), comObjectFlagChanges: new Set([0]) }).catch((e: unknown) => e))
-      .toMatchObject({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" });
-    expect(upd.ops).toEqual([]);
+    const updHeld = (before & ~0xdb) | { Low: 0b11, High: 0b01, Alert: 0b10 }[app0.priority] | (app0.flags.read ? 0x08 : 0) | (app0.flags.write ? 0x10 : 0) | (app0.flags.transmit ? 0x40 : 0) | (app0.flags.update ? 0x80 : 0);
+    upd.mem.set(l3.address + 3 + 2, updHeld);
+    expect(await classify(cfg).flashGroupTables(asDev(upd), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: new Map([[0, { flags: { update: !app0.flags.update } }]]), comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
+    expect(config(upd, 0)).toBe((updHeld & ~0x80) | (app0.flags.update ? 0 : 0x80) | 0x04);
   }, 20_000);
 
   test("parameter flash: one bracket on the application, the stamps, the restart", async () => {

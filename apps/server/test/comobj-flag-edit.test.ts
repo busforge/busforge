@@ -53,10 +53,10 @@ plainTest("a family whose full download cannot write the com-object table offers
   expect(getDeviceComObjOverrides(s.state.db, s.id, s.deviceId)).toEqual([]);
 });
 
-test("System 7 (MDT BE-02001.02): read, write, transmit and priority are offered; an edit counts as a change and reverts", async () => {
+test("System 7 (MDT BE-02001.02): every flag but read-on-init and the priority are offered; an edit counts as a change and reverts", async () => {
   const s = await setup("M-0083_A-00B6-32-9642.xml.gz");
   const v = await s.view();
-  expect(v.comObjFlagsEditable).toEqual(["read", "write", "transmit", "priority"]);
+  expect(v.comObjFlagsEditable).toEqual(["read", "write", "comm", "transmit", "update", "priority"]);
   const [o] = objects(v);
   expect(o.flagsChanged).toBe(false);
   const r = await s.edit({ comObjRefId: o.refId, flags: { read: !o.flags.read }, priority: "Alert" });
@@ -70,7 +70,7 @@ test("System 7 (MDT BE-02001.02): read, write, transmit and priority are offered
   const project = await j(await handleApi(req(`/api/projects/${s.id}`), s.state));
   expect(project.devices[0].changes.flags).toBe(1);
   // a flag the family's download cannot write is refused, nothing stored
-  const bad = await s.edit({ comObjRefId: o.refId, flags: { update: !o.flags.update } });
+  const bad = await s.edit({ comObjRefId: o.refId, flags: { readOnInit: !o.flags.readOnInit } });
   expect((await j(bad)).error.code).toBe("COM_OBJECT_FLAG_NOT_EDITABLE");
   // set back to the application's: unchanged again, and no row left
   const back = await s.edit({ comObjRefId: o.refId, flags: { read: null }, priority: null });

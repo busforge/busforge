@@ -284,7 +284,7 @@ worse load state than it found it (`GA_FLASH_BROKE_APPLICATION`).
 | Path | Writes | Leaves alone |
 |---|---|---|
 | **Parameters** (`flash`) | the parameter segment built from the device's edited values | the addressing and com-object tables |
-| **Group addresses** (`flash-ga`) | the address and association tables, plus the com-object table: rebuilt from the current link set on System B, the device's own with each linked bit following the links on System 7 | the parameter image |
+| **Group addresses** (`flash-ga`) | the address and association tables, plus the com-object table: rebuilt from the current link set on System B, the device's own with each linked bit following the links and the communication flags on System 7 | the parameter image |
 | **Structural flash** (`flash` or `flash-ga`, when the change alters the com-object table) | the parameter bytes, the com-object table authored for the new configuration and links, and the group tables, in one load bracket on System B (one per load-state machine on System 7), only what differs from the device | everything else of the parameter image |
 | **Full download** (`download`) | application id, parameter image, com-object table and group tables, in one load bracket | nothing; this is what commissions a virgin device |
 

@@ -955,7 +955,7 @@ where it cannot do that faithfully:
 | a value outside the schema | `COM_OBJECT_OVERRIDE_INVALID` |
 | a ref id that is no object of the configuration's com-object table, nor of the application or an absent module instance (those are not written, and neither is their override) | `COM_OBJECT_OVERRIDE_UNRESOLVED` |
 | one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
-| System 7: update, read-on-init or communication set differently from the application (an override of the update bit `0x80` is not written, the config byte has no read-on-init bit, its communication bit follows the links), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
+| System 7: read-on-init set differently from the application (the config byte has no read-on-init bit), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
 
 The device page edits them per object (`PUT .../devices/:id/comobject-flags`): a flag or the priority
 set otherwise than the application is stored as the attribute ETS stores, set back to the
@@ -963,21 +963,25 @@ application's value it is dropped, and set back to what the device was last writ
 the form that baseline holds (`device_comobj_override_base`), so the object counts as unchanged. Only
 the bits the family's full download writes are offered (`comObjOverridableBits`): every flag and the
 priority on System B, where the communication flag of an object without a group address is written
-off whatever the project sets, as for the application's own flags; read, write, transmit and priority
-on System 7 where the application names its com-object table's segment; none elsewhere. ETS's own
-object panel offers more on System 7 (communication and update, read-on-init greyed); what it writes
-for those is not captured, so the device page does not offer them.
+off whatever the project sets, as for the application's own flags; on System 7, where the application
+names its com-object table's segment, every flag but read-on-init and the priority, as ETS's object
+panel offers them (read-on-init greyed there); none elsewhere.
 
 ETS writes a flag change alone with its group-address download (its log names it
 `PartialLoadGroupCommunication`; captures of a read flag off and back on, on the MDT BE-02001.02 and
-the Jung 400021SE): the address, association and com-object tables (System B: with the security object,
-then a restart), and in the com-object table only the changed object's byte differs. Busforge does the
-same: the group-address flash carries an edited flag. On System B it writes every object's flags from
-the project, the table equal to ETS's in both captures; on System 7 it writes the read, write and
-transmit bits and the priority of each object whose flags changed since the device was last written
-(the update bit of such an object set otherwise is refused, `COM_OBJECT_OVERRIDE_UNWRITABLE`), its
-linked bit from the links, and leaves every other bit as the device holds it, equal to ETS's table in
-the capture. The structural flash and the full download write them too. A verified write of any of
+the Jung 400021SE, and of a linked object's communication flag off and back on and its update flag on
+and back off, on the MDT BE-02001.02): the address, association and com-object tables (System B: with
+the security object, then a restart), and in the com-object table only the changed object's byte
+differs. On System 7 the communication flag is the linked bit `0x04`: communication off keeps the
+object's address and association and clears the bit, on again sets it; the update flag is `0x80`.
+Busforge does the same: the group-address flash carries an edited flag. On System B it writes every
+object's flags from the project, the table equal to ETS's in both captures; on System 7 it writes the
+read, write, transmit and update bits and the priority of each object whose flags changed since the
+device was last written, sets the linked bit on each linked object whose communication flag the
+project leaves on and clears it on every other, and leaves every other bit as the device holds it,
+equal to ETS's table in each capture. On an object without a group address, communication off writes
+nothing, as its linked bit is clear already; on an object whose application sets communication off,
+the same rule clears the bit, which no capture shows. The structural flash and the full download write them too. A verified write of any of
 the three adopts the flags it was submitted with as what the device holds, and so does a group-address
 flash that finds the device already holding them (`unchanged`). The parameter flash does
 not write flags; an edit stays pending through it, and the flash dialog says which flash writes it. A
@@ -986,9 +990,9 @@ read-back takes no flag into the baseline; where it checks the image by a group-
 device does not hold.
 
 The surgical parameter flashes keep the table the device holds. The System 7 group-address flash
-keeps it too, apart from the bits above: it sets each object's communication bit from the links, and
-a project that sets an object's communication flag differently from the application is refused there
-as well. A product replacement drops the old application's overrides with its other configuration.
+keeps it too, apart from the bits above. The full download sets the linked bit the same way: on a
+linked object whose communication flag is on. A product replacement drops the old application's
+overrides with its other configuration.
 
 On hardware an override has been written by a System 7 full download, onto a device that already
 held that value, and by ETS's group-address download in the captures above, whose bytes Busforge's

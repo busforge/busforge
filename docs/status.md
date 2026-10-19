@@ -428,11 +428,11 @@ report a device family as working on the strength of a passing test suite.
 - **A com-object flag or priority edited on the device page has not been written to hardware by
   Busforge.** ETS writes a flag change with its group-address download; on the MDT BE-02001.02 and the
   Jung 400021SE, Busforge's group-address flash builds the com-object table ETS wrote for a read flag
-  off and back on (`tools/etsdiff-flags.test.ts`). Other flags, the priority, and the other products
+  off and back on, and on the MDT BE-02001.02 for a linked object's communication flag off and back on
+  and its update flag on and back off (`tools/etsdiff-flags.test.ts`). Other flags, the priority, and the other products
   rest on the same table code, offline tests only. A read-back does not take flags into the baseline.
   On System B the communication flag of an object without a group address is written off whatever the
-  project sets; whether ETS does the same for a project's flag is not captured. ETS offers
-  communication and update on System 7, which Busforge does not (no capture of what ETS writes).
+  project sets; whether ETS does the same for a project's flag is not captured.
 - **A device in service, taken over by read-back, has been run on emulated units only.** Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
   emulated from a read-only collection (`tools/smoke/inservice-specs.test.ts`); none has run on
@@ -478,7 +478,8 @@ report a device family as working on the strength of a passing test suite.
   test compares the MDT BE-02001.02's group-address flash sequence with a capture. On other products
   the order rests on the rule ([load-procedures.md](load-procedures.md#the-rules-by-level), R8).
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
-  and changes only each object's linked bit, as ETS does on both LSM styles. On a device whose table
+  and changes each object's linked bit, from its links and its communication flag, and the flags of
+  each object whose flags the project changed, as ETS does on both LSM styles. On a device whose table
   another tool left wrong, the other bytes stay wrong. A freshly linked read-capable object and a
   transmit-only object linked by a GA flash alone work on the MDT BE-02001.02
   ([findings.md](findings.md) §7). On the Auro M-0081_A-FE01 ETS's and Busforge's group-address

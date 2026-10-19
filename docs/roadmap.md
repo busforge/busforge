@@ -15,9 +15,6 @@ depends on is hardware-proven.
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
-- **Communication and update flags on System 7.** ETS's object panel lets the user change them; what
-  its group-address download writes for them (the linked bit, the update bit `0x80`) is not captured,
-  so the device page does not offer them. Next: an ETS capture of each, then the same rule.
 - **Read-back of com-object flags.** No family's read-back reads the com-object table, so a flag set on
   the device by another tool never shows as drift. Reading it (System B and System 7 read it already
   for the group-address flash) and comparing flags and priority against the project's would close that.

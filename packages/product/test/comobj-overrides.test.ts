@@ -78,13 +78,31 @@ corpusDescribe("a full download writes the project's com-object flags", () => {
     expect((Number(diff[0][2]) ^ Number(diff[0][3]))).toBe(0x08);
   });
 
-  test("System 7: an update or read-on-init flag set differently is refused, the same value is not", () => {
+  // Update is config 0x80; communication is the linked bit 0x04, set only on a linked object
+  // (captures/mdt-be02001-ets-partial-flag-{update,comm}-{on,off}.log). The config byte has no
+  // read-on-init bit.
+  test("System 7: the update bit of the object's config byte; a read-on-init flag set differently is refused, the same value is not", () => {
     const file = "M-0083_A-00B6-32-9642.xml.gz";
     const { n, obj } = firstActive(file);
-    expect(() => plan(file, new Map([[n, { flags: { update: !obj.flags.update } }]]))).toThrow(expect.objectContaining({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" }));
+    const diff = changed(plan(file), plan(file, new Map([[n, { flags: { update: !obj.flags.update } }]])));
+    expect(diff).toHaveLength(1);
+    expect(diff[0][1]).toBe(3 + n * 4 + 2);
+    expect((Number(diff[0][2]) ^ Number(diff[0][3]))).toBe(0x80);
     expect(() => plan(file, new Map([[n, { flags: { readOnInit: !obj.flags.readOnInit } }]]))).toThrow(expect.objectContaining({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" }));
-    expect(() => plan(file, new Map([[n, { flags: { comm: !obj.flags.comm } }]]))).toThrow(expect.objectContaining({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" }));
-    expect(changed(plan(file), plan(file, new Map([[n, { flags: { update: obj.flags.update } }]])))).toEqual([]);
+    expect(changed(plan(file), plan(file, new Map([[n, { flags: { readOnInit: obj.flags.readOnInit } }]])))).toEqual([]);
+  });
+
+  test("System 7: communication off clears a linked object's linked bit and keeps its association; on an object without a group address it changes nothing", () => {
+    const file = "M-0083_A-00B6-32-9642.xml.gz";
+    const { n, obj } = firstActive(file);
+    expect(obj.flags.comm).toBe(true);
+    const off = new Map([[n, { flags: { comm: false } }]]);
+    const links = [{ comObjNum: n, gaRaws: [0x0001] }];
+    const diff = changed(plan(file, undefined, links), plan(file, off, links));
+    expect(diff).toHaveLength(1);
+    expect(diff[0][1]).toBe(3 + n * 4 + 2);
+    expect((Number(diff[0][2]) ^ Number(diff[0][3]))).toBe(0x04);
+    expect(changed(plan(file), plan(file, off))).toEqual([]);
   });
 
   test("System B (Jung 400021SE): the object's flags byte, update and read-on-init included", () => {
@@ -99,7 +117,7 @@ corpusDescribe("a full download writes the project's com-object flags", () => {
 
   test("the bits each family's full download can carry are the ones the editor offers", () => {
     const bits = (file: string) => classify(parseAppConfig(catalogueXml(file))).comObjOverridableBits();
-    expect(bits("M-0083_A-00B6-32-9642.xml.gz")).toEqual(["read", "write", "transmit", "priority"]);
+    expect(bits("M-0083_A-00B6-32-9642.xml.gz")).toEqual(["read", "write", "comm", "transmit", "update", "priority"]);
     expect(bits("M-0004_A-7072-21-99A7-O000A.xml.gz")).toEqual(["read", "write", "comm", "transmit", "update", "readOnInit", "priority"]);
   }, 60_000);
 
