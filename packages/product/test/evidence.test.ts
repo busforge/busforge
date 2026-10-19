@@ -80,7 +80,7 @@ describe("cellState", () => {
     const records: EvidenceRecord[] = ((await example("conflicting-newer.json")) as unknown[]).map(parseEvidenceRecord);
     const [, fail] = records;
     const rerun = parseEvidenceRecord({
-      ...clone(fail), id: "gvs-amma-api-rerun", recordedAt: "2026-07-25T08:27:00.873Z",
+      ...clone(fail), id: "gvs-amma-api-rerun", recordedAt: "2000-01-02T08:27:00.873Z",
       results: { ...fail.results, transfer: { state: "pass", method: "owned-byte read-back after each change and revert" } },
       supersedes: [fail.id], supersedeReason: "bench bridge dropped the management connection; rerun on the same build passed",
     });
@@ -89,7 +89,7 @@ describe("cellState", () => {
 
   test("a newer result under different conditions replaces the older one", async () => {
     const [pass, fail] = ((await example("conflicting-newer.json")) as unknown[]).map(parseEvidenceRecord);
-    const fixed = { ...pass, id: "fixed", recordedAt: "2026-07-26T00:00:00.000Z", build: { ...pass.build, server: { version: "0.4.200", commit: "abc1234" } } };
+    const fixed = { ...pass, id: "fixed", recordedAt: "2000-01-03T00:00:00.000Z", build: { ...pass.build, server: { version: "0.4.200", commit: "abc1234" } } };
     expect(cellState([pass, fail, fixed], "transfer")).toEqual({ state: "pass", basis: ["fixed"] });
   });
 
@@ -97,7 +97,7 @@ describe("cellState", () => {
     const raw = await example("self-written-dump.json");
     const dump = parseEvidenceRecord({ ...raw, subject: { ...raw.subject, productRef: "M-0162_H-EXAMPLE_P-EXAMPLE" } });
     expect(cellState([dump], "reference")).toEqual({ state: "not-assessed", basis: [] });
-    const dated = { ...dump, id: "dated", recordedAt: "2026-06-01T00:00:00.000Z", results: { ...dump.results, transfer: { state: "fail" as const } } };
+    const dated = { ...dump, id: "dated", recordedAt: "2000-01-01T00:00:00.000Z", results: { ...dump.results, transfer: { state: "fail" as const } } };
     expect(cellState([dump, dated], "transfer").basis[0]).toBe("dated");
   });
 });
@@ -105,7 +105,7 @@ describe("cellState", () => {
 describe("evidence record v1: review edge cases", () => {
   test("refuses an impossible timestamp and a malformed hash", async () => {
     const r = await example("byte-only.json");
-    expect(refusal({ ...r, recordedAt: "2026-13-45T99:99:99Z" })).toBe("EVIDENCE_INVALID");
+    expect(refusal({ ...r, recordedAt: "2000-13-45T99:99:99Z" })).toBe("EVIDENCE_INVALID");
     expect(refusal({ ...r, source: { ...r.source, sha256: "abc" } })).toBe("EVIDENCE_INVALID");
   });
 
@@ -145,8 +145,8 @@ describe("cellState: review edge cases", () => {
 
   test("orders by time, not by the spelling of the timestamp", async () => {
     const [pass, fail] = await pair();
-    const later = { ...pass, id: "later", recordedAt: "2026-07-25T08:15:32.900Z", build: { ...pass.build, server: { version: "1", commit: "b" } } };
-    const earlier = { ...fail, recordedAt: "2026-07-25T08:15:32Z", build: { ...fail.build, server: { version: "1", commit: "a" } } };
+    const later = { ...pass, id: "later", recordedAt: "2000-01-02T08:15:32.900Z", build: { ...pass.build, server: { version: "1", commit: "b" } } };
+    const earlier = { ...fail, recordedAt: "2000-01-02T08:15:32Z", build: { ...fail.build, server: { version: "1", commit: "a" } } };
     expect(cellState([earlier, later], "transfer")).toEqual({ state: "pass", basis: ["later"] });
   });
 
@@ -183,7 +183,7 @@ describe("cellState: review edge cases", () => {
 
   test("a superseding record removes others only on the axes it assessed itself", async () => {
     const [pass, fail] = await pair();
-    const note = { ...pass, id: "note", recordedAt: "2026-07-26T00:00:00.000Z", supersedes: [fail.id], supersedeReason: "x",
+    const note = { ...pass, id: "note", recordedAt: "2000-01-03T00:00:00.000Z", supersedes: [fail.id], supersedeReason: "x",
       results: { ...pass.results, transfer: { state: "not-assessed" as const } } };
     expect(cellState([pass, fail, note], "transfer").state).toBe("conflict");
   });

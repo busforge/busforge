@@ -133,8 +133,29 @@ app shows it in each device's compatibility badge.
 | `derived` | none of the above, and the same Hardware with the same application program version is `tested` on another known Product; shown with that Product and the firmware it was tested on |
 | `eligible` | none of the above; possibly with a hint naming another Hardware where the same application program version is `tested` |
 
-The kept records ship with the server as a bundle that `bun run tools/evidence-bundle.ts --write`
-generates, together with [compatibility.md](compatibility.md); a test fails when either is stale.
+### The shipped records
+
+The kept records name run times, builds and the source files of a run, so they are not part of the
+repository: they live in the private corpus, under `evidence/runs/` and `evidence/reference/`
+([testing.md](testing.md#the-private-corpus)). `bun run tools/evidence-bundle.ts --write` generates
+from them the bundle the server ships (`apps/server/src/evidence-bundle.json`) and
+[compatibility.md](compatibility.md); a test fails when either is stale.
+
+The bundle holds only the records that decide a matrix cell, each as a public copy:
+
+- `recordedAt` is `null`, `build.server` is `null`, the runner and spec revisions are `null`, and the
+  id is rebuilt from the Product's order number, the operation, the channel and the axes the record
+  assessed.
+- It supersedes nothing: a superseded record never decides a cell, so it is not shipped.
+- `source.artifact` and `sha256` stay only for a reference pass, which needs them: the ETS capture
+  is named by its path in the private corpus and identified by its hash.
+- No text in it names a date, an individual address or a host path.
+
+Run times order the records of a cell, and the public copies carry none, so the generator refuses
+the bundle unless every cell and axis decides exactly as it does on the kept records, in the order
+the records ship and in the reverse one, and names the first cell that does not. A `conflict` cell
+lists its records in run-time order, so a bundle is refused while the kept evidence holds one: the
+conflict is resolved there (a correcting run that supersedes one side) before the bundle ships.
 
 `tested` is the transfer axis only. Whether a Product is qualified (behaviour, persistence, and the
 mechanism's reference case, below) is a separate judgement the matrix does not make.
@@ -233,6 +254,8 @@ means the right one.
 | **supported** (unqualified) | older documents | retired: a claim names its axes instead |
 
 ## The examples
+
+The examples are modelled on real records; their ids, times and source files are illustrative.
 
 | File | Shows |
 |---|---|

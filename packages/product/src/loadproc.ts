@@ -370,10 +370,10 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?:
       case "LdCtrlWriteAbsMem":  // superseded by the surgical owned-byte write (strictly narrower)
         return { kind: "executed" };
       case "LdCtrlUnload":
-        return { kind: "skipped", reason: "full-download erase; a surgical par write must leave loaded segments intact (hw-evidenced, M-0081)" };
+        return { kind: "skipped", reason: "full-download erase; a surgical par write must leave loaded segments intact (hw-evidenced on an M-0081 device)" };
       case "LdCtrlTaskSegment":
       case "LdCtrlTaskCtrl1":
-        return { kind: "skipped", reason: "full-download task/segment allocation; a par write rewrites no app code (hw-evidenced, M-0081)" };
+        return { kind: "skipped", reason: "full-download task/segment allocation; a par write rewrites no app code (hw-evidenced on an M-0081 device)" };
     }
   } else {
     // The System B base bracket drives exactly ONE segment object: LSM/object 4 (the

@@ -102,14 +102,14 @@ describe("KnxIpTunnel", () => {
     //   06 10 04 20 00 15                 header: svc TUNNEL_REQ, len 21
     //   04 15 05 00                       conn header: len 4, channel 0x15,
     //                                     seq 5, reserved
-    //   29 00 bc e0 12 11 0a 03 01 00 81  cEMI: L_Data.ind, no add. info,
+    //   29 00 bc e0 12 07 0a 03 01 00 81  cEMI: L_Data.ind, no add. info,
     //                                     ctrl bc e0 (group-addressed),
-    //                                     src 1.2.17, dst GA 1/2/3 (0x0a03),
+    //                                     src 1.2.7, dst GA 1/2/3 (0x0a03),
     //                                     len 1, TPDU 00 81 (GroupValueWrite 1)
     const req = Buffer.from([
       0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
       0x04, CHANNEL, 0x05, 0x00,
-      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x07, 0x0a, 0x03, 0x01, 0x00, 0x81,
     ]);
     sock.inject(req);
     await tick();
@@ -123,7 +123,7 @@ describe("KnxIpTunnel", () => {
     ]);
 
     expect(calls.length).toBe(1);
-    expect(calls[0]!.src).toBe(iaToNum("1.2.17"));
+    expect(calls[0]!.src).toBe(iaToNum("1.2.7"));
     expect(calls[0]!.dst).toBe(0x0a03); // GA 1/2/3
     expect(calls[0]!.isGroup).toBe(true);
     expect(calls[0]!.tpdu.equals(Buffer.from([0x00, 0x81]))).toBe(true);
@@ -142,7 +142,7 @@ describe("KnxIpTunnel", () => {
     const con = Buffer.from([
       0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
       0x04, CHANNEL, 0x07, 0x00,
-      0x2e, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+      0x2e, 0x00, 0xbc, 0xe0, 0x12, 0x07, 0x0a, 0x03, 0x01, 0x00, 0x81,
     ]);
     sock.inject(con);
     await tick();
@@ -165,7 +165,7 @@ describe("KnxIpTunnel", () => {
     const req = Buffer.from([
       0x06, 0x10, 0x04, 0x20, 0x00, 0x15,
       0x04, CHANNEL, 0x05, 0x00, // same seq 5 both times
-      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x11, 0x0a, 0x03, 0x01, 0x00, 0x81,
+      0x29, 0x00, 0xbc, 0xe0, 0x12, 0x07, 0x0a, 0x03, 0x01, 0x00, 0x81,
     ]);
     sock.inject(req);
     await tick();
@@ -179,8 +179,8 @@ describe("KnxIpTunnel", () => {
 
   test("sendCemi carries the local seq counter and increments per ACKed send", async () => {
     const { sock, tunnel } = await connected();
-    // cemiLData(1.1.250, 1.2.17, [0x80]) = 11 00 bc 60 11 fa 12 11 00 80 (10 B)
-    const cemi = cemiLData(ASSIGNED_IA, iaToNum("1.2.17"), Buffer.from([0x80]));
+    // cemiLData(1.1.250, 1.2.7, [0x80]) = 11 00 bc 60 11 fa 12 07 00 80 (10 B)
+    const cemi = cemiLData(ASSIGNED_IA, iaToNum("1.2.7"), Buffer.from([0x80]));
 
     const p1 = tunnel.sendCemi(cemi);
     await tick();

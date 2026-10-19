@@ -12,7 +12,7 @@ const XML = `<?xml version="1.0" encoding="utf-8"?>
 <AdditionalAddresses><Address Address="250" Name="" /></AdditionalAddresses>
 </DeviceInstance>
 <DeviceInstance Id="P-0001-0_DI-0" Address="2" Name="Taster 0" ProductRefId="M-0083_H-2_P-2" Hardware2ProgramRefId="M-0083_H-2_HP-2" />
-<DeviceInstance Id="P-0001-0_DI-1" Address="90" Name="" ProductRefId="M-0083_H-1_P-1" Hardware2ProgramRefId="M-0083_H-1_HP-1">
+<DeviceInstance Id="P-0001-0_DI-1" Address="7" Name="" ProductRefId="M-0083_H-1_P-1" Hardware2ProgramRefId="M-0083_H-1_HP-1">
 <AdditionalAddresses><Address Address="255" Name="" /><Address Address="" Name="" /></AdditionalAddresses>
 <IPConfig Assign="Fixed" IPAddress="192.0.2.2" SubnetMask="255.255.255.0" DefaultGateway="192.0.2.1" />
 <Security ToolKey="a" LoadedToolKey="a" SequenceNumber="1" />

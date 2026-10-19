@@ -2,13 +2,14 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  APCI, CEMI, SVC, iaToNum, parseApdu, parseCemiLData,
+  APCI, CEMI, SVC, parseApdu, parseCemiLData,
   decodeDeviceDescriptorResponse, decodePropertyValueResponse, decodeAuthorizeResponse, decodePropertyDescription,
   decodeFunctionPropertyExtState, decodeMemoryRead, decodeMemoryResponse, encodeAuthorizeFreeKey, encodePropertyDescriptionRead,
 } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml, captureText } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
+import { captureDevice } from "./etsdiff.ts";
 
 // The reference vectors of docs/raw-acquisition.md point at lines of the bench captures (ETS, the
 // collector, single memory reads). This test keeps them honest: every vector must decode, from the
@@ -17,8 +18,15 @@ import { corpusTest } from "./corpus-test.ts";
 // decode every vector to the same result.
 
 const FIXTURES = join(import.meta.dir, "fixtures");
-const { vectors } = JSON.parse(readFileSync(join(FIXTURES, "raw-acquisition-vectors.json"), "utf8")) as {
+const { devices, vectors } = JSON.parse(readFileSync(join(FIXTURES, "raw-acquisition-vectors.json"), "utf8")) as {
+  devices: Record<string, string>;
   vectors: { id: string; file: string; line: number; device: string; service: string; decoded: Record<string, unknown> }[];
+};
+// The bus address of a product's bench device: the one ETS's full download of it wrote to.
+const deviceAddress = (product: string) => {
+  const file = devices[product];
+  if (!file) throw new Error(`no capture names the bus address of ${product}`);
+  return captureDevice(captureText(file));
 };
 
 // Literal on purpose: the APCI table is checked against them below, not used to derive them.
@@ -108,6 +116,11 @@ describe("raw acquisition reference vectors", () => {
 
   test("the fixture is not empty", () => expect(vectors.length).toBeGreaterThan(0));
 
+  corpusTest("every product of the vectors names its own device", () => {
+    const products = [...new Set(vectors.map((v) => v.device))];
+    expect(new Set(products.map(deviceAddress)).size).toBe(products.length);
+  });
+
   for (const v of vectors) {
     corpusTest(`${v.id} decodes from ${v.file}:${v.line}`, () => {
       const { code, src, dst, tpdu, control, apci, data } = apduAt(v.file, v.line);
@@ -115,7 +128,7 @@ describe("raw acquisition reference vectors", () => {
       // A request is the tool's frame to the device, a response the device's frame from the bus.
       const request = /_(Read|Request)$/.test(v.service);
       expect(code).toBe(request ? CEMI.LDATA_REQ : CEMI.LDATA_IND);
-      expect(request ? dst : src).toBe(iaToNum(v.device));
+      expect(request ? dst : src).toBe(deviceAddress(v.device));
       const decoded = decode(v.service, tpdu, apci, data);
       // The collector's codec agrees with the independent decoder on the captured frame.
       expect(codec(v.service, tpdu, apci, data)).toEqual(decoded);

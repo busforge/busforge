@@ -91,6 +91,12 @@ A new file the tests read from the corpus is added to `CORPUS_FILES` in `tools/c
 corpus without it is reported incomplete. A contributor without the corpus attaches the file (a
 catalogue, a capture) privately to the issue or pull request, and a maintainer adds it.
 
+The kept evidence records are in the corpus as well (`evidence/runs/`, `evidence/reference/`): they
+name run times, builds and devices' addresses. `tools/evidence-bundle.ts` generates the shipped
+bundle from them ([evidence-contract.md](evidence-contract.md#the-shipped-records)); to keep a smoke
+run, copy its report and `<report>.evidence.json` to `evidence/runs/<date>/` in the corpus and run it
+with `--write`.
+
 The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
 `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
@@ -102,7 +108,7 @@ comparison pins that Busforge plans exactly those bytes for that device, running
 download on the device again shows nothing new. So:
 
 - **A changed plan whose result a capture comparison pins** (write set, table layout, image bytes)
-  needs no bench or house run. The comparison is the proof.
+  needs no hardware run. The comparison is the proof.
 - **A hardware run is needed only for what no capture can show**: a service, timing, restart or
   link behaviour the captures do not hold; a device or application without a capture; a claim on
   the behaviour or persistence axes that has never been shown for that product.
@@ -332,7 +338,9 @@ BUSFORGE_BENCH=1 bun run smoke <spec-id> --channel=api|ui [--seed=N]
 Omitting the spec id runs every spec. `--channel` selects one channel per invocation; a device
 counts as done only with both green, so it is run once per channel. `bun run smoke` implies
 `--report`, writing one JSON artifact per run under `tools/smoke/reports/` (git-ignored) with the
-spec, channel, seed, every verdict and the raw `FlashResult`s. Next to each report the run writes
+spec, channel, seed, every verdict and the raw `FlashResult`s (`--report=<dir>` picks another directory
+inside the repository; one outside it is refused, because a record names its report by its repository
+path, and a backup path the server returns is written relative to its data directory). Next to each report the run writes
 `<report>.evidence.json`: one [evidence record](evidence-contract.md) per observed capability,
 click-through and behaviour, with the persistence result on the writes it covers, naming the server build (read from `/api/version` before the first
 run), the runner revision, the spec revision (a hash of the spec), the transport and the device's

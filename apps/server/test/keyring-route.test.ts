@@ -41,37 +41,37 @@ describe("POST /api/projects/:id/keyring", () => {
   test("carries tool keys, certificates, group keys and senders, signed under the password", async () => {
     const p = await project();
     const [a, b] = p.devices;
-    putDeviceSecurity(p.state.db, p.projectId, [{ deviceId: a.id, toolKey: hex("00112233445566778899aabbccddeeff"), serialNumber: hex("000a00000204"), sequenceNumber: "275729203974", source: "provisioned" }], p.state.masterKey);
-    putDeviceCertificate(p.state.db, p.projectId, { deviceId: a.id, fdsk: hex("ffeeddccbbaa99887766554433221100"), serialNumber: hex("000a00000204") }, p.state.masterKey);
+    putDeviceSecurity(p.state.db, p.projectId, [{ deviceId: a.id, toolKey: hex("00112233445566778899aabbccddeeff"), serialNumber: hex("000a00000407"), sequenceNumber: "275729203974", source: "provisioned" }], p.state.masterKey);
+    putDeviceCertificate(p.state.db, p.projectId, { deviceId: a.id, fdsk: hex("ffeeddccbbaa99887766554433221100"), serialNumber: hex("000a00000407") }, p.state.masterKey);
     putDeviceCertificate(p.state.db, p.projectId, { deviceId: b.id, fdsk: hex("0102030405060708090a0b0c0d0e0f10"), serialNumber: hex("00fa01020304") }, p.state.masterKey);
     putGroupKeys(p.state.db, p.projectId, [{ raw: 1, key: hex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"), source: "generated" }], p.state.masterKey);
     p.state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'x', 0, 1)").run(p.projectId, a.id);
-    putGroupSenders(p.state.db, p.projectId, [{ gaRaw: 1, ia: "1.1.100", source: "busforge" }]);
+    putGroupSenders(p.state.db, p.projectId, [{ gaRaw: 1, ia: "1.2.250", source: "busforge" }]);
 
-    const res = await call(p, { password: "bench-pw" });
+    const res = await call(p, { password: "test-pw" });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-disposition")).toMatch(/\.knxkeys"$/);
-    const k = readKeyring(await res.text(), "bench-pw");
+    const k = readKeyring(await res.text(), "test-pw");
     expect(k.created).toBe("2026-10-02T08:00:00");
     expect(k.createdBy).toBe("Busforge");
     const da = k.devices.find((d) => d.individualAddress === a.ia)!;
     expect(Buffer.from(da.toolKey!).toString("hex")).toBe("00112233445566778899aabbccddeeff");
     expect(Buffer.from(da.fdsk!).toString("hex")).toBe("ffeeddccbbaa99887766554433221100");
-    expect(Buffer.from(da.serialNumber!).toString("hex")).toBe("000a00000204");
+    expect(Buffer.from(da.serialNumber!).toString("hex")).toBe("000a00000407");
     expect(da.sequenceNumber).toBe(275729203974n);
     // A device with only a certificate: what ETS takes over after a master reset.
     const db = k.devices.find((d) => d.individualAddress === b.ia)!;
     expect(db.toolKey).toBeUndefined();
     expect(Buffer.from(db.fdsk!).toString("hex")).toBe("0102030405060708090a0b0c0d0e0f10");
     expect(k.groups.map((g) => [g.address, Buffer.from(g.key).toString("hex")])).toEqual([[1, "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"]]);
-    expect(k.interfaces).toEqual([{ individualAddress: "1.1.100", groups: [{ address: 1, senders: [a.ia] }] }]);
+    expect(k.interfaces).toEqual([{ individualAddress: "1.2.250", groups: [{ address: 1, senders: [a.ia] }] }]);
   });
 
   test("an unconfirmed (pending) tool key is not stated, an unknown sequence is left out", async () => {
     const p = await project();
     const [a, b] = p.devices;
     putDeviceSecurity(p.state.db, p.projectId, [
-      { deviceId: a.id, toolKey: hex("00112233445566778899aabbccddeeff"), serialNumber: hex("000a00000204"), sequenceNumber: "", source: "manual" },
+      { deviceId: a.id, toolKey: hex("00112233445566778899aabbccddeeff"), serialNumber: hex("000a00000407"), sequenceNumber: "", source: "manual" },
       { deviceId: b.id, toolKey: hex("ffeeddccbbaa99887766554433221100"), serialNumber: hex("00fa01020304"), sequenceNumber: "5", source: "pending" },
     ], p.state.masterKey);
     putDeviceCertificate(p.state.db, p.projectId, { deviceId: b.id, fdsk: hex("0102030405060708090a0b0c0d0e0f10"), serialNumber: hex("00fa01020304") }, p.state.masterKey);

@@ -5,7 +5,7 @@
 //
 //   bun run tools/paramtest.ts <interface-ip> <device-ia> <app.xml> <decrypted-0.xml> <device-id>
 //
-//   bun run tools/paramtest.ts 198.51.100.10 1.2.20 ./M-0162_A-0004-11-F245.xml ./0.xml P-07C7-0_DI-53
+//   bun run tools/paramtest.ts 198.51.100.10 1.2.3 ./M-0162_A-0004-11-F245.xml ./0.xml P-0123-0_DI-4
 //
 // There are no default paths or default target: every argument is required so a
 // bare invocation opens no tunnel and reads nothing.

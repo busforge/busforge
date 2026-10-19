@@ -224,7 +224,7 @@ function refuseSecureTables(ctx: { security?: SecureTablesCtx }, family: string)
 // cycle: the parameter segment read back byte-identical after power-down. Everything NOT listed keeps
 // the safe default — persistence happens on the restart (thelsing/knx, OpenKNX) — so an unproven
 // device still refuses on a restart it could not confirm.
-//   0x0085 GVS (K-BUS): AMMA-04/06.S full download survived a power cycle byte-identical, 2026-07-14.
+//   0x0085 GVS (K-BUS): AMMA-04/06.S full download survived a power cycle byte-identical.
 const PERSIST_ON_LOAD_COMPLETED = new Set<number>([0x0085]);
 const appManufacturer = (app: AppConfig): number => Number.parseInt(String(app.id).split("_")[0].replace("M-", ""), 16);
 
@@ -240,7 +240,7 @@ export const persistsOnLoadCompleted = (app: AppConfig): boolean => PERSIST_ON_L
 //   0x0004 Jung (Insta stack): a table-only GA flash left all three tables LOADED and byte-perfect while
 //   object 4 dropped to ERROR — the device answered management but ran no application, so every link was
 //   dead, and only a full download recovered it. With the bracket the same flash keeps object 4 LOADED
-//   and the re-pointed link answers on the bus (2026-07-24).
+//   and the re-pointed link answers on the bus.
 // Everything NOT listed keeps the proven table-only bracket, because the extra LoadCompleted is not
 // free: on a persist-at-LoadCompleted device (GVS) it triggers an additional flash persist, and the GVS
 // smoke failed its very next parameter flash with DEVICE_NOT_ANSWERING when the bracket was applied
@@ -533,7 +533,7 @@ function sentBytes(readCompare: boolean): { add: (n: number) => void; total: () 
 
 // A device that has just rebooted can still be starting its application and drop management frames
 // for a while (the OpenKNX RaumController went silent 9 KB into the 21.6 KB read-back, the write
-// itself committed and LOADED, 2026-09-27). One lost read is not a verdict on the write: reconnect and
+// itself committed and LOADED). One lost read is not a verdict on the write: reconnect and
 // read once more; a second silence is reported as it is.
 async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>): Promise<boolean> {
   try { return await verify(); }
@@ -1294,7 +1294,7 @@ export class SystemBProfile extends DeviceProfile {
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
     // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
-    // them (GVS AMMA partial-download capture, 2026-09-26: exactly the owned bytes, those included).
+    // them (GVS AMMA partial-download capture: exactly the owned bytes, those included).
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
     const mcb = declaredMcbWrites(proc, target.size, "par");
@@ -1555,7 +1555,7 @@ export class SystemBProfile extends DeviceProfile {
 // System 7 (absolute-segment) devices: MV-0700/0701/0705 and the RF/IP variants. Parameters
 // live at fixed EEPROM addresses (driven by the device's declared LoadProcedure); group tables
 // use the System-7 layout. Read-back, parameter flash and GA flash are all hardware-verified
-// on twisted-pair (M-0081): identity flash, re-point and revert each byte-matched.
+// on twisted-pair (an M-0081 device): identity flash, re-point and revert each byte-matched.
 // The bits of a System 7 com-object config byte a project override can set (buildComObjectTableMv0705):
 // priority, read, write, transmit. Its communication bit follows the links, its update bit the application.
 const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "transmit", "priority"];
@@ -1566,7 +1566,7 @@ export class System7Profile extends DeviceProfile {
 
   capabilities(): DeviceCapabilities {
     // Parameters (absolute segments) and links (System-7 tables) are both read back. Parameter
-    // and GA flash are hardware-proven on TP (M-0081); the RF/IP variants share the codec
+    // and GA flash are hardware-proven on TP (an M-0081 device); the RF/IP variants share the codec
     // but have not been exercised on that medium (see the device-support.md medium caveat).
     //
     // Full download needs the group-table segments and, for the memory-mapped System 7 masks

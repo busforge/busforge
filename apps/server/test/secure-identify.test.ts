@@ -4,10 +4,10 @@ import type { Connection } from "../src/db/connections.ts";
 
 // secure-identify against a simulated device on the transport: every secured frame (A_Data_Secure,
 // the Sync included) goes unanswered, as from a device that does not hold the key; plain requests
-// get the answers the bench devices gave (2026-09-30).
+// get answers shaped like those of a GVS AMMA (plain) and a Jung 400021SE (in secure mode).
 type Plain = { mask: string; serial: string; mode: string };
 class SimDevice implements KnxTransport {
-  assignedIa = 0x1164;
+  assignedIa = 0x12fa;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   constructor(private readonly plain: Plain) {}
@@ -30,7 +30,7 @@ class SimDevice implements KnxTransport {
   }
 }
 
-let device: Plain = { mask: "07b0", serial: "008500000203", mode: "000000" };
+let device: Plain = { mask: "07b0", serial: "00fa00000307", mode: "000000" };
 const realTransport = await import("../src/transport.ts");
 const realMake = realTransport.makeTransport;
 let makeImpl: typeof realMake = () => new SimDevice(device);
@@ -45,23 +45,23 @@ const code = (e: unknown) => (e as { code?: string }).code;
 
 describe("secure-identify", () => {
   test("without a tool key it reads plainly: mask, serial and the security mode the device states", async () => {
-    device = { mask: "07b0", serial: "008500000203", mode: "000000" };
-    expect(await secureIdentify(conn, "1.1.203", undefined)).toEqual({ secure: false, mask: "MV-07B0", serial: "008500000203", securityMode: { state: "off" } });
+    device = { mask: "07b0", serial: "00fa00000307", mode: "000000" };
+    expect(await secureIdentify(conn, "1.2.3", undefined)).toEqual({ secure: false, mask: "MV-07B0", serial: "00fa00000307", securityMode: { state: "off" } });
   });
 
   test("a device in secure mode read without its key: no serial, and the mode denied, never off", async () => {
     device = { mask: "ffff", serial: "", mode: "fc" };
-    const r = await secureIdentify(conn, "1.1.204", undefined);
+    const r = await secureIdentify(conn, "1.2.4", undefined);
     expect(r).toMatchObject({ secure: false, mask: "MV-FFFF", serial: null, securityMode: { state: "denied" } });
   });
 
   test("a stored key the device does not answer, on a device that states it is off: not activated", async () => {
     device = { mask: "07b0", serial: "00fa01020304", mode: "000000" };
-    expect(code(await secureIdentify(conn, "1.1.204", creds).catch((e: unknown) => e))).toBe("SECURE_MODE_OFF");
+    expect(code(await secureIdentify(conn, "1.2.4", creds).catch((e: unknown) => e))).toBe("SECURE_MODE_OFF");
   }, 15_000);
 
   test("a stored key the device does not answer, on a device that will not say: the Sync failure stands", async () => {
     device = { mask: "ffff", serial: "", mode: "fc" };
-    expect(code(await secureIdentify(conn, "1.1.204", creds).catch((e: unknown) => e))).toBe("SECURE_SYNC_NO_RESPONSE");
+    expect(code(await secureIdentify(conn, "1.2.4", creds).catch((e: unknown) => e))).toBe("SECURE_SYNC_NO_RESPONSE");
   }, 15_000);
 });

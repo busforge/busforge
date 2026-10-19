@@ -6,10 +6,9 @@ import { ApiError } from "../errors.ts";
 import { putGroupKeys, hasGroupKey, deleteGroupKey } from "./groupKeys.ts";
 import { isSecureDevice } from "./deviceSecurity.ts";
 
-// A group address's Data Secure mode and the rules ETS 6.4.1 applies to it (findings.md §22, bench
-// 2026-10-01/02). Whether an address is secured is whether the project holds a key for it; the mode
-// decides when Busforge makes or drops that key. A device counts as secure when the project holds a
-// tool key for it.
+// A group address's Data Secure mode and the rules ETS 6.4.1 applies to it (findings.md §22).
+// Whether an address is secured is whether the project holds a key for it; the mode decides when
+// Busforge makes or drops that key. A device counts as secure when the project holds a tool key for it.
 //
 // - "auto" (ETS "Automatisch"): an address without a key gets a new one as soon as a secure device is
 //   linked to it and every device linked to it is secure. A device without security linked to a

@@ -1,7 +1,7 @@
 // Decrypt the A_Data_Secure frames of a knxproxy capture log offline.
 // Keys come only from the environment, never from a file:
 //   KEYS="fdsk=<32 hex>,tool=<32 hex>"   tried in order on every secured P2P frame
-//   GROUP_KEYS="0/0/1=<32 hex>,..."       optional, for secured group frames
+//   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for secured group frames
 //   bun run tools/secure-capture-decode.ts <capture.log>
 import { readFileSync } from "node:fs";
 import { secureDecode } from "../packages/knx/src/secure.ts";

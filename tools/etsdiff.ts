@@ -116,6 +116,21 @@ export function parseCapture(text: string, deviceIa: number): Capture {
   return cap;
 }
 
+// The individual address of the device a capture's download went to: the one destination of every memory
+// write ETS sent. A capture without a memory write, or with memory writes to more than one device, is refused.
+export function captureDevice(text: string): number {
+  const destinations = new Set<number>();
+  for (const line of text.split("\n")) {
+    if (!line.includes("TUNNELLING_REQ") || !line.includes("ETS->BRIDGE")) continue;
+    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (!fr || fr.group || fr.code !== L_DATA_REQ || fr.tpdu.length < 2) continue;
+    if (memWriteOf(fr.tpdu, ((fr.tpdu[0] & 0x03) << 8) | fr.tpdu[1])) destinations.add(fr.dst);
+  }
+  if (destinations.size !== 1) throw new Error(`the capture's memory writes go to ${destinations.size} devices, not one`);
+  return [...destinations][0];
+}
+
 function memWriteOf(t: Buffer, apci: number): MemWrite | null {
   if ((apci & 0x3c0) === 0x280) { // A_Memory_Write: count in the APCI's low 6 bits (1-63), 16-bit address
     const n = t[1] & 0x3f, data = t.subarray(4, 4 + n);

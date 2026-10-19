@@ -135,7 +135,7 @@ corpusDescribe("the GROUP-ADDRESS flash is gated too (the parameter flash alone 
   // a link must target an object the configuration activates, or the GA flash refuses it
   // (LINK_COM_OBJECT_INACTIVE) before the staleness gate is what these tests are exercising.
   const gaCtx = (params: Map<string, string>, base: Map<string, string>) => ({
-    deviceId: "d", ia: "1.2.53", links: [{ comObjNum: 241, gaRaws: [2305] }],
+    deviceId: "d", ia: "1.2.3", links: [{ comObjNum: 241, gaRaws: [2305] }],
     params, baseParams: base, dryRun: false,
     persistBackups: () => { throw new Error("BACKUP-PERSISTED"); },
   });

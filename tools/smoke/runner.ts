@@ -12,7 +12,7 @@
 // Hardware-gated: refuses to run without BUSFORGE_BENCH=1 and a reachable bench bridge. Never part of
 // `bun run check`.
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
+import { join, resolve, basename, relative, isAbsolute } from "node:path";
 import { Client, ApiError, allParams, allComObjects, type DeviceCapabilities } from "./client.ts";
 import { Witness } from "./witness.ts";
 import { UiDriver } from "./ui.ts";
@@ -22,7 +22,7 @@ import { verifyBehaviour, type BehaviourResult, type BehaviourCtx } from "./beha
 import { linkChan, type ChanCtx } from "./channel.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
-import { runEvidence } from "./evidence.ts";
+import { runEvidence, reportText } from "./evidence.ts";
 import { observeReboot, judgeRestoredConfig, judgeLoadStates, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
 import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
@@ -124,7 +124,7 @@ async function rebootOnBench(host: string, ia: string, mask: string, creds: Cred
 // - an earlier answer delivered again -> DEVICE_NOT_ANSWERING (an old sequence number is dropped), or
 //                                        DEVICE_CLOSED_CONNECTION: the device's real answer never got
 //                                        our acknowledgement, and the Jung closed the connection
-//                                        (2026-09-30); either way the replay was not used
+//                                        on the bench; either way the replay was not used
 // The last two run the server's own read-back through a local pass-through (faultproxy.ts).
 type Robustness = NonNullable<RunResult["negatives"]>;
 async function secureRobustness(o: { client: Client; spec: DeviceSpec; host: string; benchConnId: string; pid: string; did: string; creds: NonNullable<Creds>; log: (m: string) => void }): Promise<Robustness> {
@@ -490,18 +490,18 @@ function writeReport(r: RunResult, dir: string): string {
   mkdirSync(dir, { recursive: true });
   const iso = new Date(r.startedAt).toISOString();
   const path = join(dir, `${r.spec}-${r.channel}-${iso.replace(/[:.]/g, "-")}.json`);
-  writeFileSync(path, JSON.stringify({ ...r, keptProjectId: r.ok ? null : r.pid, startedAt: iso }, null, 2) + "\n");
+  writeFileSync(path, reportText({ ...r, keptProjectId: r.ok ? null : r.pid, startedAt: iso }));
   return path;
 }
 
 // The evidence records of a run (docs/evidence-contract.md), next to its report and pointing at it
-// by path and hash.
+// by its path relative to the repository and its hash.
 async function writeEvidence(r: RunResult, spec: DeviceSpec, reportPath: string, server: { version: string; commit: string }): Promise<string> {
   const records = runEvidence(r, spec, {
     server, runnerRevision: gitRevision(),
     transport: transportOf(r.ipTransport ?? undefined, process.env.BUSFORGE_BENCH_VIA),
     firmware: r.firmware,
-    source: { artifact: reportPath, sha256: sha256(new Uint8Array(await Bun.file(reportPath).arrayBuffer())) },
+    source: { artifact: relative(resolve(import.meta.dir, "..", ".."), reportPath), sha256: sha256(new Uint8Array(await Bun.file(reportPath).arrayBuffer())) },
   });
   const path = reportPath.replace(/\.json$/, ".evidence.json");
   writeFileSync(path, JSON.stringify(records, null, 2) + "\n");
@@ -522,6 +522,9 @@ async function main() {
   let allOk = true;
   // Read before any run: the build that executes the runs, not whatever is up once they are over.
   // Without it no run's evidence could name its build, so the bench is not touched at all.
+  // A record names its report by its path relative to the repository, so the report has to lie in it.
+  const inRepo = reportDir === null ? "" : relative(resolve(import.meta.dir, "..", ".."), resolve(reportDir));
+  if (inRepo === ".." || inRepo.startsWith("../") || isAbsolute(inRepo)) { console.error(`refused: --report=${reportDir} lies outside the repository, so a record could not name its report by a repository path`); process.exit(2); }
   const server = reportDir ? await new Client().version().catch(() => null) : null;
   if (reportDir && !server) { console.error("refused: the server's /api/version is not readable, so the run's evidence could not name the build"); process.exit(2); }
   for (const spec of chosen) {

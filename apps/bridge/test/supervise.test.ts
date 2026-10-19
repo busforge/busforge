@@ -7,7 +7,7 @@ class FakeUsb implements KnxTransport {
   onRawCemi: KnxTransport["onRawCemi"] = null;
   onClosed: KnxTransport["onClosed"] = null;
   disconnected = 0;
-  constructor(public assignedIa = 0x1164) {}
+  constructor(public assignedIa = 0x12fa) {}
   connect(): Promise<void> { return Promise.resolve(); }
   sendCemi(): Promise<void> { return Promise.resolve(); }
   disconnect(): Promise<void> { this.disconnected++; return Promise.resolve(); }
@@ -21,7 +21,7 @@ function rig(attempts: (() => Promise<KnxTransport>)[]) {
     interfaceLost: (r: string) => { events.push(`lost: ${r}`); },
     interfaceRestored: (t: KnxTransport) => {
       if (t.assignedIa === 0) throw new KnxError("BRIDGE_NO_ADDRESS", "did not tell its address yet");
-      if (t.assignedIa !== 0x1164) throw new KnxError("BRIDGE_INTERFACE_CHANGED", "back under another address; restart the bridge");
+      if (t.assignedIa !== 0x12fa) throw new KnxError("BRIDGE_INTERFACE_CHANGED", "back under another address; restart the bridge");
       events.push("restored");
     },
   };

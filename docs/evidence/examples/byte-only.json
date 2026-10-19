@@ -1,7 +1,7 @@
 {
   "schema": "busforge.evidence/1",
-  "id": "abb-usu-4.2-api-2026-07-24T11-22-30Z-fullDownload",
-  "recordedAt": "2026-07-24T11:22:30.459Z",
+  "id": "abb-usu-4.2-api-fullDownload",
+  "recordedAt": "2000-01-01T11:22:30.459Z",
   "subject": {
     "manufacturer": "M-0002",
     "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
@@ -59,7 +59,7 @@
   "supersedeReason": null,
   "source": {
     "kind": "smoke-report",
-    "artifact": "tools/smoke/reports/abb-usu-4.2-api-2026-07-24T11-22-30-459Z.json",
-    "sha256": "fa3c3219ecb30f461e67a3fd07a7776a8165369e32e34f89bb917fbf7eeed718"
+    "artifact": null,
+    "sha256": null
   }
 }

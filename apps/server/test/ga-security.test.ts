@@ -25,7 +25,7 @@ describe("group address security", () => {
     createGroupAddress(db, "p", mid, 1, "Taste 1", "1.001");
     createGroupAddress(db, "p", mid, 2, "Taste 2", "1.001");
     const ins = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p', ?, ?, ?, '', '', 0)");
-    for (const [id, ia] of [["JUNG", "1.1.204"], ["GVS", "1.1.203"], ["MDT", "1.1.56"]]) ins.run(id, ia, id);
+    for (const [id, ia] of [["JUNG", "1.2.4"], ["GVS", "1.2.3"], ["MDT", "1.2.7"]]) ins.run(id, ia, id);
     const deviceId = (instance: string) => (db.query("SELECT id FROM devices WHERE instance_id = ?").get(instance) as { id: number }).id.toString();
     const ids = { jung: deviceId("JUNG"), gvs: deviceId("GVS"), mdt: deviceId("MDT") };
     putDeviceSecurity(db, "p", [ids.jung, ids.gvs].map((d) => ({ deviceId: d, toolKey: Buffer.alloc(16, 7), serialNumber: Buffer.alloc(6, 1), sequenceNumber: "1", source: "import" as const })), state.masterKey);

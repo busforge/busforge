@@ -63,7 +63,7 @@ All hardware verification is on **twisted pair**.
 | Transport: KNXnet/IP tunnelling (UDP and TCP), own implementation | yes | hardware | Connect, tunnel, management, heartbeat and closure. The connection-state heartbeat keeps an idle TCP tunnel up against a third-party KNX IP interface and against Busforge's bridge, which reaps a silent TCP channel after 120 s; a client that vanished without a FIN is reaped the same way and the next connect is served ([connections.md](connections.md)). |
 | Transport: KNX USB (HID) | yes | hardware | Bus-level round trip proven on one interface model; sends are serialized because a second send clobbers the outstanding confirmation. |
 | Expose a local USB interface on the network as a KNXnet/IP gateway | yes | hardware | Full downloads driven through it; a third-party tool (ETS) can also program a device through it. Management works only on the interface's own address on the USB stick tested. |
-| Bus monitor: live telegrams, DPT-decoded values, group-address names | yes | hardware | Read-only: decoded live telegrams off a real installation bus. |
+| Bus monitor: live telegrams, DPT-decoded values, group-address names | yes | hardware | Read-only: decoded live telegrams off a live KNX bus. |
 | Bus monitor: secured group telegrams (KNX Data Secure) | yes | hardware | Decrypted with the imported project's group keys; no key, failed authentication, a sequence already seen and undecodable frames are shown as such, never as a value. On the Jung 400021SE its contact's secured telegrams decrypted to the toggle its parameters describe, and show as "no key" under a project without the key. Cipher also covered by xknx's known-answer vectors. Failed authentication and replay shown by tests only; not compared with the ETS group monitor. |
 | KNX Data Secure: sending secured group telegrams, assigned senders | yes | hardware | Senders imported from the `.knxproj` (BusInterface connectors) or added in the group-address overlay, loaded into PID 54 by the GA flash. On the Jung 400021SE: a secured GroupValueRead from the monitor's send panel answered with a secured response, both decrypted; with the sender removed and flashed the device ignored it and Busforge refused to send. The secure smoke spec's `securedOutput` behaviour repeats the secured read every run. |
 | Snapshots: configuration restore points (capture, compare, restore) | yes | tests only | Database-level feature; no device write involved. |
@@ -349,8 +349,8 @@ What each row does not show:
   download route runs the same procedure and has not run on its own. Not shown: the procedure on a
   unit that did not hold the application, and a run over USB (refused).
 - **A wider set carries the weaker proof of a read-back match** (build the image, read the device's
-  memory, compare the bytes we own, `tools/verify-images.ts`): 28 of 32 reachable devices of a real
-  installation. Of the four residuals, two are secure interfaces and the rest are project-versus-device
+  memory, compare the bytes we own, `tools/verify-images.ts`): 28 of 32 reachable devices of an
+  installation commissioned by ETS. Of the four residuals, two are secure interfaces and the rest are project-versus-device
   drift or a self-stamped marker, not modelling gaps. A Theben HMG 6 T unit holds old values in six bytes
   of inactive parameters, which ETS's full download writes as zero. A read-back match is not a flash
   round-trip.
@@ -367,7 +367,9 @@ and in which channel it passes: `api` (the production endpoints directly) or `ui
 in a browser). Persistence here means an observed reboot after A_Restart, every load object LOADED
 again, and a read-back equal to the project; it is not a bus power cut
 ([evidence-contract.md](evidence-contract.md)). Kept runs and their records are in
-[evidence/runs/](evidence/runs/).
+the private corpus; the records that decide each cell ship with the server
+([evidence-contract.md](evidence-contract.md#the-shipped-records)), and the states they decide are in
+[compatibility.md](compatibility.md).
 
 **The done bar** ([testing.md](testing.md#the-done-bar)): a device counts as fully supported only when
 every capability its product claims, plus provisioning and the UI click-through, passes on real
@@ -430,7 +432,7 @@ report a device family as working on the strength of a passing test suite.
   (OpenKNX RaumController, Theben MIX 2, Theben DALI-Gateway, Jung 400021SE, GVS AMMA) wrote a wider set
   of the same values, which leaves the unit the same.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
-  device exists (`tools/etsdiff.ts`, records in [evidence/reference/](evidence/reference/)). Full
+  device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA and the Jung 400021SE, every segment
   byte for byte. Parameter flash: one ETS partial download of the Jung. Group-address flash: one ETS
   partial download each of the MDT, the ABB, the GVS and the Jung, every byte ETS wrote equal to Busforge's image. Plus the Auro

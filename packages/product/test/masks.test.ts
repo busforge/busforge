@@ -32,7 +32,7 @@ describe("mask registry", () => {
 });
 
 describe("maskInfo lookup", () => {
-  // The exact masks present in the real house production projects, with the family
+  // The exact masks present in the real production projects of the corpus, with the family
   // and memory model each MUST resolve to. MV-0012 is the load-bearing case: it has an
   // AbsoluteSegment and so used to be misrouted into the System 7 (absolute) path, but it
   // is a System 1 / BCU1 device and must resolve to bcu1 (-> the System 1 profile), not absolute.

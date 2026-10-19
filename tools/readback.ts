@@ -6,8 +6,8 @@
 //   bun run tools/readback.ts <project.knxproj> <password> <interface-ip> <out-dir> [--mode=all|params|tables]
 //        [--configured-by=ets|busforge|unknown] [--prior-busforge-writes=none|some|unknown] [--via=busforge-bridge|direct]
 //
-//   bun run tools/readback.ts ~/house.knxproj '<password>' 198.51.100.10 ./out
-//   bun run tools/readback.ts ~/house.knxproj '' 198.51.100.10 ./out --mode=tables
+//   bun run tools/readback.ts ./project.knxproj '<password>' 198.51.100.10 ./out
+//   bun run tools/readback.ts ./project.knxproj '' 198.51.100.10 ./out --mode=tables
 //
 // WARNING: the OUTPUT is real device memory (parameter images and group-address
 // tables, i.e. your installation). Write it to a gitignored location and never

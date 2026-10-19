@@ -1,11 +1,11 @@
 import { test, expect, describe } from "bun:test";
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseEvidenceRecord, type EvidenceRecord, type AxisState } from "../src/evidence.ts";
 import { buildMatrix, hardwareOf, checkEvidenceSet, parseEvidenceBundle, MATRIX_OPERATIONS, EVIDENCE_BUNDLE_SCHEMA, type MatrixProduct } from "../src/compatibility.ts";
 import type { DeviceCapabilities } from "../src/config.ts";
 
-const EVIDENCE = join(import.meta.dir, "..", "..", "..", "docs", "evidence");
+const BUNDLE = join(import.meta.dir, "..", "..", "..", "apps", "server", "src", "evidence-bundle.json");
 const ALL: DeviceCapabilities = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true };
 
 const HW_A = "M-0085_H-AM22AA-16";
@@ -20,7 +20,7 @@ function rec(o: { product?: string; app?: string; op?: string; channel?: "api" |
   const id = o.id ?? `r${++seq}`;
   const transfer = o.transfer ?? "pass";
   return parseEvidenceRecord({
-    schema: "busforge.evidence/1", id, recordedAt: o.at ?? "2026-09-25T10:00:00.000Z",
+    schema: "busforge.evidence/1", id, recordedAt: o.at ?? "2000-01-02T10:00:00.000Z",
     subject: { manufacturer: "M-0085", productRef: o.product ?? P1, appProgramId: o.app ?? APP, mask: "MV-07B0",
       firmware: o.firmware ? { state: "observed", value: o.firmware, source: "PID 9" } : { state: "unknown" } },
     medium: "TP", transport: { kind: "ip-tcp", via: "direct" },
@@ -97,17 +97,17 @@ describe("buildMatrix", () => {
   });
 
   test("a refusal outranks the Product's own newer failure", () => {
-    expect(op([...both(), rec({ channel: "ui", transfer: "fail", at: "2026-09-27T10:00:00.000Z" })], product(P1, APP, { ...ALL, flashParams: false })).state).toBe("refused");
+    expect(op([...both(), rec({ channel: "ui", transfer: "fail", at: "2000-01-04T10:00:00.000Z" })], product(P1, APP, { ...ALL, flashParams: false })).state).toBe("refused");
   });
 
   test("superseded evidence no longer counts", () => {
-    const old = both({ at: "2026-09-25T10:00:00.000Z" });
-    const revoked = rec({ channel: "ui", transfer: "fail", at: "2026-09-26T10:00:00.000Z", supersedes: [old[1].id] });
+    const old = both({ at: "2000-01-02T10:00:00.000Z" });
+    const revoked = rec({ channel: "ui", transfer: "fail", at: "2000-01-03T10:00:00.000Z", supersedes: [old[1].id] });
     expect(op([...old, revoked], product(P1)).state).toBe("failed");
   });
 
   test("opposite results under the same conditions are a conflict", () => {
-    const records = [...both(), rec({ channel: "api", transfer: "fail", at: "2026-09-26T10:00:00.000Z" })];
+    const records = [...both(), rec({ channel: "api", transfer: "fail", at: "2000-01-03T10:00:00.000Z" })];
     expect(op(records, product(P1)).state).toBe("conflict");
   });
 
@@ -130,19 +130,8 @@ describe("buildMatrix", () => {
   });
 });
 
-describe("the records in docs/evidence", () => {
-  const walk = (d: string): string[] => readdirSync(d).flatMap((f) => {
-    const p = join(d, f);
-    return statSync(p).isDirectory() ? walk(p) : p.endsWith(".evidence.json") || (d.endsWith("reference") && p.endsWith(".json")) ? [p] : [];
-  });
-  const load = async () => {
-    const out: EvidenceRecord[] = [];
-    for (const p of [...walk(join(EVIDENCE, "runs")), ...walk(join(EVIDENCE, "reference"))]) {
-      const raw = JSON.parse(await Bun.file(p).text());
-      for (const r of Array.isArray(raw) ? raw : [raw]) out.push(parseEvidenceRecord(r));
-    }
-    return out;
-  };
+describe("the shipped evidence bundle", () => {
+  const load = async (): Promise<EvidenceRecord[]> => (JSON.parse(readFileSync(BUNDLE, "utf8")) as { records: unknown[] }).records.map(parseEvidenceRecord);
 
   // Capabilities are all allowed here: this checks the evidence side; the shipped matrix (18b) pairs
   // the records with each Product's real capabilities().
@@ -155,7 +144,7 @@ describe("the records in docs/evidence", () => {
       for (const o of ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload"] as const) {
         expect(`${row.productRef} ${o} ${row.operations[o].state}`).toBe(`${row.productRef} ${o} tested`);
       }
-      // The structural flash was driven on the Jung and the MDT only (2026-10-03); the others never ran it.
+      // The structural flash was driven on the Jung and the MDT only; the others never ran it.
       const structural = row.productRef.startsWith("M-0004_") || row.productRef.startsWith("M-0083_") ? "tested" : "eligible";
       expect(`${row.productRef} structuralFlash ${row.operations.structuralFlash.state}`).toBe(`${row.productRef} structuralFlash ${structural}`);
       expect(Object.keys(row.operations)).toEqual([...MATRIX_OPERATIONS]);
@@ -169,10 +158,10 @@ describe("a shipped evidence set", () => {
   test("names the record at fault: a repeated id, a supersession of another cell or of nothing", () => {
     const [a, b] = both();
     expect(code(() => checkEvidenceSet([a, { ...a }]))).toBe("EVIDENCE_SET_INVALID");
-    const crossCell = rec({ channel: "api", op: "flashLinks", at: "2026-09-27T10:00:00.000Z", supersedes: [b.id], id: "cross" });
+    const crossCell = rec({ channel: "api", op: "flashLinks", at: "2000-01-04T10:00:00.000Z", supersedes: [b.id], id: "cross" });
     expect(() => checkEvidenceSet([a, b, crossCell])).toThrow("cross: supersedes");
-    expect(code(() => checkEvidenceSet([rec({ supersedes: ["nowhere"], at: "2026-09-27T10:00:00.000Z" })]))).toBe("EVIDENCE_SET_INVALID");
-    expect(code(() => checkEvidenceSet([a, rec({ channel: "api", at: "2026-09-24T10:00:00.000Z", supersedes: [a.id] })]))).toBe("EVIDENCE_SET_INVALID");
+    expect(code(() => checkEvidenceSet([rec({ supersedes: ["nowhere"], at: "2000-01-04T10:00:00.000Z" })]))).toBe("EVIDENCE_SET_INVALID");
+    expect(code(() => checkEvidenceSet([a, rec({ channel: "api", at: "2000-01-01T10:00:00.000Z", supersedes: [a.id] })]))).toBe("EVIDENCE_SET_INVALID");
   });
 
   test("a bundle lists every Product that has records, with every capability", () => {

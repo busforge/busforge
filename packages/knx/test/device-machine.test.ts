@@ -273,7 +273,7 @@ describe("KnxDevice request machine (frame level)", () => {
   });
 
   // A device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores
-  // it (Jung 400021SE, 2026-09-28): the restart, and the master reset, go through the session.
+  // it (seen on a Jung 400021SE): the restart, and the master reset, go through the session.
   test("secure: A_Restart and the master reset are sent secured, never plain", async () => {
     const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
     const tun = new FakeTransport();
@@ -715,8 +715,8 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
       }
     });
 
-    // The MEAN WELL KNX-40E-1280D's parameter flash over the bench USB stick (private corpus
-    // captures/meanwell-busforge-final2-par-1810.log), on a time scale of 1:10: A_Restart confirmed
+    // The MEAN WELL KNX-40E-1280D's parameter flash over a KNX-USB stick (a Busforge bus capture in
+    // the private corpus), on a time scale of 1:10: A_Restart confirmed
     // negatively; the first probes confirmed negatively too (the unit is rebooting); from +0.68 s every
     // probe confirmed positively with no transport answer at all (its stack drops frames on the dead
     // connection without T_Disconnect); its startup telegrams at +2.19 s; no decision within the 4 s window.

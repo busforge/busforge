@@ -4,10 +4,10 @@ import { runEvidence } from "./smoke/evidence.ts";
 import { jung400021se } from "./smoke/specs/jung-400021se.ts";
 
 const cmp: ImageComparison = {
-  ia: "1.2.54", firmware: { state: "unknown" }, productRef: "M-0162_H-EX_P-EX", hardware2Program: "M-0162_H-EX_HP-0004-11-F245",
+  ia: "1.1.5", firmware: { state: "unknown" }, productRef: "M-0162_H-EX_P-EX", hardware2Program: "M-0162_H-EX_HP-0004-11-F245",
   mask: "MV-07B0", match: true, diffBytes: 0, length: 120,
 };
-const run = { recordedAt: "2026-09-24T12:00:00.000Z", runnerRevision: "b613b88", transport: { kind: "ip-udp" as const, via: "direct" as const }, artifact: "out/1.2.54.device.bin", sha256: "b".repeat(64) };
+const run = { recordedAt: "2000-01-01T12:00:00.000Z", runnerRevision: "abc1234", transport: { kind: "ip-udp" as const, via: "direct" as const }, artifact: "out/1.1.5.device.bin", sha256: "b".repeat(64) };
 
 describe("readback evidence", () => {
   test("a match on a device only ETS ever wrote is reference evidence", () => {
@@ -42,7 +42,7 @@ describe("etsdiff evidence", () => {
     configuration: "application defaults, no links", compared: 274, divergent: 0, etsOutside: 0, busforgeOnly: 0, uncomparedSegments: 0,
     segments: ["AS-4000 0/1", "AS-4468 0/168"], exclusions: [],
   };
-  const r0 = { recordedAt: run.recordedAt, runnerRevision: "b613b88", artifact: "capture.log", sha256: "c".repeat(64) };
+  const r0 = { recordedAt: run.recordedAt, runnerRevision: "abc1234", artifact: "capture.log", sha256: "c".repeat(64) };
   test("every compared byte equal against a hashed ETS capture is a reference pass", () => {
     const r = etsdiffEvidence(c, r0);
     expect(r.results.reference).toMatchObject({ state: "pass" });

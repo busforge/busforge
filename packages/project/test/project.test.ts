@@ -204,7 +204,7 @@ describe("0.xml parser", () => {
     expect(parseProject(xml0, undefined, "fallback").groupKeys).toEqual([]);
   });
 
-  // ETS 6.4.1 (bench export 2026-10-02): "Automatisch" writes no Security attribute, "Erzwungen an"
+  // ETS 6.4.1 export: "Automatisch" writes no Security attribute, "Erzwungen an"
   // Security="On" beside the Key, "Erzwungen aus" Security="Off" and drops the Key.
   test("reads a group address's security mode, auto when ETS writes none", () => {
     const withMode = (mode: string) => parseProject(xml0.replace(
@@ -221,10 +221,10 @@ describe("0.xml parser", () => {
 
 describe("secured senders (a bus interface assigned to a group address)", () => {
   // The shape ETS 6.4.1 writes when a tunnelling channel of an IP router is made a sender of a
-  // secured address (bench export 2026-09-29): the connector sits on the device's BusInterface, and
+  // secured address: the connector sits on the device's BusInterface, and
   // the channel's address is the device's AdditionalAddresses entry at the BusInterface's AddressIndex.
   const router = `<DeviceInstance Id="P-TEST-0_DI-7" Address="0" ProductRefId="M-0083_H-9_P-9" Hardware2ProgramRefId="M-0083_H-9_HP-9">
-                  <AdditionalAddresses><Address Address="100" Name="" /><Address Address="254" Name="" /></AdditionalAddresses>
+                  <AdditionalAddresses><Address Address="250" Name="" /><Address Address="254" Name="" /></AdditionalAddresses>
                   <BusInterfaces>
                     <BusInterface RefId="M-0083_A-9_BI-1" Password="x"><Connectors><Connector GroupAddressRefId="P-TEST-0_GA-2" /></Connectors></BusInterface>
                     <BusInterface RefId="M-0083_A-9_BI-2" Password="x" />
@@ -234,7 +234,7 @@ describe("secured senders (a bus interface assigned to a group address)", () => 
 
   test("resolves the connector to the channel's individual address and the group address", () => {
     const p = parseProject(withRouter, undefined, "fallback", new Map(), new Map([["M-0083_A-9_BI-1", 1], ["M-0083_A-9_BI-2", 2]]));
-    expect(p.secureSenders).toEqual([{ gaRaw: 2, ia: "1.1.100", deviceId: "P-TEST-0_DI-7", busInterfaceRefId: "M-0083_A-9_BI-1" }]);
+    expect(p.secureSenders).toEqual([{ gaRaw: 2, ia: "1.1.250", deviceId: "P-TEST-0_DI-7", busInterfaceRefId: "M-0083_A-9_BI-1" }]);
     expect(p.unresolvedSenders).toBe(0);
   });
 

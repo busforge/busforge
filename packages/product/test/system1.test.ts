@@ -69,9 +69,16 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
   });
 
   test("the KNXnet/IP properties written are the project's settings and ETS's defaults, in ETS's order", () => {
+    // The unit's own IP settings and additional addresses come from the corpus fixture, encoded here by hand:
+    // an IPv4 address as its four octets, an additional address as the device's area and line plus its number.
+    const { ipConfig, ia, additionalAddresses } = fx.knxIp;
+    const octets = (ip: string) => Buffer.from(ip.split(".").map(Number)).toString("hex");
+    const [area, line] = ia.split(".").map(Number);
+    const extra = additionalAddresses.map((d) => (((area << 12) | (line << 8) | d!) >>> 0).toString(16).padStart(4, "0")).join("");
+    expect(additionalAddresses).toHaveLength(4);
     expect(knxIpWrites(cfg, knxIp()).map((w) => `${w.pid}*${w.count}=${w.data.toString("hex")}`)).toEqual([
       "51*1=0000", "66*1=e000170c", "67*1=20", `76*30=${Buffer.from("SCN-IP000.03 IP Interface with").toString("hex")}`,
-      "55*1=01", "60*1=cb007129", "61*1=ffffff00", "62*1=cb007101", "53*4=11ff11fe11fd11fc",
+      "55*1=01", `60*1=${octets(ipConfig!.IPAddress!)}`, "61*1=ffffff00", `62*1=${octets(ipConfig!.DefaultGateway!)}`, `53*4=${extra}`,
     ]);
   });
 
@@ -84,13 +91,13 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
       { ipConfig: null },
       { ipConfig: { ...fx.knxIp.ipConfig, Assign: "Auto" } },
       { ipConfig: { ...fx.knxIp.ipConfig, IPAddress: "192.0.2.300" } },
-      { ipConfig: { ...fx.knxIp.ipConfig, DnsServer: "1.1.1.1" } },
+      { ipConfig: { ...fx.knxIp.ipConfig, DnsServer: "192.0.2.53" } },
       { additionalAddresses: [255, 254, 253] },
       { additionalAddresses: [255, 254, 253, 256] },
       { securityAttributes: [...fx.knxIp.securityAttributes, "DeviceAuthenticationCode"] },
       { toolKeyLoaded: false },
       { busInterfaces: 1 },
-      { installation: { ...fx.knxIp.installation, IPRoutingMulticastAddress: "239.0.0.1" } },
+      { installation: { ...fx.knxIp.installation, IPRoutingMulticastAddress: "233.252.0.1" } },
       { installation: { ...fx.knxIp.installation, BCUKey: "305419896" } },
       { installation: { ...fx.knxIp.installation, IPRoutingLatencyTolerance: "1000" } },
     ];
@@ -116,14 +123,14 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
     expect(m.reads).toEqual([]);
   });
 
-  // A unit as the house unit was after ETS's download: the image, and the KNXnet/IP properties the plan writes,
+  // A unit as an MDT SCN-IP000.03 is after ETS's download: the image, and the KNXnet/IP properties the plan writes,
   // the friendly name in German.
   const unit = (over: { name?: string; props?: Record<number, Buffer>; secured?: boolean; overUsb?: boolean; eeprom?: (b: Buffer) => void } = {}) => {
     const name = Buffer.from(over.name ?? "SCN-IP000.03 IP Interface mit ");
     const { image, knxIp: writes } = planSystem1Download(cfg, params, knxIp(), name);
     const held = new Map<number, Buffer>(writes.map((w) => [w.pid, Buffer.from(w.data)]));
     held.set(76, name);
-    held.set(64, Buffer.from("020000000001", "hex"));
+    held.set(64, Buffer.from("020000000001", "hex")); // a locally administered stand-in MAC
     for (const [pid, b] of Object.entries(over.props ?? {})) held.set(Number(pid), b);
     const bytes = Buffer.from(image); bytes[0x76] = 32; // the TTL byte the unit keeps PID 67 in
     over.eeprom?.(bytes);
@@ -151,7 +158,7 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
     expect(await code(dry(unit({ secured: false })))).toBe("SYSTEM1_SECURE_SESSION_REQUIRED");
     expect(await code(dry(unit({ overUsb: true })))).toBe("SYSTEM1_TRANSPORT_UNCAPTURED");
     expect(await code(classify(cfg).downloadFull(asDev(unit() as unknown as MockEeprom), "MV-0012", { deviceId: "d", ia: "1.1.250", appXml: "", params, links: [{ comObjNum: 1, gaRaws: [1] }], knxIp: knxIp(), dryRun: true, persistBackups: () => "b" }))).toBe("SYSTEM1_LOAD_UNCAPTURED");
-    for (const [pid, b] of [[60, "cb00712a"], [55, "04"], [53, "11ff11fe11fd11fb"], [62, "cb0071fe"]] as const) {
+    for (const [pid, b] of [[60, "c0000201"], [55, "04"], [53, "11ff11fe11fd11fb"], [62, "c00002fe"]] as const) {
       expect([pid, await code(dry(unit({ props: { [pid]: Buffer.from(b, "hex") } })))]).toEqual([pid, "SYSTEM1_IP_CHANGE_UNCAPTURED"]);
     }
     expect(await code(dry(unit({ eeprom: (b) => { b[0x04] = 0x72; } })))).toBe("SYSTEM1_UNIT_UNCAPTURED");

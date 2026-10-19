@@ -1017,7 +1017,7 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
   test("the project's assigned senders and the other devices on its secured addresses reach the profile", async () => {
     const state = freshState();
     const { projectId, deviceId } = await secureProject(state);
-    putGroupSenders(state.db, projectId, [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
+    putGroupSenders(state.db, projectId, [{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
     state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, 'O-1_R-1', 0, 1)").run(projectId, deviceId);
     // A link of a device the project no longer holds names no one who could send.
     state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, 'gone', 'O-1_R-1', 0, 1)").run(projectId);
@@ -1025,7 +1025,7 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     gaFlashImpl = async (o) => { seen = o; return flashed(true); };
     try { await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
     finally { gaFlashImpl = realGaFlash; }
-    expect(seen.security?.senders).toEqual(new Map([[1, [0x1164]]]));
+    expect(seen.security?.senders).toEqual(new Map([[1, [0x12fa]]]));
     expect(seen.security?.otherDevices).toEqual(new Map());
   });
 
@@ -1164,7 +1164,7 @@ corpusDescribe("a Data Secure device: a security object that no longer matches i
     expect(await security(state, p.projectId, p.deviceId)).toBeNull();
 
     // A sender assigned to the address (not this device's own link) changes its sender table.
-    putGroupSenders(state.db, p.projectId, [{ gaRaw: 1, ia: "1.1.100", source: "busforge" }]);
+    putGroupSenders(state.db, p.projectId, [{ gaRaw: 1, ia: "1.2.250", source: "busforge" }]);
     expect(await security(state, p.projectId, p.deviceId)).toBe("changed");
     // The link baseline is untouched: the device's own change count says nothing about it.
     expect(getDeviceChangedKeys(state.db, p.projectId, p.deviceId).links.size).toBe(0);

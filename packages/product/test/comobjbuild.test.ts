@@ -142,7 +142,7 @@ describe("the whole table", () => {
 
   test("a configuration that activates no object is written as a table of silent entries, as ETS does", () => {
     // GVS AMMA at application defaults (every output disabled): ETS 6 wrote the count 532 and 532
-    // zero entries (ETS capture of 1.1.203, 2026-09-25).
+    // zero entries (ETS capture of a GVS AMMA).
     expect(buildComObjectTable(new Map(), 532, new Set())).toEqual(Buffer.concat([Buffer.from("0214", "hex"), Buffer.alloc(1064)]));
   });
 

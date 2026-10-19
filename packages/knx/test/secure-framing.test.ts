@@ -14,7 +14,7 @@ describe("chunk sizes of a secured session", () => {
   });
 
   test("a secured session leaves room for the framing on the path and in the device's APDU", () => {
-    // Jung 400021SE (maximum APDU 233) over the bench: 35 bytes read back on 2026-09-28, 48 did not.
+    // Jung 400021SE (maximum APDU 233) on the test bench: 35 bytes read back, 48 did not.
     // Writes are the 22-byte memory chunks and 18-byte property elements ETS sends it there.
     expect(transferChunks(233, true)).toEqual({ classicRead: 35, extRead: 35, extWrite: 22, propRead: 31, propWrite: 18 });
     // A small device APDU is the binding limit: data + 5 (write) + 13 must not exceed it.

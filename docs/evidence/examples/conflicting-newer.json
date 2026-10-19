@@ -1,8 +1,8 @@
 [
   {
     "schema": "busforge.evidence/1",
-    "id": "gvs-amma-api-2026-07-25T07-27-26Z-flashParams",
-    "recordedAt": "2026-07-25T07:27:26.524Z",
+    "id": "gvs-amma-api-flashParams-1",
+    "recordedAt": "2000-01-02T07:27:26.524Z",
     "subject": {
       "manufacturer": "M-0085",
       "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
@@ -60,14 +60,14 @@
     "supersedeReason": null,
     "source": {
       "kind": "smoke-report",
-      "artifact": "tools/smoke/reports/gvs-amma-api-2026-07-25T07-27-26-524Z.json",
-      "sha256": "b2d7cf7b67064b4ae02ba2828c578aa266bf4db86548419d2ee19d35bd9c9bed"
+      "artifact": null,
+      "sha256": null
     }
   },
   {
     "schema": "busforge.evidence/1",
-    "id": "gvs-amma-api-2026-07-25T08-15-32Z-flashParams",
-    "recordedAt": "2026-07-25T08:15:32.514Z",
+    "id": "gvs-amma-api-flashParams-2",
+    "recordedAt": "2000-01-02T08:15:32.514Z",
     "subject": {
       "manufacturer": "M-0085",
       "productRef": "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
@@ -125,8 +125,8 @@
     "supersedeReason": null,
     "source": {
       "kind": "smoke-report",
-      "artifact": "tools/smoke/reports/gvs-amma-api-2026-07-25T08-15-32-514Z.json",
-      "sha256": "89189e9b74825e210a84d16e949c1d72c7b642d82c5114d35801706742c374ce"
+      "artifact": null,
+      "sha256": null
     }
   }
 ]

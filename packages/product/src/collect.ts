@@ -67,7 +67,7 @@ const MAX_MCB_REGIONS = 16;
 
 // docs/raw-acquisition.md, "Bounds". The duration and the failures in a row are the bounds a user is
 // told about. memoryBytes only guards against a device that states a wrong table size; at the request
-// rates of the bench (about 4 per second) the duration ends a job long before it.
+// rates of a TP line (about 4 per second) the duration ends a job long before it.
 export const COLLECT_LIMITS = {
   durationMs: 10 * 60_000,
   failuresInARow: 3,

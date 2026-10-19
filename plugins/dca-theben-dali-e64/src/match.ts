@@ -29,7 +29,7 @@ export const manifest: DcaManifest = {
   category: "DALI configuration",
   appIdPrefix: "M-0048_A-9071",
   dcaAppId: "M0048-A00C8",
-  compatibleAppVersions: [32], // verified against a device (ApplicationVersion 32)
+  compatibleAppVersions: [32], // verified against a gateway running ApplicationVersion 32
   baggageToken: "Dalie64",
 };
 

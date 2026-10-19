@@ -4,12 +4,12 @@ The fixtures themselves are not in this repository: they are the `catalogue/` di
 private corpus ([`docs/testing.md`](../../../../../docs/testing.md#the-private-corpus)). This
 directory keeps only `golden.json`, their per-fixture counts and content hashes.
 
-Every distinct manufacturer `ApplicationProgram` found across a real multi-manufacturer KNX
-installation (13 products, 6 manufacturers), plus bench products added for ETS-capture tests, gzipped, used by `real-catalogue.test.ts` to pin the
-parser and the image projection against real catalogue data: every parameter type kind, unions,
-modules, bitfields, and the segment layouts real hardware uses. The set is small enough
-(~1.2 MB gzipped) to cover completely rather than sample, so every product in that installation is
-a regression guard.
+16 manufacturer `ApplicationProgram`s from 9 manufacturers (M-0002, M-0004, M-0008, M-0048, M-0081,
+M-0083, M-0085, M-008E, M-0162), gzipped: the applications the corpus's ETS captures and the device tests
+refer to. `real-catalogue.test.ts` uses them to pin the parser and the image projection
+against real catalogue data: every parameter type kind, unions, modules, bitfields, and the segment
+layouts real hardware uses. The set is small enough (~1.2 MB gzipped) to cover completely rather
+than sample, so every application in it is a regression guard.
 
 ## No personal data
 

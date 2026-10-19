@@ -3,7 +3,7 @@ import type { Levels } from "@busforge/knx";
 
 export interface Device {
   id: string;           // the 0.xml DeviceInstance Id, e.g. "P-07C7-0_DI-1"
-  ia: string;           // "1.2.50"
+  ia: string;           // "1.2.3"
   name: string;
   productRef: string;   // M-0048_H-...-P-...
   appRef: string;       // Hardware2ProgramRefId

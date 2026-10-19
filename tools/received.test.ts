@@ -21,7 +21,7 @@ const MEMORY = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 
 function collected(over: Partial<CollectPackage> = {}): CollectPackage {
   return {
-    format: "busforge-raw-collect/1", ia: "1.1.203", mask: "MV-07B0", family: "system-b", secured: false, authorizeLevel: 0, maxApdu: 55,
+    format: "busforge-raw-collect/1", ia: "1.2.3", mask: "MV-07B0", family: "system-b", secured: false, authorizeLevel: 0, maxApdu: 55,
     plan: null,
     records: [
       rec({ step: "descriptor", space: "descriptor", target: { type: 0 }, bytes: "07b0" }),
@@ -63,9 +63,9 @@ describe("checkPackage", () => {
   });
 
   test("takes the file the app saves from a whole collection of a simulated device", async () => {
-    const dev = new KnxDevice(new SimSystemB(), "1.1.203");
+    const dev = new KnxDevice(new SimSystemB(), "1.2.3");
     await dev.connect();
-    const collected = await collectDevice(dev, { ia: "1.1.203", signal: new AbortController().signal, reopen: async () => { await dev.disconnect(); await dev.connect(); } });
+    const collected = await collectDevice(dev, { ia: "1.2.3", signal: new AbortController().signal, reopen: async () => { await dev.disconnect(); await dev.connect(); } });
     await dev.disconnect();
     const pkg = toDiagnosticPackage(collected, {
       busforge: { version: "0.0.1", commit: "abc1234" }, connection: { kind: "usb", usbVendorId: 0x147b, usbProductId: 0x5120 }, error: "",
@@ -232,7 +232,7 @@ describe("receive, load and remove", () => {
     const { id } = receive(corpus, file(bytes(diagnostic())), DETAILS);
     const dir = join(corpus, "received", id);
     const original = readFileSync(join(dir, "package.json"));
-    writeFileSync(join(dir, "package.json"), bytes({ ...diagnostic(), ia: "1.1.1" }));
+    writeFileSync(join(dir, "package.json"), bytes({ ...diagnostic(), ia: "1.2.7" }));
     expect(() => loadReceived(corpus)).toThrow(/not the file that was received/);
     writeFileSync(join(dir, "package.json"), original);
 

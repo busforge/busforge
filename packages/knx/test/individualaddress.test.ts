@@ -28,7 +28,7 @@ class SimBus implements KnxTransport {
   progModeWrites = 0;
 
   // `negativeCon`: a frame to an address no device acknowledges comes back as a negative
-  // L_Data.con (the ABB KNX-USB stick behind the bench bridge, 2026-09-30) instead of silence.
+  // L_Data.con (as an ABB KNX-USB stick behind a bridge does) instead of silence.
   constructor(public devices: SimDevice[], public negativeCon = false) {}
   nacks = 0;
   async connect() {}
@@ -83,7 +83,7 @@ class SimBus implements KnxTransport {
   }
 }
 
-const NEW_IA = "1.2.32";
+const NEW_IA = "1.2.3";
 const fast = { probeMs: 20, settleMs: 5 };
 
 describe("reading who is in programming mode", () => {

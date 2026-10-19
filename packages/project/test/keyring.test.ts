@@ -53,10 +53,10 @@ describe("readKeyring (ETS known-answer files)", () => {
 
 describe("writeKeyring", () => {
   const base: Keyring = {
-    project: "Bench", createdBy: "Busforge", created: "2026-10-02T08:00:00",
-    devices: [{ individualAddress: "1.1.204", toolKey: bytes("00112233445566778899aabbccddeeff"), sequenceNumber: 0x011028n, serialNumber: bytes("0083a1b2c3d4"), fdsk: bytes("ffeeddccbbaa99887766554433221100") }],
+    project: "Example", createdBy: "Busforge", created: "2025-03-14T08:00:00",
+    devices: [{ individualAddress: "1.2.4", toolKey: bytes("00112233445566778899aabbccddeeff"), sequenceNumber: 0x011028n, serialNumber: bytes("0083a1b2c3d4"), fdsk: bytes("ffeeddccbbaa99887766554433221100") }],
     groups: [{ address: 1, key: bytes("0102030405060708090a0b0c0d0e0f10") }, { address: 2305, key: bytes("e14343050f4377e3159b90afe0228216") }],
-    interfaces: [{ individualAddress: "1.1.100", groups: [{ address: 1, senders: ["1.1.204", "1.1.203"] }, { address: 2305, senders: [] }] }],
+    interfaces: [{ individualAddress: "1.2.250", groups: [{ address: 1, senders: ["1.2.4", "1.2.3"] }, { address: 2305, senders: [] }] }],
   };
 
   test("encrypts a key as ETS does: the group key of keyring.knxkeys under its Created and password", () => {
@@ -65,22 +65,22 @@ describe("writeKeyring", () => {
   });
 
   test("round-trips through the reader with every value", () => {
-    const xml = writeKeyring(base, "bench-pw");
+    const xml = writeKeyring(base, "example-pw");
     expect(xml.startsWith("﻿<?xml")).toBe(true);
     expect(xml).toContain('xmlns="http://knx.org/xml/keyring/1"');
     expect(xml).toContain('SerialNumber="0083A1B2C3D4"');
-    const k = readKeyring(xml, "bench-pw");
-    expect(k.project).toBe("Bench");
+    const k = readKeyring(xml, "example-pw");
+    expect(k.project).toBe("Example");
     expect(k.created).toBe(base.created);
     expect(k.devices).toHaveLength(1);
     const d = k.devices[0];
-    expect(d.individualAddress).toBe("1.1.204");
+    expect(d.individualAddress).toBe("1.2.4");
     expect(hex(d.toolKey)).toBe("00112233445566778899aabbccddeeff");
     expect(d.sequenceNumber).toBe(0x011028n);
     expect(hex(d.serialNumber)).toBe("0083a1b2c3d4");
     expect(hex(d.fdsk)).toBe("ffeeddccbbaa99887766554433221100");
     expect(k.groups.map((g) => [g.address, hex(g.key)])).toEqual([[1, "0102030405060708090a0b0c0d0e0f10"], [2305, "e14343050f4377e3159b90afe0228216"]]);
-    expect(k.interfaces).toEqual([{ individualAddress: "1.1.100", groups: [{ address: 1, senders: ["1.1.204", "1.1.203"] }, { address: 2305, senders: [] }] }]);
+    expect(k.interfaces).toEqual([{ individualAddress: "1.2.250", groups: [{ address: 1, senders: ["1.2.4", "1.2.3"] }, { address: 2305, senders: [] }] }]);
   });
 
   test("escapes a project name and still verifies", () => {
@@ -101,7 +101,7 @@ describe("writeKeyring", () => {
   test("refuses what ETS's readers would take differently", () => {
     expect(() => writeKeyring(base, "")).toThrow(/password/);
     expect(() => writeKeyring(base, "pässword")).toThrow(/ASCII/);
-    expect(() => writeKeyring({ ...base, created: "2026-10-02" }, "pw")).toThrow(/Created/);
+    expect(() => writeKeyring({ ...base, created: "2025-03-14" }, "pw")).toThrow(/Created/);
     expect(() => writeKeyring({ ...base, groups: [{ address: 1, key: bytes("00") }] }, "pw")).toThrow(/16 bytes/);
     expect(() => writeKeyring({ ...base, groups: [{ address: 0, key: bytes("00112233445566778899aabbccddeeff") }] }, "pw")).toThrow(/group address/);
     expect(() => writeKeyring({ ...base, devices: [{ individualAddress: "16.1.1" }] }, "pw")).toThrow(/individual address/);

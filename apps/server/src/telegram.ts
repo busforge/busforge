@@ -10,7 +10,7 @@ export const TELEGRAM_SECURITY: readonly TelegramSecurity[] = ["decrypted", "noK
 
 export interface Telegram {
   ts: number;
-  src: string;    // source individual address "1.2.50"
+  src: string;    // source individual address "1.2.3"
   dst: string;    // destination group address "1/2/3"
   dstRaw: number; // 16-bit GA, kept for DB storage and GA-name joins
   kind: TelegramKind;

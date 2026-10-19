@@ -100,7 +100,7 @@ export class KnxIpTunnel implements KnxTransport {
   private ackTimeoutMs = 1500;
   // TCP: the sends waiting for the gateway's L_Data.con, oldest first, and how long each may wait (an
   // instance field so a test can shorten it). Over TCP the confirmation is the only sign that a frame
-  // left the gateway; a stream that stalls (lost segments in retransmission back-off, 2026-09-30 on
+  // left the gateway; a stream that stalls (lost segments in retransmission back-off, seen on
   // the bench's Wi-Fi) otherwise looks exactly like a device that stopped answering.
   private conWaiters: ConWaiter[] = [];
   private conTimeoutMs = 3000;

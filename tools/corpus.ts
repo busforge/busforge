@@ -1,5 +1,5 @@
 // The private test corpus: files the tests need but the repository does not carry, because they
-// are third-party catalogue data or were recorded on a real installation (docs/testing.md,
+// are third-party catalogue data or were recorded on real devices (docs/testing.md,
 // "The private corpus"). Its root comes from BUSFORGE_CORPUS and nowhere else.
 //
 //   unset                  -> the corpus is absent: corpusRoot() is null, every read refuses

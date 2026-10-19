@@ -103,7 +103,7 @@ corpusDescribe("applications without tunnelling entries are unaffected", () => {
     expect(declaresTunnelingEntries(parseAppConfig(xml))).toBe(n !== undefined && !(/^\d+$/.test(n) && Number(n) === 0));
   });
 
-  // The bench devices whose full download is proven, plus the System B reference app the
+  // The products whose full download is proven, plus the System B reference app the
   // orchestration tests run on: each still offers it.
   test.each([
     "M-0085_A-0072-30-69AA.xml.gz",       // GVS AMMA-04/06.S

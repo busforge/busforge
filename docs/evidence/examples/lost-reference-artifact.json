@@ -1,7 +1,7 @@
 {
   "schema": "busforge.evidence/1",
-  "id": "openknx-raumcontroller-etsdiff-2026-07-20",
-  "recordedAt": "2026-07-20T12:04:02.000Z",
+  "id": "openknx-raumcontroller-etsdiff",
+  "recordedAt": "2000-01-01T12:04:02.000Z",
   "subject": {
     "manufacturer": "M-00FA",
     "productRef": "M-00FA_H-0xA012-1_P-OpenKnxRaumController",
@@ -20,14 +20,14 @@
     "server": null,
     "runner": {
       "name": "tools/etsdiff.ts",
-      "revision": "52ed96e"
+      "revision": null
     },
     "spec": null
   },
   "scope": {
     "operation": "fullDownload",
     "channel": "tool",
-    "configuration": "the configuration of a productive controller as ETS downloaded it (parameter image only)",
+    "configuration": "the configuration of a controller as ETS downloaded it (parameter image only)",
     "configurationFingerprint": null
   },
   "origin": {
@@ -42,7 +42,7 @@
     },
     "reference": {
       "state": "not-assessed",
-      "detail": "tools/etsdiff.ts reported 0 of 30 parameter segments differing from the ETS download (commit 52ed96e), but the ETS capture was not retained, so the comparison cannot be re-checked"
+      "detail": "tools/etsdiff.ts reported 0 of 30 parameter segments differing from the ETS download, but the ETS capture was not retained, so the comparison cannot be re-checked"
     },
     "behaviour": {
       "state": "not-assessed"

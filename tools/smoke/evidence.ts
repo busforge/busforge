@@ -48,6 +48,19 @@ const detail = (d: string) => (d ? { detail: d } : {});
 // skip changes the revision, which is what separates a spec edit from a device outcome.
 export const specRevision = (spec: DeviceSpec): string => sha256(JSON.stringify(spec)).slice(0, 12);
 
+// The server names a pre-flash backup by its absolute path on the server's host. A report records
+// it from the server's data directory on, "projects/<id>/backups/<file>", so no host path reaches a
+// kept report; a path of any other shape is refused rather than written as it came.
+export function serverDataPath(path: string): string {
+  const m = /(?:^|\/)(projects\/[^/]+\/backups\/[^/]+)$/.exec(path);
+  if (!m) throw new Error(`the server returned a backup path that is not <data dir>/projects/<id>/backups/<file>: ${path}`);
+  return m[1];
+}
+
+// A run's report as the runner writes it: every backup path relative to the server's data directory.
+export const reportText = (report: unknown): string =>
+  `${JSON.stringify(report, (key, value: unknown) => (key === "backup" && typeof value === "string" ? serverDataPath(value) : value), 2)}\n`;
+
 export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditions): EvidenceRecord[] {
   const appProgramId = programOf(spec.device.appRef);
   const recordedAt = new Date(run.startedAt).toISOString();

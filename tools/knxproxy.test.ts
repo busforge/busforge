@@ -84,7 +84,7 @@ describe("the proxy on the wire", () => {
     const lines = readFileSync(log, "utf8").split("\n");
     expect(lines.some((l) => l.includes("ETS->BRIDGE TUNNELLING_REQ") && l.endsWith(memWrite.toString("hex")))).toBe(true);
     expect(lines.some((l) => l.includes("BRIDGE->ETS SEARCH_RES_EXT") && l.endsWith(searchResExt.toString("hex")))).toBe(true);
-    expect(lines.some((l) => l.includes("--- rewrote control HPAI 08010a0000090e57 -> 0801c00002070e58 ---"))).toBe(true);
+    expect(lines.some((l) => l.includes("--- rewrote control HPAI 0801c00002090e57 -> 0801c00002070e58 ---"))).toBe(true);
   });
 
   test("with a Sync gap, a second Sync request is held that long after the first, and the frames behind it keep their order", async () => {

@@ -156,10 +156,10 @@ corpusDescribe("POST /read-back", () => {
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
     // Both sides show #14; the project links #0, the device links #14 and not #0.
     state.db.run("INSERT INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, '1')", [projectId, deviceId, MDT_SHOWS_14]);
-    link(state, projectId, deviceId, "MD-2_M-2_MI-1_O-3-0_R-11", 0x1b01);
-    readImpl = reading("MV-0705", [{ comObjNum: 14, gaRaws: [0x1b03] }], new Map([[MDT_SHOWS_14, "1"]]));
+    link(state, projectId, deviceId, "MD-2_M-2_MI-1_O-3-0_R-11", 0x77c8);
+    readImpl = reading("MV-0705", [{ comObjNum: 14, gaRaws: [0x77c9] }], new Map([[MDT_SHOWS_14, "1"]]));
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(0);
-    expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x1b03 }]);
+    expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x77c9 }]);
     expect(await changedObjects(state, projectId, deviceId)).toEqual([0, 14]);
   });
 
@@ -167,9 +167,9 @@ corpusDescribe("POST /read-back", () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, realXml(`${MDT}.xml.gz`));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
-    readImpl = reading("MV-0705", [{ comObjNum: 14, gaRaws: [0x1b03] }], new Map([[MDT_SHOWS_14, "1"]]));
+    readImpl = reading("MV-0705", [{ comObjNum: 14, gaRaws: [0x77c9] }], new Map([[MDT_SHOWS_14, "1"]]));
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
-    expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x1b03 }]);
+    expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x77c9 }]);
   });
 
   // Jung 400021SE: a module template object has a bare number of its own (#5 names
@@ -178,7 +178,7 @@ corpusDescribe("POST /read-back", () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, realXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
-    readImpl = reading("MV-07B0", [{ comObjNum: 5, gaRaws: [0x1b03] }], new Map());
+    readImpl = reading("MV-07B0", [{ comObjNum: 5, gaRaws: [0x77c9] }], new Map());
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
     expect(rows(state, projectId, deviceId)).toEqual([]);
   });
@@ -187,7 +187,7 @@ corpusDescribe("POST /read-back", () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, realXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
-    readImpl = reading("MV-07B0", [{ comObjNum: 254, gaRaws: [0x1b03] }]);
+    readImpl = reading("MV-07B0", [{ comObjNum: 254, gaRaws: [0x77c9] }]);
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
   });
 

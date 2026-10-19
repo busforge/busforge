@@ -95,7 +95,7 @@ corpusDescribe("device profile capabilities (read vs flash, per memory model)", 
     const caps = classify(cfg).capabilities();
     // fullDownload true: property-mapped System 7 authors its com-object table into the declared
     // <ComObjectTable CodeSegment> (buildComObjectTableMv0705), live-hardware certified on the sibling
-    // MDT BE-02001.02 (1.1.56). A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
+    // MDT BE-02001.02. A MV-0705 app WITHOUT that segment would stay false (cannot author L3).
     // structuralFlash true: the family's rule (profiles.ts structuralFirmwareOff), tested against this
     // application's revert capture.
     expect(caps).toEqual({ readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true });
@@ -149,9 +149,9 @@ describe("selectFlashLinks (ETS-parity hidden-object handling)", () => {
 
 describe("telegram decoding", () => {
   test("GroupValueWrite with a 1-bit value", () => {
-    // src 1.2.50, dst 0/0/1, APDU 00 81 -> write, value bit 1
-    const t = decodeGroupTpdu(0x1232, 0x0001, Buffer.from([0x00, 0x81]), 1000);
-    expect(t).toMatchObject({ src: "1.2.50", dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite", raw: "01" });
+    // src 1.2.3, dst 0/0/1, APDU 00 81 -> write, value bit 1
+    const t = decodeGroupTpdu(0x1203, 0x0001, Buffer.from([0x00, 0x81]), 1000);
+    expect(t).toMatchObject({ src: "1.2.3", dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite", raw: "01" });
   });
   test("GroupValueRead", () => {
     expect(decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x00]), 0).kind).toBe("GroupValueRead");

@@ -374,13 +374,14 @@ bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml|.xml.gz|.knxprod> [--a
   [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
 # e.g. the MDT worked case (passes: every byte ETS wrote matches):
 # (<ia>, <ga-obj0> and <ga-obj6> are the device address and the group addresses of objects 0
-# and 6 in the mdt-be02001 case of tools/etsdiff.test.ts)
+# and 6 as ETS wrote them in that capture)
 bun run tools/etsdiff.ts "$BUSFORGE_CORPUS/captures/mdt-be02001-ets-fulldownload-linked.log" \
   --app="$BUSFORGE_CORPUS/catalogue/M-0083_A-00B6-32-9642.xml.gz" --ia=<ia> --link=0:<ga-obj0>
 # An ETS partial download: --partial compares what it wrote and records one reference per flash
 # operation it touched (flashParams, flashLinks); a segment ETS left alone is not a gap.
-# --evidence records the capture path as given, so name it relative to the corpus root.
+# --evidence records the capture path as given, so name it relative to the corpus root. The kept
+# records live in the corpus too; regenerate the bundle afterwards (tools/evidence-bundle.ts --write).
 repo=$PWD; (cd "$BUSFORGE_CORPUS" && bun run "$repo/tools/etsdiff.ts" captures/mdt-be02001-ets-partial-links.log \
   --app=catalogue/M-0083_A-00B6-32-9642.xml.gz --ia=<ia> --link=0:<ga-obj0> --link=6:<ga-obj6> --partial \
-  --evidence="$repo/docs/evidence/reference/mdt-be02001-partial-links.json")
+  --evidence=evidence/reference/mdt-be02001-partial-links.json)
 ```

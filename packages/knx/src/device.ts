@@ -201,7 +201,7 @@ function assertAddressable(addr: number, len: number, what: string): void {
 // arrives within about a second of the previous one (docs/findings.md §21: 900 ms ignored, 1000 ms
 // answered), so every session a KnxDevice opens to a device it synced with shortly before waits,
 // whichever transport it runs over: the server opens a new tunnel per operation, and two previews
-// back to back (parameters, then group tables) met the window on 2026-09-30. Keyed by individual
+// back to back (parameters, then group tables) meet that window. Keyed by individual
 // address alone, so the same address on another line in the same process waits needlessly, which
 // costs at most the gap.
 export const SYNC_GAP_MS = 1200;
@@ -669,7 +669,7 @@ export class KnxDevice {
   // Bytes per A_Memory_Read: 12 fit a standard frame. A device that declares a longer APDU gets
   // requests up to that length (3 octets of APCI and address), capped at EXT_READ_CHUNK: the path
   // (interface, couplers, a single USB HID report) has its own limit, and that size is what the
-  // extended reads already carry over the bench's USB interface and the house's IP interface.
+  // extended reads already carry over a KNX-USB interface and an MDT IP interface.
   async classicReadChunk(): Promise<number> {
     return transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead;
   }
@@ -967,7 +967,7 @@ export class KnxDevice {
   // Not read back: on thelsing/OpenKNX (RP2040) a memory write lands in a RAM buffer of the flash
   // erase block and a memory read returns the flash itself until the block is committed (at the
   // bracket's restart, or when a write moves to another block), so a read straight after the write
-  // shows the old bytes (house OpenKNX RaumController, 2026-09-27). ETS reads nothing back either.
+  // shows the old bytes (seen on an OpenKNX RaumController). ETS reads nothing back either.
   // The per-chunk return code and the caller's read-back after the restart are the proof.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");

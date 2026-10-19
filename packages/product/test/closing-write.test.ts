@@ -60,7 +60,7 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     }
   }
   const asDev = (m: MockDevice) => m as unknown as KnxDevice;
-  const base = { deviceId: "d", ia: "1.1.203", appXml: xml, params, baseParams: params, moduleInstances: [], dryRun: false, persistBackups: () => "backup" };
+  const base = { deviceId: "d", ia: "1.2.3", appXml: xml, params, baseParams: params, moduleInstances: [], dryRun: false, persistBackups: () => "backup" };
   // One full download (it pauses 8 s for the device to save); every other test starts from a copy of it.
   let fullDownload: Promise<MockDevice> | undefined;
   const commissioned = async () => {

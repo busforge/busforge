@@ -323,7 +323,7 @@ export function setProjectConnection(db: Database, id: string, connectionId: str
 // this codebase refuses.
 export function setDeviceAddress(db: Database, projectId: string, deviceId: string, ia: string): { id: string; ia: string } {
   if (!/^(1[0-5]|[0-9])\.(1[0-5]|[0-9])\.(2[0-4][0-9]|25[0-5]|1?[0-9]?[0-9])$/.test(ia)) {
-    throw new ApiError("IA_INVALID", `"${ia}" is not a valid individual address (area.line.device, e.g. 1.2.32)`);
+    throw new ApiError("IA_INVALID", `"${ia}" is not a valid individual address (area.line.device, e.g. 1.2.3)`);
   }
   const dev = db.query("SELECT instance_id FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId);
   if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);

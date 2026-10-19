@@ -158,7 +158,7 @@ function InterfaceSenders({ projectId, raw, data }: { projectId: string; raw: nu
         </ul>
       )}
       <form className="mt-2 flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (ia.trim()) add.mutate(ia.trim(), { onSuccess: () => setIa("") }); }}>
-        <input value={ia} onChange={(e) => setIa(e.target.value)} placeholder="1.1.100" aria-label={t("gaDevices.addSender")}
+        <input value={ia} onChange={(e) => setIa(e.target.value)} placeholder="1.2.250" aria-label={t("gaDevices.addSender")}
           className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-xs" data-testid="ga-sender-input" />
         <button type="submit" disabled={add.isPending || !ia.trim()} className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs hover:bg-secondary disabled:opacity-50" data-testid="ga-sender-add">
           <Plus className="size-3.5" /> {t("gaDevices.addSender")}

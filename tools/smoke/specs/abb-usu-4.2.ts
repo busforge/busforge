@@ -1,7 +1,7 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // ABB US/U 4.2 universal interface (MV-0701, System 7 memory-mapped). The from-factory full download
-// was hardware byte-verified 2026-07-18; this spec re-proves the download + the surgical param sweep
+// is hardware byte-verified; this spec re-proves the download + the surgical param sweep
 // after any code change. Refs pinned verbatim from GET .../config and GET /api/catalog/products.
 export const abbUsu42: DeviceSpec = {
   id: "abb-usu-4.2",
@@ -11,7 +11,7 @@ export const abbUsu42: DeviceSpec = {
     ia: "1.1.201",
     mask: "MV-0701",
   },
-  provision: "skip-if-present", // the bench device keeps 1.1.201 between runs; unattended
+  provision: "skip-if-present", // the bench device keeps its address between runs; unattended
   // Channel A = "control an LED" (an output). This reveals "Ausgang A" and other objects; the
   // flashLinks capability links the first visible one to a random GA and byte-verifies it on read-back.
   configure: [{ set: { paramRefId: "M-0002_A-A001-13-63C2_P-9_R-9", value: "104" } }],

@@ -11,7 +11,7 @@ import type { KnxTransport } from "../src/transport.ts";
 // identity-checked drop() plus cancelling a closed channel's queue.
 
 const noopUdp: ServerSocket = { bind: (_p, cb) => cb(), onMessage: () => {}, onError: () => {}, addMembership: () => {}, send: () => {}, close: () => {} };
-const IA = (1 << 12) | (1 << 8) | 100; // 1.1.100
+const IA = (1 << 12) | (2 << 8) | 250; // 1.2.250
 
 class FakeConn implements ServerTcpSocket {
   written: Buffer[] = [];
@@ -27,8 +27,8 @@ class FakeConn implements ServerTcpSocket {
 
 const connectReq = knxFrame(SVC.CONNECT_REQ, Buffer.concat([hpaiTcp(), hpaiTcp(), Buffer.from([0x04, 0x04, 0x02, 0x00])]));
 const disconnectReq = (ch: number) => knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([ch, 0x00]), hpaiTcp()]));
-const tunnelReq = (ch: number, seq: number) => knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, ch, seq, 0x00]), Buffer.from([0x11, 0x00, 0xbc, 0xe0, 0x11, 0x64, 0x1b, 0x01, 0x01, 0x00, 0x81])]));
-const busInd = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x11, 0x64, 0x01, 0x00, 0x81]); // an L_Data.ind the bridge fans to clients
+const tunnelReq = (ch: number, seq: number) => knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, ch, seq, 0x00]), Buffer.from([0x11, 0x00, 0xbc, 0xe0, 0x12, 0xfa, 0x77, 0xc8, 0x01, 0x00, 0x81])]));
+const busInd = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]); // an L_Data.ind the bridge fans to clients
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("KnxIpServer: a stale channel's dying queue must not take a successor with it", () => {

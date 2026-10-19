@@ -77,8 +77,8 @@ export interface SecurityObjectTables { groupKeys: Buffer; goFlags: Buffer; send
 export const GROUP_KEY_ENTRY = 18;
 export const SENDER_ENTRY = 8;
 
-// The security object's bracket as ETS runs it inside a secured download (Jung 400021SE,
-// 2026-09-28 and 2026-09-29): after the memory writes, LOAD, clear the individual-address table
+// The security object's bracket as ETS runs it inside a secured download (ETS captures of a Jung
+// 400021SE): after the memory writes, LOAD, clear the individual-address table
 // (element 0, the count, set to 0), write its sender entries from element 1, the group key table and
 // the per-object flags, LOAD_COMPLETED. Its UNLOAD goes with the other objects' unloads before
 // anything is written (securityUnload).

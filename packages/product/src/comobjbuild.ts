@@ -132,7 +132,7 @@ export function buildComObjectTable(active: Map<number, CfgComObjImage>, declare
       `communication object ${zero.refId} resolves to number ${zero.number}; com-object numbers are 1-based (entry 0 of the table is its count), so this cannot be programmed`);
   }
   // A configuration may activate no object at all (every channel disabled): ETS then writes the
-  // declared count with every entry 0x0000 (GVS AMMA capture, 2026-09-25), and so does this. Only an
+  // declared count with every entry 0x0000 (GVS AMMA capture), and so does this. Only an
   // application that declares no object has no table to write.
   if (active.size === 0 && declaredCount < 1) {
     throw new ProductError("COM_OBJECT_TABLE_EMPTY",
@@ -230,7 +230,7 @@ export function programIdStamp(app: AppConfig): Buffer {
 
 // Group-address flash on System 7: the com-object table the device holds, with only the linked bit
 // (config 0x04) following the links, set on linked objects and cleared on the rest. ETS rewrites L3
-// on a group-address download on both LSM styles (2026-09-26 partial captures: the whole table on
+// on a group-address download on both LSM styles (partial-download captures: the whole table on
 // the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device holding a
 // correct table both equal this. Every other byte stays as the device holds it. Layout as in
 // buildComObjectTableMv0705.
@@ -254,7 +254,7 @@ export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<num
 // ETS lets the project set an object's flags and priority per device, over what the application
 // declares, and stores them on the device's ComObjectInstanceRef (ReadFlag, WriteFlag,
 // CommunicationFlag, TransmitFlag, UpdateFlag, ReadOnInitFlag as "Enabled"/"Disabled", Priority as
-// Low/High/Alert). Its download writes them into the com-object table: on the Gira M-0008 object
+// Low/High/Alert). Its download writes them into the com-object table: on a Gira M-0008 unit object
 // 64's config byte is 0x4f where the application's flags give 0x47 (read flag set,
 // captures/gira-m0008-ets-partial-revert.log). An absent attribute leaves the application's value.
 export interface ComObjInstanceOverride { flags: Partial<ComObjFlags>; priority?: ComObjPriority }

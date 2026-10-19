@@ -530,9 +530,9 @@ describe("project export", () => {
   test("round-trips the security state of recorded telegrams, and imports a log that has none", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x81]), 10));
-    insertTelegram(db, "p1", { ...decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x80]), 20), security: "decrypted" });
-    insertTelegram(db, "p1", undecodedSecureTelegram(0x1232, 1, "noKey", 30));
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x81]), 10));
+    insertTelegram(db, "p1", { ...decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x80]), 20), security: "decrypted" });
+    insertTelegram(db, "p1", undecodedSecureTelegram(0x1203, 1, "noKey", 30));
     const ex = exportProject(db, "p1", 5000, MK)!;
     importProjectExport(db, ex, "p2", 6000, MK);
     expect(recentTelegrams(db, "p2", 10).map((t) => [t.kind, t.raw, t.security])).toEqual([
@@ -561,22 +561,22 @@ describe("secured senders", () => {
   test("stores, lists, adds and removes the senders of a group address", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
-    addGroupSender(db, "p1", 1, "1.2.50");
-    addGroupSender(db, "p1", 2, "1.1.100");
+    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
+    addGroupSender(db, "p1", 1, "1.2.3");
+    addGroupSender(db, "p1", 2, "1.2.250");
     expect(listGroupSenders(db, "p1")).toEqual([
-      { gaRaw: 1, ia: "1.2.50", source: "busforge" }, { gaRaw: 1, ia: "1.1.100", source: "import" }, { gaRaw: 2, ia: "1.1.100", source: "busforge" },
+      { gaRaw: 1, ia: "1.2.3", source: "busforge" }, { gaRaw: 1, ia: "1.2.250", source: "import" }, { gaRaw: 2, ia: "1.2.250", source: "busforge" },
     ]);
-    expect(sendersByGroup(db, "p1")).toEqual(new Map([[1, ["1.2.50", "1.1.100"]], [2, ["1.1.100"]]]));
-    expect(removeGroupSender(db, "p1", 1, "1.2.50")).toBe(true);
-    expect(removeGroupSender(db, "p1", 1, "1.2.50")).toBe(false);
-    expect(sendersByGroup(db, "p1").get(1)).toEqual(["1.1.100"]);
+    expect(sendersByGroup(db, "p1")).toEqual(new Map([[1, ["1.2.3", "1.2.250"]], [2, ["1.2.250"]]]));
+    expect(removeGroupSender(db, "p1", 1, "1.2.3")).toBe(true);
+    expect(removeGroupSender(db, "p1", 1, "1.2.3")).toBe(false);
+    expect(sendersByGroup(db, "p1").get(1)).toEqual(["1.2.250"]);
   });
 
   test("refuses an address that is not an individual address", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    expect(() => addGroupSender(db, "p1", 1, "1/1/100")).toThrow(/individual address/);
+    expect(() => addGroupSender(db, "p1", 1, "1/2/250")).toThrow(/individual address/);
     expect(() => addGroupSender(db, "p1", 1, "1.1.256")).toThrow(/individual address/);
     expect(() => addGroupSender(db, "p1", 70000, "1.1.1")).toThrow(/group address/);
     expect(() => addGroupSender(db, "p1", 1, "0.0.0")).toThrow(/individual address/);
@@ -585,34 +585,34 @@ describe("secured senders", () => {
   test("removing takes the same address written differently", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    addGroupSender(db, "p1", 1, "1.1.100");
-    expect(removeGroupSender(db, "p1", 1, "01.1.100")).toBe(true);
+    addGroupSender(db, "p1", 1, "1.2.250");
+    expect(removeGroupSender(db, "p1", 1, "01.2.250")).toBe(true);
   });
 
   test("the send sequence never repeats and never falls behind the clock", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    expect(nextSendSequence(db, "p1", "1.1.100", 500n)).toBe(500n);
-    expect(nextSendSequence(db, "p1", "1.1.100", 400n)).toBe(501n); // clock went back: still ahead of the last
-    expect(nextSendSequence(db, "p1", "1.1.100", 900n)).toBe(900n);
-    expect(nextSendSequence(db, "p1", "1.1.101", 10n)).toBe(10n); // per sender
+    expect(nextSendSequence(db, "p1", "1.2.250", 500n)).toBe(500n);
+    expect(nextSendSequence(db, "p1", "1.2.250", 400n)).toBe(501n); // clock went back: still ahead of the last
+    expect(nextSendSequence(db, "p1", "1.2.250", 900n)).toBe(900n);
+    expect(nextSendSequence(db, "p1", "1.2.251", 10n)).toBe(10n); // per sender
   });
 
   test("round-trips senders and send sequences through export/import", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
-    nextSendSequence(db, "p1", "1.1.100", 777n);
+    putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
+    nextSendSequence(db, "p1", "1.2.250", 777n);
     const ex = exportProject(db, "p1", 5000, MK_SENDERS)!;
-    expect(ex.groupSenders).toEqual([{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
-    expect(ex.sendSequences).toEqual([{ ia: "1.1.100", last: "777" }]);
+    expect(ex.groupSenders).toEqual([{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
+    expect(ex.sendSequences).toEqual([{ ia: "1.2.250", last: "777" }]);
     importProjectExport(db, ex, "p2", 6000, MK_SENDERS);
-    expect(listGroupSenders(db, "p2")).toEqual([{ gaRaw: 1, ia: "1.1.100", source: "import" }]);
-    expect(nextSendSequence(db, "p2", "1.1.100", 1n)).toBe(778n);
+    expect(listGroupSenders(db, "p2")).toEqual([{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
+    expect(nextSendSequence(db, "p2", "1.2.250", 1n)).toBe(778n);
     expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1, ia: "x", source: "import" }] })).toThrow(/groupSenders/);
     expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1.5, ia: "1.1.1", source: "import" }] })).toThrow(/groupSenders/);
     expect(() => validateExport({ ...ex, groupSenders: [{ gaRaw: 1, ia: "99.99.999", source: "import" }] })).toThrow(/groupSenders/);
-    expect(() => validateExport({ ...ex, sendSequences: [{ ia: "1.1.100", last: "281474976710656" }] })).toThrow(/sendSequences/);
+    expect(() => validateExport({ ...ex, sendSequences: [{ ia: "1.2.250", last: "281474976710656" }] })).toThrow(/sendSequences/);
   });
 });
 const MK_SENDERS = Buffer.alloc(32, 9);
@@ -999,9 +999,9 @@ describe("telegrams", () => {
   test("recent returns oldest-first with formatted dst", () => {
     const db = fresh();
     insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 1, Buffer.from([0x00, 0x81]), 10));
-    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 2, Buffer.from([0x00, 0x81]), 20));
-    insertTelegram(db, "p1", decodeGroupTpdu(0x1232, 3, Buffer.from([0x00, 0x81]), 30));
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x81]), 10));
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 2, Buffer.from([0x00, 0x81]), 20));
+    insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 3, Buffer.from([0x00, 0x81]), 30));
     const recent = recentTelegrams(db, "p1", 10);
     expect(recent.map((t) => t.ts)).toEqual([10, 20, 30]); // oldest first
     expect(recent[0]).toMatchObject({ dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite" });

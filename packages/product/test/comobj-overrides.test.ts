@@ -23,7 +23,7 @@ describe("the com-object flags a project sets on a device", () => {
   });
 });
 
-// The image a full download writes, with and without an override, on the bench products: the
+// The image a full download writes, with and without an override, on products with ETS captures: the
 // override changes exactly the object's entry where the table has a bit for it, and is refused where
 // it has none.
 corpusDescribe("a full download writes the project's com-object flags", () => {

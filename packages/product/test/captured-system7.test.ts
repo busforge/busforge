@@ -65,22 +65,22 @@ const STAMPS = ["read 1/27#1", "read 2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `
 corpusDescribe("the captured M-0008 downloads, run against an emulated device", () => {
   const xml = catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz");
   const cfg = parseAppConfig(xml);
-  const IA = "1.1.1";
+  const IA = "1.2.7";
   const base = { deviceId: "d", ia: IA, appXml: xml, params: new Map<string, string>(), dryRun: false, persistBackups: () => "backup" };
-  const twoObjects: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x0012, 0x1800] }, { comObjNum: 2, gaRaws: [0x0013, 0x1800] }];
+  const twoObjects: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x77c8] }, { comObjNum: 2, gaRaws: [0x1108, 0x77c8] }];
 
   test("full download: ETS's sequence, the tables placed one behind the other, verified after the restart", async () => {
     const dev = new GiraDevice(cfg);
     const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
-    // address table: count 3 (own address + 2), 1.1.1, 0/0/18, 0/0/19, 3/0/0 -> 9 bytes at 0x4000
+    // address table: count 3 (own address + 2), 1.2.7, 2/1/7, 2/1/8, 14/7/200 -> 9 bytes at 0x4000
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2",
       "load:1", "absSegment:1@16384+9", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16393+475", "write", "taskSegment:2@16393", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", ...STAMPS, "restart",
     ]);
-    // the association table, first links first: (1,0) (2,2), then 3/0/0 = index 3 on both: (3,0) (3,2)
+    // the association table, first links first: (1,0) (2,2), then 14/7/200 = index 3 on both: (3,0) (3,2)
     expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
     expect(dev.tableRef.get(2)).toBe(0x4009);
   }, 20_000);
@@ -137,7 +137,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const dev = new GiraDevice(cfg);
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
     dev.ops = [];
-    const more = [...twoObjects, { comObjNum: 4, gaRaws: [0x7ffa] }];
+    const more = [...twoObjects, { comObjNum: 4, gaRaws: [0x77c9] }];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
@@ -163,7 +163,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const written: number[] = [];
     const memWrite = dev.memWrite.bind(dev);
     dev.memWrite = async (addr: number, data: Buffer) => { data.forEach((_, i) => written.push(addr + i)); return memWrite(addr, data); };
-    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: [...twoObjects, { comObjNum: 4, gaRaws: [0x7ffa] }], baseParams: new Map() });
+    const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: [...twoObjects, { comObjNum: 4, gaRaws: [0x77c9] }], baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(written.filter((a) => marked.includes(a))).toEqual([]);
     expect(marked.map((a) => dev.mem.get(a))).toEqual(marked.map(() => 0xa5));
@@ -172,7 +172,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
     const dev = new GiraDevice(cfg);
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
-    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x09);
     dev.ops = [];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "unchanged" });
@@ -185,7 +185,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const dev = new GiraDevice(cfg);
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
     // The unit holds its own address in the address table, as a real one does (the download leaves it).
-    dev.mem.set(0x4001, 0x11).set(0x4002, 0x01);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x07);
     const at = dev.tableRef.get(2)!;
     dev.tableRef.set(2, at + 2);
     for (let i = 20; i >= 0; i--) dev.mem.set(at + 2 + i, dev.mem.get(at + i) ?? 0);
@@ -324,10 +324,10 @@ corpusDescribe("a memory-mapped System 7 parameter flash, run against an emulate
 
   test("a full download reports the bytes it wrote, and its progress runs over the planned bytes", async () => {
     const dev = new MemMappedDevice(cfg, Buffer.from("0002a00113", "hex"));
-    dev.mem.set(0x4001, 0x11).set(0x4002, 0xc9);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x05);
     const progress: [number, number][] = [];
     const r = await classify(cfg).downloadFull(dev as unknown as KnxDevice, cfg.mask, {
-      deviceId: "d", ia: "1.1.201", appXml: xml, params: new Map(), links: [], dryRun: false, persistBackups: () => "backup",
+      deviceId: "d", ia: "1.2.5", appXml: xml, params: new Map(), links: [], dryRun: false, persistBackups: () => "backup",
       onProgress: (phase, done, total) => { if (phase === "write" && done !== undefined && total !== undefined) progress.push([done, total]); },
     });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
@@ -358,10 +358,10 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   const xml = catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
   const cfg = parseAppConfig(xml);
   const proc = parseLoadProcedures(xml);
-  const IA = "1.2.18";
+  const IA = "1.2.3";
   const base = { deviceId: "d", ia: IA, appXml: xml, params: new Map<string, string>(), dryRun: false, persistBackups: () => "backup" };
   // Object 0 is the one the defaults activate.
-  const links: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807] }];
+  const links: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x2a01] }];
   const auro = () => {
     const dev = new GiraDevice(cfg);
     dev.programId = Buffer.from("0081fe0111", "hex");
@@ -371,7 +371,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
 
   test("full download: the declared steps in their declared order, the own address left to the device, verified after the restart", async () => {
     const dev = auro();
-    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x03);
     const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
@@ -381,7 +381,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
       "load:3", "absSegment:3@1792+250", "absSegment:3@16476+91", "write", "absSegment:3@16896+256", "write",
       "taskSegment:3@16567", "taskCtrl1:3=0000000000000000", "loadCompleted:3", "restart",
     ]);
-    expect((await dev.memRead(0x4000, 7)).toString("hex")).toBe("031212050a1807");
+    expect((await dev.memRead(0x4000, 7)).toString("hex")).toBe("03120311072a01");
     expect((await dev.memRead(0x402f, 5)).toString("hex")).toBe("0201000200");
   }, 20_000);
 
@@ -403,9 +403,9 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   test("group-address flash: the tables unloaded and declared again, the own address left alone, the com-object table whole, verified", async () => {
     const dev = auro();
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
-    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x03);
     dev.ops = [];
-    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x2a01, 0x77c8] }];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
@@ -414,7 +414,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
       "load:2", "absSegment:2@16431+45", "write", "taskSegment:2@16431", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", "restart",
     ]);
-    expect((await dev.memRead(0x4000, 9)).toString("hex")).toBe("041212050a18077ffa");
+    expect((await dev.memRead(0x4000, 9)).toString("hex")).toBe("04120311072a0177c8");
     expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
   }, 20_000);
 
@@ -422,7 +422,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
     const dev = auro();
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
-    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x09);
     dev.ops = [];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "unchanged" });
@@ -432,13 +432,13 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   test("group-address flash: the change counted is the bytes of the planned runs that differ from the device", async () => {
     const dev = auro();
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
-    dev.mem.set(0x4001, 0x11).set(0x4002, 0x05);
-    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x09);
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x2a01, 0x77c8] }];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map(), dryRun: true });
-    // What changes: the address table's count and 7f fa after the two linked addresses, the association table's
-    // count and (03,00); everything else the plan writes equals the unit, and the own address 11 05
-    // (the project's is 12 12) is not counted.
-    const want: [number, number][] = [[0x4000, 0x04], [0x4007, 0x7f], [0x4008, 0xfa], [0x402f, 0x03], [0x4034, 0x03], [0x4035, 0x00]];
+    // What changes: the address table's count and 77 c8 after 2/1/7 and 5/2/1, the association table's
+    // count and (03,00); everything else the plan writes equals the unit, and the own address 12 09
+    // (the project's is 12 03) is not counted.
+    const want: [number, number][] = [[0x4000, 0x04], [0x4007, 0x77], [0x4008, 0xc8], [0x402f, 0x03], [0x4034, 0x03], [0x4035, 0x00]];
     const differing = want.filter(([a, b]) => (dev.mem.get(a) ?? 0) !== b).length;
     expect(differing).toBeGreaterThanOrEqual(2);
     expect(r).toMatchObject({ kind: "dryRun", diffBytes: differing });
@@ -447,9 +447,9 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   test("group-address flash: a table reference the device does not hold at the declared address after the restart is not verified", async () => {
     const dev = auro();
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
-    dev.mem.set(0x4001, 0x12).set(0x4002, 0x12);
+    dev.mem.set(0x4001, 0x12).set(0x4002, 0x03);
     dev.restart = async () => { dev.ops.push("restart"); dev.tableRef.set(2, 0x4030); };
-    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x050a, 0x1807, 0x7ffa] }];
+    const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x2a01, 0x77c8] }];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: false });
     expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
@@ -484,7 +484,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   // known, is refused rather than guessed at.
   describe("a masked segment whose written bytes cannot be told is refused", () => {
     const ADDR = "M-0081_A-FE01-11-75D9_AS-4000";
-    const tables = { addr: Buffer.from("031212050a1807", "hex"), assoc: Buffer.from("0201000200", "hex") };
+    const tables = { addr: Buffer.from("03120311072a01", "hex"), assoc: Buffer.from("0201000200", "hex") };
     const withMask = (mask: (m: Buffer) => Buffer): AppConfig => ({ ...cfg, absoluteSegments: cfg.absoluteSegments.map((s) => (s.id === ADDR ? { ...s, mask: mask(s.mask!) } : s)) });
     const plan = (app: AppConfig) => () => planSystem7GaFlash(app, proc, tables, null);
     test("the unmodified address table segment plans", () => {
@@ -513,9 +513,9 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
   const xml = catalogueXml("M-0048_A-107E-12-5B58.xml.gz");
   const cfg = parseAppConfig(xml);
   const proc = parseLoadProcedures(xml);
-  const IA = "1.2.10";
+  const IA = "1.2.4";
   const base = { deviceId: "d", ia: IA, appXml: xml, params: new Map<string, string>(), dryRun: false, persistBackups: () => "backup" };
-  const links: ComObjectLink[] = [{ comObjNum: 6, gaRaws: [0x0014, 0x1800, 0x1801] }];
+  const links: ComObjectLink[] = [{ comObjNum: 6, gaRaws: [0x1109, 0x77c8, 0x77c9] }];
   const COM = "M-0048_A-107E-12-5B58_AS-43FC";
   const theLuxa = () => {
     const dev = new GiraDevice(cfg);
@@ -588,7 +588,7 @@ corpusDescribe("the update bit of the MV-0705 com-object table is the configured
     test(`${file}: 0x80 on a configured object exactly where it declares the update flag`, () => {
       const active = buildDeviceConfig(cfg, new Map()).imageComObjects;
       const seg = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
-      const table = absoluteStructuralImages(cfg, new Map(), [], 0x120a, { baseValues: new Map(), comObjectTable: { active, linked: new Set() } })
+      const table = absoluteStructuralImages(cfg, new Map(), [], 0x110a, { baseValues: new Map(), comObjectTable: { active, linked: new Set() } })
         .find((i) => i.id === seg.id)!.image;
       for (let n = 0; n < seg.data[0]; n++) {
         const at = 3 + n * 4 + 2, o = active.get(n);

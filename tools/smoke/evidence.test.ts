@@ -1,17 +1,17 @@
 import { test, expect, describe } from "bun:test";
-import { runEvidence, specRevision, type RunConditions } from "./evidence.ts";
+import { runEvidence, specRevision, reportText, serverDataPath, type RunConditions } from "./evidence.ts";
 import { serverBuild, transportOf } from "../evidence.ts";
 import { gvsAmma } from "./specs/gvs-amma.ts";
 
 const cond: RunConditions = {
-  server: { version: "v0.4.136", commit: "e6991a0" },
-  runnerRevision: "e6991a0",
+  server: { version: "v0.4.136", commit: "abc1234" },
+  runnerRevision: "abc1234",
   transport: { kind: "ip-tcp", via: "busforge-bridge" },
   firmware: { state: "unknown" },
   source: { artifact: "tools/smoke/reports/gvs-amma-api-x.json", sha256: "a".repeat(64) },
 };
 const run = {
-  spec: "gvs-amma", channel: "api" as const, ok: true, startedAt: Date.parse("2026-09-24T12:00:00.000Z"),
+  spec: "gvs-amma", channel: "api" as const, ok: true, startedAt: Date.parse("2000-01-01T12:00:00.000Z"),
   capabilities: [
     { capability: "fullDownload", channel: "api" as const, state: "pass" as const, detail: "downloaded verified" },
     { capability: "readParams", channel: "api" as const, state: "pass" as const, detail: "read" },
@@ -34,9 +34,9 @@ describe("smoke evidence records", () => {
     ]);
     for (const r of records) {
       expect(r.subject).toMatchObject({ manufacturer: "M-0085", productRef: gvsAmma.device.productRef, appProgramId: "M-0085_A-0072-30-69AA", mask: "MV-07B0" });
-      expect(r.build).toEqual({ server: cond.server, runner: { name: "tools/smoke", revision: "e6991a0" }, spec: { name: "gvs-amma", revision: specRevision(gvsAmma) } });
+      expect(r.build).toEqual({ server: cond.server, runner: { name: "tools/smoke", revision: "abc1234" }, spec: { name: "gvs-amma", revision: specRevision(gvsAmma) } });
       expect(r.origin).toEqual({ configuredBy: "busforge", reference: "self-written", priorBusforgeWrites: "some" });
-      expect(r.recordedAt).toBe("2026-09-24T12:00:00.000Z");
+      expect(r.recordedAt).toBe("2000-01-01T12:00:00.000Z");
     }
   });
 
@@ -92,13 +92,31 @@ describe("smoke evidence records", () => {
   });
 
   test("a dev server with local changes is not the commit it was started from", () => {
-    expect(serverBuild({ version: "v0.4.136-2-ge6991a0-dirty (dev)", commit: "e6991a0" })).toEqual({ version: "v0.4.136-2-ge6991a0-dirty (dev)", commit: "e6991a0-dirty" });
-    expect(serverBuild({ version: "v0.4.136", commit: "e6991a0" }).commit).toBe("e6991a0");
+    expect(serverBuild({ version: "v0.4.136-2-gabc1234-dirty (dev)", commit: "abc1234" })).toEqual({ version: "v0.4.136-2-gabc1234-dirty (dev)", commit: "abc1234-dirty" });
+    expect(serverBuild({ version: "v0.4.136", commit: "abc1234" }).commit).toBe("abc1234");
   });
 
   test("transport is what the saved connection pins, and the route only what the operator declared", () => {
     expect(transportOf("tcp", "busforge-bridge")).toEqual({ kind: "ip-tcp", via: "busforge-bridge" });
     expect(transportOf("auto", undefined)).toEqual({ kind: "unknown", via: "unknown" });
     expect(() => transportOf("udp", "a-bridge")).toThrow("BUSFORGE_BENCH_VIA");
+  });
+});
+
+describe("smoke report paths", () => {
+  test("a backup path the server returns is written from its data directory on", () => {
+    expect(serverDataPath("/srv/busforge/data/projects/p1/backups/BF-1-full-17.bin")).toBe("projects/p1/backups/BF-1-full-17.bin");
+    expect(serverDataPath("projects/p1/backups/a.bin")).toBe("projects/p1/backups/a.bin");
+  });
+
+  test("a backup path of any other shape is refused, not written as it came", () => {
+    expect(() => serverDataPath("/srv/busforge/data/elsewhere/a.bin")).toThrow("not <data dir>/projects/<id>/backups/<file>");
+    expect(() => serverDataPath("/srv/projects/p1/backups/")).toThrow();
+  });
+
+  test("the report rewrites every nested backup path and leaves other strings alone", () => {
+    const text = reportText({ capabilities: [{ evidence: { flash: { backup: "/srv/data/projects/p1/backups/x.bin", kind: "flashed" } } }], detail: "/srv/data/projects/p1/backups/x.bin" });
+    expect(JSON.parse(text)).toEqual({ capabilities: [{ evidence: { flash: { backup: "projects/p1/backups/x.bin", kind: "flashed" } } }], detail: "/srv/data/projects/p1/backups/x.bin" });
+    expect(text.endsWith("}\n")).toBe(true);
   });
 });

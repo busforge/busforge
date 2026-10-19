@@ -338,7 +338,7 @@ describe("sending group telegrams through the monitor connection", () => {
     };
     const connect = async () => {
       await handleApi(new Request("http://x/api/projects/p/bus/connect", { method: "POST" }), state);
-      const t = created.at(-1)!; t.assignedIa = 0x1164; return t;
+      const t = created.at(-1)!; t.assignedIa = 0x12fa; return t;
     };
     const close = async () => { await state.bus.disconnect(); state.db.close(); rmSync(dir, { recursive: true, force: true }); };
     return { state, seen, send, connect, close };
@@ -356,7 +356,7 @@ describe("sending group telegrams through the monitor connection", () => {
     const t = await s.connect();
     expect(await s.send({ ga: 1, service: "write", value: "01" })).toMatchObject({ status: 200, body: { handedToInterface: true, secured: false } });
     expect(t.sent).toHaveLength(1);
-    expect(t.sent[0].readUInt16BE(4)).toBe(0x1164);
+    expect(t.sent[0].readUInt16BE(4)).toBe(0x12fa);
     expect(tpduOf(t.sent[0]).toString("hex")).toBe("0081");
     // The interface's confirmation is not read, so the telegram is not recorded as seen on the bus.
     expect(s.seen).toEqual([]);
@@ -394,7 +394,7 @@ describe("sending group telegrams through the monitor connection", () => {
   });
 
   test("a secured address is refused unless the tunnel's address is one of its senders", async () => {
-    const s = await setup({ secured: true, sender: "1.2.50" });
+    const s = await setup({ secured: true, sender: "1.2.3" });
     const t = await s.connect();
     expect(await s.send({ ga: 1, service: "write", value: "01" })).toMatchObject({ status: 409, body: { error: { code: "SECURE_SENDER_NOT_LISTED" } } });
     expect(t.sent).toHaveLength(0);
@@ -402,11 +402,11 @@ describe("sending group telegrams through the monitor connection", () => {
   });
 
   test("a secured write is encrypted with the address's key at a fresh sequence each time", async () => {
-    const s = await setup({ secured: true, sender: "1.1.100" });
+    const s = await setup({ secured: true, sender: "1.2.250" });
     const t = await s.connect();
     await s.send({ ga: 1, service: "write", value: "01" });
     await s.send({ ga: 1, service: "write", value: "00" });
-    const opened = t.sent.map((c) => openSecureGroupTpdu(0x1164, 1, tpduOf(c), key));
+    const opened = t.sent.map((c) => openSecureGroupTpdu(0x12fa, 1, tpduOf(c), key));
     expect(opened.map((o) => o.state)).toEqual(["decrypted", "decrypted"]);
     const [a, b] = opened as { apdu: Buffer; seq: bigint }[];
     expect([a.apdu.toString("hex"), b.apdu.toString("hex")]).toEqual(["0081", "0080"]);
@@ -415,9 +415,9 @@ describe("sending group telegrams through the monitor connection", () => {
   });
 
   test("a secured value that does not fit a standard frame is refused, not sent oversized", async () => {
-    const s = await setup({ secured: true, sender: "1.1.100" });
+    const s = await setup({ secured: true, sender: "1.2.250" });
     const t = await s.connect();
-    putGroupSenders(s.state.db, "p", [{ gaRaw: 2, ia: "1.1.100", source: "import" }]);
+    putGroupSenders(s.state.db, "p", [{ gaRaw: 2, ia: "1.2.250", source: "import" }]);
     expect(await s.send({ ga: 2, service: "write", value: "0c1a" })).toMatchObject({ status: 400, body: { error: { code: "SECURE_VALUE_TOO_LONG" } } });
     expect(t.sent).toHaveLength(0);
     await s.close();

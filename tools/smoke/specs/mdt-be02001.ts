@@ -9,7 +9,7 @@ import type { DeviceSpec } from "../spec.ts";
 // Both channels of this device are CONTACT INPUTS, not outputs/relays — there is nothing for an input
 // to drive, so the bus behaviour proven is `output`: the input's "Zustand senden" object carries the
 // read flag, so a GroupValueRead is answered by the device itself (the same functional proof the
-// MV-0705 certification used: 1.1.56 answered a read on a flashed link).
+// MV-0705 certification used: the device answered a read on a flashed link).
 export const mdtBe02001: DeviceSpec = {
   id: "mdt-be02001",
   device: {
@@ -18,7 +18,7 @@ export const mdtBe02001: DeviceSpec = {
     ia: "1.1.56",
     mask: "MV-0705",
   },
-  provision: "skip-if-present", // the bench MDT keeps 1.1.56 between runs
+  provision: "skip-if-present", // the bench MDT keeps its address between runs
   // Baseline: Input A = "Zustand senden" (its default function 5), which exposes the readable object
   // #0 the behaviour binds to. Setting the default explicitly is a no-op on a fresh place but pins the
   // linkable state against a default change.
@@ -38,8 +38,8 @@ export const mdtBe02001: DeviceSpec = {
   ],
   // Input B's function drives its module-instance com-objects. Changing it from the canonical 5
   // ("Zustand senden", one object #6) to 7 ("kurz/lang", ADDS object #8) rewrites the com-object table:
-  // the structuralFlash driver writes it and its revert as structural flashes, the change ETS's partial
-  // download of 2026-10-01 made. Deliberately on Input B, NOT Input A: it must not disturb object #0 the
+  // the structuralFlash driver writes it and its revert as structural flashes, the change an ETS partial
+  // download capture shows. Deliberately on Input B, NOT Input A: it must not disturb object #0 the
   // behaviour binds to.
   structuralTrigger: { paramRefId: "M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", value: "7" },
   // The seeded sweep draws from the safe scalar/enum params (device timings, debounce, logic, input B

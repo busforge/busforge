@@ -221,7 +221,7 @@ corpusDescribe("read-back does not launder an unobservable parameter into the pr
 });
 
 corpusDescribe("System B readState covers TOP-LEVEL UNION parameters", () => {
-  // The DALI gateway places 178 top-level union parameters,
+  // The Theben DALI gateway places 178 top-level union parameters,
   // 16 of which the config view exposes for editing and the surgical flash target OWNS (it
   // writes those bytes). Read-back must therefore see them: a model that drops union params
   // decodes nothing at those offsets, so the device could hold anything and read-back would
@@ -301,7 +301,7 @@ corpusDescribe("System B readState covers TOP-LEVEL UNION parameters", () => {
 // Relevance comes from the DEVICE's configuration, not the project's. A setting that only the
 // device's value of another parameter makes visible (a sensor type the project leaves at "none")
 // must still enter the baseline, or a later flash of the project resets it without anyone seeing
-// the difference. Found on the house's OpenKNX RaumController.
+// the difference (seen on an OpenKNX RaumController).
 corpusDescribe("readState records settings that only the device's configuration makes visible", () => {
   const cfg = app("M-0048_A-9071-20-F258-O00EF.xml.gz");
   const profile = classify(cfg);

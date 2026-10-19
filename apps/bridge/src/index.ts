@@ -6,8 +6,8 @@ import { superviseInterface } from "./supervise.ts";
 // busforge-bridge: puts a KNX-USB interface on the network as a KNXnet/IP tunnelling server.
 //
 // It exists because a USB interface can only be opened by one process on one machine. That forced
-// every piece of bus work onto the machine the stick is plugged into (the bench laptop), and it
-// made the bus monitor and a download mutually exclusive. With the bridge, the bench interface is
+// every piece of bus work onto the machine the stick is plugged into, and it made the bus
+// monitor and a download mutually exclusive. With the bridge, that interface is
 // an ordinary KNXnet/IP gateway on the LAN: Busforge can run anywhere, several tunnels can share
 // the bus, and ETS can use it too.
 //

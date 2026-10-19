@@ -5,7 +5,7 @@ import { ProductError } from "./errors.ts";
 // The flag byte for a group object linked to a secured group address: bit 0 authentication, bit 1
 // confidentiality, one byte per object for both directions (thelsing/knx
 // SecurityInterfaceObject::getGroupObjectSecurity checks the same byte on send and receive). ETS
-// writes 0x03 for such an object and 0x00 for every other one (Jung 400021SE, 2026-09-28); it offers
+// writes 0x03 for such an object and 0x00 for every other one (Jung 400021SE); it offers
 // no authentication-only setting.
 export const GO_SECURED = 0x03;
 
@@ -15,7 +15,7 @@ export const GO_SECURED = 0x03;
 // table (the group index buildGroupTables assigns), not under the address: the device looks a key
 // up by that index, and stops at the first entry past it, so the entries are ascending
 // (thelsing/knx SecurityInterfaceObject::groupKey). In ETS's capture of the Jung both are 1, since
-// its one secured address 0/0/1 is also the first in its table.
+// its one secured address is also the first in its table.
 //
 // An object linked to both secured and plain addresses has no single flag that is right for both,
 // so it is refused rather than given one.
@@ -26,9 +26,9 @@ export const GO_SECURED = 0x03;
 // - the senders the project assigns to each secured address it uses (a tunnelling channel), with 0;
 // - every other secured device with an object that transmits on such an address, with the
 //   SequenceNumber the project holds for that device.
-// Both as ETS 6.4.1 loads them (the Jung 400021SE and the GVS AMMA on one secured address,
-// 2026-09-30). Another device whose objects on the address only receive (no transmit flag) is not
-// listed, as ETS does not list it (2026-10-01). One without a sequence in the project is refused.
+// Both as ETS 6.4.1 loads them (the Jung 400021SE and the GVS AMMA on one secured address).
+// Another device whose objects on the address only receive (no transmit flag) is not listed, as ETS
+// does not list it. One without a sequence in the project is refused.
 // unresolved: why the device cannot be classed as a sender or not (its application or object does not
 // resolve, or the linked object is hidden); such a device is refused, never left out.
 // unclear: a link whose case ETS has not been seen to decide (an object that answers reads there, or a
@@ -92,7 +92,7 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
 // The group key table without its trailing entries for address-table indices beyond `addressCount`.
 // A load writes the key table from element 1 without shrinking it, as ETS's does, so a device whose
 // address table lost entries keeps keys at the end for indices nothing refers to (GVS AMMA, ETS
-// partial download 2026-10-01); those are left out of every comparison. Such an entry before a
+// partial download); those are left out of every comparison. Such an entry before a
 // reachable one is not what a load leaves, and stays in, so it shows as a difference.
 export function reachableGroupKeys(table: Buffer, addressCount: number): Buffer {
   let end = table.length - (table.length % GROUP_KEY_ENTRY);

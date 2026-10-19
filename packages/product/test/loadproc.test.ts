@@ -282,7 +282,7 @@ corpusTest("par policy over the whole real catalogue: every step is dispositione
 
 corpusTest("the declared MCB entries of a System B full download, as ETS sends them", () => {
   // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the
-  // 10-byte InlineData (Jung 400021SE capture, 2026-09-25). Declared Verify="false": only the region
+  // 10-byte InlineData (Jung 400021SE capture). Declared Verify="false": only the region
   // size has to come back in the echo.
   const lp = parseLoadProcedures(readRealFixture("M-0048_A-493B-21-B471.xml.gz"));
   expect(declaredMcbWrites(lp, 2003)).toEqual([

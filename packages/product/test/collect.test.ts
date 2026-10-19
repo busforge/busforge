@@ -5,7 +5,7 @@ import { SimSystemB, ALLOWED_APCIS } from "./collect-sim.ts";
 
 function setup() {
   const sim = new SimSystemB();
-  const dev = new KnxDevice(sim, "1.1.203");
+  const dev = new KnxDevice(sim, "1.2.3");
   let reopened = 0;
   const reopen = async () => { reopened++; await dev.disconnect(); await dev.connect(); };
   return { sim, dev, reopen, reopened: () => reopened };
@@ -20,7 +20,7 @@ describe("raw acquisition on a System B device", () => {
   test("reads identity, scan and planned ranges, sends only read services, and records refusals exactly", async () => {
     const { sim, dev, reopen } = setup();
     await dev.connect();
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(p.limits).toEqual([]);
     expect(p.mask).toBe("MV-07B0");
@@ -61,7 +61,7 @@ describe("raw acquisition on a System B device", () => {
 
   test("a session without the free-key authorize sends none and says so", async () => {
     const { sim, dev, reopen } = setup();
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen, authorize: false });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, authorize: false });
     expect(sim.apcis).not.toContain(APCI.AUTHORIZE_REQUEST);
     expect(p.authorizeLevel).toBeNull();
     expect(p.records.filter((r) => r.space === "authorize")).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("without the free-key authorize") }]);
@@ -71,7 +71,7 @@ describe("raw acquisition on a System B device", () => {
   test("refused elements: a refused batch is asked again singly, and the first refused element ends the property", async () => {
     const { sim, dev, reopen } = setup();
     sim.refuseElementsFrom.set("2:23", 5);
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     const pid23 = p.records.filter((r) => r.step === "scan" && r.target.object === 2 && r.target.pid === 23);
     expect(pid23.filter((r) => r.outcome === "bytes").map((r) => [r.target.start, r.target.count])).toEqual([[0, 1], [1, 1], [2, 1], [3, 1], [4, 1]]);
     expect(pid23.filter((r) => r.outcome === "refused").map((r) => [r.target.start, r.target.count])).toEqual([[2, 11], [5, 1]]);
@@ -82,7 +82,7 @@ describe("raw acquisition on a System B device", () => {
   test("a device answering fewer elements than asked: the next request starts after the last it gave", async () => {
     const { sim, dev, reopen } = setup();
     sim.maxElementsPerAnswer = 3;
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     const pid23 = p.records.filter((r) => r.step === "scan" && r.target.object === 2 && r.target.pid === 23 && r.outcome === "bytes" && Number(r.target.start) > 0);
     // Elements 1 to 20, each exactly once, in order.
     const got = pid23.flatMap((r) => Array.from({ length: Number(r.target.count) }, (_, i) => Number(r.target.start) + i));
@@ -92,7 +92,7 @@ describe("raw acquisition on a System B device", () => {
   test("an object whose type is not known is not read, since it may be the security object", async () => {
     const { sim, dev, reopen } = setup();
     sim.objects[6].props.get(1)!.elements[0] = Buffer.from([0x11]); // one octet: not a type
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     const values = p.records.filter((r) => r.step === "scan" && r.target.object === 6 && r.space === "property" && r.target.pid !== 1);
     expect(values.length).toBeGreaterThan(0);
     expect(values.every((r) => r.outcome === "not-attempted" && r.detail!.includes("type is not known"))).toBe(true);
@@ -101,7 +101,7 @@ describe("raw acquisition on a System B device", () => {
   test("a descriptor answer that is no type 0 descriptor stops the job as such", async () => {
     const { sim, dev, reopen } = setup();
     sim.descriptorData = Buffer.from([0x07]);
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("descriptor-malformed");
     expect(p.mask).toBeNull();
   });
@@ -111,7 +111,7 @@ describe("raw acquisition on a System B device", () => {
     sim.echoOffset = 1;
     // A table long enough for several requests in a row.
     sim.objects[1].props.get(27)!.elements[0] = Buffer.from([0, 0, 0, 200, 0, 0, 0x12, 0x34]);
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("unresponsive");
     expect(p.records.filter((r) => r.outcome === "malformed")).toHaveLength(3);
     expect(reopened()).toBe(2);
@@ -120,7 +120,7 @@ describe("raw acquisition on a System B device", () => {
   test("a secure device without a key: the descriptor and nothing else", async () => {
     const { sim, dev, reopen } = setup();
     sim.mask = "ffff";
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("secured-no-key");
     expect(sim.apcis).toEqual([APCI.DEVICE_DESCRIPTOR_READ]);
   });
@@ -136,7 +136,7 @@ describe("raw acquisition on a System B device", () => {
 
   test("the memory budget cuts the plan and records the rest as not attempted", async () => {
     const { dev, reopen } = setup();
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen, limits: { memoryBytes: 20 } });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, limits: { memoryBytes: 20 } });
     expect(p.limits).toEqual(["memory plan: 20 bytes"]);
     expect(p.counts.memoryBytes).toBe(20);
     const assoc = memRecords(p, "association table");
@@ -146,7 +146,7 @@ describe("raw acquisition on a System B device", () => {
   test("a cancelled job drops everything it read", async () => {
     const { dev, reopen } = setup();
     const c = ctl();
-    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen, onProgress: (phase) => { if (phase === "scan") c.abort(); } });
+    const run = collectDevice(dev, { ia: "1.2.3", signal: c.signal, reopen, onProgress: (phase) => { if (phase === "scan") c.abort(); } });
     expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
   });
 
@@ -154,7 +154,7 @@ describe("raw acquisition on a System B device", () => {
     const { sim, dev, reopen } = setup();
     const c = ctl();
     sim.mask = "ffff"; // stops after the descriptor
-    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen, onRequest: () => c.abort() });
+    const run = collectDevice(dev, { ia: "1.2.3", signal: c.signal, reopen, onRequest: () => c.abort() });
     expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
   });
 
@@ -163,7 +163,7 @@ describe("raw acquisition on a System B device", () => {
     const { sim, dev, reopen, reopened } = setup();
     const c = ctl();
     sim.silent = (a) => { if (a === APCI.MEMORY_READ) { c.abort(); return true; } return false; };
-    const run = collectDevice(dev, { ia: "1.1.203", signal: c.signal, reopen });
+    const run = collectDevice(dev, { ia: "1.2.3", signal: c.signal, reopen });
     expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
     expect(reopened()).toBe(0);
   }, 20_000);
@@ -171,7 +171,7 @@ describe("raw acquisition on a System B device", () => {
   test("a stopped job keeps its package; only a cancel drops it", async () => {
     const { sim, dev, reopen } = setup();
     sim.mask = "ffff";
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("secured-no-key");
     expect(p.records).toHaveLength(1);
   });
@@ -180,7 +180,7 @@ describe("raw acquisition on a System B device", () => {
     const { sim, dev, reopen } = setup();
     const ref = Buffer.alloc(4); ref.writeUInt32BE(0x01000000);
     sim.objects[1].props.get(7)!.elements[0] = ref;
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(memRecords(p, "group address table")).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("24-bit") }]);
     expect(memRecords(p, "association table").some((r) => r.outcome === "bytes")).toBe(true);
@@ -190,7 +190,7 @@ describe("raw acquisition on a System B device", () => {
     const { sim, dev, reopen } = setup();
     const region = (size: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size); b.writeUInt16BE(0x0032, 4); return b; };
     sim.objects[4].props.get(27)!.elements.splice(0, 1, region(20), region(12));
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(memRecords(p, "application").reduce((n, r) => n + Number(r.target.length), 0)).toBe(32);
   });
@@ -198,14 +198,14 @@ describe("raw acquisition on a System B device", () => {
   test("a memory-control-block region that is not 8 bytes leaves the table unread, and says why", async () => {
     const { sim, dev, reopen } = setup();
     sim.objects[4].props.get(27)!.elements.push(Buffer.alloc(4));
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(memRecords(p, "application")).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("element 2 of 2 is not 8 bytes") }]);
   });
 
   test("the duration bound stops the job", async () => {
     const { dev, reopen } = setup();
     let t = 0;
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen, now: () => (t += 1000), limits: { durationMs: 30_000 } });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, now: () => (t += 1000), limits: { durationMs: 30_000 } });
     expect(p.stop?.reason).toBe("duration");
   });
 
@@ -215,7 +215,7 @@ describe("raw acquisition on a System B device", () => {
     sim.silent = (a) => a === APCI.MEMORY_READ;
     // A table long enough for several requests in a row.
     sim.objects[1].props.get(27)!.elements[0] = Buffer.from([0, 0, 0, 200, 0, 0, 0x12, 0x34]);
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("unresponsive");
     expect(p.records.filter((r) => r.outcome === "timeout").map((r) => r.space)).toEqual(["memory", "memory", "memory"]);
     expect(reopened()).toBe(2);
@@ -228,7 +228,7 @@ describe("raw acquisition on a System B device", () => {
     // The device goes quiet at its first memory read and stays so.
     let gone = false;
     sim.silent = (a) => (gone ||= a === APCI.MEMORY_READ);
-    const p = await collectDevice(dev, { ia: "1.1.203", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen });
     expect(p.stop?.reason).toBe("unresponsive");
     const timeouts = p.records.filter((r: CollectRecord) => r.outcome === "timeout");
     // The memory read, then the authorize on each reopened link.
@@ -239,7 +239,7 @@ describe("raw acquisition on a System B device", () => {
   }, 20_000);
 });
 
-// A device that answers descriptor `0x0012` (BCU1), as the house's MDT IP interface does under its
+// A device that answers descriptor `0x0012` (BCU1), as the MDT SCN-IP000.03 IP interface does under its
 // secure session. `pid56` is how it answers PID 56 of object 0.
 function bcu1(secured: boolean, pid56: "absent" | "silent" | "mac-failed" | Buffer, silentMemoryReads = 0) {
   const asked: string[] = [];
@@ -272,7 +272,7 @@ const memoryStep = (p: CollectPackage) => p.records.filter((r) => r.space === "m
 describe("raw acquisition on a BCU1-mask device", () => {
   test("secured: PID 56 of object 0 is read first, and the memory is read within the APDU it declares", async () => {
     const { dev, asked, reopen } = bcu1(true, Buffer.from([0x00, 0x28]));
-    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.4", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(p.maxApdu).toBe(40);
     // Read-only: the descriptor, the one property read, then memory; nothing else.
@@ -286,7 +286,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
 
   test("secured, PID 56 absent: the memory step is not attempted, and the record says the device declares none", async () => {
     const { dev, asked, reopen } = bcu1(true, "absent");
-    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.4", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(p.maxApdu).toBeNull();
     expect(asked).toEqual(["descriptor", "property 0/56"]);
@@ -296,7 +296,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
 
   test("secured, PID 56 unanswered: the memory step is not attempted, and the record says the read ended without an answer", async () => {
     const { dev, asked, reopen, reopened } = bcu1(true, "silent");
-    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.4", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(asked).toEqual(["descriptor", "property 0/56"]);
     expect(reopened()).toBe(1);
@@ -308,7 +308,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
 
   test("plain, PID 56 unanswered: the memory is read in standard-frame chunks, as before", async () => {
     const { dev, asked, reopen, reopened } = bcu1(false, "silent");
-    const p = await collectDevice(dev, { ia: "1.2.10", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.7", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(p.records.find((r) => r.step === "max-apdu")).toMatchObject({ outcome: "timeout" });
     expect(reopened()).toBe(1);
@@ -319,7 +319,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
   test("an unanswered PID 56 does not count towards closing the device off", async () => {
     // Two failed memory requests after it: with PID 56 counted, that would be three in a row.
     const { dev, reopen, reopened } = bcu1(false, "silent", 2);
-    const p = await collectDevice(dev, { ia: "1.2.10", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.7", signal: ctl().signal, reopen });
     expect(p.stop).toBeNull();
     expect(reopened()).toBe(3);
     expect(memoryStep(p).filter((r) => r.outcome === "timeout")).toHaveLength(2);
@@ -328,7 +328,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
 
   test("secured, PID 56 answered with a failed MAC: the record names the malformed read, not an absent property", async () => {
     const { dev, reopen } = bcu1(true, "mac-failed");
-    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.4", signal: ctl().signal, reopen });
     const m = memoryStep(p);
     expect(m.map((r) => r.outcome)).toEqual(["not-attempted"]);
     expect(m[0].detail).toContain("the read of PID 56 of object 0 ended malformed");
@@ -336,7 +336,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
 
   test("secured, a declared maximum APDU too short for a secured memory read: the memory step is not attempted and says so", async () => {
     const { dev, asked, reopen } = bcu1(true, Buffer.from([0x00, 0x0f]));
-    const p = await collectDevice(dev, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(dev, { ia: "1.2.4", signal: ctl().signal, reopen });
     expect(p.maxApdu).toBe(15);
     expect(asked).toEqual(["descriptor", "property 0/56"]);
     const m = memoryStep(p);
@@ -348,7 +348,7 @@ describe("raw acquisition on a BCU1-mask device", () => {
     const { dev, reopen } = bcu1(true, "absent");
     // An unknown mask: the probing plan, no PID 56, and an empty memory plan apart from the chunk check.
     const d = { ...dev, descriptorType0: async () => "MV-4711", propertyDescription: async () => { throw new KnxError("DEVICE_NOT_ANSWERING", "no answer"); } };
-    const p = await collectDevice(d, { ia: "1.2.90", signal: ctl().signal, reopen });
+    const p = await collectDevice(d, { ia: "1.2.4", signal: ctl().signal, reopen });
     expect(p.records.some((r) => r.step === "max-apdu")).toBe(false);
     expect(memoryStep(p)).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("no maximum APDU length is known: this plan does not read PID 56 of object 0") }]);
   });

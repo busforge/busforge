@@ -11,7 +11,7 @@ class RepeatingDevice implements KnxTransport {
   assignedIa = 0x0001;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
-  readonly device = 0x1237;
+  readonly device = 0x1203; // 1.2.3
   private txSeq = 0;
   private last: Buffer | null = null;
   acksSeen: number[] = [];
@@ -55,7 +55,7 @@ const expected = (addr: number, len: number) => Buffer.from(Array.from({ length:
 describe("a numbered frame the device repeats", () => {
   test("is acknowledged again and dropped, and the read takes the answer to its own request", async () => {
     const tun = new RepeatingDevice({ repeatBefore: 0x53c0 });
-    const dev = new KnxDevice(tun, "1.2.55");
+    const dev = new KnxDevice(tun, "1.2.3");
     await dev.connect();
     const got = await dev.memRead(0x5390, 96, 48);
     expect(got.equals(expected(0x5390, 96))).toBe(true);
@@ -66,14 +66,14 @@ describe("a numbered frame the device repeats", () => {
 
   test("an answer whose T_ACK failed to send is taken from the device's repetition", async () => {
     const tun = new RepeatingDevice({ failFirstAck: true });
-    const dev = new KnxDevice(tun, "1.2.55");
+    const dev = new KnxDevice(tun, "1.2.3");
     await dev.connect();
     const got = await dev.memRead(0x5390, 48, 48);
     expect(got.equals(expected(0x5390, 48))).toBe(true);
   }, 10_000);
 
   test("an answer for another address is refused, not taken as this one's", async () => {
-    const dev = new KnxDevice(new RepeatingDevice({ wrongAddressAt: 0x53c0 }), "1.2.55");
+    const dev = new KnxDevice(new RepeatingDevice({ wrongAddressAt: 0x53c0 }), "1.2.3");
     await dev.connect();
     const err = await dev.memRead(0x5390, 96, 48).then(() => null, (e: Error) => e);
     expect(err?.message).toMatch(/memory read of 0x53c0 was answered for 0x5390/);

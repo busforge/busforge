@@ -9,7 +9,7 @@ const SERIAL = "00fa01020304";
 
 function pkg(records: CollectRecord[], stop: CollectPackage["stop"] = null): CollectPackage {
   return {
-    format: "busforge-raw-collect/1", ia: "1.1.203", mask: "MV-07B0", family: "system-b", secured: true, authorizeLevel: 0, maxApdu: 55,
+    format: "busforge-raw-collect/1", ia: "1.2.3", mask: "MV-07B0", family: "system-b", secured: true, authorizeLevel: 0, maxApdu: 55,
     plan: null, records, limits: [], stop,
     counts: { requests: 3, scanRequests: 1, memoryRequests: 1, memoryBytes: 4, reconnects: 0 }, startedAt: 10, finishedAt: 20,
   };
@@ -53,7 +53,7 @@ describe("toDiagnosticPackage", () => {
     expect(d.stop?.detail).toBe("TUNNEL_CONNECT_TIMEOUT: <removed> did not answer (<removed>/<removed>)");
     expect(d.error).toBe("gateway <removed> gone");
     expect(d.connection).toEqual({ kind: "ip", ipTransport: "tcp" });
-    expect(d).toMatchObject({ format: "busforge-diagnostic/1", ia: "1.1.203", mask: "MV-07B0", secured: true, startedAt: 10, finishedAt: 20 });
+    expect(d).toMatchObject({ format: "busforge-diagnostic/1", ia: "1.2.3", mask: "MV-07B0", secured: true, startedAt: 10, finishedAt: 20 });
   });
 
   test("PID 11 of any object is a serial, and IP addresses leave every text, also the plan's reasons", () => {
@@ -61,7 +61,7 @@ describe("toDiagnosticPackage", () => {
       rec({ target: { object: 3, pid: 11, start: 1, count: 1 }, bytes: SERIAL }),
       rec({ outcome: "connection-closed", detail: "connect ECONNREFUSED 203.0.113.40:3671 and fe80::1:2:3 at 14:03:30" }),
     ]);
-    p.plan = { notAttempted: [{ name: "application", reason: "APP_PARSE: knx-gw.example 192.0.2.2" }] } as unknown as CollectPackage["plan"];
+    p.plan = { notAttempted: [{ name: "application", reason: "APP_PARSE: knx-gw.example 198.51.100.2" }] } as unknown as CollectPackage["plan"];
     const d = toDiagnosticPackage(p, ctx({ secrets: ["knx-gw.example"] }));
     expect(d.records[0]).toMatchObject({ removed: "serial number, 6 bytes" });
     expect(d.records[1].detail).toBe("connect ECONNREFUSED <removed> and <removed> at 14:03:30");

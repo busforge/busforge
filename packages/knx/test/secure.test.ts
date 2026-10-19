@@ -2,8 +2,8 @@ import { test, expect, describe } from "bun:test";
 import { isSecureApdu, openSecureGroupTpdu, secureEncode, secureDecode, SCF_TOOL_DATA } from "../src/secure.ts";
 
 const key = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
-const src = 0x1101; // 1.1.1
-const dst = 0x125a; // 1.2.90
+const src = 0x1203; // 1.2.3
+const dst = 0x1207; // 1.2.7
 const seq = Buffer.from("000000000001", "hex");
 const tpci = 0x43; // numbered T_Data_Connected (0x40) | top APCI bits of SecureService (0x03)
 const plaintext = Buffer.from("0300", "hex"); // an A_DeviceDescriptor_Read service APDU

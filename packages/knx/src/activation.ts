@@ -4,7 +4,7 @@ import { OBJECT_TYPE_SECURITY, SECURITY_PID } from "./device.ts";
 import { KnxError } from "./errors.ts";
 
 // Taking a secure device from its factory key (FDSK) to a tool key of our own, as ETS does it
-// (Jung 400021SE, 2026-09-28): a secured session under the FDSK, the security mode switched on,
+// (an ETS capture of a Jung 400021SE): a secured session under the FDSK, the security mode switched on,
 // the new tool key written, and a new session under that key to prove it took.
 //
 // The new key is persisted BEFORE it is written to the device. Once written, it is the only way in

@@ -133,7 +133,7 @@ export interface AbsParFlashPlan {
 // allocation resets the segment's regions, so they are written again right after it.
 // Only the bytes holding an owned bit are written (`owned`, a bit mask per byte), as ETS does: its
 // parameter download reallocates without fill and writes exactly the bytes its parameter model owns
-// (GVS AMMA and Jung 400021SE partial-download captures, 2026-09-26), relying on the device to keep
+// (GVS AMMA and Jung 400021SE partial-download captures), relying on the device to keep
 // the rest. That holds only while the segment stays at `keptAt`, the address it had before; one the
 // allocation moved is written whole (writeSegmentOwned). The caller's read-back of the whole
 // segment proves the result.
@@ -190,7 +190,7 @@ export interface KeptSegment { image: Buffer; owned: ReadonlyArray<number>; kept
 // The System B bracket for a change that alters the com-object table: the application, the
 // com-object table and both group tables, and on a Data Secure device its security object, in one
 // load bracket. This is the bracket ETS runs for such a partial download (Jung 400021SE, K2 switched
-// between two functions with different objects, both directions, 2026-10-01): unload all four objects
+// between two functions with different objects, both directions): unload all four objects
 // and the security object; load and reallocate each without fill (the application first, then its
 // memory-control blocks); write the parameter bytes, the com-object table bytes that differ, the
 // association and address tables whole; load the security object; stamp the program id; complete
@@ -307,7 +307,7 @@ export interface AbsStructuralFlashPlan { plan: LoadPlan; changedBytes: number; 
 // the parameter segments' owned bytes. A parameter that was active in the programmed baseline
 // (`baseValues`) and is not in the new configuration goes back to its segment's <Data> template value,
 // as ETS writes it: ETS writes where its old image differs from its new one (MDT BE-02001.02, input
-// B's short/long settings, 2026-10-01). Only bits a baseline parameter owned and verifies are taken
+// B's short/long settings). Only bits a baseline parameter owned and verifies are taken
 // this way, so a byte no parameter derives (a text, a value the codec cannot encode) and an
 // Access="None" parameter the device stamps are never reset, and every bit taken is verified.
 export function absoluteStructuralImages(

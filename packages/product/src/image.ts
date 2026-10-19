@@ -129,7 +129,7 @@ export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "Bina
 //    every text field holds its value and zeros over a <Data> holding other texts ("" over
 //    "Statuselement00" is 30 zero bytes, "Bit Alarm 1" over "Bit Alarm 2"), and the 30-character
 //    "MDT IP Interface mit IPRouting" fills its 30-byte field. Its parameter downloads write
-//    "hc10" and 22 zeros (mdt-router-ets6log-partial-name.txt) and the 30 characters without a zero
+//    the name's 4 changed characters and 22 zeros (mdt-router-ets6log-partial-name.txt) and the 30 characters without a zero
 //    (mdt-router-ets6log-partial-name-revert.txt) into that field.
 // No capture shows a character beyond ASCII, a field that is not whole bytes from bit 0, or a
 // field-length value in an application declaring TextParameterZeroTerminate: those are refused.

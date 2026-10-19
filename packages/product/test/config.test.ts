@@ -133,7 +133,7 @@ describe("buildDeviceConfig visibility", () => {
 // ETS evaluates EVERY matching <when> of a <choose>, not just the first. A single choose
 // can drive two independent overlapping placements (the Theben RMG 8 S contact block does
 // this for a param + a union member sharing one byte). First-match-wins left the second
-// placement unwritten; this is the hardware-confirmed fix. See config.ts selectWhens.
+// placement unwritten; this is the hardware-confirmed fix (on an RMG 8 S). See config.ts selectWhens.
 describe("choose evaluates all matching whens (overlapping tests)", () => {
   const overlapXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-9" ApplicationNumber="9" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Overlap" DefaultLanguage="en-US">
@@ -178,7 +178,7 @@ describe("choose evaluates all matching whens (overlapping tests)", () => {
 // ETS writes an <Assign> target's value to its memory even when the target's own
 // ParameterRef is only placed in an inactive branch. A hidden Access="None" param assigned
 // from a visible one in the ACTIVE branch must therefore land in imageValues (the image
-// set), not only imgEnv. Hardware-confirmed on 1.1.56 (Steinel M-0083).
+// set), not only imgEnv. Hardware-confirmed on a Steinel M-0083 device.
 describe("assign target lands in imageValues (written to memory)", () => {
   const assignXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-8" ApplicationNumber="8" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Assign" DefaultLanguage="en-US">

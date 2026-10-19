@@ -1,7 +1,7 @@
 {
   "schema": "busforge.evidence/1",
-  "id": "mdt-be02001-api-2026-07-24T06-41-11Z-flashLinks",
-  "recordedAt": "2026-07-24T06:41:11.728Z",
+  "id": "mdt-be02001-api-flashLinks",
+  "recordedAt": "2000-01-01T06:41:11.728Z",
   "subject": {
     "manufacturer": "M-0083",
     "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
@@ -59,7 +59,7 @@
   "supersedeReason": null,
   "source": {
     "kind": "smoke-report",
-    "artifact": "tools/smoke/reports/mdt-be02001-api-2026-07-24T06-41-11-728Z.json",
-    "sha256": "f03e84840b9bb3ca60a167bb210421f7e87eb9cebc89a4c4d96148e89f676d73"
+    "artifact": null,
+    "sha256": null
   }
 }

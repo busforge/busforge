@@ -399,7 +399,7 @@ test("verifyRelativeOwned checks only owned bytes; unowned drift does not fail i
 // memory the module instance now occupies. Those displaced top-level params are inactive,
 // and writing their static default would corrupt the channel the module placed there. The
 // surgical target must NOT own them. Real Theben HMG 6T fixture (hardware-mapped: offsets
-// 617/1129 on the unit were exactly this, the inactive "Zeit fuer zykl. Senden" param inside
+// 617/1129 on an HMG 6 T were exactly this, the inactive "Zeit fuer zykl. Senden" param inside
 // the JME channel-module region; owning its default 2 was the spurious 2-byte "drift").
 const APP = "M-0048_A-493B-21-B471";
 
@@ -589,7 +589,7 @@ corpusTest("the relative images of the full download and the parameter flash sta
     expect([f, r(true), r(false)]).toEqual([f, full, surgical]);
   }
   // MDT IP Interface/Router: every text field holds its value over <Data>, the 30-character device name fills its
-  // 30-byte field. With the house unit's project values this image equals ETS's image of its full download byte for
+  // 30-byte field. With an ETS-programmed unit's project values this image equals ETS's image of its full download byte for
   // byte (tools/etsdiff.test.ts, "MDT IP Interface/Router"); at defaults the fingerprint pins it.
   const ip = parseAppConfig(readRealFixture("M-0083_A-0137-20-7EB2.xml.gz"));
   const ipr = (own: boolean) => { const t = buildRelativeSegmentTarget(ip, new Map(), 4, { ownIdleUnionDefaults: own })!; return `${h(t.bytes)}/${h(t.owned.map(Boolean))}/${t.owned.filter(Boolean).length}`; };

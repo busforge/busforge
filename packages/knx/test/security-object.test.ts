@@ -4,10 +4,10 @@ import { planSecurityObjectLoad, securityUnload, planSystemBFullDownload, planSy
 import { runLoadPlan } from "../src/loadrunner.ts";
 import { parseApdu, tpAck, type KnxTransport } from "../src/index.ts";
 
-// Reference: ETS 6.4.1's secured download of the bench Jung 400021SE (2026-09-28), decrypted. Its
+// Reference: ETS 6.4.1's secured download of a Jung 400021SE, decrypted. Its
 // security-object bracket is LOAD, PID 54 element 0 = 0000, PID 53 element 1 = address-table index
-// 0001 (0/0/1 is the first address) + key, PID 61 from element 1 in runs of 18 (1327 objects, only object 253 flagged 03), LOAD_COMPLETED.
-// The key here is a dummy; the framing around it is ETS's.
+// 0001 (the first group address) + key, PID 61 from element 1 in runs of 18 (1327 objects, only object 253 flagged 03), LOAD_COMPLETED.
+// The key here is a dummy, and the sender address below a stand-in; the framing around them is ETS's.
 const KEY = "00112233445566778899aabbccddeeff";
 const FLAGS = Buffer.alloc(1327); FLAGS[252] = 0x03;
 const ETS = {
@@ -16,14 +16,14 @@ const ETS = {
   groupKey: "01ce00110010350100010001" + KEY,
   complete: "01d4001100100502000000000000000000",
   unload: "01d4001100100504000000000000000000",
-  // ETS 6.4.1, 2026-09-29, after 1.1.100 (a router's tunnelling channel) was assigned to 0/0/1.
-  sender1164: "01ce00110010360100011164000000000000",
+  // ETS 6.4.1, after a router's tunnelling channel (here 1.2.250) was assigned to the first group address.
+  sender: "01ce001100103601000112fa000000000000",
 };
 
 // A security object that answers each extended service the way the Jung does: a write-con with
 // success, a load event with the state it leads to.
 class SecurityObjectDevice implements KnxTransport {
-  assignedIa = 0x1164;
+  assignedIa = 0x12fa; // 1.2.250
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   readonly sent: string[] = [];
@@ -37,13 +37,13 @@ class SecurityObjectDevice implements KnxTransport {
     const svc = Buffer.from(tpdu); svc[0] &= 0x03;
     const hex = svc.toString("hex");
     this.sent.push(hex);
-    this.onCemi?.(0x11cc, this.assignedIa, tpAck(p.seq), false);
+    this.onCemi?.(0x1204, this.assignedIa, tpAck(p.seq), false);
     const head = hex.slice(4, 14);
     const answer = hex.startsWith("01ce") ? "01cf" + head + hex.slice(14, 20) + "00"
       : "01d6" + head + "00" + this.stateAfter[svc[7]].toString(16).padStart(2, "0");
     const a = Buffer.from(answer, "hex");
     a[0] = 0x40 | (p.seq << 2) | (a[0] & 0x03);
-    this.onCemi?.(0x11cc, this.assignedIa, a, false);
+    this.onCemi?.(0x1204, this.assignedIa, a, false);
   }
 }
 
@@ -63,7 +63,7 @@ describe("the security object load, against ETS's secured download", () => {
 
   test("the bracket sends ETS's events and table writes, and the flags land element for element", async () => {
     const tun = new SecurityObjectDevice();
-    const dev = new KnxDevice(tun, "1.1.204");
+    const dev = new KnxDevice(tun, "1.2.4");
     await runLoadPlan(dev, [securityUnload, ...planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.alloc(0) })]);
     const s = tun.sent;
     expect(s.slice(0, 4)).toEqual([ETS.unload, ETS.load, ETS.clearIaTable, ETS.groupKey]);
@@ -81,8 +81,8 @@ describe("the security object load, against ETS's secured download", () => {
 
   test("a listed sender is written after the table is cleared, frame for frame as ETS does it", async () => {
     const tun = new SecurityObjectDevice();
-    await runLoadPlan(new KnxDevice(tun, "1.1.204"), planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.from("1164000000000000", "hex") }));
-    expect(tun.sent.slice(0, 4)).toEqual([ETS.load, ETS.clearIaTable, ETS.sender1164, ETS.groupKey]);
+    await runLoadPlan(new KnxDevice(tun, "1.2.4"), planSecurityObjectLoad({ groupKeys: Buffer.from("0001" + KEY, "hex"), goFlags: FLAGS, senders: Buffer.from("12fa000000000000", "hex") }));
+    expect(tun.sent.slice(0, 4)).toEqual([ETS.load, ETS.clearIaTable, ETS.sender, ETS.groupKey]);
   });
 
   test("sender entries split at whole 8-byte elements within the secured budget", () => {
@@ -92,7 +92,7 @@ describe("the security object load, against ETS's secured download", () => {
 
   test("a load event that does not reach its state stops the bracket", async () => {
     const tun = new SecurityObjectDevice({ 1: 3, 2: 1, 4: 0 }); // LOAD leaves the object in ERROR
-    const err = await runLoadPlan(new KnxDevice(tun, "1.1.204"), planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: FLAGS, senders: Buffer.alloc(0) })).catch((e: unknown) => e);
+    const err = await runLoadPlan(new KnxDevice(tun, "1.2.4"), planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: FLAGS, senders: Buffer.alloc(0) })).catch((e: unknown) => e);
     expect((err as { code?: string }).code).toBe("LOAD_STATE_UNEXPECTED");
     expect(tun.sent).toEqual([ETS.load]);
   });

@@ -1,7 +1,7 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // OpenKNX RaumController (AB-SmartHouse "AB-PRE", MV-07B0, System B, LSM 4). The from-factory full
-// download taken end-to-end through the production endpoints on 2026-07-17. It matters more than a
+// download taken end-to-end through the production endpoints. It matters more than a
 // manufacturer device: OpenKNX cannot ship a signed .knxprod, so an ETS-free commission is the
 // product's whole reason to exist. Refs pinned verbatim from GET .../config and GET /api/catalog/products.
 // Background and every trap behind it: docs/commissioning.md.
@@ -38,10 +38,10 @@ export const openknxRaumController: DeviceSpec = {
   ],
   // System B claims flashParams/flashLinks and the endpoints perform them. They are kept out of
   // automated runs because a failed boot on this firmware ends in an auto-erase whose recovery needs
-  // the device's serial console. The surgical parameter flash has since been proven by hand on the
-  // house unit (docs/findings.md §16); both stay for the controlled comparison on docs/roadmap.md.
+  // the device's serial console. The surgical parameter flash is proven by hand on an OpenKNX AB-PRE
+  // (docs/findings.md §16); both stay for the controlled comparison on docs/roadmap.md.
   unsafe: [
-    { capability: "flashParams", reason: "proven by hand on the house unit (one byte, verified after the restart, docs/findings.md §16), not by this spec; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
+    { capability: "flashParams", reason: "proven by hand on an OpenKNX AB-PRE (one byte, verified after the restart, docs/findings.md §16), not by this spec; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
     { capability: "flashLinks", reason: "never driven on OpenKNX; a failed boot auto-erases the device and recovery needs its serial console, so it runs only in the controlled comparison (docs/roadmap.md)" },
   ],
   // No fuzz: the seeded param sweep is the surgical path excluded above, so there is nothing to

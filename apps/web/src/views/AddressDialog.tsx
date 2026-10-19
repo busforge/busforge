@@ -67,7 +67,7 @@ export function AddressDialog({ open, onOpenChange, projectId, device, onSaved, 
             <Input
               value={ia} onChange={(e) => { setIa(e.target.value); setError(null); }} disabled={saving}
               onKeyDown={(e) => { if (e.key === "Enter" && !unchanged) void save(); }}
-              placeholder="1.2.32" className="font-mono" autoComplete="off" spellCheck={false} data-testid="device-address"
+              placeholder="1.2.3" className="font-mono" autoComplete="off" spellCheck={false} data-testid="device-address"
             />
           </label>
         )}

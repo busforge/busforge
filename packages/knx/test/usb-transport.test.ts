@@ -23,11 +23,11 @@ class FakeHidDevice {
   // connect() has to establish Data Link Layer mode (0x00). See usb.ts enterDataLinkLayer.
   commMode = 0xff;
   acceptsCommMode = true;
-  // The interface's own identity in its Device Object: 1.1.100, the address the real bench stick
-  // turned out to hold. publishesIdentity=false mimics an interface that does not expose it.
+  // The interface's own identity in its Device Object, here 1.2.250 (a real stick holds whatever
+  // address it was given). publishesIdentity=false mimics an interface that does not expose it.
   publishesIdentity = true;
-  subnet = 0x11;
-  deviceAddr = 0x64;
+  subnet = 0x12;
+  deviceAddr = 0xfa;
   serial = Buffer.from([0x00, 0xc5, 0x01, 0x02, 0x03, 0x04]);
   private dataCb: ((d: Buffer) => void) | null = null;
   on(ev: "data" | "error", cb: (arg: never) => void): void {
@@ -143,10 +143,10 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 0));
 describe("KnxUsbTransport", () => {
   test("sendCemi frames the cEMI into one 64-byte HID report", async () => {
     const { dev, t } = await connected();
-    // cemiLData(0, 1.2.17, [0x80]) = T_Connect from source 0.0.0 (the
+    // cemiLData(0, 1.2.7, [0x80]) = T_Connect from source 0.0.0 (the
     // interface substitutes its own IA):
-    //   11 00 bc 60 00 00 12 11 00 80   (10 bytes)
-    const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
+    //   11 00 bc 60 00 00 12 07 00 80   (10 bytes)
+    const cemi = cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
     await flush();
     // resolve the pending L_Data.con wait (con handling proven separately)
@@ -179,14 +179,14 @@ describe("KnxUsbTransport", () => {
     const calls: { src: number; dst: number; tpdu: Buffer; isGroup: boolean }[] = [];
     t.onCemi = (src, dst, tpdu, isGroup) => calls.push({ src, dst, tpdu, isGroup });
 
-    // L_Data.ind: 29 00 bc 60 | src 12 11 (1.2.17) | dst 11 05 (1.1.5) |
+    // L_Data.ind: 29 00 bc 60 | src 12 07 (1.2.7) | dst 11 05 (1.1.5) |
     // len 03 | tpdu 42 40 00 00 (len byte = tpdu.length - 1)
     const tpdu = Buffer.from([0x42, 0x40, 0x00, 0x00]);
-    const cemi = Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x11, 0x11, 0x05, 0x03, ...tpdu]);
+    const cemi = Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x07, 0x11, 0x05, 0x03, ...tpdu]);
     dev.inject(tunnelReport(cemi));
 
     expect(calls.length).toBe(1);
-    expect(calls[0]!.src).toBe(iaToNum("1.2.17"));
+    expect(calls[0]!.src).toBe(iaToNum("1.2.7"));
     expect(calls[0]!.dst).toBe(iaToNum("1.1.5"));
     expect(calls[0]!.isGroup).toBe(false);
     expect(calls[0]!.tpdu.equals(tpdu)).toBe(true);
@@ -204,7 +204,7 @@ describe("KnxUsbTransport", () => {
     tpdu[1] = 0x40;
     for (let i = 2; i < 61; i++) tpdu[i] = i;
     const cemi = Buffer.concat([
-      Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x11, 0x11, 0x05, 60]), // len byte = 61-1
+      Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x07, 0x11, 0x05, 60]), // len byte = 61-1
       tpdu,
     ]);
     expect(cemi.length).toBe(70);
@@ -248,7 +248,7 @@ describe("KnxUsbTransport", () => {
     // And a well-formed frame afterwards still reassembles normally (the guard only drops
     // orphans, it does not wedge the receiver).
     const tpdu = Buffer.from([0x42, 0x40, 0x00, 0x00]);
-    const cemi = Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x11, 0x11, 0x05, 0x03, ...tpdu]);
+    const cemi = Buffer.from([0x29, 0x00, 0xbc, 0x60, 0x12, 0x07, 0x11, 0x05, 0x03, ...tpdu]);
     dev.inject(tunnelReport(cemi));
     expect(calls.length).toBe(1);
     expect(calls[0]!.equals(tpdu)).toBe(true);
@@ -259,7 +259,7 @@ describe("KnxUsbTransport", () => {
     const calls: Buffer[] = [];
     t.onCemi = (_s, _d, tpdu) => calls.push(tpdu);
 
-    const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
+    const cemi = cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]));
     let resolved = false;
     const p = t.sendCemi(cemi).then(() => {
       resolved = true;
@@ -279,7 +279,7 @@ describe("KnxUsbTransport", () => {
   // resolving (a silent success would resurface one layer up as a misleading timeout).
   test("sendCemi rejects with a coded error after ~1.5 s when no con arrives", async () => {
     const { dev, t } = await connected();
-    const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
+    const cemi = cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]));
     const t0 = Date.now();
     const err = await t.sendCemi(cemi).catch((e) => e);
     const dt = Date.now() - t0;
@@ -347,10 +347,10 @@ describe("Data Link Layer mode (what makes the interface actually transmit)", ()
 describe("KnxUsbTransport: what the interface says about our frames", () => {
   test("connect() learns the interface's own address and serial from its Device Object", async () => {
     const { t } = await connected();
-    // The real bench stick answers 1.1.100 here. Before this read the field was hardcoded to 0,
+    // A real stick answers its own address here. Before this read the field was hardcoded to 0,
     // which is fine for SENDING (the interface substitutes its address) but is not an address a
     // KNXnet/IP server can hand to a tunnelling client.
-    expect(t.assignedIa).toBe(iaToNum("1.1.100"));
+    expect(t.assignedIa).toBe(iaToNum("1.2.250"));
     expect([...t.serialNumber]).toEqual([0x00, 0xc5, 0x01, 0x02, 0x03, 0x04]);
   });
 
@@ -361,7 +361,7 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
     await t.connect(); // must NOT throw: every path that predates the identity read sends from 0.0.0
     expect(t.assignedIa).toBe(0);
 
-    const cemi = cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]));
+    const cemi = cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
     await flush();
     dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)])));
@@ -370,7 +370,7 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
 
   test("a NEGATIVE L_Data.con is a failure, not a send that quietly went nowhere", async () => {
     const { dev, t } = await connected();
-    const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const cemi = cemiLData(0, iaToNum("1.2.3"), Buffer.from([0x80]));
 
     const p = t.sendCemi(cemi);
     await flush();
@@ -390,7 +390,7 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
 
   test("a POSITIVE L_Data.con still resolves", async () => {
     const { dev, t } = await connected();
-    const cemi = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const cemi = cemiLData(0, iaToNum("1.2.3"), Buffer.from([0x80]));
     const p = t.sendCemi(cemi);
     await flush();
     dev.inject(tunnelReport(Buffer.from([0x2e, ...cemi.subarray(1)]))); // ctrl1 0xbc: confirm bit clear
@@ -402,14 +402,14 @@ describe("KnxUsbTransport: what the interface says about our frames", () => {
   // would freeze the whole transport.)
   test("a failed send does not block the next one", async () => {
     const { dev, t } = await connected();
-    const a = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const a = cemiLData(0, iaToNum("1.2.3"), Buffer.from([0x80]));
     const pa = t.sendCemi(a);
     await flush();
     // negative con: send A rejects
     dev.inject(tunnelReport(Buffer.from([0x2e, a[1]!, a[2]! | 0x01, ...a.subarray(3)])));
     await pa.catch(() => {});
 
-    const b = cemiLData(0, iaToNum("1.2.33"), Buffer.from([0x80]));
+    const b = cemiLData(0, iaToNum("1.2.4"), Buffer.from([0x80]));
     const pb = t.sendCemi(b);
     await flush();
     dev.inject(tunnelReport(Buffer.from([0x2e, ...b.subarray(1)]))); // positive con
@@ -503,14 +503,14 @@ describe("KnxUsbTransport: losing the interface", () => {
   test("a write the HID handle refuses is the interface lost, said once, and no later send touches the handle", async () => {
     const { dev, t, closed } = await losable();
     dev.gone = true;
-    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]))).catch((x) => x);
     expect(e).toBeInstanceOf(KnxError);
     expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
     expect(closed.length).toBe(1);
     expect(closed[0]).toContain("Cannot write to hid device");
     expect(dev.closed).toBe(1); // the dead handle is released, so a reopen can take the stick
 
-    const e2 = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    const e2 = await t.sendCemi(cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]))).catch((x) => x);
     expect((e2 as KnxError).code).toBe("USB_INTERFACE_LOST");
     expect(closed.length).toBe(1);
   });
@@ -520,7 +520,7 @@ describe("KnxUsbTransport: losing the interface", () => {
     dev.fail("could not read from HID device");
     expect(closed).toEqual(["the USB interface reported an error: could not read from HID device"]);
     expect(dev.closed).toBe(1);
-    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    const e = await t.sendCemi(cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]))).catch((x) => x);
     expect((e as KnxError).code).toBe("USB_INTERFACE_LOST");
     expect(dev.writes.length).toBe(0);
     dev.fail("again");
@@ -567,7 +567,7 @@ describe("KnxUsbTransport: losing the interface, edges", () => {
   test("a send waiting for its L_Data.con fails at once as lost, not 1.5 s later as unconfirmed", async () => {
     const { dev, t } = await losable();
     const started = Date.now();
-    const p = t.sendCemi(cemiLData(0, iaToNum("1.2.17"), Buffer.from([0x80]))).catch((x) => x);
+    const p = t.sendCemi(cemiLData(0, iaToNum("1.2.7"), Buffer.from([0x80]))).catch((x) => x);
     await flush();
     dev.fail("could not read from HID device");
     const e = await p;

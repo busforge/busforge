@@ -189,7 +189,7 @@ describe("KnxIpServer: connection management", () => {
   });
 
   test("answers the additional-individual-addresses array read (count at index 0, address at index 1)", async () => {
-    const { sock } = await serve([iaToNum("1.1.100")]);
+    const { sock } = await serve([iaToNum("1.2.250")]);
     sock.deliver(connectReq(0x02, 0x03), CLIENT);
     await tick();
     const chId = sock.ofService(SVC.CONNECT_RES).at(-1)![6];
@@ -202,7 +202,7 @@ describe("KnxIpServer: connection management", () => {
     expect([...sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(17)]).toEqual([0x00, 0x01]);
     sock.clear();
     sock.deliver(rd(1, 1), CLIENT); await tick(); // index 1 -> the address itself
-    expect([...sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(17)]).toEqual([0x11, 0x64]); // 1.1.100
+    expect([...sock.ofService(SVC.DEVICE_CONFIG_REQ).at(-1)!.subarray(17)]).toEqual([0x12, 0xfa]); // 1.2.250
   });
 
   test("a bus-monitor layer connection is REFUSED with the code that says why", async () => {
@@ -323,7 +323,7 @@ describe("KnxIpServer: connection management", () => {
 });
 
 describe("KnxIpServer: client -> bus", () => {
-  const req = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80])); // T_Connect to the device
+  const req = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80])); // T_Connect to the device
 
   test("a tunnelled L_Data.req is ACKed, put on the bus, and confirmed with an L_Data.con", async () => {
     const rig = await serve();
@@ -387,7 +387,7 @@ describe("KnxIpServer: client -> bus", () => {
   test("a client sending from 0.0.0 gets its channel's address filled in", async () => {
     const rig = await serve();
     const ch = await open(rig);
-    const anonymous = cemiLData(0, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const anonymous = cemiLData(0, iaToNum("1.2.3"), Buffer.from([0x80]));
 
     rig.sock.deliver(tunnelReq(ch, 0, anonymous), CLIENT);
     await tick();
@@ -423,7 +423,7 @@ describe("KnxIpServer: client -> bus", () => {
 });
 
 describe("KnxIpServer: bus -> client", () => {
-  const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]);
+  const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]);
 
   test("a telegram from the bus reaches the client verbatim, with a sequence number", async () => {
     const rig = await serve();
@@ -485,7 +485,7 @@ describe("KnxIpServer: bus -> client", () => {
     const b = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
     rig.sock.clear();
 
-    const req = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const req = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]));
     rig.sock.deliver(tunnelReq(a, 0, req), CLIENT);
     await tick();
 
@@ -516,7 +516,7 @@ describe("KnxIpServer: bus -> client", () => {
 });
 
 describe("KnxIpServer: management NAT (the USB single-address limit)", () => {
-  const DEV = iaToNum("1.2.32");
+  const DEV = iaToNum("1.2.3");
 
   test("a point-to-point frame leaves the bus sourced from the INTERFACE, not the tunnel address", async () => {
     const rig = await serve([IFACE_IA, SECOND_IA]);
@@ -605,7 +605,7 @@ describe("KnxIpServer: management NAT (the USB single-address limit)", () => {
     await tick();
     rig.sock.clear();
 
-    const group = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]);
+    const group = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]);
     rig.bus.emit(group);
     await tick();
 
@@ -652,7 +652,7 @@ describe("KnxIpServer: the negative-confirm bit is additional-info-aware", () =>
     rig.bus.refuse = "dead line";
     // An L_Data.req carrying ONE additional-info byte: code, addIL=1, [info], ctrl1, ctrl2, ...
     // ctrl1 sits at offset 2 + addIL = 3, NOT at the fixed offset 2.
-    const withInfo = Buffer.from([0x11, 0x01, 0xaa, 0xbc, 0x60, 0x11, 0xfa, 0x12, 0x20, 0x01, 0x00, 0x80]);
+    const withInfo = Buffer.from([0x11, 0x01, 0xaa, 0xbc, 0x60, 0x11, 0xfa, 0x12, 0x03, 0x01, 0x00, 0x80]);
     rig.sock.deliver(tunnelReq(ch, 0, withInfo), CLIENT);
     await tick();
 
@@ -690,7 +690,7 @@ describe("KnxIpServer: refusals", () => {
 });
 
 describe("KnxIpServer: the interface goes away", () => {
-  const req = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
+  const req = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]));
 
   test("open tunnels are disconnected, and a new one is refused with E_KNX_CONNECTION", async () => {
     const rig = await serve();
@@ -710,7 +710,7 @@ describe("KnxIpServer: the interface goes away", () => {
     // now would confirm every frame negatively, which reads as a dead line, not a missing interface.
     expect(rig.sock.ofService(SVC.CONNECT_RES)[0]!.subarray(6)[1]).toBe(0x27);
     // Nothing from the dead transport reaches anyone any more.
-    rig.bus.emit(cemiLData(iaToNum("1.2.32"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
+    rig.bus.emit(cemiLData(iaToNum("1.2.3"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
     await tick();
     expect(rig.sock.ofService(SVC.TUNNEL_REQ).length).toBe(0);
   });
@@ -740,7 +740,7 @@ describe("KnxIpServer: the interface goes away", () => {
     await tick();
 
     rig.sock.clear();
-    fresh.emit(cemiLData(iaToNum("1.2.32"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
+    fresh.emit(cemiLData(iaToNum("1.2.3"), iaToNum("1/0/1"), Buffer.from([0x00, 0x81])));
     await tick();
     expect(rig.sock.ofService(SVC.TUNNEL_REQ).length).toBe(1);
   });
@@ -798,7 +798,7 @@ describe("KnxIpServer: restoring the interface, refusals", () => {
     const rig = await serve();
     const ch = await open(rig);
     rig.bus.sendCemi = () => { rig.server.interfaceLost("the USB interface refused a write"); return Promise.reject(new Error("USB_INTERFACE_LOST")); };
-    rig.sock.deliver(tunnelReq(ch, 0, cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]))), CLIENT);
+    rig.sock.deliver(tunnelReq(ch, 0, cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]))), CLIENT);
     await tick();
     await tick();
     expect(rig.server.channels.size).toBe(0);

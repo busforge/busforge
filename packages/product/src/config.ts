@@ -345,11 +345,11 @@ export function buildDeviceConfig(
   // contact block has one choose on P-1 whose whens "0 1 3"/"2 4" place the contact-type
   // param (bits 0-1) AND whose whens "0 1"/"2 3 4" place a union member (bits 2-3), so
   // every P-1 value matches two whens and ETS places both. First-match-wins left the
-  // union bits unwritten (hardware-confirmed: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
+  // union bits unwritten (hardware-confirmed on an RMG 8 S: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
     // A choose on a union member that no active branch places matches none of its tests: that
     // member holds no value, since its union's memory belongs to whichever member is placed (GVS
-    // AMMA, ETS partial download 2026-09-26: tests of 0 on the idle Forced/Delay/Counter members
+    // AMMA, ETS partial download: tests of 0 on the idle Forced/Delay/Counter members
     // placed no object in ETS). An unset Merker still reads as 0 here.
     if (isUnplacedUnionMember(defParamRefId, scope, e)) { const def = whens.find((w) => w.isDefault); return def ? [def] : []; }
     const v = Number(resolve(defParamRefId, scope, e) ?? 0);
@@ -718,7 +718,7 @@ export function buildDeviceConfig(
         // inactive branch (a common pattern: assign a hidden Access="None" param from a
         // visible one in branch A, place it in branch B). So the assigned value belongs in
         // imageValues, not just imgEnv. Non-memory targets (Merker) have no offset and are
-        // ignored by the image build. Hardware-confirmed on 1.1.56 (Steinel M-0083): P-26
+        // ignored by the image build. Hardware-confirmed on a Steinel M-0083 device: P-26
         // SendFallingOnInit is assigned from P-1 SendRisingOnInit and written to bit 4.
         // A UNION-member target is NOT recorded: union branches overlap one region and the
         // image build owns a union byte only for the actively-placed branch, so injecting an

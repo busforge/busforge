@@ -70,17 +70,17 @@ corpusDescribe("the structural flash against real applications", () => {
     // A device holding what a full download of the baseline wrote.
     const seeded = () => {
       const dev = new MockDevice();
-      const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: base, links: [], proc: parseLoadProcedures(xml) });
+      const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.4", params: base, links: [], proc: parseLoadProcedures(xml) });
       for (const s of build.segments) dev.load(dev.addr.get(s.lsm)!, s.image);
       return dev;
     };
-    const ctx = (params: Map<string, string>, dryRun = false) => ({ deviceId: "d", ia: "1.1.204", appXml: xml, params, baseParams: base, links: [], moduleInstances: [], dryRun, persistBackups: () => "backup" });
+    const ctx = (params: Map<string, string>, dryRun = false) => ({ deviceId: "d", ia: "1.2.4", appXml: xml, params, baseParams: base, links: [], moduleInstances: [], dryRun, persistBackups: () => "backup" });
 
     test("a change that removes objects is written in one bracket and verified", async () => {
       const dev = seeded();
       const res = await classify(cfg).flashStructure(asDev(dev), "MV-07B0", ctx(changed));
       expect(res).toMatchObject({ kind: "flashed", verified: true, structural: true });
-      const want = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.204", params: changed, links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 3)!.image;
+      const want = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.4", params: changed, links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 3)!.image;
       expect((await dev.memRead(0x3000, want.length)).equals(want)).toBe(true);
       // The com-object table went only where it differs, not whole.
       const l3 = dev.writes.filter((w) => w.addr >= 0x3000 && w.addr < 0x3000 + want.length).reduce((n, w) => n + w.len, 0);
@@ -128,11 +128,11 @@ corpusDescribe("the structural flash against real applications", () => {
       // The table references (PID 7) a System 7 unit reports: the segments its procedure declares.
       const declared = (id: string | undefined) => cfg.absoluteSegments.find((s) => s.id === id)!.address;
       dev.addr.set(1, declared(cfg.groupTables.addressSegment)).set(2, declared(cfg.groupTables.associationSegment));
-      const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.56", params, links: [], proc: parseLoadProcedures(xml) });
+      const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.7", params, links: [], proc: parseLoadProcedures(xml) });
       for (const s of build.segments) if (s.address !== null) dev.load(s.address, s.image);
       return dev;
     };
-    const ctx = (params: Map<string, string>, baseParams: Map<string, string>) => ({ deviceId: "d", ia: "1.1.56", appXml: xml, params, baseParams, links: [], moduleInstances: [], dryRun: false, persistBackups: () => "backup" });
+    const ctx = (params: Map<string, string>, baseParams: Map<string, string>) => ({ deviceId: "d", ia: "1.2.7", appXml: xml, params, baseParams, links: [], moduleInstances: [], dryRun: false, persistBackups: () => "backup" });
 
     test("going back to the one-object function restores the deactivated settings' template bytes, verified", async () => {
       const dev = seeded(shortLong);
@@ -145,7 +145,7 @@ corpusDescribe("the structural flash against real applications", () => {
     test("only bytes a parameter of the baseline or the new configuration owns are ever taken", () => {
       const inst = resolveModuleInstances(cfg, contact);
       const view = buildDeviceConfig(cfg, contact, undefined, inst);
-      const images = absoluteStructuralImages(cfg, contact, [], 0x1138, { baseValues: shortLong, moduleInstances: inst, comObjectTable: { active: view.imageComObjects, linked: new Set() } });
+      const images = absoluteStructuralImages(cfg, contact, [], 0x1207, { baseValues: shortLong, moduleInstances: inst, comObjectTable: { active: view.imageComObjects, linked: new Set() } });
       const now = new Map(buildAbsoluteSegmentTargets(cfg, contact, { moduleInstances: inst }).map((t) => [t.address, t]));
       const was = new Map(buildAbsoluteSegmentTargets(cfg, shortLong, { moduleInstances: inst }).map((t) => [t.address, t]));
       for (const img of images) {

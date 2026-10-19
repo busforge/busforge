@@ -87,7 +87,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
   }
   const asDev = (m: MockUnit) => m as unknown as KnxDevice;
   const ctxFor = (params = new Map<string, string>(), links: ComObjectLink[] = []) => ({
-    deviceId: "d", ia: "1.2.55", appXml: xml, params, links, moduleInstances: [], dryRun: false, backupBeforeUnload: false,
+    deviceId: "d", ia: "1.2.3", appXml: xml, params, links, moduleInstances: [], dryRun: false, backupBeforeUnload: false,
     persistBackups: () => "backup",
   });
   const run = async (unit: MockUnit, params?: Map<string, string>, links?: ComObjectLink[]) => {

@@ -4,12 +4,12 @@ import { FaultProxy, type FaultMode } from "./faultproxy.ts";
 
 // A tunnelled L_Data.ind from `src` carrying `tpdu`, as the bridge sends it to a client.
 function ind(src: number, tpdu: Buffer): Buffer {
-  const cemi = Buffer.concat([Buffer.from([0x29, 0x00, 0xb0, 0x60, src >> 8, src & 0xff, 0x11, 0x64, tpdu.length - 1]), tpdu]);
+  const cemi = Buffer.concat([Buffer.from([0x29, 0x00, 0xb0, 0x60, src >> 8, src & 0xff, 0x12, 0xfa, tpdu.length - 1]), tpdu]);
   const f = Buffer.concat([Buffer.from([0x06, 0x10, 0x04, 0x20, 0, 0, 0x04, 0x01, 0x00, 0x00]), cemi]);
   f.writeUInt16BE(f.length, 4);
   return f;
 }
-const DEV = 0x11cc;
+const DEV = 0x1204; // 1.2.4
 const securedA = Buffer.from("43f190" + "0000000016ea" + "aabbccdd" + "01020304", "hex");
 const securedB = Buffer.from("47f190" + "0000000016eb" + "eeff0011223344" + "05060708", "hex");
 const plain = Buffer.from("0340ffff", "hex");
@@ -43,7 +43,7 @@ test("pass leaves every frame as it was", async () => {
 });
 
 test("corrupt flips one bit in each secured data answer of the device, and nothing else", async () => {
-  const got = await through("corrupt", [ind(DEV, securedA), ind(DEV, plain), ind(0x1101, securedB)]);
+  const got = await through("corrupt", [ind(DEV, securedA), ind(DEV, plain), ind(0x1207, securedB)]);
   expect(tpdu(got[0]).subarray(0, -1)).toEqual(securedA.subarray(0, -1));
   expect(tpdu(got[0]).at(-1)).toBe(securedA.at(-1)! ^ 0x01);
   expect(tpdu(got[1])).toEqual(plain);

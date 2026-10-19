@@ -29,7 +29,8 @@ export class SimSystemB implements KnxTransport {
   assignedIa = 0x11ff;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
-  readonly device = 0x11cb; // 1.1.203
+  // The individual address the sim answers from; null answers as whichever device a request addresses.
+  device: number | null = null;
   apcis: number[] = [];
   mask = "07b0";
   objects: SimObject[] = systemBObjects();
@@ -49,6 +50,7 @@ export class SimSystemB implements KnxTransport {
 
   async sendCemi(cemi: Buffer): Promise<void> {
     const tpdu = cemi.subarray(9);
+    const from = this.device ?? cemi.readUInt16BE(6);
     if ((tpdu[0] & 0xc0) === 0x80) return; // T_Connect / T_Disconnect
     const p = parseApdu(tpdu);
     if (p.control) return;
@@ -58,7 +60,7 @@ export class SimSystemB implements KnxTransport {
     if (this.silent(service)) return;
     const reply = (apciOut: number, data: Buffer, low = 0) => {
       const a = Buffer.concat([Buffer.from([0x40 | (p.seq << 2) | ((apciOut >> 8) & 0x03), (apciOut & 0xff) | (low & 0x3f)]), data]);
-      queueMicrotask(() => { this.onCemi?.(this.device, this.assignedIa, tpAck(p.seq), false); this.onCemi?.(this.device, this.assignedIa, a, false); });
+      queueMicrotask(() => { this.onCemi?.(from, this.assignedIa, tpAck(p.seq), false); this.onCemi?.(from, this.assignedIa, a, false); });
     };
     const d = p.data;
     switch (service) {

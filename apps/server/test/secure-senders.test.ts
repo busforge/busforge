@@ -6,7 +6,7 @@ import type { ComObjFlags, OtherDevice } from "@busforge/product";
 // findings §22): only a visible object with the communication and transmit flags that has the address
 // first (its sending address) makes it one; anything undecidable is refused, never left out.
 const flags = (f: Partial<ComObjFlags>): ComObjFlags => ({ read: false, write: false, comm: true, transmit: false, update: false, readOnInit: false, ...f });
-const GVS = 0x11cb;
+const GVS = 0x1203; // 1.2.3
 const model = (over: Partial<OtherDeviceModel> = {}): OtherDeviceModel => ({
   ia: GVS, sequence: 0x0ab9aen,
   objs: new Map([

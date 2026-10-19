@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { telegramValue } from "./telegramValue.ts";
 
-const base = { ts: 0, src: "1.1.204", dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite", raw: "01" };
+const base = { ts: 0, src: "1.2.4", dst: "0/0/1", dstRaw: 1, kind: "GroupValueWrite", raw: "01" };
 
 test("a plain or decrypted telegram shows its decoded value", () => {
   expect(telegramValue(base, "1.001")).toEqual({ value: "On" });

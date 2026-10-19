@@ -56,17 +56,17 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
     constructor() { this.seedComObjTable(comObjSeg.data); } // the device holds a com-object table
   }
   const asDev = (m: MockDevice) => m as unknown as KnxDevice;
-  const ia = (1 << 12) | (2 << 8) | 17; // 1.2.17
+  const ia = (1 << 12) | (2 << 8) | 7; // 1.2.7
 
   describe("MV-0705 GA flash orchestration (mock device)", () => {
     test("System7Profile.flashGroupTables programs a same-size re-point and reports verified", async () => {
-      const orig: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x180a] }];
+      const orig: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040b] }, { comObjNum: 5, gaRaws: [0x1107] }];
       const dev = new MockDevice();
       const o = buildGroupTablesMv0705(orig, ia);
       dev.seedTables(o.addr, o.assoc);
-      const repointed: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040c] }, { comObjNum: 5, gaRaws: [0x180a] }]; // same count
+      const repointed: ComObjectLink[] = [{ comObjNum: 1, gaRaws: [0x040c] }, { comObjNum: 5, gaRaws: [0x1107] }]; // same count
       const res = await new System7Profile("system-7", "MV-0705", withCapacity(undefined, undefined)).flashGroupTables(asDev(dev), "MV-0705", {
-        deviceId: "d", ia: "1.2.17", links: repointed, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+        deviceId: "d", ia: "1.2.7", links: repointed, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
       });
       expect(res.kind).toBe("flashed");
       expect(res.kind === "flashed" && res.verified).toBe(true);
@@ -84,7 +84,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia); // 1 GA today
       dev.seedTables(small.addr, small.assoc);
       const res = await new System7Profile("system-7", "MV-0705", withCapacity(22, 22)).flashGroupTables(asDev(dev), "MV-0705", {
-        deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // grow 1 -> 4, within 22
+        deviceId: "d", ia: "1.2.7", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // grow 1 -> 4, within 22
       });
       expect(res.kind).toBe("flashed");
       const built = buildGroupTablesMv0705(grownLinks, ia);
@@ -96,7 +96,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
       dev.seedTables(small.addr, small.assoc);
       expect(new System7Profile("system-7", "MV-0705", withCapacity(3, 3)).flashGroupTables(asDev(dev), "MV-0705", {
-        deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // 4 GAs > capacity 3
+        deviceId: "d", ia: "1.2.7", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup", // 4 GAs > capacity 3
       })).rejects.toThrow(/GA_TABLE_TOO_LARGE|reserves only/);
       expect((await dev.memRead(ADDR, small.addr.length)).equals(small.addr)).toBe(true); // unchanged
     });
@@ -106,7 +106,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       const small = buildGroupTablesMv0705([{ comObjNum: 1, gaRaws: [0x040b] }], ia);
       dev.seedTables(small.addr, small.assoc);
       expect(new System7Profile("system-7", "MV-0705", withCapacity(undefined, undefined)).flashGroupTables(asDev(dev), "MV-0705", {
-        deviceId: "d", ia: "1.2.17", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+        deviceId: "d", ia: "1.2.7", links: grownLinks, params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
       })).rejects.toThrow(/reserves only/);
     });
 
@@ -118,7 +118,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       held[3 + 1 * 4 + 2] |= 0x04; // object 1 held as linked, its link is being removed
       dev.seedComObjTable(held);
       const res = await new System7Profile("system-7", "MV-0705", realCfg).flashGroupTables(asDev(dev), "MV-0705", {
-        deviceId: "d", ia: "1.2.17", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+        deviceId: "d", ia: "1.2.7", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
       });
       expect(res.kind === "flashed" && res.verified).toBe(true);
       const back = await dev.memRead(comObjSeg.address, held.length);
@@ -134,7 +134,7 @@ corpusDescribe("the GA flash against the real M-0081 application", () => {
       const noSeg = { ...realCfg, groupTables: { ...realCfg.groupTables, comObjectSegment: undefined } } as AppConfig;
       const before = new Map(dev.mem);
       expect(new System7Profile("system-7", "MV-0701", noSeg).flashGroupTables(asDev(dev), "MV-0701", {
-        deviceId: "d", ia: "1.2.17", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
+        deviceId: "d", ia: "1.2.7", links: [{ comObjNum: 0, gaRaws: [0x040b] }], params: new Map(), baseParams: new Map(), dryRun: false, persistBackups: () => "backup",
       })).rejects.toThrow(/FULL_DOWNLOAD_TABLE_SEGMENT_MISSING|names no com-object table/);
       expect(dev.mem).toEqual(before);
     });

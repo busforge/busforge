@@ -8,7 +8,7 @@ import { diagnosticFileName, diagnosticFileText, diagnosticStatus, diagnosticSum
 const rec = (r: Partial<DiagnosticRecord>): DiagnosticRecord => ({ step: "scan", space: "property", target: {}, source: "device", outcome: "bytes", at: 1, ...r });
 const pkg = (over: Partial<DiagnosticPackage> = {}): DiagnosticPackage => ({
   format: "busforge-diagnostic/1", cleaned: { removed: [], notAnonymized: [] }, busforge: { version: "0.0.1", commit: "abc" },
-  connection: { kind: "ip", ipTransport: "tcp" }, ia: "1.1.203", mask: "MV-07B0", family: "system-b", secured: false, authorizeLevel: 0, maxApdu: 55,
+  connection: { kind: "ip", ipTransport: "tcp" }, ia: "1.2.3", mask: "MV-07B0", family: "system-b", secured: false, authorizeLevel: 0, maxApdu: 55,
   plan: null, records: [], limits: [], stop: null, error: null,
   counts: { requests: 0, scanRequests: 0, memoryRequests: 0, memoryBytes: 0, reconnects: 0 },
   startedAt: Date.UTC(2026, 9, 5, 14, 2), finishedAt: Date.UTC(2026, 9, 5, 14, 3, 30), bus: { takenAt: 0, monitorClosedAt: null, releasedAt: 0 },
@@ -18,7 +18,7 @@ const desc = (pid: number): DiagnosticRecord["description"] => ({ objectIndex: 0
 
 describe("diagnostic package review", () => {
   test("the file name is English in every language and says device and time", () => {
-    expect(diagnosticFileName(pkg())).toBe("busforge-diagnostic-1.1.203-2026-10-05-14-03.json");
+    expect(diagnosticFileName(pkg())).toBe("busforge-diagnostic-1.2.3-2026-10-05-14-03.json");
   });
 
   test("the reviewed text is the saved file, the package exactly", () => {

@@ -129,7 +129,7 @@ corpusTest("adjacent owned bytes coalesce into a single contiguous run", () => {
 
 corpusTest("a memory-mapped full download authors the com-object table as ETS does", () => {
   // ABB US/U 4.2 (MV-0701), com-object table AS-43FE: [count][2 B] then 4-byte entries, config byte
-  // at 3+4n+2. ETS 6 captures, 2026-09-25/26: at application defaults no object is configured and
+  // at 3+4n+2. ETS 6 captures: at application defaults no object is configured and
   // every config byte is the template's 0xdf with the link bit 0x04 cleared (0xdb); with channel A
   // controlling an LED, object 1 linked and object 3 not, ETS wrote 0x17 and 0x13 (write, low
   // priority, link bit only on the linked one).

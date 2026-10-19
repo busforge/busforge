@@ -44,19 +44,19 @@ describe("the security object a device's links imply", () => {
 });
 
 describe("the security individual address table (PID 54) a device's links imply", () => {
-  const JUNG = 0x11cc, TUNNEL = 0x1164;
+  const JUNG = 0x1204, TUNNEL = 0x1202;
   const none = { byGa: new Map<number, number[]>(), ownIa: JUNG, otherDevices: new Map<number, OtherDevice[]>() };
 
-  test("the ETS reference: 1.1.100 assigned to 0/0/1, one entry, address then a zero sequence", () => {
+  test("the ETS reference: one tunnel assigned to the secured address, one entry, address then a zero sequence", () => {
     const t = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, byGa: new Map([[1, [TUNNEL]]]) });
-    expect(t.senders.toString("hex")).toBe("1164" + "000000000000");
+    expect(t.senders.toString("hex")).toBe("1202" + "000000000000");
   });
 
   test("the senders of every secured address the device uses, once each, ascending, never itself", () => {
     const byGa = new Map([[1, [0x1205, TUNNEL]], [5, [TUNNEL, JUNG]], [7, [0x1101]]]);
     const t = buildSecurityObject([{ comObjNum: 1, gaRaws: [1] }, { comObjNum: 2, gaRaws: [5] }, { comObjNum: 3, gaRaws: [7] }], 3, new Map([[1, K1], [5, K5]]), { ...none, byGa });
     // 7 is plain: its sender is not listed. JUNG is the device itself.
-    expect(t.senders.toString("hex")).toBe("1164000000000000" + "1205000000000000");
+    expect(t.senders.toString("hex")).toBe("1202000000000000" + "1205000000000000");
   });
 
   test("no senders is an empty table, as ETS loads it for a device alone on its secured address", () => {
@@ -65,22 +65,22 @@ describe("the security individual address table (PID 54) a device's links imply"
     expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]])).senders).toHaveLength(0);
   });
 
-  // ETS 6.4.1, 2026-09-30 (capture ets-gvs-secure-2026-09-30.log, decrypted): the Jung 400021SE
-  // (1.1.204, object 253 transmits on 0/0/1) and the GVS AMMA (1.1.203, object 3 transmits on it,
-  // object 2 receives), both secured, 1.1.100 assigned as a sender. Each device's PID 54 lists the
-  // tunnel with sequence 0 and the other device with its SequenceNumber from the project.
-  const GVS = 0x11cb;
+  // ETS 6.4.1 (capture, decrypted): the Jung 400021SE (object 253 transmits on the secured address)
+  // and the GVS AMMA (object 3 transmits on it, object 2 receives), both secured, a tunnel assigned as
+  // a sender. Each device's PID 54 lists the tunnel with sequence 0 and the other device with its
+  // SequenceNumber from the project. The individual addresses here are synthetic, in the capture's order.
+  const GVS = 0x1203;
   test("the ETS reference: another secured device on the address is listed with its project sequence", () => {
     const byGa = new Map([[1, [TUNNEL]]]);
     const jung = buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { byGa, ownIa: JUNG, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 0x0ab9aen }]]]) });
-    expect(jung.senders.toString("hex")).toBe("1164" + "000000000000" + "11cb" + "0000000ab9ae");
+    expect(jung.senders.toString("hex")).toBe("1202" + "000000000000" + "1203" + "0000000ab9ae");
     const gvs = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [1] }], 3, new Map([[1, K1]]), { byGa, ownIa: GVS, otherDevices: new Map([[1, [{ ia: JUNG, transmits: true, sequence: 0x010bcdn }]]]) });
-    expect(gvs.senders.toString("hex")).toBe("1164" + "000000000000" + "11cc" + "000000010bcd");
+    expect(gvs.senders.toString("hex")).toBe("1202" + "000000000000" + "1204" + "000000010bcd");
   });
 
-  test("another device that only receives on the address is not listed, as ETS does (2026-10-01)", () => {
+  test("another device that only receives on the address is not listed, as ETS does", () => {
     const gvs = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [1] }], 3, new Map([[1, K1]]), { byGa: new Map([[1, [TUNNEL]]]), ownIa: GVS, otherDevices: new Map([[1, [{ ia: JUNG, transmits: false, sequence: null }]]]) });
-    expect(gvs.senders.toString("hex")).toBe("1164" + "000000000000");
+    expect(gvs.senders.toString("hex")).toBe("1202" + "000000000000");
   });
 
   test("another device that has no sequence, or cannot be classed, is refused: not shown", () => {
@@ -88,7 +88,7 @@ describe("the security individual address table (PID 54) a device's links imply"
     expect(tbl({ ia: GVS, transmits: false, sequence: 5n, unclear: "its linked object #3 transmits, but this is not its sending address" })).toThrow(/not its sending address/);
     expect(tbl({ ia: GVS, transmits: false, sequence: 5n, unclear: "its linked object #4 answers reads there" })).toThrow(/answers reads/);
     // A device that transmits there is listed whatever else its links leave unclear.
-    expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 5n, unclear: "its linked object #4 answers reads there" }]]]) }).senders.toString("hex")).toBe("11cb000000000005");
+    expect(buildSecurityObject([{ comObjNum: 253, gaRaws: [1] }], 1327, new Map([[1, K1]]), { ...none, otherDevices: new Map([[1, [{ ia: GVS, transmits: true, sequence: 5n, unclear: "its linked object #4 answers reads there" }]]]) }).senders.toString("hex")).toBe("1203000000000005");
     expect(tbl({ ia: GVS, transmits: true, sequence: null })).toThrow(/another device/);
     expect(tbl({ ia: GVS, transmits: true, sequence: 5n, unresolved: "its linked object #3 is hidden by its parameters" })).toThrow(/hidden/);
     expect(tbl({ ia: GVS, transmits: true, sequence: 2n ** 48n })).toThrow(/48 bits/);

@@ -3,7 +3,7 @@ import { KnxDevice } from "./device.ts";
 
 const [ip, target] = process.argv.slice(2);
 if (!ip || !target) {
-  console.error("usage: bun run knx <gateway-ip> <device-ia>   e.g. bun run knx 203.0.113.41 1.2.55");
+  console.error("usage: bun run knx <gateway-ip> <device-ia>   e.g. bun run knx 203.0.113.41 1.2.3");
   process.exit(2);
 }
 

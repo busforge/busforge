@@ -34,8 +34,8 @@ function seqNum(b: Buffer): bigint {
 
 // Where a tool's sequence starts when nothing else is known: milliseconds since 2018-01-01, so it grows
 // from one session to the next, across restarts of busforge too, as a device's replay protection
-// expects of a tool. ETS's start is a clock of the same kind (0x004024085340 on 2026-09-28, about four
-// days behind this one). A clock stepped backwards, or a Sync that adopted a higher sequence, can
+// expects of a tool. ETS's start is a clock of the same kind (an observed ETS start ran about four days
+// behind this one). A clock stepped backwards, or a Sync that adopted a higher sequence, can
 // still put a later session's start below what the device has seen.
 const TOOL_SEQUENCE_EPOCH = Date.UTC(2018, 0, 1);
 export function toolSequenceNow(now = Date.now()): bigint { return BigInt(now - TOOL_SEQUENCE_EPOCH); }

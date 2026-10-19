@@ -66,7 +66,7 @@ corpusDescribe("a colour parameter in use on a System 7 application", () => {
   });
 });
 
-// The MDT BE-06001.02's own colour parameters (RGB, module 2), in a unit's configuration with channel 1's
+// The MDT BE-06001.02's own colour parameters (RGB, module 2), in an ETS-programmed unit's configuration with channel 1's
 // LED set to a colour: the full download, whose parameter segment declares no <Mask>, refuses as well.
 corpusDescribe("a catalogue colour in use on a System 7 full download", () => {
   const xml = catalogueXml("M-0083_A-00B4-32-3919.xml.gz");

@@ -89,8 +89,8 @@ class FakeTcpSocket implements TcpSocket {
 }
 
 const CHANNEL = 0x07;
-const CLIENT_IA = iaToNum("1.2.10");
-// CONNECT_RESPONSE: channel 0x07, status ok, gateway HPAI, CRD carrying IA 1.2.10. The client
+const CLIENT_IA = iaToNum("1.2.250");
+// CONNECT_RESPONSE: channel 0x07, status ok, gateway HPAI, CRD carrying IA 1.2.250. The client
 // ignores the gateway HPAI on TCP (the connection is the endpoint), so any address serves here.
 const CONNECT_RES = knxFrame(SVC.CONNECT_RES, Buffer.concat([
   Buffer.from([CHANNEL, 0x00]),
@@ -173,7 +173,7 @@ describe("KnxIpTunnel over TCP", () => {
 
     const round = tunnel["heartbeat"]();
     await tick();
-    // Byte-equal to ETS 6 over TCP (bench capture 2026-09-29): channel, reserved, IPV4_TCP HPAI.
+    // Byte-equal to ETS 6 over TCP (an ETS capture): channel, reserved, IPV4_TCP HPAI.
     expect([...sock.sent[0]!]).toEqual([
       0x06, 0x10, 0x02, 0x07, 0x00, 0x10,
       CHANNEL, 0x00,
@@ -472,7 +472,7 @@ describe("KnxIpServer over TCP", () => {
   test("a tunnelled L_Data.req is ACKed on the socket, put on the bus, and confirmed with an L_Data.con on the socket", async () => {
     const rig = await serveTcp();
     const { conn, ch } = await openTcp(rig);
-    const req = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const req = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]));
 
     conn.feed(tunnelReq(ch, 0, req));
     await tick();
@@ -493,9 +493,9 @@ describe("KnxIpServer over TCP", () => {
     const rig = await serveTcp();
     const { conn, ch } = await openTcp(rig);
 
-    const f1 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));            // T_Connect
-    const f2 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x43, 0x00]));      // a numbered read
-    const f3 = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x81]));            // T_Disconnect
+    const f1 = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]));            // T_Connect
+    const f2 = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x43, 0x00]));      // a numbered read
+    const f3 = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x81]));            // T_Disconnect
     conn.feed(tunnelReq(ch, 0, f1)); await tick();
     conn.feed(tunnelReq(ch, 0, f2)); await tick(); // SAME seq 0
     conn.feed(tunnelReq(ch, 0, f3)); await tick(); // SAME seq 0
@@ -510,7 +510,7 @@ describe("KnxIpServer over TCP", () => {
   test("a bus telegram is delivered to the TCP client as a TUNNELLING_REQUEST and completes on the client ACK", async () => {
     const rig = await serveTcp();
     const { conn, ch } = await openTcp(rig);
-    const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]);
+    const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]);
 
     rig.bus.emit(ind);
     await tick();
@@ -638,7 +638,7 @@ describe("KnxIpServer over TCP", () => {
     expect(rig.server.channels.get(b.ch)!.ia).toBe(SECOND_IA);
 
     // A bus telegram reaches BOTH, each over its own connection.
-    const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]);
+    const ind = Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]);
     rig.bus.emit(ind);
     await tick();
     expect(a.conn.ofService(SVC.TUNNEL_REQ).length).toBe(1);
@@ -698,7 +698,7 @@ describe("KNXnet/IP tunnel over TCP, client and server end to end", () => {
     const flush = async () => { for (let i = 0; i < 12; i++) await tick(); };
 
     // client -> bus: sendCemi resolves once the frame is written (no ACK over TCP); it reaches the bus.
-    const out = cemiLData(IFACE_IA, iaToNum("1.2.32"), Buffer.from([0x80]));
+    const out = cemiLData(IFACE_IA, iaToNum("1.2.3"), Buffer.from([0x80]));
     await tunnel.sendCemi(out);
     await flush();
     expect(bus.written.length).toBe(1);
@@ -707,9 +707,9 @@ describe("KNXnet/IP tunnel over TCP, client and server end to end", () => {
     // bus -> client: a telegram from the bus surfaces via onCemi on the client.
     const seen: number[] = [];
     tunnel.onCemi = (src) => seen.push(src);
-    bus.emit(Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x20, 0x1b, 0x01, 0x01, 0x00, 0x81]));
+    bus.emit(Buffer.from([0x29, 0x00, 0xbc, 0xe0, 0x12, 0x03, 0x77, 0xc8, 0x01, 0x00, 0x81]));
     await flush();
-    expect(seen).toEqual([iaToNum("1.2.32")]);
+    expect(seen).toEqual([iaToNum("1.2.3")]);
 
     await tunnel.disconnect();
     await server.stop();

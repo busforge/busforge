@@ -27,23 +27,23 @@ describe("group address senders API", () => {
   test("the overlay says whether the address is secured and lists its assigned senders", async () => {
     const s = await setup();
     expect((await s.call("GET", "/devices")).body).toMatchObject({ secured: true, interfaceSenders: [] });
-    expect((await s.call("POST", "/senders", { ia: "1.1.100" })).status).toBe(200);
-    expect((await s.call("GET", "/devices")).body).toMatchObject({ interfaceSenders: [{ ia: "1.1.100", source: "busforge" }] });
+    expect((await s.call("POST", "/senders", { ia: "1.2.250" })).status).toBe(200);
+    expect((await s.call("GET", "/devices")).body).toMatchObject({ interfaceSenders: [{ ia: "1.2.250", source: "busforge" }] });
     s.close();
   });
 
   test("removes a sender, and says so when there was none", async () => {
     const s = await setup();
-    await s.call("POST", "/senders", { ia: "1.1.100" });
-    expect((await s.call("DELETE", "/senders/1.1.100")).status).toBe(200);
-    expect((await s.call("DELETE", "/senders/1.1.100"))).toMatchObject({ status: 404, body: { error: { code: "SENDER_NOT_FOUND" } } });
+    await s.call("POST", "/senders", { ia: "1.2.250" });
+    expect((await s.call("DELETE", "/senders/1.2.250")).status).toBe(200);
+    expect((await s.call("DELETE", "/senders/1.2.250"))).toMatchObject({ status: 404, body: { error: { code: "SENDER_NOT_FOUND" } } });
     expect((await s.call("GET", "/devices")).body).toMatchObject({ interfaceSenders: [] });
     s.close();
   });
 
   test("refuses what is not an individual address, and an unknown group address", async () => {
     const s = await setup();
-    expect(await s.call("POST", "/senders", { ia: "1/1/100" })).toMatchObject({ status: 400, body: { error: { code: "SENDER_INVALID" } } });
+    expect(await s.call("POST", "/senders", { ia: "1/2/250" })).toMatchObject({ status: 400, body: { error: { code: "SENDER_INVALID" } } });
     const res = (await handleApi(new Request("http://x/api/projects/p/group-addresses/99/senders", { method: "POST", body: JSON.stringify({ ia: "1.1.1" }) }), s.state))!;
     expect(res.status).toBe(404);
     s.close();

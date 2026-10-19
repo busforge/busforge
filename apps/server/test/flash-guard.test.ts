@@ -82,7 +82,7 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
 // refused before a single write. The stub fails on any bus call the pre-flight does not expect.
 corpusDescribe("the M-0081_A-FE01-11-75D9 full download's pre-flight", () => {
   const xml = fixture("M-0081_A-FE01-11-75D9.xml.gz");
-  const ctx = { ...ctxFor(xml), ia: "1.2.18", links: [] };
+  const ctx = { ...ctxFor(xml), ia: "1.2.7", links: [] };
   const PROGRAM_ID = Buffer.from("0081fe0111", "hex");
   const reads: string[] = [];
   const unit = (programId: Buffer) => dev({

@@ -1,7 +1,7 @@
 {
   "schema": "busforge.evidence/1",
   "id": "synthetic-ets-reference",
-  "recordedAt": "2026-01-01T00:00:00.000Z",
+  "recordedAt": "2000-01-01T00:00:00.000Z",
   "subject": {
     "manufacturer": "M-00FA",
     "productRef": "M-00FA_H-0xA012-1_P-OpenKnxRaumController",

@@ -7,7 +7,7 @@ import { cemiLData, cemiLDataGroup, iaToNum, gaToNum } from "../src/frame.ts";
 describe("parseCemiLData", () => {
   test("individual-addressed L_Data round-trips", () => {
     const src = iaToNum("1.1.5");
-    const dst = iaToNum("1.2.17");
+    const dst = iaToNum("1.2.7");
     const tpdu = Buffer.from([0x42, 0x40, 0x00, 0x00]); // some numbered TPDU
     const cemi = cemiLData(src, dst, tpdu);
     const p = parseCemiLData(cemi);

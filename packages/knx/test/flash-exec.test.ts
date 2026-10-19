@@ -71,11 +71,11 @@ describe("appId", () => {
 describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoadPlan)", () => {
   // The relative planner lives in @busforge/product; this test locks that the planned
   // steps reproduce the RETIRED hardcoded executor's hardware-proven call order
-  // (M-0162 byte-match) exactly, with ONE deliberate, documented delta: the
+  // (a byte match on an M-0162 device) exactly, with ONE deliberate, documented delta: the
   // engine asserts LOADING after Load (an extra propRead), as it always did for the
   // absolute path. Standard LSM behavior, now hardware-smoked on a System B device: a
   // module-instance param change was flashed + restored, byte-checked, on the Theben
-  // HMG through this engine bracket (see docs/load-procedures.md).
+  // MIX 2 HMG 6 T through this engine bracket (see docs/load-procedures.md).
   const relativePlan = (lsm: number, image: Buffer, id: Buffer): LoadPlan => [
     { op: "unload", lsm },
     { op: "load", lsm },
@@ -694,7 +694,7 @@ describe("master reset over the bus", () => {
   test("builds A_Restart with the MasterReset type and the erase code", async () => {
     const sent: Buffer[] = [];
     const tun = { assignedIa: 0, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async (c: Buffer) => { sent.push(Buffer.from(c)); } };
-    const dev = new KnxDevice(tun as any, "1.2.32");
+    const dev = new KnxDevice(tun as any, "1.2.3");
     await dev.masterReset(ERASE.FACTORY_RESET);
 
     const cemi = sent[0];
@@ -710,7 +710,7 @@ describe("master reset over the bus", () => {
     // The frame never left the interface, so the device still holds its full configuration. Returning
     // clean here would tell the caller a factory reset happened when nothing was wiped.
     const tun = { assignedIa: 0, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async () => { throw new Error("interface down"); } };
-    const dev = new KnxDevice(tun as any, "1.2.32");
+    const dev = new KnxDevice(tun as any, "1.2.3");
     expect(dev.masterReset(ERASE.FACTORY_RESET)).rejects.toThrow("interface down");
   });
 })

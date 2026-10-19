@@ -2,7 +2,7 @@
 
 `keyring.knxkeys` and `testcase.knxkeys` are byte-identical copies of
 `test/secure_tests/resources/keyring.knxkeys` and `test/secure_tests/resources/testcase.knxkeys`
-in [xknx](https://github.com/XKNX/xknx) (checked against `main` on 2026-10-04). They are ETS 5.7
+in [xknx](https://github.com/XKNX/xknx) (`main`). They are ETS 5.7
 exports made for that test suite, with published passwords (`pwd` and `password`), and
 `keyring.test.ts` uses them as known-answer vectors. They are not Busforge's work and are
 distributed here under xknx's license, reproduced below.

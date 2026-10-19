@@ -12,11 +12,11 @@ import type { DeviceSpec } from "../spec.ts";
 // the contact-state object with its current value (0 = contact open on the bench). Refs pinned verbatim
 // from GET .../config and GET /api/catalog/products.
 //
-// This device is why the System B GA flash now brackets the application object (2026-07-24). A table-only
-// GA flash left all three tables LOADED and byte-perfect here while the APPLICATION PROGRAM object dropped
-// to ERROR: the device kept answering management (so everything verified green) but ran no application, so
-// the freshly linked object was functionally dead. The fix holds object 4 in its own load bracket across
-// the table rewrite; the surgical GA flash below is the hardware proof that it works (and a guard now
+// On this device the System B GA flash must bracket the application object. A table-only GA flash leaves
+// all three tables LOADED and byte-perfect here while the APPLICATION PROGRAM object drops to ERROR: the
+// device keeps answering management (so everything verifies green) but runs no application, so the
+// freshly linked object is functionally dead. The GA flash holds object 4 in its own load bracket across
+// the table rewrite; the surgical GA flash below is the hardware proof that it works (and a guard
 // refuses a GA flash that degrades the application, instead of reporting it verified).
 export const jung400021se: DeviceSpec = {
   id: "jung-400021se",
@@ -26,7 +26,7 @@ export const jung400021se: DeviceSpec = {
     ia: "1.1.204",
     mask: "MV-07B0",
   },
-  provision: "skip-if-present", // the bench Jung keeps 1.1.204 between runs
+  provision: "skip-if-present", // the bench Jung keeps its address between runs
   // Both channels at their default "Schalten" function (0), which exposes each channel's readable
   // "Ausgang" contact object (#253 for K1, #261 for K2) the behaviour binds to.
   configure: [

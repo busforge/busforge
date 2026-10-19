@@ -98,7 +98,7 @@ corpusDescribe("module instances (Theben 493B channel device)", () => {
     // The HMG6T Notprogramm block (P-55..P-58) is gated by an Access=None Merker (P-7)
     // that is only placed when its real switch P-6 = 1. With P-6 at its default 0, ETS
     // leaves those parameter bytes at 0; our resolver must do the same (the Merker reads
-    // as unset, so the block's params are not active). Hardware-verified on a device.
+    // as unset, so the block's params are not active). Hardware-verified on an HMG 6 T.
     const instances = resolveModuleInstances(app, new Map([[`${APP}_P-57_R-57`, "6"]]));
     const mi1 = `${APP}_MD-7_M-19_MI-1`;
     const setpoint = `${mi1}_P-57_R-71`; // Maximale Stellgroesse im Notprogramm (default 40)

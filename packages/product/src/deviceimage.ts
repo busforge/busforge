@@ -180,7 +180,7 @@ export function buildAbsoluteSegmentTargets(
 //    module type: the active one is owned and writes its enumeration's bytes, as ETS's
 //    image holds them (ETS captures of all three MIX 2 products).
 //  - LegacyPatchAlways params: owned like any other. ETS writes their value over the <Data> byte
-//    (MDT BE-02001.02 captures; the Theben MIX house devices hold the values, not <Data>).
+//    (MDT BE-02001.02 captures; Theben MIX devices programmed by ETS hold the values, not <Data>).
 //  - A plain top-level param that is INACTIVE and whose memory falls inside an active
 //    module instance's region: NOT owned. That byte belongs to the channel the module
 //    placed there; the top-level param is the displaced channel variant (e.g. the relay
@@ -214,7 +214,7 @@ export function buildRelativeSegmentTarget(
   values: Map<string, string>,
   lsm: number,
   // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member,
-  // as ETS writes it in both its full and its parameter download (GVS AMMA captures, 2026-09-25/26).
+  // as ETS writes it in both its full and its parameter download (GVS AMMA captures).
   // The read-back model leaves it unset: it compares what the configuration derives.
   opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals } = {},
 ): RelativeSegmentTarget | null {
@@ -289,7 +289,7 @@ export function buildRelativeSegmentTarget(
     if (gated || active.has(ref.id)) v = active.get(ref.id);
     else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = param.value;
     //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
-    //    capture, 2026-09-25: every disabled channel's unions, byte for byte), under the same
+    //    capture: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
     //    covered by a capture and stay unowned.
     if (v === undefined && opts.ownIdleUnionDefaults && cfgParam?.unionDefault && cfgParam.unionId !== undefined && !ref.id.includes("_MI-")

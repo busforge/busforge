@@ -119,7 +119,7 @@ corpusDescribe("the real M-0081 absolute par flash plan", () => {
 
 test("planRelativeParFlash emits exactly the hardware-proven System B bracket", () => {
   // The oracle is the retired hardcoded executor's call order (hardware-proven on
-  // M-0162), hand-written here, NOT derived from the planner. The engine-side
+  // an M-0162 device), hand-written here, NOT derived from the planner. The engine-side
   // device-call lock for the same bracket lives in packages/knx/test/flash-exec.test.ts.
   const image = Buffer.alloc(212, 0xab);
   const id = Buffer.from("0083123421", "hex");

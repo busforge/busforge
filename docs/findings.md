@@ -389,7 +389,7 @@ A placed ref with nothing stored keeps its own default, because applications sel
 parameter's value by which ref an active branch places; when several refs with different defaults
 are placed, each keeps its own, since which one ETS would use is unknown. Which refs are placed is
 determined once, by walking the tree until the placement no longer changes, and every pass (the
-view and the image) reads the same placement. Against the stored configurations of a real
+view and the image) reads the same placement. Against the stored configurations of an ETS
 installation project and every catalogue fixture at its defaults, this rule changes the image only
 for the Meteodata (8 bytes) and the two Auros (1 byte each), each to the byte the device holds.
 Configurations edited after a ref switch change too, by design; no capture shows ETS after such an
@@ -966,7 +966,7 @@ The view lists them: an object directly under a container goes into the containe
 that encloses the block. Every active object the image pass reaches must appear in the view, or the
 configuration is refused (`CONFIG_VIEW_INCOMPLETE`), and so is anything placed outside every
 channel and block. A test over every catalogue fixture checks the view against the image pass
-and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over a real
+and against the catalogue itself (every `ComObjectRefRef` with no `<when>` above it). Over an ETS
 installation project, listing these objects changes only views, no parameter image, and every
 project link resolves.
 

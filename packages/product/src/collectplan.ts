@@ -152,7 +152,7 @@ export function planForMask(mask: string, app?: CollectApp | null): MaskPlan {
       // timeout. The EEPROM segment holds every resource but the run status; on BCU1 the table
       // pointers are one byte added to 0x0100, so the tables lie inside it.
       p.objects = "none";
-      // The one property read: an IP interface that reports this mask (the house's MDT SCN-IP000.03)
+      // The one property read: an IP interface that reports this mask (the MDT SCN-IP000.03)
       // answers secured property reads, and without a maximum APDU no secured memory read is sent. A
       // real BCU1 is not expected to answer it (inferred), which costs one unanswered request with its
       // retries and a reopened link.

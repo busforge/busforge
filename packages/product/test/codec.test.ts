@@ -254,7 +254,7 @@ describe("multiple refs to one param", () => {
 
 // An application may declare <Options ParameterByteOrder="LittleEndian"> (the ABB US/U 4.2 does):
 // ETS then writes a multi-byte parameter least significant byte first (its LED flash time 450 went
-// out as c2 01 in an ETS partial download, 2026-09-26).
+// out as c2 01 in an ETS partial download).
 describe("little-endian parameter byte order", () => {
   const le = { littleEndian: true };
   const m = mk(

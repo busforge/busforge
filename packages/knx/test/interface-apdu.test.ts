@@ -4,9 +4,10 @@ import { KnxIpTunnel, type TunnelSocket } from "../src/connection.ts";
 import { cemiLData } from "../src/frame.ts";
 import { writeChunks, EXT_WRITE_CHUNK } from "../src/device.ts";
 
-// The MDT IP Interface/Router's SEARCH_RESPONSE_EXTENDED to ETS 6 (captures/openknx-ets-fulldownload.log, house gateway),
+// The MDT IP Interface/Router's SEARCH_RESPONSE_EXTENDED to ETS 6 (captures/openknx-ets-fulldownload.log),
 // its Extended Device Information DIB `08 08 00 00 00 d2 00 12`: maximum APDU 210, device descriptor 0012.
-const MDT = "0610020c009e0801cb0071290e5736010200125a0000008300000090e000170c02000000000153434e2d49503030302e303320495020496e7465726661636520776974680e020202030204020502070109010808000000d200121003cb007129ffffff00cb00710106011404cb007129ffffff00cb0071010000000000000c05125a11ff11fe11fd11fc140700d211fffffe11fefffe11fdffff11fcffff";
+// Its individual, tunnelling, IP and MAC addresses and serial number are stand-ins; the layout is the capture's.
+const MDT = "0610020c009e0801cb0071290e573601020012070000008300000000e000170c02000000000153434e2d49503030302e303320495020496e7465726661636520776974680e020202030204020502070109010808000000d200121003cb007129ffffff00cb00710106011404cb007129ffffff00cb0071010000000000000c05120712ff12fe12fd12fc140700d212fffffe12fefffe12fdffff12fcffff";
 
 test("the interface's maximum APDU from the Extended Device Information DIB", () => {
   expect(extendedDeviceMaxApdu(Buffer.from(MDT, "hex").subarray(6))).toBe(210);
@@ -54,6 +55,6 @@ test("the tunnel asks its interface with ETS's extended search and takes the ans
 });
 
 test("a TPDU longer than a standard frame goes as an extended frame, as ETS sends it", () => {
-  expect(cemiLData(0x11ff, 0x1220, Buffer.alloc(16))[2]).toBe(0xbc);
-  expect(cemiLData(0x11ff, 0x1220, Buffer.alloc(17))[2]).toBe(0x3c);
+  expect(cemiLData(0x12fa, 0x1203, Buffer.alloc(16))[2]).toBe(0xbc);
+  expect(cemiLData(0x12fa, 0x1203, Buffer.alloc(17))[2]).toBe(0x3c);
 });

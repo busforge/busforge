@@ -6,10 +6,10 @@ import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
 // System B parameter flash against a device whose bytes already match: whether it may call that
-// "unchanged" depends on the parameter load-state machine being LOADED. On the house's OpenKNX
-// RaumController an interrupted flash left the bytes right and LSM 4 Loading (application halted),
-// and the next flash reported "unchanged". The System B bracket rewrites the segment
-// and completes the load, so it runs.
+// "unchanged" depends on the parameter load-state machine being LOADED. On an OpenKNX RaumController
+// an interrupted flash can leave the bytes right and LSM 4 Loading (application halted), which a
+// byte comparison alone would call "unchanged". The System B bracket rewrites the segment and
+// completes the load, so it runs.
 corpusDescribe("the System B parameter flash against the real M-0162 application", () => {
   const xml = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
   const cfg = parseAppConfig(xml);
@@ -108,17 +108,17 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
   // application (tools/etsdiff.test.ts).
   describe("System B group-address flash and the stamp record", () => {
     const tables = (links: { comObjNum: number; gaRaws: number[] }[]) => {
-      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.20", params, links, proc: parseLoadProcedures(xml) });
+      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.7", params, links, proc: parseLoadProcedures(xml) });
       return (lsm: number) => b.segments.find((s) => s.lsm === lsm)!.image;
     };
-    const unlinked = tables([]), linked = tables([{ comObjNum: 2, gaRaws: [0x7ffa] }]);
+    const unlinked = tables([]), linked = tables([{ comObjNum: 2, gaRaws: [0x77c8] }]);
     const COMOBJ = `${unlinked(3).length.toString(16).padStart(8, "0")}00ff00cc`;
     const run = async (record: { obj: number; element: number; hex: string; written?: true }[] | undefined, comObjStamp = COMOBJ, tablesState: number = STATE.LOADED) => {
       const dev = seeded();
       dev.stamps.set(3, comObjStamp);
       dev.state.set(3, tablesState);
       for (const lsm of [1, 2, 3]) unlinked(lsm).forEach((b, i) => dev.mem.set(0x100 * lsm + i, b));
-      const res = await classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links: [{ comObjNum: 2, gaRaws: [0x7ffa] }], stampRecord: record });
+      const res = await classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links: [{ comObjNum: 2, gaRaws: [0x77c8] }], stampRecord: record });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(res.verified).toBe(true);
       for (const lsm of [1, 2, 3]) expect([lsm, Buffer.from(Array.from(linked(lsm), (_, i) => dev.mem.get(0x100 * lsm + i)!)).equals(linked(lsm))]).toEqual([lsm, true]);
@@ -160,15 +160,15 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
   describe("which objects each operation's record marks as written", () => {
     const writtenObjs = (stamps: { obj: number; written?: true }[] | undefined) =>
       stamps === undefined ? undefined : [...new Set(stamps.filter((st) => st.written).map((st) => st.obj))].sort((a, b) => a - b);
-    const links = [{ comObjNum: 2, gaRaws: [0x7ffa] }];
+    const links = [{ comObjNum: 2, gaRaws: [0x77c8] }];
     const loadedUnit = () => {
       const dev = seeded();
-      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.20", params, links: [], proc: parseLoadProcedures(xml) });
+      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.7", params, links: [], proc: parseLoadProcedures(xml) });
       for (const lsm of [1, 2, 3]) b.segments.find((sg) => sg.lsm === lsm)!.image.forEach((v, i) => dev.mem.set(0x100 * lsm + i, v));
       return dev;
     };
     test("full download: all four objects", async () => {
-      const res = await classify(cfg).downloadFull(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      const res = await classify(cfg).downloadFull(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
     }, 30_000);
@@ -181,12 +181,12 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(writtenObjs(res.stamps)).toEqual([4]);
     }, 30_000);
     test("group-address flash: no record", async () => {
-      const res = await classify(cfg).flashGroupTables(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      const res = await classify(cfg).flashGroupTables(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toBeUndefined();
     }, 30_000);
     test("structural flash: all four objects", async () => {
-      const res = await classify(cfg).flashStructure(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.20", links });
+      const res = await classify(cfg).flashStructure(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
     }, 30_000);
@@ -197,7 +197,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
   // restartUnproven. Every operation alike; any other restart failure, a failed read-back or a device that
   // does not come back stays a failure.
   describe("a restart the device did not prove", () => {
-    const links = [{ comObjNum: 2, gaRaws: [0x7ffa] }];
+    const links = [{ comObjNum: 2, gaRaws: [0x77c8] }];
     const changedUnit = () => {
       const dev = seeded();
       const k = target.owned.findIndex((m) => m === 0xff);
@@ -207,10 +207,10 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     // The full download writes the application's non-zero runs into a segment its allocation fills with 0,
     // which this mock does not do: it starts from the image.
     const ops: [string, (dev: MockDevice) => Promise<unknown>, () => MockDevice][] = [
-      ["full download", (dev) => classify(cfg).downloadFull(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), seeded],
+      ["full download", (dev) => classify(cfg).downloadFull(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), seeded],
       ["parameter flash", (dev) => classify(cfg).flashParameters(asDev(dev), "07B0", ctx), changedUnit],
-      ["group-address flash", (dev) => classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), changedUnit],
-      ["structural flash", (dev) => classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.20", links }), changedUnit],
+      ["group-address flash", (dev) => classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), changedUnit],
+      ["structural flash", (dev) => classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), changedUnit],
     ];
     for (const [name, op, unitFor] of ops) {
       test(`${name}: verified, with restartUnproven, and the acceptance closed after it`, async () => {

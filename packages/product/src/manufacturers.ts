@@ -2,7 +2,7 @@
 // leads to the manufacturer's own download page; Busforge never downloads or ships the databases,
 // the user imports the file. `productDataUrl: null` means no public page was found (data only
 // through the ETS Online Catalog, or behind a partner login). Names follow the KNX manufacturer
-// list. Only pages that were opened and offer the data are listed (checked 2026-10-03).
+// list. Only pages that were opened and offer the data are listed.
 
 export interface ManufacturerInfo { id: string; name: string; productDataUrl: string | null }
 

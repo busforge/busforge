@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// LIVE flash harness: change one group address on a real device (last GA low byte
-// 0x07 -> 0x08), flash it, prove on the bus that the device answers on the new GA,
+// LIVE flash harness: change one group address on a real device (the address table's last GA gets
+// low byte 0x08), flash it, prove on the bus that the device answers on the new GA,
 // then revert. This WRITES to a real KNX device.
 //
 //   bun run tools/flashtest.ts <interface-ip> <device-ia> <extended|classic>
 //
-//   bun run tools/flashtest.ts 198.51.100.10 1.2.20 classic
+//   bun run tools/flashtest.ts 198.51.100.10 1.2.3 classic
 //
 // The third argument is the application's SupportsExtendedMemoryServices option (extended = set):
 // it decides the memory write service, as it does for ETS.
@@ -18,6 +18,7 @@ import fs from "node:fs";
 import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum, runLoadPlan } from "../packages/knx/src/index.ts";
 import { planSystemBGaFlash } from "../packages/knx/src/flash.ts";
 import { readGroupTables } from "../packages/knx/src/grouptable-read.ts";
+import { formatGa } from "../packages/knx/src/ga.ts";
 
 const ip = process.argv[2];
 const ia = process.argv[3];
@@ -71,24 +72,32 @@ fs.writeFileSync(`${BK}/addr.bin`, t.addr); fs.writeFileSync(`${BK}/assoc.bin`, 
 log(`backups saved to ${BK}`);
 
 const orig = t.addr;
-const mod = Buffer.from(orig); mod[mod.length - 1] = 0x08; // last GA low byte 0x07 -> 0x08 (2/1/7 -> 2/1/8)
+const mod = Buffer.from(orig); mod[mod.length - 1] = 0x08;
+const entries = Array.from({ length: (orig.length - 2) / 2 }, (_, i) => orig.readUInt16BE(2 + 2 * i));
+// planSystemBGaFlash writes System B's layout, [count:2][GA:2]xN, ascending: any other table is refused.
+if (orig.length % 2 !== 0 || orig.readUInt16BE(0) !== entries.length) { console.error("the device's address table is not System B's [count:2][GA:2]xN layout"); process.exit(1); }
+if (entries.length === 0) { console.error("the device's address table holds no group address to change"); process.exit(1); }
+if (entries.length > 1 && mod.readUInt16BE(mod.length - 2) <= entries[entries.length - 2]) { console.error("the changed last address would no longer sort after the one before it"); process.exit(1); }
+const from = formatGa(orig.readUInt16BE(orig.length - 2), 3);
+const to = formatGa(mod.readUInt16BE(mod.length - 2), 3);
+if (entries.includes(mod.readUInt16BE(mod.length - 2))) { console.error(`${to} is already in the device's address table: changing ${from} to it proves nothing`); process.exit(1); }
 log(`\nBASELINE`);
-log(`  2/1/7 responds: ${await groupResponds("2/1/7")} (expect true)`);
-log(`  2/1/8 responds: ${await groupResponds("2/1/8")} (expect false)`);
+log(`  ${from} responds: ${await groupResponds(from)} (expect true)`);
+log(`  ${to} responds: ${await groupResponds(to)} (expect false)`);
 
-log(`\nFLASH change 2/1/7 -> 2/1/8`);
+log(`\nFLASH change ${from} -> ${to}`);
 const f1 = await flash({ addr: mod, assoc: t.assoc, comObj: t.comObj }); log(`  flash: ${f1 ? "OK" : "FAILED"}`);
 await sleep(4000);
-const a8 = await groupResponds("2/1/8"); const a7 = await groupResponds("2/1/7");
-log(`  2/1/8 responds: ${a8} (expect true = change took)`);
-log(`  2/1/7 responds: ${a7} (expect false)`);
+const a8 = await groupResponds(to); const a7 = await groupResponds(from);
+log(`  ${to} responds: ${a8} (expect true = change took)`);
+log(`  ${from} responds: ${a7} (expect false)`);
 
 log(`\nREVERT`);
 const f2 = await flash({ addr: orig, assoc: t.assoc, comObj: t.comObj }); log(`  flash: ${f2 ? "OK" : "FAILED"}`);
 await sleep(4000);
-const r7 = await groupResponds("2/1/7"); const r8 = await groupResponds("2/1/8");
-log(`  2/1/7 responds: ${r7} (expect true = restored)`);
-log(`  2/1/8 responds: ${r8} (expect false)`);
+const r7 = await groupResponds(from); const r8 = await groupResponds(to);
+log(`  ${from} responds: ${r7} (expect true = restored)`);
+log(`  ${to} responds: ${r8} (expect false)`);
 
 const proven = f1 && f2 && a8 && !a7 && r7 && !r8;
 log(`\n=== TS LIVE FLASH ${proven ? "PROVEN (changed + reverted on the bus)" : "INCONCLUSIVE (see log)"} ===`);

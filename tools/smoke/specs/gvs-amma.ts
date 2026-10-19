@@ -3,10 +3,10 @@ import type { DeviceSpec } from "../spec.ts";
 // GVS AMMA 4-fold multifunction actuator (M-0085, MV-07B0, System B). A switch actuator with a
 // READABLE status object, so it is the spec that proves the device functionally ACTS: write the
 // switch, read the status back (an inputToOutput behaviour), not merely that the bytes landed.
-// Hardware-proven 2026-07-14/17; refs pinned verbatim from GET .../config and GET /api/catalog/products.
+// Hardware-proven; refs pinned verbatim from GET .../config and GET /api/catalog/products.
 //
-// KNX Data Secure since 2026-09-30 (ETS commissioned it; Output 1's switch and status objects sit on
-// the secured 0/0/1 next to the Jung's K1). Its tool key exists only in the ETS project, so the spec
+// It runs in KNX Data Secure (ETS commissioned it; Output 1's switch and status objects sit on the
+// secured group address it shares with the Jung's K1). Its tool key exists only in the ETS project, so the spec
 // imports that file, as jung-400021se-secure does (password from BUSFORGE_SMOKE_KNXPROJ_PASSWORD), and
 // proves the plain behaviour on Output 2: a plain link on Output 1's secured objects would mix secured
 // and plain on one object (SECURE_LINK_MIXED).
@@ -17,7 +17,7 @@ export const gvsAmma: DeviceSpec = {
     productRef: "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
     ia: "1.1.203",
     mask: "MV-07B0",
-    knxprod: "scratchpad/bench-jung-ets-20261001.knxproj",
+    knxprod: "scratchpad/bench-jung-ets.knxproj",
   },
   provision: "import-knxproj",
   // Baseline: Output 1&2 function = Switch, and enable Output 2. This reveals the switch + status
