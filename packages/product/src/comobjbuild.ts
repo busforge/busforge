@@ -319,20 +319,55 @@ export function placeComObjOverrides(app: AppConfig, view: Pick<DeviceConfigBuil
 
 // The flags the project gives each object of the configuration, by object number: the
 // application's with the project's overrides laid over them, placed as the writes that author the
-// com-object table place them (placeComObjOverrides). What a family's table write derives from the
-// links on top (comobjbuild's communication and linked bits) is not in them. `overridden` names the flags the project sets
-// differently from the application. Refuses as placeComObjOverrides does.
-export interface EffectiveComObjFlags { flags: ComObjFlags; overridden: (keyof ComObjFlags)[] }
+// com-object table place them (placeComObjOverrides), and the priority likewise. What a family's table
+// write derives from the links on top (comobjbuild's communication and linked bits) is not in them.
+// `overridden` names the flags the project sets differently from the application, `priorityOverridden`
+// says the same of the priority. Refuses as placeComObjOverrides does.
+export interface EffectiveComObjFlags { flags: ComObjFlags; overridden: (keyof ComObjFlags)[]; priority: ComObjPriority; priorityOverridden: boolean }
 export function effectiveComObjFlags(app: AppConfig, view: Pick<DeviceConfigBuild, "blocks" | "imageComObjects">, rows: readonly { comObjRefId: string; attrs: Readonly<Record<string, string>> }[]): Map<number, EffectiveComObjFlags> {
   const placed = placeComObjOverrides(app, view, rows);
   const out = new Map<number, EffectiveComObjFlags>();
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind !== "comObject") continue;
     const own = it.comObject.flags;
-    const o = placed.get(it.comObject.number)?.flags ?? {};
+    const p = placed.get(it.comObject.number);
+    const o = p?.flags ?? {};
     const overridden = (Object.keys(o) as (keyof ComObjFlags)[]).filter((k) => o[k] !== own[k]);
-    out.set(it.comObject.number, { flags: { ...own, ...o }, overridden });
+    const priority = p?.priority ?? it.comObject.priority;
+    out.set(it.comObject.number, { flags: { ...own, ...o }, overridden, priority, priorityOverridden: priority !== it.comObject.priority });
   }
+  return out;
+}
+
+// One edit of an object's flags or priority on the device page, as the attributes the project then
+// stores for it (the form ETS keeps on a ComObjectInstanceRef). `live`: what the project stores for
+// the object now; `held`: what it stored when the device was last written (its baseline), so a bit set
+// back to the device's value takes exactly the form the baseline holds and nothing counts as changed.
+// A bit set to the application's value otherwise, or reset (null), drops its attribute; any other
+// value is stored as ETS stores it. Refuses a stored value outside the schema, as the writes do.
+export interface ComObjOverrideEdit { flags?: Partial<Record<keyof ComObjFlags, boolean | null>>; priority?: ComObjPriority | null }
+export function editComObjOverride(
+  live: Readonly<Record<string, string>> | undefined, held: Readonly<Record<string, string>> | undefined,
+  app: { flags: ComObjFlags; priority: ComObjPriority }, edit: ComObjOverrideEdit,
+): Record<string, string> {
+  const out: Record<string, string> = { ...live };
+  const heldOverride = comObjInstanceOverride(held ?? {});
+  comObjInstanceOverride(out);
+  const place = (attr: string, value: string | null, appValue: string, heldValue: string | undefined) => {
+    const want = value ?? appValue;
+    if (want === (heldValue ?? appValue)) {
+      if (heldValue === undefined) delete out[attr];
+      else out[attr] = heldValue;
+    } else if (want === appValue) delete out[attr];
+    else out[attr] = want;
+  };
+  const enabled = (b: boolean) => (b ? "Enabled" : "Disabled");
+  for (const [attr, flag] of OVERRIDE_FLAGS) {
+    const v = edit.flags?.[flag];
+    if (v === undefined) continue;
+    place(attr, v === null ? null : enabled(v), enabled(app.flags[flag]), held?.[attr] !== undefined ? enabled(heldOverride.flags[flag]!) : undefined);
+  }
+  if (edit.priority !== undefined) place("Priority", edit.priority, app.priority, heldOverride.priority);
   return out;
 }
 

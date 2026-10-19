@@ -392,6 +392,13 @@ Conventions that hold across views:
   where they cannot be placed the page says so and shows none. What a table write derives from the
   links on top (communication off on an unlinked System B object, the System 7 linked bit) is not
   shown, and a family that cannot write an override refuses the write instead.
+- **Flags are edited per object, as ETS stores them.** The object row's flag button (ETS's letters)
+  opens the flags and the priority (`FlagEditor`): only the bits the family's full download writes
+  are enabled (`comObjFlagsEditable`), a bit set otherwise than the application has its reset, and an
+  edit not yet on the device its revert (`PUT .../comobject-flags`, `POST .../revert-comobject-flags`).
+  An edit counts as a change until a verified full download adopts it; the other flashes refuse
+  while one is pending, and the flash dialog offers the full download
+  ([load-procedures.md](load-procedures.md#project-level-com-object-flags)).
 - **The dangerous dialogs step.** `CommissionDialog` gates each of its three steps (find the device
   in programming mode, assign the address, download) on the previous one having been *verified*; a
   `verified: false` renders as a terminal failure, never as success.

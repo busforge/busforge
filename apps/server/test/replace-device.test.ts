@@ -256,14 +256,14 @@ describe("POST /api/projects/:id/devices/:deviceId/replace", () => {
 
     // Device row: new product, same IA/name/instance id; room assignment intact.
     const proj = (await (await handleApi(req(`/api/projects/${projectId}`), state))!.json()) as {
-      devices: { id: string; ia: string; name: string; appRef: string; productRef: string; changes: { params: number; links: number; neverProgrammed: boolean } }[];
+      devices: { id: string; ia: string; name: string; appRef: string; productRef: string; changes: { params: number; links: number; flags: number; neverProgrammed: boolean } }[];
       locations: { id: string; deviceIds: string[] }[];
     };
     expect(proj.devices).toHaveLength(1);
     expect(proj.devices[0]).toMatchObject({ id: deviceId, ia: "1.1.1", name: "Sensor Bad", appRef: NEW_PRODUCT.appRef, productRef: NEW_PRODUCT.productRef });
     expect(proj.locations.find((l) => Number(l.id) === spaceId)?.deviceIds).toContain(deviceId);
     // The migrated links are unprogrammed drift (new hardware, no baseline); no param edits.
-    expect(proj.devices[0].changes).toEqual({ params: 0, links: 3, neverProgrammed: true });
+    expect(proj.devices[0].changes).toEqual({ params: 0, links: 3, flags: 0, neverProgrammed: true });
 
     // Stored rows: exactly the mapped links; the two-GA link keeps its slot order
     // (slot 0 is the sending address, swapping it would re-point the device).

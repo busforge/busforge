@@ -443,7 +443,7 @@ const MIGRATIONS: string[] = [
   `,
   // The com-object flags and priority the project sets on a device over its application's (0.xml
   // ComObjectInstanceRef; @busforge/project DeviceComObjOverrides). attrs: the attributes as ETS stores
-  // them, JSON. Read-only project data, written at import; seq keeps two entries of one RefId apart.
+  // them, JSON. Written at import and by the device page; seq keeps two entries of one RefId apart.
   `
   CREATE TABLE device_comobj_overrides (
     project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -470,6 +470,19 @@ const MIGRATIONS: string[] = [
     settings   TEXT NOT NULL,
     PRIMARY KEY (project_id, device_id)
   );
+  `,
+  // The com-object flags and priority the device was last written with (device_comobj_overrides as
+  // it stood then), the flags' programmed baseline. Seeded from the import, which is what ETS wrote.
+  `
+  CREATE TABLE device_comobj_override_base (
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id      TEXT NOT NULL,
+    seq            INTEGER NOT NULL,
+    com_obj_ref_id TEXT NOT NULL,
+    attrs          TEXT NOT NULL,
+    PRIMARY KEY (project_id, device_id, seq)
+  );
+  INSERT INTO device_comobj_override_base SELECT * FROM device_comobj_overrides;
   `,
 ];
 

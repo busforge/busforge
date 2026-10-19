@@ -50,13 +50,17 @@ export interface CfgParamView {
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
-  objectSize: string; dpt: string; flags: ComObjFlags;
+  objectSize: string; dpt: string; flags: ComObjFlags; priority: ComObjPriority;
   gaRaw?: number | null; // current GA link, filled in by the server from stored links
   gaRaws?: number[];     // every linked GA, in link order (gaRaw is the first); filled in by the server
   changed?: boolean; // GA link differs from the programmed baseline; filled in by the server
   // The flags the project sets differently from the application (ComObjectInstanceRef); `flags`
   // then carries them. Filled in by the server (effectiveComObjFlags).
   overriddenFlags?: (keyof ComObjFlags)[];
+  overriddenPriority?: boolean; // as overriddenFlags, for `priority`
+  // The flags or priority the project sets differ from the ones the device was last written with;
+  // filled in by the server.
+  flagsChanged?: boolean;
 }
 // The minimal resolved facts the com-object-table (L3) build needs for one reached
 // com-object: its number, its datapoint size, and its RESOLVED flags. Captured for
@@ -123,6 +127,9 @@ export interface DeviceConfigView {
   // Attached by the server (not buildDeviceConfig). When params/links is false, the
   // shown change state was never confirmed against the device. See readbackSupport.
   readbackSupport?: { params: boolean; links: boolean };
+  // The com-object flags (and "priority") the device page lets the user set per object; attached by the
+  // server (buildDeviceView).
+  comObjFlagsEditable?: (keyof ComObjFlags | "priority")[];
   // The full capability record for this device (classify().capabilities()), attached by the
   // server. The single source of truth the server gate, the UI, and the smoke framework all read,
   // so the UI never offers a flash the server's capability gate would refuse (refusals from the
@@ -487,6 +494,7 @@ export function buildDeviceConfig(
         objectSize: img.objectSize,
         dpt: pick(ref?.dpt, obj.dpt),
         flags: img.flags,
+        priority: img.priority,
       },
     };
   };

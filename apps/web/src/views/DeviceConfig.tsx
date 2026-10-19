@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
+import { FlagEditor } from "./FlagEditor.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
@@ -67,7 +68,7 @@ function countChanged(view: DeviceConfigView): number {
   let n = 0;
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind === "param") { if (it.param.changed) n++; }
-    else if (it.kind === "comObject") { if (it.comObject.changed) n++; }
+    else if (it.kind === "comObject") { if (it.comObject.changed || it.comObject.flagsChanged) n++; }
   }
   return n;
 }
@@ -96,7 +97,7 @@ const flagWords = (co: CfgComObjView, t: TFn) => {
 };
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
-const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && !!it.comObject.changed);
+const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && (!!it.comObject.changed || !!it.comObject.flagsChanged));
 const norm = (s?: string) => (s ?? "").toLowerCase();
 // Whether an item matches the carried search term (mirrors the device-list deep
 // search: param name/value and com-object function/name).
@@ -121,8 +122,8 @@ export function DeviceConfig() {
   const gaOptions = useMemo(() => { const o: GaOption[] = []; if (project) flattenGas(project.groupRanges, o); return o; }, [project]);
 
   const { data: view, isLoading, error } = useDeviceConfig(projectId, deviceId);
-  const { setParam, setLink, revert, revertParam, revertLink, readBack } = useDeviceEdit(projectId, deviceId);
-  const saving = setParam.isPending || setLink.isPending || revert.isPending || revertParam.isPending || revertLink.isPending;
+  const { setParam, setLink, setFlags, revertFlags, revert, revertParam, revertLink, readBack } = useDeviceEdit(projectId, deviceId);
+  const saving = setParam.isPending || setLink.isPending || setFlags.isPending || revertFlags.isPending || revert.isPending || revertParam.isPending || revertLink.isPending;
   // Which targets the flash dialog is open for (null = closed). One "Flashen" button
   // programs whatever applies (config and/or group addresses); the split dropdown narrows
   // it to a single target, and only appears when both targets apply to this device.
@@ -386,11 +387,11 @@ export function DeviceConfig() {
           key={key}
           className={cn(
             "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
-            co.changed ? "border-primary bg-primary/5" : "border-transparent",
+            co.changed || co.flagsChanged ? "border-primary bg-primary/5" : "border-transparent",
           )}
         >
           <span className="flex min-w-0 items-center gap-2 sm:flex-1">
-            {co.changed ? <ChangedDot title={t("device.changedDot")} /> : null}
+            {co.changed || co.flagsChanged ? <ChangedDot title={t("device.changedDot")} /> : null}
             <span className="min-w-0">{comObjLabel(co)}</span>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -401,6 +402,13 @@ export function DeviceConfig() {
           </span>
           <div className="flex shrink-0 items-center gap-2">
             {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
+            {!view?.comObjFlagsRefused && (
+              <FlagEditor
+                co={co} editable={view?.comObjFlagsEditable ?? []} disabled={saving} testId={`flags-${co.number}`}
+                onEdit={(edit) => setFlags.mutate({ comObjRefId: co.refId, edit }, { onError })}
+                onRevert={() => revertFlags.mutate(co.refId, { onError })}
+              />
+            )}
             <div className={cn("shrink-0", CONTROL_W)}><LinkEditor options={gaOptions} gaRaws={co.gaRaws ?? []} onChange={(next) => relink(co.refId, co.gaRaws ?? [], next)} disabled={saving} testId={`link-${co.number}`} levels={project?.groupAddressLevels ?? 3} /></div>
           </div>
         </div>

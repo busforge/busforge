@@ -483,7 +483,7 @@ describe("blank projects + catalog (device placement)", () => {
       body: JSON.stringify({ appRef: prod.appRef, productRef: prod.productRef }),
     }), state))!.json()) as any;
     const changes = async (pid: string) => ((await (await handleApi(req(`/api/projects/${pid}`), state))!.json()) as any).devices[0].changes;
-    expect(await changes(blank.id)).toEqual({ params: 0, links: 0, neverProgrammed: true });
+    expect(await changes(blank.id)).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: true });
 
     // It survives an export and re-import.
     const { bytes } = await exportArtifact(state, blank.id);
@@ -851,7 +851,7 @@ describe("busforge re-import (export round-trip)", () => {
     expect(r1!.status).toBe(400);
     expect(((await r1!.json()) as any).error.code).toBe("BUSFORGE_INVALID");
 
-    const r2 = await reimport(state, { busforgeExport: 999, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [] });
+    const r2 = await reimport(state, { busforgeExport: 999, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [] });
     expect(r2!.status).toBe(400);
     expect(((await r2!.json()) as any).error.code).toBe("BUSFORGE_VERSION_UNSUPPORTED");
 
@@ -861,7 +861,7 @@ describe("busforge re-import (export round-trip)", () => {
 
     // A version-1 artifact missing fields importProjectExport dereferences (catalog,
     // baggage) or with a malformed project must fail cleanly as 400, not crash mid-insert.
-    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [] };
+    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [] };
     for (const partial of [
       { busforgeExport: 1, project: { name: "x" }, ...arrays, baggage: [] }, // no catalog
       { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {} }, // no baggage

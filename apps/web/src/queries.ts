@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity } from "./api.ts";
+import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -232,6 +232,14 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     mutationFn: (refId: string) => api.revertParam(projectId, deviceId, refId, lang),
     onSuccess,
   });
+  const setFlags = useMutation({
+    mutationFn: (v: { comObjRefId: string; edit: ComObjFlagEdit }) => api.setComObjFlags(projectId, deviceId, v.comObjRefId, v.edit, lang),
+    onSuccess,
+  });
+  const revertFlags = useMutation({
+    mutationFn: (comObjRefId: string) => api.revertComObjFlags(projectId, deviceId, comObjRefId, lang),
+    onSuccess,
+  });
   const revertLink = useMutation({
     mutationFn: (comObjRefId: string) => api.revertLink(projectId, deviceId, comObjRefId, lang),
     onSuccess,
@@ -249,5 +257,5 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
       api.replaceDevice(projectId, deviceId, v.appRef, v.productRef, v.mapping, lang),
     onSuccess,
   });
-  return { setParam, setLink, revert, revertParam, revertLink, readBack, replaceProduct, after };
+  return { setParam, setLink, setFlags, revertFlags, revert, revertParam, revertLink, readBack, replaceProduct, after };
 }

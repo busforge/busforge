@@ -15,6 +15,14 @@ depends on is hardware-proven.
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
+- **Com-object flag edits through ETS's partial download.** A flag or priority edited on the device
+  page goes only by the full download today; the parameter, group-address and structural flashes
+  refuse while one is pending. Next: ETS captures of a flag-only change and its revert on a System B
+  and a System 7 device, plus which flags ETS's object properties offer per family, then the partial
+  path they show.
+- **Read-back of com-object flags.** No family's read-back reads the com-object table, so a flag set on
+  the device by another tool never shows as drift. Reading it (System B and System 7 read it already
+  for the group-address flash) and comparing flags and priority against the project's would close that.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
   object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).

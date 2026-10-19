@@ -1285,3 +1285,42 @@ corpusDescribe("a Data Secure device: addressing and activation", () => {
   });
 });
 
+
+// A com-object flag edited on the device page: the full download writes it (it receives the edit by
+// object number) and only a verified one adopts it as what the device holds; the surgical flashes
+// are refused while it is pending.
+corpusDescribe("an edited com-object flag", () => {
+  test("goes to the full download, which adopts it only when verified", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await mdtProject(state);
+    const base = `/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}`;
+    const view = (await (await handleApi(req(`${base}/config`), state))!.json()) as any;
+    const o = view.blocks.flatMap((b: any) => b.items).find((i: any) => i.kind === "comObject").comObject;
+    const r = await handleApi(req(`${base}/comobject-flags`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId: o.refId, flags: { read: !o.flags.read } }) }), state);
+    expect(r!.status).toBe(200);
+    paramFlashImpl = async () => { throw new Error("the parameter flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    for (const route of ["flash", "flash-ga", "flash?dry=1"]) {
+      const res = (await post(state, `${base}/${route}`))!;
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD");
+    }
+    let seen: unknown;
+    try {
+      downloadImpl = async (opts) => { seen = opts.comObjectOverrides.get(o.number); return flashed(false); };
+      await programmed(state, post(state, `${base}/download`));
+      expect(seen).toEqual({ flags: { read: !o.flags.read } });
+      expect(getDeviceChangedKeys(state.db, projectId, deviceId).flags.size).toBe(1); // not verified: nothing adopted
+      // an edit made while the download runs is not what it wrote: it stays pending
+      downloadImpl = async () => {
+        await handleApi(req(`${base}/comobject-flags`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId: o.refId, priority: o.priority === "Alert" ? "Low" : "Alert" }) }), state);
+        return flashed(true);
+      };
+      await programmed(state, post(state, `${base}/download`));
+      expect(getDeviceChangedKeys(state.db, projectId, deviceId).flags.size).toBe(1);
+      downloadImpl = async () => flashed(true);
+      await programmed(state, post(state, `${base}/download`));
+      expect(getDeviceChangedKeys(state.db, projectId, deviceId).flags.size).toBe(0);
+    } finally { downloadImpl = realDownload; paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+});

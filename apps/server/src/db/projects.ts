@@ -120,6 +120,7 @@ export function insertProject(db: Database, id: string, project: Project, source
   const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
   const insLinkBase = db.prepare("INSERT INTO device_link_base (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
   const insOverride = db.prepare("INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
+  const insOverrideBase = db.prepare("INSERT INTO device_comobj_override_base (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
   const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
 
   const insertRange = (node: GroupRangeNode, parentId: number | null) => {
@@ -145,7 +146,7 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
     for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
-    for (const d of project.deviceComObjOverrides) d.overrides.forEach((o, seq) => insOverride.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)));
+    for (const d of project.deviceComObjOverrides) d.overrides.forEach((o, seq) => { insOverride.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)); insOverrideBase.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)); });
     for (const { deviceId, ...settings } of project.deviceKnxIp) insKnxIp.run(id, deviceId, JSON.stringify(settings));
     insertSpaces(db, id, project.locations);
   })();
@@ -224,7 +225,7 @@ export function getProject(db: Database, id: string, security?: ReadonlyMap<stri
   const secureIds = new Set((db.query("SELECT device_id AS id FROM device_security WHERE project_id = ?").all(id) as { id: string }[]).map((r) => r.id));
   const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
     ...d,
-    changes: { ...(changes.get(d.id) ?? { params: 0, links: 0, neverProgrammed: false }), ...(security?.has(d.id) ? { security: security.get(d.id) } : {}) },
+    changes: { ...(changes.get(d.id) ?? { params: 0, links: 0, flags: 0, neverProgrammed: false }), ...(security?.has(d.id) ? { security: security.get(d.id) } : {}) },
     searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
     secure: secureIds.has(d.id),
   }));

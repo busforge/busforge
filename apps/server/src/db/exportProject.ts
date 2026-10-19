@@ -45,6 +45,8 @@ export interface ProjectExport {
   // attributes as ETS stores them. Required: an artifact without it would write every object with its
   // application's flags.
   deviceComObjOverrides: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
+  // Their programmed baseline (device_comobj_override_base). Required, like the other baselines.
+  deviceComObjOverrideBase: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
   // A KNXnet/IP device's settings from the project (device_knxip, @busforge/project DeviceKnxIp). Optional so
   // artifacts from before they were kept still import; such a device's download that writes them is refused.
   deviceKnxIp?: DeviceKnxIp[];
@@ -80,6 +82,11 @@ const linkRows = (db: Database, table: string, projectId: string) =>
 // unknown project. The catalog is read from the DB; the caller is expected to
 // have ensured it is populated (for legacy projects, by resolving each device's
 // app program first, which backfills the catalog).
+const overrideRows = (db: Database, table: "device_comobj_overrides" | "device_comobj_override_base", projectId: string) =>
+  (db.query(`SELECT device_id AS deviceId, seq, com_obj_ref_id AS comObjRefId, attrs FROM ${table} WHERE project_id = ? ORDER BY device_id, seq`)
+    .all(projectId) as { deviceId: string; seq: number; comObjRefId: string; attrs: string }[])
+    .map((r) => ({ ...r, attrs: JSON.parse(r.attrs) as Record<string, string> }));
+
 export function exportProject(db: Database, projectId: string, now: number, masterKey: Buffer): ProjectExport | null {
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
@@ -140,9 +147,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceLinks: linkRows(db, "device_links", projectId),
     deviceLinkBase: linkRows(db, "device_link_base", projectId),
     deviceModules,
-    deviceComObjOverrides: (db.query("SELECT device_id AS deviceId, seq, com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? ORDER BY device_id, seq")
-      .all(projectId) as { deviceId: string; seq: number; comObjRefId: string; attrs: string }[])
-      .map((r) => ({ ...r, attrs: JSON.parse(r.attrs) as Record<string, string> })),
+    deviceComObjOverrides: overrideRows(db, "device_comobj_overrides", projectId),
+    deviceComObjOverrideBase: overrideRows(db, "device_comobj_override_base", projectId),
     deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
       .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
     catalog,

@@ -954,6 +954,21 @@ where it cannot do that faithfully:
 | one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
 | System 7: update, read-on-init or communication set differently from the application (an override of the update bit `0x80` is not written, the config byte has no read-on-init bit, its communication bit follows the links), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
 
+The device page edits them per object (`PUT .../devices/:id/comobject-flags`): a flag or the priority
+set otherwise than the application is stored as the attribute ETS stores, set back to the
+application's value it is dropped, and set back to what the device was last written with it takes
+the form that baseline holds (`device_comobj_override_base`), so the object counts as unchanged. Only
+the bits the family's full download writes are offered (`comObjOverridableBits`): every flag and the
+priority on System B, where the communication flag of an object without a group address is written
+off whatever the project sets, as for the application's own flags; read, write, transmit and priority
+on System 7 where the application names its com-object table's segment; none elsewhere. An edited flag is written only by the full download, which
+adopts it as the device's once verified. No ETS capture shows yet which partial download ETS writes a
+flag-only change with, so while one is pending the parameter, group-address and structural flashes
+refuse (`COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD`, the flash dialog offers the full download). A
+read-back takes no flag into the baseline; where it checks the image by a group-address flash dry run
+(System B, which builds the table with the project's flags), a pending flag edit counts as bytes the
+device does not hold.
+
 The surgical parameter flashes keep the table the device holds. The System 7 group-address flash
 keeps it too, but sets each object's communication bit from the links; a project that sets an
 object's communication flag differently from the application is refused there as well. Its other

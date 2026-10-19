@@ -39,7 +39,7 @@ All hardware verification is on **twisted pair**.
 | Capability | Implemented | Proven | Note |
 |---|---|---|---|
 | Import a `.knxproj` (ETS 5/6, AES) and a manufacturer `.knxprod` catalog | yes | real input files | Own ZIP + WinZip-AES + XML implementation. Nothing that cannot be rendered is dropped silently; it is surfaced as a visible "not supported" marker. |
-| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. |
+| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. Editing an object's flags and priority: browser and route tests; an edit is written only by the full download, whose bytes for a project's flag are offline tests only (see [Known unproven](#known-unproven)). |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. Writes the bytes ETS's parameter download writes: on a property-mapped System 7 mask every byte a parameter covers, on a memory-mapped one the bytes that differ from the unit ([load-procedures.md](load-procedures.md#the-rules-by-level)); on System B every owned byte. |
@@ -425,6 +425,13 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **A com-object flag or priority edited on the device page has not been written to hardware.** The
+  full download carries it into the com-object table (offline tests per family: System B every flag
+  and the priority, System 7 read, write, transmit and priority); no capture shows which partial
+  download ETS writes a flag-only change with, so the surgical flashes refuse while one is pending,
+  and a read-back does not take flags into the baseline. On System B the communication flag of an
+  object without a group address is written off whatever the project sets; whether ETS does the
+  same for a project's flag is not captured.
 - **A device in service, taken over by read-back, has been run on emulated units only.** Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
   emulated from a read-only collection (`tools/smoke/inservice-specs.test.ts`); none has run on

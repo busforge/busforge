@@ -73,16 +73,76 @@ export function getDeviceProductRef(db: Database, projectId: string, deviceId: s
 
 // The com-object flags and priority the project sets on a device (stored com-object ref id as in
 // device_links, the attributes as ETS stores them), in the order the project lists them.
-export function getDeviceComObjOverrides(db: Database, projectId: string, deviceId: string): { comObjRefId: string; attrs: Record<string, string> }[] {
-  const rows = db.query("SELECT com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? AND device_id = ? ORDER BY seq")
+export type ComObjOverrideRow = { comObjRefId: string; attrs: Record<string, string> };
+type OverrideTable = "device_comobj_overrides" | "device_comobj_override_base";
+function overrideRows(db: Database, table: OverrideTable, projectId: string, deviceId: string): ComObjOverrideRow[] {
+  const rows = db.query(`SELECT com_obj_ref_id AS comObjRefId, attrs FROM ${table} WHERE project_id = ? AND device_id = ? ORDER BY seq`)
     .all(projectId, deviceId) as { comObjRefId: string; attrs: string }[];
   return rows.map((r) => {
     const attrs = JSON.parse(r.attrs) as unknown;
     if (!attrs || typeof attrs !== "object" || Array.isArray(attrs) || Object.values(attrs).some((v) => typeof v !== "string")) {
-      throw new Error(`device_comobj_overrides row ${projectId}/${deviceId}/${r.comObjRefId} is not an attribute map (corrupt store)`);
+      throw new Error(`${table} row ${projectId}/${deviceId}/${r.comObjRefId} is not an attribute map (corrupt store)`);
     }
     return { comObjRefId: r.comObjRefId, attrs: attrs as Record<string, string> };
   });
+}
+export function getDeviceComObjOverrides(db: Database, projectId: string, deviceId: string): ComObjOverrideRow[] {
+  return overrideRows(db, "device_comobj_overrides", projectId, deviceId);
+}
+// What the device was last written with (the flags' programmed baseline), in the same form.
+export function getDeviceComObjOverrideBase(db: Database, projectId: string, deviceId: string): ComObjOverrideRow[] {
+  return overrideRows(db, "device_comobj_override_base", projectId, deviceId);
+}
+
+// One object's stored attributes laid together in their order (a later entry of the same attribute wins;
+// the writes refuse two that differ, placeComObjOverrides), with sorted keys so equal sets compare equal.
+const canonical = (rows: readonly ComObjOverrideRow[]) => {
+  const merged: Record<string, string> = Object.assign({}, ...rows.map((r) => r.attrs));
+  return JSON.stringify(Object.keys(merged).sort().map((k) => [k, merged[k]]));
+};
+const byRef = (rows: readonly ComObjOverrideRow[]) => {
+  const out = new Map<string, ComObjOverrideRow[]>();
+  for (const r of rows) out.set(r.comObjRefId, [...(out.get(r.comObjRefId) ?? []), r]);
+  return out;
+};
+// The objects whose stored flags or priority differ from what the device was last written with.
+function changedFlagRefs(live: readonly ComObjOverrideRow[], base: readonly ComObjOverrideRow[]): Set<string> {
+  const l = byRef(live), b = byRef(base);
+  return new Set([...new Set([...l.keys(), ...b.keys()])].filter((ref) => canonical(l.get(ref) ?? []) !== canonical(b.get(ref) ?? [])));
+}
+
+// Set what the project stores for one object's flags and priority (the attributes as ETS stores them;
+// none: the application's). Where that is what the device was last written with, the baseline's own
+// entries come back, so the object counts as unchanged.
+export function setDeviceComObjOverride(db: Database, projectId: string, deviceId: string, comObjRefId: string, attrs: Readonly<Record<string, string>>): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_comobj_overrides WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?").run(projectId, deviceId, comObjRefId);
+    const held = getDeviceComObjOverrideBase(db, projectId, deviceId).filter((r) => r.comObjRefId === comObjRefId);
+    const rows = canonical(held) === canonical([{ comObjRefId, attrs: { ...attrs } }]) ? held : Object.keys(attrs).length ? [{ comObjRefId, attrs: { ...attrs } }] : [];
+    insertOverrideRows(db, "device_comobj_overrides", projectId, deviceId, rows);
+  })();
+}
+function insertOverrideRows(db: Database, table: OverrideTable, projectId: string, deviceId: string, rows: readonly ComObjOverrideRow[]): void {
+  const next = (db.query(`SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM ${table} WHERE project_id = ? AND device_id = ?`).get(projectId, deviceId) as { n: number }).n;
+  const ins = db.prepare(`INSERT INTO ${table} (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)`);
+  rows.forEach((r, i) => ins.run(projectId, deviceId, next + i, r.comObjRefId, JSON.stringify(r.attrs)));
+}
+
+// Discard one object's unwritten flag edit: back to what the device was last written with.
+export function revertDeviceComObjFlags(db: Database, projectId: string, deviceId: string, comObjRefId: string): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_comobj_overrides WHERE project_id = ? AND device_id = ? AND com_obj_ref_id = ?").run(projectId, deviceId, comObjRefId);
+    insertOverrideRows(db, "device_comobj_overrides", projectId, deviceId, getDeviceComObjOverrideBase(db, projectId, deviceId).filter((r) => r.comObjRefId === comObjRefId));
+  })();
+}
+
+// A verified write that authored the whole com-object table from `submitted` (the rows read when it was
+// queued, not what was edited while it ran): the device now holds exactly those.
+export function resetComObjOverrideBase(db: Database, projectId: string, deviceId: string, submitted: readonly ComObjOverrideRow[]): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM device_comobj_override_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    insertOverrideRows(db, "device_comobj_override_base", projectId, deviceId, submitted);
+  })();
 }
 
 // Whether a value has the shape of a stored KNXnet/IP settings record (DeviceKnxIp without deviceId).
@@ -150,7 +210,7 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_knxip"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.
@@ -204,11 +264,12 @@ export function getSourceFile(db: Database, projectId: string): string | null {
 // placed or its product replaced, so it needs a full download whatever its configuration.
 // security: the device's Data Secure security object differs from the one last verified on it, or that
 // cannot be told (deviceservice.ts securityChanges, merged in by the routes); absent otherwise.
-export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
+// flags: com-objects whose flags or priority differ from what the device was last written with.
+export interface DeviceChanges { params: number; links: number; flags: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
 export function getProjectChanges(db: Database, projectId: string): Map<string, DeviceChanges> {
   const out = new Map<string, DeviceChanges>();
-  const entry = (id: string) => { const c = out.get(id) ?? { params: 0, links: 0, neverProgrammed: false }; out.set(id, c); return c; };
-  const bump = (id: string, k: "params" | "links", n: number) => { entry(id)[k] = n; };
+  const entry = (id: string) => { const c = out.get(id) ?? { params: 0, links: 0, flags: 0, neverProgrammed: false }; out.set(id, c); return c; };
+  const bump = (id: string, k: "params" | "links" | "flags", n: number) => { entry(id)[k] = n; };
   for (const r of db.query("SELECT instance_id AS id FROM devices WHERE project_id = ? AND never_programmed = 1").all(projectId) as { id: string }[]) {
     entry(r.id).neverProgrammed = true;
   }
@@ -253,6 +314,19 @@ export function getProjectChanges(db: Database, projectId: string): Map<string, 
   `).all(projectId, projectId, projectId, projectId) as { deviceId: string; n: number }[];
   for (const r of linkRows) bump(r.deviceId, "links", r.n);
 
+  const overridesOf = (table: OverrideTable) => {
+    const m = new Map<string, ComObjOverrideRow[]>();
+    for (const r of db.query(`SELECT device_id AS deviceId, com_obj_ref_id AS comObjRefId, attrs FROM ${table} WHERE project_id = ? ORDER BY device_id, seq`).all(projectId) as { deviceId: string; comObjRefId: string; attrs: string }[]) {
+      m.set(r.deviceId, [...(m.get(r.deviceId) ?? []), { comObjRefId: r.comObjRefId, attrs: JSON.parse(r.attrs) as Record<string, string> }]);
+    }
+    return m;
+  };
+  const live = overridesOf("device_comobj_overrides"), base = overridesOf("device_comobj_override_base");
+  for (const d of new Set([...live.keys(), ...base.keys()])) {
+    const n = changedFlagRefs(live.get(d) ?? [], base.get(d) ?? []).size;
+    if (n) bump(d, "flags", n);
+  }
+
   return out;
 }
 
@@ -260,7 +334,7 @@ export function getProjectChanges(db: Database, projectId: string): Map<string, 
 // config view can flag the exact edited parameters and com-objects. Param keys
 // are the stored full ref ids; link keys are the stored (stripped) com-object
 // ref ids, matching how the config view overlays them.
-export interface DeviceChangedKeys { params: Set<string>; links: Set<string>; }
+export interface DeviceChangedKeys { params: Set<string>; links: Set<string>; flags: Set<string> }
 export function getDeviceChangedKeys(db: Database, projectId: string, deviceId: string): DeviceChangedKeys {
   // Symmetric difference of (param, value) rows: a param edited from its default
   // has no baseline row, so a plain JOIN would miss it (see getProjectChanges).
@@ -295,11 +369,12 @@ export function getDeviceChangedKeys(db: Database, projectId: string, deviceId: 
   return {
     params: new Set(paramRows.map((r) => r.param_ref_id)),
     links: new Set(linkRows.map((r) => r.com_obj_ref_id)),
+    flags: changedFlagRefs(getDeviceComObjOverrides(db, projectId, deviceId), getDeviceComObjOverrideBase(db, projectId, deviceId)),
   };
 }
 
-// Discard a device's unprogrammed edits: restore the live params/links from the
-// programmed baseline. Inverse of resetParamBase/resetLinkBase.
+// Discard a device's unprogrammed edits: restore the live params/links and com-object flags from
+// the programmed baseline. Inverse of resetParamBase/resetLinkBase.
 export function revertDevice(db: Database, projectId: string, deviceId: string): void {
   db.transaction(() => {
     db.prepare("DELETE FROM device_parameters WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
@@ -309,6 +384,10 @@ export function revertDevice(db: Database, projectId: string, deviceId: string):
     db.prepare("DELETE FROM device_links WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
     db.prepare(`INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw)
       SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?`)
+      .run(projectId, deviceId);
+    db.prepare("DELETE FROM device_comobj_overrides WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    db.prepare(`INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs)
+      SELECT project_id, device_id, seq, com_obj_ref_id, attrs FROM device_comobj_override_base WHERE project_id = ? AND device_id = ?`)
       .run(projectId, deviceId);
   })();
 }

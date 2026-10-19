@@ -366,13 +366,17 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
       it.comObject.gaRaws = links.get(key) ?? [];
       it.comObject.changed = changed.links.has(key);
       const eff = flags.byNumber?.get(it.comObject.number);
-      if (eff) { it.comObject.flags = eff.flags; it.comObject.overriddenFlags = eff.overridden; }
+      if (eff) { it.comObject.flags = eff.flags; it.comObject.overriddenFlags = eff.overridden; it.comObject.priority = eff.priority; it.comObject.overriddenPriority = eff.priorityOverridden; }
+      it.comObject.flagsChanged = changed.flags.has(key);
     }
   }
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
+  // The bits an edit may set: those the family's full download writes (the only write that carries a
+  // flag edit), none where the device's full download is withheld or its overrides cannot be placed.
+  const comObjFlagsEditable = view.capabilities.fullDownload && !flags.refused ? [...classify(app).comObjOverridableBits()] : [];
+  const wire: DeviceConfigView = { blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
   return extra ? { ...wire, ...extra } : wire;
 }
 

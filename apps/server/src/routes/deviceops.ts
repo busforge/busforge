@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceChangedKeys, getDeviceComObjOverrides, resetComObjOverrideBase } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -111,6 +111,20 @@ function refuseNeverProgrammed(dev: { neverProgrammed: boolean }, app: AppConfig
   if (onlyEtsDownloads(app)) {
     throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this application in full; commission it with ETS first", 400);
   }
+}
+
+// A com-object flag or priority edited on the device page reaches the device only with a write that
+// authors the com-object table from the project. Until an ETS capture shows which partial download ETS
+// writes such an edit with, only the full download carries it; the parameter, group-address and
+// structural flashes keep or rebuild the table without it being shown, so they refuse while one is
+// pending.
+function refusePendingFlags(db: AppState["db"], projectId: string, deviceId: string, app: AppConfig | null): void {
+  const n = getDeviceChangedKeys(db, projectId, deviceId).flags.size;
+  if (!n) return;
+  if (canDownloadFull(app)) {
+    throw new ApiError("COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD", `the flags or priority of ${n} communication object(s) differ from what the device was last written with; only a full download writes them`, 409);
+  }
+  throw new ApiError("COM_OBJECT_FLAGS_PENDING", `the flags or priority of ${n} communication object(s) differ from what the device was last written with, and Busforge cannot write them to this device`, 409);
 }
 
 // A group-address flash writes the tables whole. While the last read-back left device links out of
@@ -619,6 +633,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       const why = classify(gaApp).operationRefusals().flashLinks;
       return why ? err(why.code, why.message) : err("GA_FLASH_UNSUPPORTED", "this device's memory model is recognised but programming its group addresses is not implemented yet");
     }
+    refusePendingFlags(db, id, deviceId, gaFamilyApp);
     const dryGa = url.searchParams.get("dry") === "1";
     // The links carry the LIVE configuration's com-object numbers, so the profile checks them
     // against the com-object table the device was last programmed with (same gate as the
@@ -681,6 +696,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const dlParams = getDeviceParams(db, id, deviceId);
     const dlModules = getDeviceModules(db, id, deviceId);
     const dlOverrides = resolveComObjOverrides(state, id, deviceId);
+    const dlOverrideRows = getDeviceComObjOverrides(db, id, deviceId); // the rows dlOverrides was placed from
     const dryDl = url.searchParams.get("dry") === "1";
     let dlFingerprint: string | null = null;
     return programOrPreview(state,
@@ -701,6 +717,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         resetLinkBase(db, id, deviceId, resolved.flashedRefIds, submittedLinks);
         keepLinkBaseOnly(db, id, deviceId, new Set([...resolved.flashedRefIds, ...submittedLinks.keys()]));
         setLinkBaseGaps(db, id, deviceId, 0);
+        resetComObjOverrideBase(db, id, deviceId, dlOverrideRows);
         setSecurityBase(state, id, deviceId, dlFingerprint);
         clearNeverProgrammed(db, id, deviceId);
       }),
@@ -720,6 +737,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       const why = classify(flApp).operationRefusals().flashParams;
       return why ? err(why.code, why.message) : err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
     }
+    refusePendingFlags(db, id, deviceId, flApp);
     const dryParams = url.searchParams.get("dry") === "1";
     const secure = secureCredsFor(state, id, deviceId);
     // Snapshot the stored config ONCE, before the (long, bus-bound) flash is queued, and use

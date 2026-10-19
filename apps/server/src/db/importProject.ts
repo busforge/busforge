@@ -45,17 +45,19 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   if (project.connectionId !== undefined && project.connectionId !== null && typeof project.connectionId !== "string") {
     throw new ApiError("BUSFORGE_INVALID", "malformed project connectionId");
   }
-  for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "deviceComObjOverrides", "baggage"]) {
+  for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "deviceComObjOverrides", "deviceComObjOverrideBase", "baggage"]) {
     if (!Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `missing ${key}`);
   }
-  const overrideKeys = new Set<string>();
-  for (const o of d.deviceComObjOverrides as Record<string, unknown>[]) {
-    const key = `${String(o?.deviceId)}\u0000${String(o?.seq)}`;
-    if (overrideKeys.has(key)) throw new ApiError("BUSFORGE_INVALID", "duplicate deviceComObjOverrides entry");
-    overrideKeys.add(key);
-    const attrs = o?.attrs as Record<string, unknown> | undefined;
-    if (typeof o?.deviceId !== "string" || !Number.isInteger(o.seq) || typeof o.comObjRefId !== "string" || !attrs || typeof attrs !== "object" || Array.isArray(attrs) || Object.values(attrs).some((v) => typeof v !== "string")) {
-      throw new ApiError("BUSFORGE_INVALID", "malformed deviceComObjOverrides entry");
+  for (const name of ["deviceComObjOverrides", "deviceComObjOverrideBase"]) {
+    const overrideKeys = new Set<string>();
+    for (const o of d[name] as Record<string, unknown>[]) {
+      const key = `${String(o?.deviceId)}\u0000${String(o?.seq)}`;
+      if (overrideKeys.has(key)) throw new ApiError("BUSFORGE_INVALID", `duplicate ${name} entry`);
+      overrideKeys.add(key);
+      const attrs = o?.attrs as Record<string, unknown> | undefined;
+      if (typeof o?.deviceId !== "string" || !Number.isInteger(o.seq) || typeof o.comObjRefId !== "string" || !attrs || typeof attrs !== "object" || Array.isArray(attrs) || Object.values(attrs).some((v) => typeof v !== "string")) {
+        throw new ApiError("BUSFORGE_INVALID", `malformed ${name} entry`);
+      }
     }
   }
   // Validate each device's identity/reference fields so a crafted artifact fails as a clean
@@ -200,6 +202,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const m of data.deviceModules) insMod.run(id, m.deviceId, JSON.stringify(m.instances));
     const insOverride = db.prepare("INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
     for (const o of data.deviceComObjOverrides) insOverride.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
+    const insOverrideBase = db.prepare("INSERT INTO device_comobj_override_base (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
+    for (const o of data.deviceComObjOverrideBase) insOverrideBase.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
     const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
     for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
 

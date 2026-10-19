@@ -2,7 +2,7 @@ import { ShieldAlert, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { DeviceChanges } from "../api.ts";
 
-export const changeTotal = (c?: DeviceChanges) => (c ? c.params + c.links : 0);
+export const changeTotal = (c?: DeviceChanges) => (c ? c.params + c.links + (c.flags ?? 0) : 0);
 
 // Amber pill flagging a device with unprogrammed edits, or one never programmed at all. Renders
 // nothing when clean.

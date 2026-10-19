@@ -7,19 +7,20 @@
 import type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
   DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
-  DiagnosticPackage, DiagnosticRecord,
+  DiagnosticPackage, DiagnosticRecord, ComObjOverrideEdit as ComObjFlagEdit,
 } from "@busforge/product";
 export type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
   DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
-  DiagnosticPackage, DiagnosticRecord,
+  DiagnosticPackage, DiagnosticRecord, ComObjFlagEdit,
 };
 
 // neverProgrammed: no configuration of this project has been verified on the device since it was
 // placed or its product replaced.
 // security: the device's Data Secure security object differs from the one last verified on it
 // ("changed", written by a GA flash or full download), or that cannot be told ("unknown").
-export interface DeviceChanges { params: number; links: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
+// flags: com-objects whose flags or priority differ from what the device was last written with.
+export interface DeviceChanges { params: number; links: number; flags?: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
 // security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
 export type GroupAddressSecurity = "auto" | "on" | "off";
@@ -377,6 +378,15 @@ export const api = {
   revertParam: (id: string, deviceId: string, paramRefId: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-param`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paramRefId, lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  // flags: per flag true, false or null (the application's value); priority likewise.
+  setComObjFlags: (id: string, deviceId: string, comObjRefId: string, edit: ComObjFlagEdit, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/comobject-flags`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, ...edit, lang }),
+    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  revertComObjFlags: (id: string, deviceId: string, comObjRefId: string, lang?: string): Promise<DeviceConfigView> =>
+    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-comobject-flags`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
   revertLink: (id: string, deviceId: string, comObjRefId: string, lang?: string): Promise<DeviceConfigView> =>
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-link`, {

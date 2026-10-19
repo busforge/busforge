@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { buildDeviceConfig } from "@busforge/product";
+import { buildDeviceConfig, editComObjOverride, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
 import { appProgramId } from "@busforge/project";
-import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, type ReplaceMappingEntry } from "../deviceservice.ts";
+import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -124,6 +124,48 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 
+  // /api/projects/:id/devices/:deviceId/comobject-flags  -> set a com-object's flags and priority over
+  // the application's, per device, as ETS stores them (ComObjectInstanceRef). `flags`: per flag true,
+  // false, or null for the application's value; `priority` likewise. Only the bits the device's full
+  // download writes are accepted (DeviceConfigView.comObjFlagsEditable).
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "comobject-flags" && req.method === "PUT") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const body = (await req.json().catch(() => ({}))) as { comObjRefId?: unknown; flags?: unknown; priority?: unknown; lang?: string };
+    const edit = comObjOverrideEdit(body);
+    if (typeof body.comObjRefId !== "string" || !edit) return err("COMOBJ_FLAGS_INVALID", "comObjRefId and flags (true, false or null per flag) or a priority (Low, High, Alert or null) required");
+    const app = loadApp(state, id, deviceId);
+    if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const key = stripRef(app.id, body.comObjRefId);
+    const view = buildDeviceConfig(app, getDeviceParams(db, id, deviceId), body.lang, getDeviceModules(db, id, deviceId));
+    const obj = view.blocks.flatMap((b) => b.items).find((it) => it.kind === "comObject" && it.comObject.refId === fullRef(app.id, key));
+    if (!obj || obj.kind !== "comObject") return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
+    const placed = deviceComObjFlags(state, id, deviceId, app, view);
+    if (placed.refused) return err(placed.refused, "the flags this project sets on the device's communication objects cannot be placed; refusing to edit them", 409);
+    const editable = new Set<string>(buildDeviceView(state, id, deviceId).comObjFlagsEditable ?? []);
+    const asked = [...Object.keys(edit.flags ?? {}), ...(edit.priority !== undefined ? ["priority"] : [])];
+    const refused = asked.filter((k) => !editable.has(k));
+    if (refused.length) return err("COM_OBJECT_FLAG_NOT_EDITABLE", `this device's downloads cannot write ${refused.join(", ")} of a communication object as the project sets it`);
+    const merged = (rows: { comObjRefId: string; attrs: Record<string, string> }[]) => {
+      const own = rows.filter((r) => r.comObjRefId === key);
+      return own.length ? Object.assign({}, ...own.map((r) => r.attrs)) as Record<string, string> : undefined;
+    };
+    const attrs = editComObjOverride(merged(getDeviceComObjOverrides(db, id, deviceId)), merged(getDeviceComObjOverrideBase(db, id, deviceId)),
+      { flags: obj.comObject.flags, priority: obj.comObject.priority }, edit);
+    setDeviceComObjOverride(db, id, deviceId, key, attrs);
+    return json(buildDeviceView(state, id, deviceId, body.lang));
+  }
+
+  // /api/projects/:id/devices/:deviceId/revert-comobject-flags  -> discard one com-object's flag edit
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "revert-comobject-flags" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const app = loadApp(state, id, deviceId);
+    if (!app) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const body = (await req.json().catch(() => ({}))) as { comObjRefId?: string; lang?: string };
+    if (!body.comObjRefId) return err("COMOBJ_REF_REQUIRED", "comObjRefId required");
+    revertDeviceComObjFlags(db, id, deviceId, stripRef(app.id, body.comObjRefId));
+    return json(buildDeviceView(state, id, deviceId, body.lang));
+  }
+
   // /api/projects/:id/devices/:deviceId/replace  -> swap the device's product for a
   // catalog product because the physical device was replaced. The row keeps its
   // identity (IA, name, comment, room); its GA links migrate through an explicit,
@@ -187,4 +229,24 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   return null;
+}
+
+const FLAG_KEYS: readonly (keyof ComObjFlags)[] = ["read", "write", "comm", "transmit", "update", "readOnInit"];
+// The edit a request body asks for, or null where it is malformed or asks nothing.
+function comObjOverrideEdit(body: { flags?: unknown; priority?: unknown }): ComObjOverrideEdit | null {
+  const out: ComObjOverrideEdit = {};
+  if (body.flags !== undefined) {
+    if (!body.flags || typeof body.flags !== "object" || Array.isArray(body.flags)) return null;
+    const flags: NonNullable<ComObjOverrideEdit["flags"]> = {};
+    for (const [k, v] of Object.entries(body.flags)) {
+      if (!FLAG_KEYS.includes(k as keyof ComObjFlags) || (v !== null && typeof v !== "boolean")) return null;
+      flags[k as keyof ComObjFlags] = v;
+    }
+    out.flags = flags;
+  }
+  if (body.priority !== undefined) {
+    if (body.priority !== null && body.priority !== "Low" && body.priority !== "High" && body.priority !== "Alert") return null;
+    out.priority = body.priority;
+  }
+  return Object.keys(out.flags ?? {}).length || out.priority !== undefined ? out : null;
 }

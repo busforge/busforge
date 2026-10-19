@@ -5,6 +5,8 @@ describe("offersFullDownload", () => {
   test("a refusal only a full download can answer offers it whatever the family", () => {
     expect(offersFullDownload("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", false)).toBe(true);
     expect(offersFullDownload("NEVER_PROGRAMMED_USE_DOWNLOAD", false)).toBe(true);
+    expect(offersFullDownload("COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD", false)).toBe(true);
+    expect(offersFullDownload("COM_OBJECT_FLAGS_PENDING", false)).toBe(false);
   });
 
   test("a device left without a running application offers it where the full download loads the application", () => {

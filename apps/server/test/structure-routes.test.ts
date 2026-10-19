@@ -273,7 +273,7 @@ describe("device rename route", () => {
   test("renaming leaves the configuration alone: no drift, no baseline move", async () => {
     const { state, projectId, deviceId } = await importConfig();
     await rename(state, projectId, deviceId, "Renamed");
-    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 0, links: 0, neverProgrammed: false });
+    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: false });
   });
 });
 
@@ -344,11 +344,11 @@ describe("device link + revert routes", () => {
     const { state, projectId, deviceId } = await importConfig();
     await setMode(state, projectId, deviceId, "1");
     await putLink(state, projectId, deviceId, COMOBJ, [1]);
-    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 1, links: 1, neverProgrammed: false });
+    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 1, links: 1, flags: 0, neverProgrammed: false });
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/revert`, { method: "POST" }), state))!;
     expect(res.status).toBe(200);
     expect(viewParam(await res.json(), PARAM)).toMatchObject({ value: "0", changed: false });
-    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 0, links: 0, neverProgrammed: false });
+    expect((await getProj(state, projectId)).devices[0].changes).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: false });
     const bad = (await handleApi(req(`/api/projects/${projectId}/devices/ghost/revert`, { method: "POST" }), state))!;
     expect(bad.status).toBe(404);
     expect(((await bad.json()) as any).error.code).toBe("DEVICE_NOT_FOUND");

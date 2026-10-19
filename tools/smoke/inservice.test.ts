@@ -67,7 +67,7 @@ function scripted(sc: Script = {}) {
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
       ...Object.keys(project.params).map((refId): CfgItem => ({ kind: "param", param: { refId, name: refId, control: "number", value: project.params[refId], min: 0, max: 16000, changed: project.params[refId] !== base.params[refId] } })),
-      ...Object.keys(project.links).map((refId, i): CfgItem => ({ kind: "comObject", comObject: { refId, number: refId === OBJ ? 1 : 23 + i, name: refId, functionText: "", objectSize: "1 Bit", dpt: "", flags: { read: !(sc.noReadFlag && refId === OBJ), write: false, comm: true, transmit: true, update: false, readOnInit: false }, gaRaw: project.links[refId][0] ?? null, gaRaws: [...project.links[refId]], changed: !same(project.links[refId], base.links[refId]) } })),
+      ...Object.keys(project.links).map((refId, i): CfgItem => ({ kind: "comObject", comObject: { refId, number: refId === OBJ ? 1 : 23 + i, name: refId, functionText: "", objectSize: "1 Bit", dpt: "", flags: { read: !(sc.noReadFlag && refId === OBJ), write: false, comm: true, transmit: true, update: false, readOnInit: false }, priority: "Low", gaRaw: project.links[refId][0] ?? null, gaRaws: [...project.links[refId]], changed: !same(project.links[refId], base.links[refId]) } })),
     ];
     return { blocks: [{ id: "b", name: "b", level: 0, items }], hasModules: false, capabilities: caps };
   };

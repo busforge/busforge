@@ -6,8 +6,8 @@ import { readProjectProperties, applyProjectProperties, type ProjectProperties }
 import { ApiError } from "../errors.ts";
 
 // ETS-style restore points. A snapshot freezes the project's CONFIG layer only:
-// the project properties (see projectProps.ts), parameter values, and
-// group-address links/structure. The application-program model is resolved at
+// the project properties (see projectProps.ts), parameter values, the com-object
+// flags the project sets per device, and group-address links/structure. The application-program model is resolved at
 // runtime, and the programmed baselines describe the physical device, so neither
 // belongs in a config restore point.
 
@@ -39,6 +39,9 @@ export interface SnapshotPayload {
   // this capture leave the current structure in place on restore.
   spaces?: { id: number; parentId: number | null; extId: string; type: string; name: string; ord: number }[];
   spaceDevices?: { spaceId: number; deviceId: string }[];
+  // The com-object flags and priority the project sets per device (device_comobj_overrides), in
+  // their stored order. Optional: a restore point without them leaves the current ones in place.
+  deviceComObjOverrides?: { deviceId: string; comObjRefId: string; attrs: Record<string, string> }[];
 }
 
 // How many automatic snapshots to keep per project (ring buffer). Manual
@@ -63,7 +66,9 @@ export function serializeConfig(db: Database, projectId: string): SnapshotPayloa
     .all(projectId) as NonNullable<SnapshotPayload["spaces"]>;
   const spaceDevices = db.query("SELECT space_id AS spaceId, device_id AS deviceId FROM space_devices WHERE project_id = ? ORDER BY space_id, device_id")
     .all(projectId) as NonNullable<SnapshotPayload["spaceDevices"]>;
-  return { project, deviceParameters, deviceLinks, groupRanges, groupAddresses, spaces, spaceDevices };
+  const deviceComObjOverrides = (db.query("SELECT device_id AS deviceId, com_obj_ref_id AS comObjRefId, attrs FROM device_comobj_overrides WHERE project_id = ? ORDER BY device_id, seq")
+    .all(projectId) as { deviceId: string; comObjRefId: string; attrs: string }[]).map((r) => ({ ...r, attrs: JSON.parse(r.attrs) as Record<string, string> }));
+  return { project, deviceParameters, deviceLinks, groupRanges, groupAddresses, spaces, spaceDevices, deviceComObjOverrides };
 }
 
 const rowToMeta = (r: { id: string; label: string; kind: string; reason: string; created_at: number; schema_version: number }): SnapshotMeta =>
@@ -149,6 +154,17 @@ export function restoreSnapshot(db: Database, projectId: string, id: string, now
     db.prepare("DELETE FROM device_links WHERE project_id = ?").run(projectId);
     const insLink = db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, ?, ?)");
     for (const l of payload.deviceLinks) insLink.run(projectId, l.deviceId, l.comObjRefId, l.slot, l.gaRaw);
+
+    if (payload.deviceComObjOverrides) {
+      db.prepare("DELETE FROM device_comobj_overrides WHERE project_id = ?").run(projectId);
+      const insOverride = db.prepare("INSERT INTO device_comobj_overrides (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
+      const seq = new Map<string, number>();
+      for (const o of payload.deviceComObjOverrides) {
+        const n = seq.get(o.deviceId) ?? 0;
+        seq.set(o.deviceId, n + 1);
+        insOverride.run(projectId, o.deviceId, n, o.comObjRefId, JSON.stringify(o.attrs));
+      }
+    }
 
     // Group-address structure: only rewritten for snapshots that captured it. Ids are
     // NOT re-inserted verbatim: group_ranges.id / group_addresses.id are GLOBAL autoincrement

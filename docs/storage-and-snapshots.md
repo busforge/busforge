@@ -81,7 +81,8 @@ and writes no programmed baseline.
 | `device_parameters` | live parameter overrides, **sparse**: no row means the application default |
 | `device_links` | live com-object to group-address links |
 | `device_modules` | a device's resolved module instances |
-| `device_param_base` / `device_link_base` | the **programmed baseline**: what the device was last known to hold |
+| `device_comobj_overrides` | the com-object flags and priority the project sets per device, the attributes as ETS stores them |
+| `device_param_base` / `device_link_base` / `device_comobj_override_base` | the **programmed baseline**: what the device was last known to hold |
 | `snapshots` | configuration restore points, one JSON payload per row |
 | `app_programs` | the global catalog of decrypted application-program XML |
 | `catalog_products` | browsable product metadata, with the `pinned` flag |
@@ -98,6 +99,9 @@ submission captured before queueing, not desired rows at completion. A concurren
 link or newly added override remains distinguishable from the programmed snapshot. Hidden or
 otherwise unwritten fields retain their previous baseline, even when absent from a sparse submission.
 Full-download adoption of parameters and links is atomic. Dry-run requests never adopt a baseline.
+The com-object flags follow the same model: `device_comobj_override_base` is seeded from the import
+and adopted only by a verified full download, the one write that carries a flag edit; a read-back does
+not read the com-object table and leaves it as it is.
 
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import
@@ -143,8 +147,10 @@ explicit save anywhere in Busforge: every edit autosaves, so restore points are 
 
 ![Restore point data model and restore flow](storage-snapshots.svg)
 
-- **Scope: the configuration layer only.** Parameter values, links, project properties, and the
-  group-address and building structure. Keyed by the stable string ids (device instance id,
+- **Scope: the configuration layer only.** Parameter values, links, the com-object flags and
+  priority the project sets per device (`device_comobj_overrides`), project properties, and the
+  group-address and building structure. A restore point taken before snapshots carried those flags
+  leaves the current ones in place. Keyed by the stable string ids (device instance id,
   com-object ref id, parameter ref id), so a restore point does not need the application-program
   model, which is resolved at runtime anyway.
 - **Storage: one JSON payload per row**, coupled to the project by foreign key, cascading on delete,

@@ -832,6 +832,10 @@ export abstract class DeviceProfile {
   // deliberately take NO live parameter state (every implementation ignored it, and the
   // callers paid two DB reads per call to feed it).
   abstract capabilities(): DeviceCapabilities;
+  // The bits of a com-object's table entry a project override can set that this family's full
+  // download writes (refuseUnwritableOverrides lets them through): the ones the device page offers
+  // to edit. None where the family has no full download that authors the com-object table.
+  comObjOverridableBits(): readonly OverridableBit[] { return []; }
   // Why capabilities() withholds a write the profile would otherwise offer, where the application
   // itself is the reason (its declared load procedure, the tables a write would have to touch).
   operationRefusals(): OperationRefusals { return {}; }
@@ -886,6 +890,12 @@ export class SystemBProfile extends DeviceProfile {
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
       structuralFlash: hasParamSegment && !!this.cfg && !structuralFirmwareOff(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
+  }
+
+  // The System B entry's flags byte has a bit for every flag, and the priority bits
+  // (comobjbuild.ts comObjectEntry).
+  override comObjOverridableBits(): readonly OverridableBit[] {
+    return this.capabilities().fullDownload ? ["read", "write", "comm", "transmit", "update", "readOnInit", "priority"] : [];
   }
 
   // Both downloads run the mask's base bracket parameterized by the application's fragments, so a
@@ -1563,6 +1573,12 @@ const MV0705_OVERRIDABLE: readonly OverridableBit[] = ["read", "write", "transmi
 export class System7Profile extends DeviceProfile {
   readonly memoryModel = "absolute" as const;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
+
+  // Only where the full download authors the table (the application names its segment); a
+  // memory-mapped one writes the application's own table and refuses every override.
+  override comObjOverridableBits(): readonly OverridableBit[] {
+    return this.capabilities().fullDownload && this.cfg?.groupTables.comObjectSegment !== undefined ? MV0705_OVERRIDABLE : [];
+  }
 
   capabilities(): DeviceCapabilities {
     // Parameters (absolute segments) and links (System-7 tables) are both read back. Parameter
