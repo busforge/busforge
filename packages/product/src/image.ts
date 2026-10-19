@@ -65,6 +65,25 @@ export function decodeAbsoluteImage(model: AppModel, segId: string, img: Buffer)
   return out;
 }
 
+// A parameter value in the form the decoders above give it: encoded at its own bits and decoded again,
+// so a value compares with a decoded device value by what the image holds ("21.0" and "21" alike).
+// Undefined where the image holds none of it (a type the codec does not represent, a value encode
+// writes nothing for or refuses); the read-back then records the device's value, and a write of the
+// refused value still refuses on its own.
+export function imageValueForm(model: AppModel, refId: string, value: string): string | undefined {
+  const param = model.params.get(model.refs.get(refId)?.paramId ?? "");
+  const type = param && model.types.get(param.typeId);
+  if (!param || !type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) return undefined;
+  const scratch = Buffer.alloc(byteWidth(type.sizeInBit, param.bitOffset));
+  try {
+    if (!encode(scratch, 0, param.bitOffset, type, value)) return undefined;
+  } catch (e) {
+    if (e instanceof ProductError) return undefined;
+    throw e;
+  }
+  return decode(scratch, 0, param.bitOffset, type);
+}
+
 // KNX 2-byte float (DPT 9.xxx): bit15 sign, bits14-11 exponent, bits10-0 mantissa.
 // value = 0.01 * mantissa * 2^exponent, the mantissa being an 11-bit two's
 // complement combined with the sign bit. Reference vectors: 0 -> 0x0000,

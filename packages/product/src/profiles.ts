@@ -5,7 +5,7 @@ import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
-import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
+import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
@@ -124,17 +124,28 @@ export async function verifySettled<T>(read: () => Promise<T>, ok: (v: T) => boo
 // absent entry meaning "holds the application default", which is exactly what it holds). A ref
 // the image writes at its default although the project stores another value for it (`defaulted`,
 // an inactive parameter) keeps the device's value: the project's value is not what it holds.
+//
+// A parameter the device's configuration activates and the project's does not (`device` known) is not
+// compared with the project's image: there the image holds what the project writes for a hidden
+// parameter (System 7 and System 1 its segment's <Data> byte, System B its default or nothing), not a
+// value of the project's. It is compared with the value the project resolves it to under the device's
+// configuration, in the form the image gives it (imageValueForm); where none resolves, or the image
+// holds none of it, the device's value is recorded.
 function foldDeviceValues(
   paramBase: Map<string, string>,
   deviceVals: Map<string, string>,
   projectVals: Map<string, string>,
   liveParams: Map<string, string>,
-  relevantRefs?: Set<string>,
+  model: AppModel,
+  device?: DeviceRelevance,
   defaulted?: Set<string>,
 ): void {
   for (const [refId, devVal] of deviceVals) {
-    if (relevantRefs && !relevantRefs.has(refId)) continue;
-    if (projectVals.get(refId) !== devVal || defaulted?.has(refId)) { paramBase.set(refId, devVal); continue; }
+    if (device && !device.relevant.has(refId)) continue;
+    const deviceOnly = device !== undefined && device.deviceActive.has(refId) && !device.projectActive.has(refId);
+    const resolved = deviceOnly ? device.projectValues.get(refId) : undefined;
+    const projectVal = deviceOnly ? (resolved === undefined ? undefined : imageValueForm(model, refId, resolved)) : projectVals.get(refId);
+    if (projectVal !== devVal || (!deviceOnly && defaulted?.has(refId))) { paramBase.set(refId, devVal); continue; }
     const live = liveParams.get(refId);
     if (live === undefined) paramBase.delete(refId); else paramBase.set(refId, live);
   }
@@ -159,11 +170,19 @@ function dropUnownedText(model: AppModel, vals: Map<string, string>, segOf: (p: 
 // The device's configuration is found by overlaying its values for every parameter active in the
 // image (hidden Merker included, since they gate chooses too) on the project, repeated until the
 // active set is stable; one that never settles is refused rather than half-read.
+// `projectActive`, `deviceActive`: the parameters each configuration places in the image.
+// `projectValues`: for the parameters only the device's configuration places, the value the project's
+// own values resolve to under it (its values for them, the rest as the device holds them). They are
+// resolved together; one that another of them, set back to the project's value, hides is resolved
+// alone; one that resolves to none even then has none.
+// `values`: the value each active ref resolves to.
+interface ConfigRefs { shown: Set<string>; active: Set<string>; values: Map<string, string> }
+interface DeviceRelevance { relevant: Set<string>; deviceConfig: Map<string, string>; projectActive: Set<string>; deviceActive: Set<string>; projectValues: Map<string, string>; }
 function deviceRelevantRefs(
   deviceVals: Map<string, string>,
   liveParams: Map<string, string>,
-  configFor?: (values: Map<string, string>) => { shown: Set<string>; active: Set<string> },
-): { relevant: Set<string>; deviceConfig: Map<string, string> } | undefined {
+  configFor?: (values: Map<string, string>) => ConfigRefs,
+): DeviceRelevance | undefined {
   if (!configFor) return undefined;
   const project = configFor(liveParams);
   let cur = project;
@@ -172,7 +191,22 @@ function deviceRelevantRefs(
     for (const [refId, v] of deviceVals) if (cur.active.has(refId)) effective.set(refId, v);
     const next = configFor(effective);
     if (next.active.size === cur.active.size && [...next.active].every((r) => cur.active.has(r))) {
-      return { relevant: new Set([...project.shown, ...next.shown]), deviceConfig: effective };
+      const deviceOnly = [...next.active].filter((r) => !project.active.has(r));
+      const asProject = new Map(effective);
+      for (const r of deviceOnly) { const v = liveParams.get(r); if (v === undefined) asProject.delete(r); else asProject.set(r, v); }
+      const together = deviceOnly.length ? configFor(asProject).values : new Map<string, string>();
+      const projectValues = new Map<string, string>();
+      for (const r of deviceOnly) {
+        let v = together.get(r);
+        if (v === undefined) {
+          const alone = new Map(effective);
+          const own = liveParams.get(r);
+          if (own === undefined) alone.delete(r); else alone.set(r, own);
+          v = configFor(alone).values.get(r);
+        }
+        if (v !== undefined) projectValues.set(r, v);
+      }
+      return { relevant: new Set([...project.shown, ...next.shown]), deviceConfig: effective, projectActive: project.active, deviceActive: next.active, projectValues };
     }
     cur = next;
   }
@@ -627,7 +661,7 @@ export interface ReadStateCtx {
   // The config view for a given set of values: the param refs it shows, and the refs active in the
   // image. Drift is recorded only for refs the project's or the device's configuration shows
   // (deviceRelevantRefs); omitted => every decodable ref.
-  configFor?: (values: Map<string, string>) => { shown: Set<string>; active: Set<string> };
+  configFor?: (values: Map<string, string>) => ConfigRefs;
   onProgress?: ProgressFn;
   signal?: AbortSignal;
 }
@@ -1264,7 +1298,7 @@ export class SystemBProfile extends DeviceProfile {
       const deviceVals = decodeParameterImage(model, LSM, img);
       dropUnownedText(model, deviceVals, (p) => (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === LSM ? target.owned : undefined));
       const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, device?.relevant, target.defaulted);
+      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, model, device, target.defaulted);
       deviceConfig = device?.deviceConfig;
       paramsRead = true;
     }
@@ -1662,7 +1696,7 @@ export class System7Profile extends DeviceProfile {
     }
     for (const t of absoluteTargets) dropUnownedText(absModel, deviceVals, (p) => (p.codeSegment === t.id ? t.owned : undefined));
     const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, device?.relevant);
+    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, absModel, device);
 
     if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
     ctx.onProgress?.("links", 0, 2);
@@ -2125,7 +2159,7 @@ export class System1Profile extends DeviceProfile {
     const projectVals = target ? decodeAbsoluteImage(model, seg.id, target.bytes) : new Map<string, string>();
     if (target) dropUnownedText(model, deviceVals, (p) => (p.codeSegment === seg.id ? target.owned : undefined));
     const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, device?.relevant);
+    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, model, device);
     const links = decodeEmptyBcu1Tables(eeprom);
     return { mask, paramsRead: true, linksRead: links !== null, paramBase, links: links ?? [], deviceConfig: device?.deviceConfig };
   }

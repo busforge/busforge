@@ -54,6 +54,22 @@ Merker included) on the project and recomputes until the active set is stable, t
 for what the project's or the device's configuration shows. It refuses (`READBACK_UNSTABLE`) if the
 set never settles.
 
+A parameter only the **device's** configuration activates is not compared with the project's image:
+for a parameter the project's configuration hides, that image holds what a download writes for it
+(on System 7 and System 1 the segment's `<Data>` template, on System B its default or nothing), not
+a value of the project's. So the read-back compares by where the parameter is active:
+
+| Active under | Compared with | Recorded where they differ |
+|---|---|---|
+| the project's configuration, or neither | the project's image (System B: an inactive parameter the image writes at its default although the project holds another value is recorded with the device's value either way) | the device's value |
+| the device's configuration only | the value the project resolves it to under the device's configuration (its own value, else its default there), in the form the image gives it | the device's value; also where no value resolves |
+
+A device byte that equals the template is therefore no proof of the project's value: a parameter
+hidden in the project and active on the device, whose default differs from its template byte, is
+recorded with the device's value. On the Theben Meteodata 140 S in service, a project taken over from
+one read writes the unit's own bytes but for its download marker, and a second read finds nothing new
+(`packages/product/test/readstate.test.ts`).
+
 Links follow the same rule. A device stores each association by com-object number, and a number
 names a com-object only under a configuration: parameters choose which objects exist, and on a
 module device each module instance shifts its objects. The read-back resolves the numbers through

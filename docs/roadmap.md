@@ -121,13 +121,6 @@ depends on is hardware-proven.
   (`tools/smoke/inservice-specs.test.ts`). Counting only the bits a read-back verifies, and writing the
   marker with every other change as ETS does, would end it; the DALI-Gateway's `P-1` note in
   [findings.md](findings.md) describes the current behaviour.
-- **A System 7 read-back keeps a hidden parameter's default where the device's byte equals the
-  template.** For a parameter the project's configuration does not activate, the read compares the
-  device's byte with the segment's `<Data>` byte rather than with the parameter's value, so where they
-  are equal it keeps the default although the device's value differs (Theben Meteodata 140 S: a
-  sun-protection channel's activation). The objects it shows stay hidden and their links unresolved;
-  read and revert reach the device's configuration only over several rounds. System 1 folds the same
-  way.
 - **Read a System B device's com-object table.** The read-back skips it, so flags the device's project
   sets on its objects (a read flag) are not taken over; a group-address flash, which writes the table
   whole, would clear them. On the Theben HMG 6 T the dry run shows it before any write.

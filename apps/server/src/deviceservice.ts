@@ -658,13 +658,13 @@ export function deviceParamRefs(state: AppState, projectId: string, deviceId: st
 }
 
 // The param refs a configuration shows and the refs active in its image (hidden Merker included).
-export function deviceConfigRefs(state: AppState, projectId: string, deviceId: string, params: StoredParams, modules?: StoredModules): { shown: Set<string>; active: Set<string> } {
+export function deviceConfigRefs(state: AppState, projectId: string, deviceId: string, params: StoredParams, modules?: StoredModules): { shown: Set<string>; active: Set<string>; values: Map<string, string> } {
   const app = loadApp(state, projectId, deviceId);
-  if (!app) return { shown: new Set(), active: new Set() };
+  if (!app) return { shown: new Set(), active: new Set(), values: new Map() };
   const view = buildDeviceConfig(app, params, undefined, modules ?? getDeviceModules(state.db, projectId, deviceId));
   const shown = new Set<string>();
   for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") shown.add(it.param.refId);
-  return { shown, active: new Set(view.imageValues.keys()) };
+  return { shown, active: new Set(view.imageValues.keys()), values: view.imageValues };
 }
 
 // Two link lists of one object hold the same on the device when they send on the same address and

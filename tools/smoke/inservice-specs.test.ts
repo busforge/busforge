@@ -231,7 +231,7 @@ const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>([
   ["theben-jmg4t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199), so the read-back refuses the assumed module types` }],
   ["theben-rmg8t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199), so the read-back refuses the assumed module types` }],
   ["theben-hmg6t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199); behind it the read-back does not read the com-object table, so read flags the unit's project sets are not taken over and a GA dry run finds them to write` }],
-  ["theben-meteodata-140s-in-service", { stop: IMAGE, reason: `${MARKER} (P-2228), and the System 7 read-back keeps the default of a parameter the project's configuration hides where the unit's byte equals the segment's template byte, though the unit's value differs` }],
+  ["theben-meteodata-140s-in-service", { stop: IMAGE, reason: `${MARKER} (P-2228), so the read-back refuses the assumed channel functions` }],
 ]);
 
 // Specs whose unit cannot be emulated, with the reason.
