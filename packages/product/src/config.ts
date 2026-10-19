@@ -1,3 +1,4 @@
+import type { ConstantDifference } from "./deviceimage.ts";
 import type { AppConfig, CfgParam, CfgParamRef, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
@@ -96,7 +97,9 @@ export interface CfgBlock {
 // `unprovenAssumptions`: assumed parameters (read-back `assume`) whose value another value of theirs
 // writes the same (objects, image), so the device could not tell them apart; taken all the same.
 // `neverProgrammedKept`: why a device never programmed from this project stays so after this read.
-export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string }
+// `constantsDiffer`: the constant parameters (deviceimage.ts constantParams) the device holds other bits
+// in, which the image check counts as no change (FlashResult.constantsDiffer).
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string; constantsDiffer?: ConstantDifference[] }
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links. Defined here
@@ -258,6 +261,7 @@ const codePoint = (m: string, n: number): string => (n >= 0 && n <= 0x10ffff ? S
 const decode = (s: string): string =>
   s.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => codePoint(m, parseInt(h, 16)))
     .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)));
+export const decodeTextEntities = decode;
 
 // An ETS text names the value of the parameter its element's TextParameterRefId points at:
 // `{{0}}` is that value, `{{0:text}}` the value or, while it is empty, `text` verbatim. Index 0 is

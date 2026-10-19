@@ -236,6 +236,21 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", ...STAMPS, "restart"]);
     expect(dev.mem.get(0x435c + 3)).toBe(40);
   }, 20_000);
+
+  // P-3738 "Downloaderkennung" (Access="None", the same value in every configuration): a unit that holds
+  // another value there and nothing else differing is unchanged, nothing written, the parameter named.
+  test("parameter flash: a unit that differs only in a constant parameter is unchanged and names it", async () => {
+    const dev = new GiraDevice(cfg);
+    await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
+    const c = buildAbsoluteSegmentTargets(cfg, new Map()).flatMap((t) => t.constants.map((k) => ({ ...k, address: t.address })))
+      .find((k) => k.paramId === "M-0008_A-10D7-11-2783-O000A_P-3738")!;
+    expect(c.sizeInBit % 8).toBe(0);
+    dev.mem.set(c.address + c.offset, dev.mem.get(c.address + c.offset)! ^ 0xff);
+    dev.ops = [];
+    const r = await classify(cfg).flashParameters(asDev(dev), cfg.mask, { ...base, dryRun: true, baseParams: new Map() });
+    expect(r).toMatchObject({ kind: "unchanged", constantsDiffer: [{ paramRefId: c.paramRefId, label: "Downloaderkennung" }] });
+    expect(dev.ops.filter((o) => o === "write")).toEqual([]);
+  }, 20_000);
 });
 
 // The rules every System 7 application's declared full download follows (docs/load-procedures.md, "The

@@ -395,7 +395,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
             read.programIdMatches !== true ? `application id ${read.programIdMatches === false ? "of another application" : "not reported"}` : "",
             read.loaded !== true ? "a load state not LOADED" : "", read.imageMatches === false ? "a flash would write bytes the device does not hold" : read.imageMatches !== true ? `image not compared (${read.imageRefused ?? "unknown"})` : ""].filter(Boolean).join("; ")
           : "";
-        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}) };
+        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}) };
       },
     );
     // `readback` tells the client what this read actually covered: `linkGaps` counts

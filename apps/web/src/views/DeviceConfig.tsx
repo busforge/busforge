@@ -204,6 +204,9 @@ export function DeviceConfig() {
         // drift there stays invisible. Say so instead of implying a complete read.
         const gaps = v.readback?.linkGaps ?? 0;
         if (gaps > 0) toast.warning(t("device.readLinkGaps", { count: gaps }));
+        // Constant parameters the device holds otherwise count as no change; named so none is overlooked.
+        const constants = v.readback?.constantsDiffer ?? [];
+        if (constants.length) toast.warning(t("device.readConstantsDiffer", { params: constants.map((c) => c.label).join(", ") }));
       },
       onError: (e) => toast.error(t("device.readError"), { description: errMsg(t, e) }),
     });

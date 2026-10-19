@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, relativeComObjWriteSet, constantParams, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
@@ -601,6 +601,7 @@ corpusDescribe("Jung 400021SE full download on a loaded unit against ETS", () =>
     const target = buildRelativeSegmentTarget(cfg, new Map(base), 4, { ownIdleUnionDefaults: true })!;
     const { image, diffBytes } = mergeRelativeTarget(unit, target);
     expect([[...image.keys()].filter((o) => image[o] !== unit[o]), diffBytes]).toEqual([[7700], 0]);
+    expect(differingConstants(cfg, target.constants, unit, image).map((c) => c.paramRefId)).toEqual([expect.stringMatching(/_P-1_R-/)]);
   });
 });
 
@@ -1574,8 +1575,9 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
 
   test("parameter flash with nothing changed: the cleared download marker alone is no change, nothing is written", () => {
     expect(constantParams(cfg).get("M-0048_A-107E-12-5B58_P-2228")).toBe("170");
-    const { plan, changedBytes } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit]]));
+    const { plan, changedBytes, constantsDiffer } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit]]));
     expect([changedBytes, bytesOf(plan).size]).toEqual([0, 0]);
+    expect(constantsDiffer.map((c) => c.paramRefId)).toEqual([expect.stringMatching(/^M-0048_A-107E-12-5B58_P-2228_R-/)]);
   });
 
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
@@ -1781,8 +1783,9 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
 
   test("parameter flash with nothing changed: the cleared download marker alone is no change, nothing is written", () => {
     expect(constantParams(cfg).get("M-0048_A-140C-14-EB70_P-2228")).toBe("170");
-    const { plan, changedBytes } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit], [otherParams.id, held4c]]));
+    const { plan, changedBytes, constantsDiffer } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit], [otherParams.id, held4c]]));
     expect([changedBytes, bytesOf(plan).size]).toEqual([0, 0]);
+    expect(constantsDiffer.map((c) => c.paramRefId)).toEqual([expect.stringMatching(/^M-0048_A-140C-14-EB70_P-2228_R-/)]);
   });
 
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
@@ -2037,6 +2040,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect([...image.keys()].filter((o) => image[o] !== held[o])).toEqual([DOWNLOADED]);
         expect(diffBytes).toBe(0);
         expect(constantParams(cfg).get(`${A}_P-199`)).toBe("1");
+        expect(differingConstants(cfg, target.constants, held, image).map((c) => c.paramRefId)).toEqual([expect.stringMatching(new RegExp(`^${A}_P-199_R-`))]);
       });
 
       test("group-address flash: ETS's tables and com-object table, in ETS's bracket", () => {

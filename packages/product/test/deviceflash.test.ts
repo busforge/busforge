@@ -121,11 +121,24 @@ const runs = (p: ReturnType<typeof planAbsoluteSegmentFlash>) => p.segments[0].r
 test("a unit that differs only in a constant Access=\"None\" parameter (a download marker it clears) gets an empty plan", () => {
   const p = plan(withNone("top"), [5, 0xff, 7, 0x00]);
   expect([p.totalWrittenBytes, runs(p)]).toEqual([0, []]);
+  // Named, so the difference is seen: by its text, else its name, else its id.
+  expect(p.constantsDiffer).toEqual([{ paramRefId: "M-0005_A-0001-01-0001_P-4_R", label: "Marker" }]);
+  expect(plan(withNone("top"), [5, 0xff, 7, 0xaa]).constantsDiffer).toEqual([]);
+  const named = parseAppConfig(withNoneXml("top").replace('Text="Marker" Value="170"', 'Name="A_Download" Text="" Value="170"'));
+  expect(plan(named, [5, 0xff, 7, 0x00]).constantsDiffer.map((c) => c.label)).toEqual(["A_Download"]);
+  const multiline = parseAppConfig(withNoneXml("top").replace('Text="Marker" Value="170"', 'Text="Wert $AA,&amp;#xD;&amp;#xA;Download" Value="170"'));
+  expect(plan(multiline, [5, 0xff, 7, 0x00]).constantsDiffer.map((c) => c.label)).toEqual(["Wert $AA, Download"]);
+  // Two active refs of the parameter: named once, by the text its ref gives it.
+  const twoRefs = parseAppConfig(withNoneXml("top")
+    .replace('<ParameterRef Id="M-0005_A-0001-01-0001_P-4_R" RefId="M-0005_A-0001-01-0001_P-4"/>', '<ParameterRef Id="M-0005_A-0001-01-0001_P-4_R" RefId="M-0005_A-0001-01-0001_P-4" Text="Marker of the ref"/><ParameterRef Id="M-0005_A-0001-01-0001_P-4_R2" RefId="M-0005_A-0001-01-0001_P-4"/>')
+    .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R2"/>'));
+  expect(plan(twoRefs, [5, 0xff, 7, 0x00]).constantsDiffer.map((c) => c.label)).toEqual(["Marker of the ref"]);
 });
 
 test("with any other change the constant parameter is written with it, as ETS writes the download marker in every download", () => {
   const p = plan(withNone("top"), [5, 0xff, 0, 0x00]);
   expect(runs(p)).toEqual([[102, [7, 0xaa]]]);
+  expect(p.constantsDiffer).toEqual([]);
   expect(p.totalWrittenBytes).toBe(2);
 });
 

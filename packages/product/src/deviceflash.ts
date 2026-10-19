@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
-import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes } from "./deviceimage.ts";
+import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
@@ -38,9 +38,11 @@ export interface SegmentFlashPlan {
   skippedUnowned: number; // bytes we deliberately never touch (defaults / gaps / inactive)
 }
 
+// `constantsDiffer`: an empty plan's constant parameters the unit holds other bits in (planAbsoluteSegmentFlash).
 export interface FlashPlan {
   segments: SegmentFlashPlan[];
   totalWrittenBytes: number;
+  constantsDiffer: ConstantDifference[];
 }
 
 // Coalesce the selected (owned, and optionally changed) byte indices into the fewest
@@ -96,10 +98,12 @@ export function planAbsoluteSegmentFlash(
   // and Meteodata 140 S clear after each download, deviceimage.ts constantParams) holds the
   // configuration: nothing is written. With any other change those bytes go out with it, as ETS's
   // parameter downloads of both write the marker.
+  let constantsDiffer: ConstantDifference[] = [];
   if (opts.current && !targets.some((t) => { const s = segments.find((x) => x.id === t.id)!; const cur = opts.current!.get(t.id)!; return t.owned.some((own, i) => ((s.image[i] ^ cur[i]) & own & ~t.constant[i]) !== 0); })) {
+    constantsDiffer = targets.flatMap((t) => differingConstants(app, t.constants, opts.current!.get(t.id)!, segments.find((x) => x.id === t.id)!.image));
     for (const s of segments) { s.runs = []; s.writtenBytes = 0; }
   }
-  return { segments, totalWrittenBytes: segments.reduce((n, s) => n + s.writtenBytes, 0) };
+  return { segments, totalWrittenBytes: segments.reduce((n, s) => n + s.writtenBytes, 0), constantsDiffer };
 }
 
 // Turn the surgical segment plan into an executable LoadPlan by wrapping it in the
@@ -122,6 +126,7 @@ export interface AbsParFlashPlan {
   changedBytes: number;
   segments: { id: string; address: number; lsm: number; changed: number }[];
   unplaceable: { id: string; address: number; changed: number }[];
+  constantsDiffer: ConstantDifference[]; // FlashPlan.constantsDiffer
 }
 
 // The System B ("relative") par-download bracket as a LoadPlan for the generic executor,
@@ -534,7 +539,7 @@ export function planAbsoluteParFlash(
     plan.push(...closingLoadSteps(closingSteps(procedure, "par")));
     if (has("LdCtrlRestart")) plan.push({ op: "restart", requireReboot: opts.requireReboot ?? true });
   }
-  return { plan, changedBytes, segments, unplaceable, covered };
+  return { plan, changedBytes, segments, unplaceable, covered, constantsDiffer: fp.constantsDiffer };
 }
 
 // ── Full download and group-address flash for absolute-segment (System 7) devices ────────────────

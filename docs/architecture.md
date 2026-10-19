@@ -254,8 +254,10 @@ every device model):
    [load-procedures.md](load-procedures.md)).
 9. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device. The
    bits of a parameter no configuration changes (an `Access="None"` download marker the unit clears
-   after each download) do not count: alone they are no change, with any other change they are
-   written ([load-procedures.md](load-procedures.md#the-rules-by-level), R17). `unchanged` holds
+   after each download) do not count: alone they are no change, and the `unchanged` result names the
+   parameters (`constantsDiffer`, shown in the flash preview, in the task list for a write that finds
+   the device unchanged, and after a read-back whose image check matches); with any other change
+   they are written ([load-procedures.md](load-procedures.md#the-rules-by-level), R17). `unchanged` holds
    only when every load-state machine the operation brackets is LOADED. Equal bytes under a machine
    left Loading by an interrupted write are not a running configuration: a System B flash, whose
    bracket always covers its load-state machines, runs anyway and completes the load; a System 7

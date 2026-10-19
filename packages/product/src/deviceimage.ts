@@ -1,6 +1,6 @@
 import type { AppConfig, CfgParamRef, DynNode, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
-import { buildDeviceConfig } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 import { ProductError } from "./errors.ts";
@@ -142,8 +142,35 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // them on download, so checking them in verify would report every successful flash as failed.
 // User-facing parameters (Access != None) stay in `verify`, so a real mis-write still fails.
 // `constant` is the subset of owned bits that hold a constant parameter's value (constantParams): a
-// unit differing from the image only there holds the configuration.
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; }
+// unit differing from the image only there holds the configuration. `constants` names whose they are.
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; }
+
+// A constant parameter placed in a segment: its ParameterRef and the bits it holds there.
+export interface ConstantPlacement { paramRefId: string; paramId: string; offset: number; bitOffset: number; sizeInBit: number }
+// A constant parameter the unit holds other bits in than the configuration writes: a download marker
+// the unit cleared, or a value another tool or application left. Reported by an `unchanged` flash, so
+// the difference is seen although it is no change. `label`: the text of its ParameterRef, else of its
+// Parameter, in the application's default language (entities decoded, on one line), else its name, else
+// its id.
+export interface ConstantDifference { paramRefId: string; label: string }
+
+// The constants of `placements` whose bits differ between the unit (`current`) and the image, each
+// parameter once.
+export function differingConstants(app: AppConfig, placements: ConstantPlacement[], current: Buffer, image: Buffer): ConstantDifference[] {
+  const seen = new Set<string>();
+  return placements.filter((c) => {
+    if (seen.has(c.paramId)) return false;
+    for (let g = c.bitOffset; g < c.bitOffset + c.sizeInBit; g++) {
+      const at = c.offset + (g >> 3), m = 0x80 >> (g & 7);
+      if (((current[at] ^ image[at]) & m) !== 0) { seen.add(c.paramId); return true; }
+    }
+    return false;
+  }).map((c) => {
+    const p = app.params.get(c.paramId);
+    const text = decodeTextEntities(app.refs.get(c.paramRefId)?.text || p?.text || "").replace(/\s+/g, " ").trim();
+    return { paramRefId: c.paramRefId, label: text || p?.name || c.paramId };
+  });
+}
 
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
@@ -206,6 +233,7 @@ export function buildAbsoluteSegmentTargets(
     const owned = new Array<number>(seg.size).fill(0);
     const verify = new Array<number>(seg.size).fill(0);
     const constant = new Array<number>(seg.size).fill(0);
+    const placements: ConstantPlacement[] = [];
     const constants = constantsAlone(app, [...model.params.values()].filter((p) => p.codeSegment === segId), model.types, seg.size);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
@@ -234,9 +262,12 @@ export function buildAbsoluteSegmentTargets(
       // re-stamps); they stay owned/written but are excluded from `verify` (see the type).
       const verifiable = app.params.get(ref.paramId)?.access !== "None";
       markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
-      if (constants.has(param.id) && constantParams(app).get(param.id) === v) markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
+      if (constants.has(param.id) && constantParams(app).get(param.id) === v) {
+        markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
+        placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
+      }
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant });
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements });
   }
   return out.sort((a, b) => a.address - b.address);
 }
@@ -286,9 +317,9 @@ const leavesOutInvisible = (app: AppConfig): boolean => app.downloadInvisiblePar
 // `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
 // set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
 // offset 39). Written, never asserted.
-// `constant`: the owned bits of constant parameters, as DeviceSegmentTarget.constant.
+// `constant`, `constants`: the owned bits of constant parameters and whose they are, as DeviceSegmentTarget.
 // `defaulted`: inactive parameters written at their default although the values hold another value for them.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; constant: number[]; defaulted: Set<string>; }
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; constant: number[]; constants: ConstantPlacement[]; defaulted: Set<string>; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -343,6 +374,7 @@ export function buildRelativeSegmentTarget(
   const verify = new Array<number>(seg.size).fill(0);
   const markers = new Array<number>(seg.size).fill(0);
   const constant = new Array<number>(seg.size).fill(0);
+  const placements: ConstantPlacement[] = [];
   const constants = constantsAlone(app, [...model.params.values()].filter((p) => !p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === lsm), model.types, seg.size);
   const defaulted = new Set<string>();
 
@@ -395,9 +427,12 @@ export function buildRelativeSegmentTarget(
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
-    if (constants.has(param.id) && constantParams(app).get(param.id) === v) markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
+    if (constants.has(param.id) && constantParams(app).get(param.id) === v) {
+      markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
+      placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
+    }
   }
-  return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, defaulted };
+  return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write

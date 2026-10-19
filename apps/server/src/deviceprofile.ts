@@ -4,7 +4,7 @@ import { KnxDevice, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividu
 import {
   classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
-  type PersistBackups, type ProgressFn,
+  type PersistBackups, type ProgressFn, type ConstantDifference,
 } from "@busforge/product";
 import { makeTransport } from "./transport.ts";
 import type { Connection } from "./db/connections.ts";
@@ -190,9 +190,10 @@ export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: 
 //   to write; the second compares the tables a GA flash writes, the com-object table among them where
 //   the family writes it. This is what shows a parameter the device does not hold has the value the
 //   project gives it, where it decides bytes Busforge writes. Null where the product has no such flash
-//   or the check could not run; the reason is in `imageRefused`.
+//   or the check could not run; the reason is in `imageRefused`. `constantsDiffer`: where the image
+//   matches, the constant parameters the device differs in, no change (FlashResult.constantsDiffer).
 export type ReadStateOpts = ReadStateCtx & { appXml: string; deviceId: string; ia: string; holds?: boolean; comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride> };
-export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string };
+export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string; constantsDiffer?: ConstantDifference[] };
 export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateOpts): Promise<DeviceStateRead> {
   const cfg = parseAppConfig(opts.appXml);
   const profile = classify(cfg);
@@ -205,6 +206,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
   let loaded = false;
   let imageMatches: boolean | null = null;
   let imageRefused: string | undefined;
+  let constantsDiffer: ConstantDifference[] = [];
   try {
     const object = planForMask(mask).applicationObject;
     const id = object === null ? null : await dev.propReadIfPresent(object, PID.PROGRAM_ID);
@@ -222,6 +224,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
       const progress = (_p: string, d?: number, t?: number) => opts.onProgress?.("check", d, t);
       const common = { deviceId: opts.deviceId, appXml: opts.appXml, params: values, baseParams: values, moduleInstances, dryRun: true, persistBackups: () => "", signal: opts.signal, onProgress: progress };
       const par = await profile.flashParameters(dev, mask, common);
+      if (par.kind === "unchanged") constantsDiffer = par.constantsDiffer ?? [];
       const links: ComObjectLink[] = read.links;
       const ga = par.kind === "unchanged" ? await profile.flashGroupTables(dev, mask, { ...common, ia: opts.ia, links, comObjectOverrides: opts.comObjectOverrides }) : null;
       imageMatches = par.kind === "unchanged" && ga?.kind === "unchanged";
@@ -231,7 +234,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
     imageMatches = null;
     imageRefused = why(e);
   }
-  return { ...read, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}) };
+  return { ...read, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}), ...(imageMatches === true && constantsDiffer.length ? { constantsDiffer } : {}) };
 }
 
 // Identify a device and read its security mode: its device descriptor, serial and the security

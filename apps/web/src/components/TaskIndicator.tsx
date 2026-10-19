@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { AlertCircle, AlertTriangle, Ban, Boxes, CheckCircle2, Clock, Cpu, Download, FileJson, KeyRound, Loader2, Network, Plug, PlugZap, Rocket, Stethoscope, Tag, Usb, X } from "lucide-react";
 import { toast } from "sonner";
-import type { BusStatus, ConnectionType, Task, TaskKind } from "../api.ts";
+import type { BusStatus, ConnectionType, FlashResult, Task, TaskKind } from "../api.ts";
 import { api } from "../api.ts";
 import { qk, useBusStatus, useConnections, useProject, useTasks } from "../queries.ts";
 import { ConnectionManager, connDetail } from "../views/ConnectionManager.tsx";
@@ -242,6 +242,13 @@ function TaskRow({ task, t, onCancel, canceling, onView }: { task: Task; t: (k: 
         </div>
       )}
       {task.state === "queued" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.queued")}</div>}
+      {(() => {
+        // An unchanged flash whose device differs only in constant parameters (FlashResult.constantsDiffer).
+        const r = task.state === "done" ? task.result as FlashResult | null : null;
+        if (r?.kind !== "unchanged" || !r.constantsDiffer?.length) return null;
+        const msg = t("task.constantsDiffer", { params: r.constantsDiffer.map((c) => c.label).join(", ") });
+        return <div className="mt-0.5 truncate text-[10px] text-amber-600 dark:text-amber-400" title={msg} data-testid="task-constants-differ">{msg}</div>;
+      })()}
       {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{task.errorCode ? localizeError(t, task.errorCode, task.error) : t("task.cancelled")}</div>}
       {(task.state === "error" || task.state === "interrupted") && (() => { const msg = localizeError(t, task.errorCode, task.error); return <div className="mt-0.5 truncate text-[10px] text-destructive" title={msg}>{msg}</div>; })()}
     </div>

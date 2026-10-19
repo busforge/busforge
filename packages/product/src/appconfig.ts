@@ -35,7 +35,7 @@ export interface CfgType {
 // mirrors the flat static model, can drop module-def and union entries to stay
 // byte-identical to the legacy image parser).
 export interface CfgParam {
-  id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
+  id: string; typeId: string; text: string; name?: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
   // Located in an interface object property (<Property>) instead of memory: also held by the device.
   onProperty?: true;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
@@ -452,7 +452,7 @@ function parseParams(staticKids: ONode[], unionScope: string): { params: Map<str
     const ma = mem ? attrsOf(mem) : undefined;
     params.set(a.Id, {
       ...(firstByTag(kidsOf(pa), "Property") ? { onProperty: true as const } : {}),
-      id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access,
+      id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", ...(a.Name ? { name: a.Name } : {}), suffix: a.SuffixText, value: a.Value, access: a.Access,
       hasMemory: unionMem ? unionMem.CodeSegment !== undefined : !!mem,
       offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,
       bitOffset: unionMem ? Number(unionMem.BitOffset ?? 0) + Number(a.BitOffset ?? 0) : ma ? Number(ma.BitOffset ?? 0) : undefined,

@@ -2,7 +2,7 @@ import { test, expect, mock, afterAll, describe } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DeviceReadback } from "@busforge/product";
+import { buildAbsoluteSegmentTargets, parseAppConfig } from "@busforge/product";
 import { CollectedUnit, asDevice, type Collection } from "../../../packages/product/test/collected-unit.ts";
 import { catalogueXml, corpusPath, inServiceCollection } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -18,6 +18,7 @@ const realReadOn = real.readStateOn;
 let readImpl: typeof realRead = realRead;
 await mock.module("../src/deviceprofile.ts", () => ({ ...real, readDeviceState: (o: Parameters<typeof realRead>[0]) => readImpl(o) }));
 const { handleApi, createState } = await import("../src/app.ts");
+type DeviceStateRead = Awaited<ReturnType<typeof realRead>>;
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { readImpl = realRead; });
 
@@ -58,13 +59,23 @@ const stored = (state: AppState, pid: string, did: string) => ({
 });
 
 describe("a read-back and never programmed", () => {
-  const read = (over: Partial<DeviceReadback & { programIdMatches: boolean | null; loaded: boolean; imageMatches: boolean | null }>): typeof realRead => async () =>
+  const read = (over: Partial<DeviceStateRead>): typeof realRead => async () =>
     ({ mask: "MV-0705", paramsRead: true, linksRead: true, paramBase: new Map<string, string>(), links: [], programIdMatches: true, loaded: true, imageMatches: true, ...over });
 
   test("a complete read without unresolved links, of a device reporting this application's id, loaded, its image as the project's, clears it", async () => {
     const { state, pid, did, path } = await placed();
     readImpl = read({});
     try { expect((await readBack(state, path)).status).toBe(200); } finally { readImpl = realRead; }
+    expect(neverProgrammed(state, pid, did)).toBe(false);
+  });
+
+  test("constant parameters the device differs in are no change, and the read names them", async () => {
+    const { state, pid, did, path } = await placed();
+    const constantsDiffer = [{ paramRefId: "M-TEST_A-1_P-9_R-9", label: "Download marker" }];
+    readImpl = read({ constantsDiffer });
+    let body: Body = {};
+    try { const r = await readBack(state, path); expect(r.status).toBe(200); body = r.body; } finally { readImpl = realRead; }
+    expect(body.readback?.constantsDiffer).toEqual(constantsDiffer);
     expect(neverProgrammed(state, pid, did)).toBe(false);
   });
 
@@ -121,6 +132,24 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     expect(again.body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0 });
     expect(again.body.linkBaseGaps).toBe(0);
     for (const a of [...ROCKERS, ...LEDS]) expect(stored(state, pid, did).base).toContainEqual({ r: a.paramRefId, v: a.value });
+    expect(neverProgrammed(state, pid, did)).toBe(false);
+  });
+
+  // P-3738 "Downloaderkennung" is a constant parameter (R17): a unit holding another value there is
+  // taken over all the same, and the read names it.
+  test("a unit that differs only in a constant parameter is taken over, and the read names it", async () => {
+    const { state, pid, did, path } = await placed(xml);
+    await onUnit(() => readBack(state, path, [...ROCKERS, ...LEDS]));
+    await handleApi(req(`${path}/revert`, { method: "POST" }), state);
+    const cfg = parseAppConfig(xml);
+    const marker = buildAbsoluteSegmentTargets(cfg, new Map()).flatMap((t) => t.constants.map((c) => ({ ...c, at: t.address + c.offset })))
+      .find((c) => c.paramId === `${A}_P-3738`)!;
+    const dev = new CollectedUnit(collection);
+    dev.mem.set(marker.at, dev.mem.get(marker.at)! ^ 0xff);
+    readImpl = (o) => realReadOn(asDevice(dev), "MV-0705", o);
+    try {
+      expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, constantsDiffer: [{ paramRefId: marker.paramRefId, label: "Downloaderkennung" }] });
+    } finally { readImpl = realRead; }
     expect(neverProgrammed(state, pid, did)).toBe(false);
   });
 

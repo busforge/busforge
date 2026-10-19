@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
@@ -448,8 +448,11 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // `restartUnproven`: the interface confirmed the closing A_Restart negatively and the device neither
 // closed the connection nor answered on it (KnxDevice.acceptUnprovenRestart), so `verified` shows the
 // device holds the bytes after the restart, not that it restarted and stored them.
+// `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
+// device holds other bits in, no change of the configuration, named so a difference that is no
+// download marker is seen; absent where there is none.
 export type FlashResult = (
-  | { kind: "unchanged"; mask: string; imageBytes: number; backup: string }
+  | { kind: "unchanged"; mask: string; imageBytes: number; backup: string; constantsDiffer?: ConstantDifference[] }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; restartUnproven?: true; stamps?: ImageStamp[] }
 ) & { structural?: true };
@@ -556,6 +559,8 @@ interface FlashOp {
   alwaysWrite?: boolean;
   // Filled by `write` with the closing stamp reads of a download that writes the parameters (ImageStamp).
   stamps?: ImageStamp[];
+  // The constant parameters the device differs in where nothing else differs (FlashResult.constantsDiffer).
+  constantsDiffer?: ConstantDifference[];
 }
 
 // The bytes a write put on the bus where read-compare decides them (a memory-mapped System 7 mask): the
@@ -601,7 +606,7 @@ async function runFlashOp(
   if (op.loadIncomplete === "refuse") {
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
-  if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup };
+  if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup, ...(op.constantsDiffer?.length ? { constantsDiffer: op.constantsDiffer } : {}) };
   if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
@@ -1354,6 +1359,7 @@ export class SystemBProfile extends DeviceProfile {
     const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
+    const constantsDiffer = diffBytes === 0 ? differingConstants(cfg, target.constants, current, image) : [];
     // With the unit's stamps equal to the record, ETS's differential: the owned bytes that differ from the
     // unit, region by region (differentialMask; the regions as the application declares them, else as the
     // unit reports them now). Otherwise every owned byte. The record is the stamps of the last download
@@ -1369,6 +1375,7 @@ export class SystemBProfile extends DeviceProfile {
       extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length,
       diffBytes,
+      constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
@@ -1545,6 +1552,7 @@ export class SystemBProfile extends DeviceProfile {
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(paramsAt, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
     const { image, diffBytes: paramDiff } = mergeRelativeTarget(current, target);
+    const constantsDiffer = paramDiff === 0 ? differingConstants(cfg, target.constants, current, image) : [];
     const cur = await readGroupTables(dev, undefined, false);
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
     const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
@@ -1563,6 +1571,7 @@ export class SystemBProfile extends DeviceProfile {
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
         + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
           + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
+      constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: `${prefix}-params.bin`,
       backups: ctx.dryRun ? [] : [
@@ -1735,7 +1744,7 @@ export class System7Profile extends DeviceProfile {
       current.set(t.id, onDev);
     }
 
-    const { plan, changedBytes, unplaceable, covered } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
+    const { plan, changedBytes, unplaceable, covered, constantsDiffer } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
     const writeBytes = plan.reduce((n, st) => n + (st.op === "writeMem" ? st.bytes.length : 0), 0);
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
@@ -1753,6 +1762,7 @@ export class System7Profile extends DeviceProfile {
       extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: totalBytes,
       diffBytes: changedBytes,
+      constantsDiffer,
       ...(paramsLoaded ? {} : { loadIncomplete: "refuse" as const }),
       backup: `${ctx.deviceId}-${targets[0]?.id.split("_").pop() ?? "AS"}-${stamp}.bin`,
       backups: targets.map((t) => ({ file: `${ctx.deviceId}-${t.id.split("_").pop()}-${stamp}.bin`, bytes: current.get(t.id)! })),

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { test, expect, describe } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, wholeBytes } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
@@ -284,8 +284,11 @@ test("relative target: a constant parameter's bits are constant only at its valu
   expect(constantAt4(relMarker((x) => x.replace("</Static>", '<ParameterCalculations><ParameterCalculation Id="M-0005_A-0001-01-0001_PC-1" Language="JavaScript" Name="c"><LParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R" AliasName="p1"/></LParameters><RParameters/></ParameterCalculation></ParameterCalculations></Static>')))).toBe(0);
   expect(constantAt4(relMarker((x) => x.replace("</ParameterBlock>", "<Unknown/></ParameterBlock>")))).toBe(0);
   // A unit differing in the marker alone is unchanged; the image still carries it.
-  const { image, diffBytes } = mergeRelativeTarget(Buffer.from([7, 0, 3, 5, 0]), buildRelativeSegmentTarget(relMarker(), new Map(), 4)!);
+  const target = buildRelativeSegmentTarget(relMarker(), new Map(), 4)!;
+  const { image, diffBytes } = mergeRelativeTarget(Buffer.from([7, 0, 3, 5, 0]), target);
   expect([diffBytes, image[4]]).toEqual([0, 0xaa]);
+  expect(differingConstants(relMarker(), target.constants, Buffer.from([7, 0, 3, 5, 0]), image)).toEqual([{ paramRefId: "M-0005_A-0001-01-0001_P-4_R", label: "Marker" }]);
+  expect(differingConstants(relMarker(), target.constants, image, image)).toEqual([]);
 });
 
 test("relative target: visible owned (active+inactive), Access=None-inactive preserved, union active-only", () => {
@@ -375,7 +378,7 @@ describe("a BinaryValue parameter writes its enumeration's bytes", () => {
 // rest; diffBytes counts only the owned bytes that actually change.
 const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned, constant: number[] = owned.map(() => 0)): RelativeSegmentTarget => {
   const bits = (m: (boolean | number)[]) => m.map((o) => (o === true ? 0xff : o === false ? 0 : o));
-  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0), constant, defaulted: new Set() };
+  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0), constant, constants: [], defaulted: new Set() };
 };
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
