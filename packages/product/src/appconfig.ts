@@ -219,6 +219,9 @@ export interface AppConfig {
   // sub-parameter under the one above), keyed by Parameter or ParameterRef Id. The XML parser trims attribute values, so
   // this is captured from the raw source and reattached to the label. See parseParamFauxIndent.
   paramFauxIndent: Map<string, string>;
+  // The ParameterRefs a <ParameterCalculation> reads or sets (its LParameters and RParameters), in the
+  // application and its module definitions. Busforge does not run these scripts.
+  calculationRefs: Set<string>;
 }
 
 // The order-preserving parser splits attributes (under ":@") from child elements,
@@ -352,7 +355,16 @@ export function parseAppConfig(xml: string): AppConfig {
     loadProcedures: loadProceduresOf(root),
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,
     paramFauxIndent: parseParamFauxIndent(xml),
+    calculationRefs: calculationRefsOf(appKids),
   };
+}
+
+function calculationRefsOf(nodes: ONode[]): Set<string> {
+  const out = new Set<string>();
+  const refsIn = (ns: ONode[]) => { for (const n of ns) { if (tagOf(n) === "ParameterRefRef" && attrsOf(n).RefId) out.add(attrsOf(n).RefId); refsIn(kidsOf(n)); } };
+  const find = (ns: ONode[]) => { for (const n of ns) { if (tagOf(n) === "ParameterCalculation") refsIn(kidsOf(n)); else find(kidsOf(n)); } };
+  find(nodes);
+  return out;
 }
 
 // Allocators (Static/Allocators): named counters used to hand out per-instance base

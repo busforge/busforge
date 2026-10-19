@@ -3,7 +3,8 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KnxDevice } from "../../packages/knx/src/index.ts";
-import { classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo } from "../../packages/product/src/index.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo } from "../../packages/product/src/index.ts";
+import { getDeviceModules, getDeviceParams } from "../../apps/server/src/db/deviceparams.ts";
 import { CollectedUnit, asDevice, type Collection } from "../../packages/product/test/collected-unit.ts";
 import { catalogueXml, corpusPath, inServiceCollection, IN_SERVICE_COLLECTIONS } from "../corpus.ts";
 import { corpusDescribe } from "../corpus-test.ts";
@@ -168,7 +169,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     const memory = new Map(dev.mem);
     const log: string[] = [];
     unit = dev;
-    try { return { r: await runInService(spec, io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00"), opts), log, dev, memory }; }
+    try { return { r: await runInService(spec, io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00"), opts), log, dev, memory, state, pid, did }; }
     finally { unit = null; }
   };
   const writes = (spec: DeviceSpec, opts: InServiceOptions) => planInService(spec, opts).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : ({ flashParams: "flash", structuralFlash: "flash", flashLinks: "flash-ga", fullDownload: "download" } as const)[p.op!]));
@@ -187,6 +188,31 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     return out;
   };
 
+  // What a run may leave different from the unit as found, by address, as the bits allowed to differ.
+  // The bits of a constant parameter (constantParams: a download marker) holding the constant: a
+  // download writes it and the real unit clears it once it has seen the download, the emulated one
+  // keeps it. On a System B application that declares DownloadInvisibleParameters="None", the bits a
+  // step's configuration owns and the final one does not, holding the step's value: a parameter a step activated keeps, once
+  // the step is reverted, the value the step wrote, since neither ETS nor Busforge writes an inactive
+  // one (docs/load-procedures.md, R14).
+  const allowedDifferences = async (spec: DeviceSpec, dev: CollectedUnit, cfg: AppConfig, state: AppState, pid: string, did: string): Promise<Map<number, number>> => {
+    const values = getDeviceParams(state.db, pid, did), moduleInstances = getDeviceModules(state.db, pid, did);
+    const steps = [spec.inService!.param, spec.inService!.structural].flatMap((s) => (s ? [new Map(values).set(s.paramRefId, s.value)] : []));
+    const out = new Map<number, number>();
+    const allow = (at: number, bits: number) => { if (bits) out.set(at, (out.get(at) ?? 0) | bits); };
+    if (classifyByMask(dev.mask).family === "system-b") {
+      const build = (v: Map<string, string>) => buildRelativeSegmentTarget(cfg, v, 4, { moduleInstances, ownIdleUnionDefaults: true })!;
+      const final = build(values), base = await dev.tableAddr(4);
+      final.constant.forEach((c, i) => allow(base + i, ((dev.mem.get(base + i)! ^ final.bytes[i]) & c) === 0 ? c : 0));
+      if (cfg.downloadInvisibleParameters === "None") for (const t of steps.map(build)) t.owned.forEach((own, i) => allow(base + i, own & ~final.owned[i] & ~(dev.mem.get(base + i)! ^ t.bytes[i])));
+    } else {
+      for (const t of buildAbsoluteSegmentTargets(cfg, values, { moduleInstances })) {
+        t.constant.forEach((c, i) => allow(t.address + i, ((dev.mem.get(t.address + i)! ^ t.bytes[i]) & c) === 0 ? c : 0));
+      }
+    }
+    return out;
+  };
+
   test("an assumed value the unit cannot tell from another is taken and named: the DALI gateway's ECG groups", async () => {
     const spec = IN_SERVICE.find((s) => s.id === "theben-dali-gateway-in-service")!;
     const { r } = await run(spec);
@@ -200,14 +226,15 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 
   for (const spec of IN_SERVICE.filter((s) => !NOT_EMULATED.has(s.id) && !STOPS_BEFORE_A_WRITE.has(s.id))) {
     test(`${spec.id}: the run makes the writes its plan lists, passes, and leaves the unit's memory as it found it`, async () => {
-      const { r, log, dev, memory } = await run(spec);
+      const { r, log, dev, memory, state, pid, did } = await run(spec);
       // One comparison, so a failing run shows every part that failed.
       expect({ stopped: r.stopped, failed: r.capabilities.filter((c) => c.state === "fail"), behaviours: r.behaviours.filter((b) => b.state !== "pass"), persistence: r.persistence?.state, restore: r.restore?.state })
         .toEqual({ stopped: undefined, failed: [], behaviours: [], persistence: r.persistence ? "pass" : undefined, restore: "pass" });
       expect(r.ok).toBe(true);
       expect(log).toEqual(writes(spec, OPTS));
       const behind = await residues(dev);
-      expect([...memory].filter(([a, b]) => dev.mem.get(a) !== b && !behind.has(a)).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
+      const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
+      expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0 && !behind.has(a)).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
     }, 120_000);
   }
 
@@ -226,13 +253,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 });
 
 const IMAGE = "READBACK_ASSUMPTION_IMAGE_DIFFERS";
-const MARKER = "the parameter flash dry run counts the download marker the unit clears after every download (Access None) as bytes to write";
 const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>([
-  ["theben-theluxa-p300-in-service", { stop: "NEVER_PROGRAMMED_USE_DOWNLOAD", reason: `${MARKER} (P-2228), so no read-back shows the unit holds its image and it stays never programmed` }],
-  ["theben-jmg4t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199), so the read-back refuses the assumed module types` }],
-  ["theben-rmg8t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199), so the read-back refuses the assumed module types` }],
-  ["theben-hmg6t-in-service", { stop: IMAGE, reason: `${MARKER} (P-199); behind it the read-back does not read the com-object table, so read flags the unit's project sets are not taken over and a GA dry run finds them to write` }],
-  ["theben-meteodata-140s-in-service", { stop: IMAGE, reason: `${MARKER} (P-2228), so the read-back refuses the assumed channel functions` }],
+  ["theben-hmg6t-in-service", { stop: IMAGE, reason: "the read-back does not read the com-object table, so read flags the unit's project sets are not taken over and a GA dry run finds them to write" }],
 ]);
 
 // Specs whose unit cannot be emulated, with the reason.

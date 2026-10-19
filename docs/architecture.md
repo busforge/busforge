@@ -252,7 +252,10 @@ every device model):
    surgical paths always hand over the segments they are about to overwrite; a full download
    hands over nothing unless its opt-in pre-unload backup is asked for (see
    [load-procedures.md](load-procedures.md)).
-9. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device, but
+9. **Build only if changed.** A zero-byte diff returns `unchanged` without touching the device. The
+   bits of a parameter no configuration changes (an `Access="None"` download marker the unit clears
+   after each download) do not count: alone they are no change, with any other change they are
+   written ([load-procedures.md](load-procedures.md#the-rules-by-level), R17). `unchanged` holds
    only when every load-state machine the operation brackets is LOADED. Equal bytes under a machine
    left Loading by an interrupted write are not a running configuration: a System B flash, whose
    bracket always covers its load-state machines, runs anyway and completes the load; a System 7
@@ -347,8 +350,8 @@ value the other way.
   the flag is cleared ([storage-and-snapshots.md](storage-and-snapshots.md)). Not read, so not shown:
   the com-object table's flags where the family's GA flash keeps the table (System 7: only the linked
   bit follows the links), text fields whose layout no capture shows, and a Data Secure device's security object (its security baseline stays unknown). A
-  device that clears a download marker itself after each download (Theben TheLuxa P300, Meteodata
-  140 S, MIX 2) never passes the dry run, so it stays never programmed. A check that cannot run (the
+  download marker the device clears itself after each download (Theben TheLuxa P300, Meteodata
+  140 S, MIX 2) is no change, so it does not fail the dry run (rule 9). A check that cannot run (the
   device refuses a property, the product has no such flash) leaves the flag as it is and the read
   stands. The read says why the flag stays (`neverProgrammedKept`). The check reads the parameter
   segments a second time.
@@ -396,9 +399,9 @@ Conventions that hold across views:
   opens the flags and the priority (`FlagEditor`): only the bits the family's full download writes
   are enabled (`comObjFlagsEditable`), a bit set otherwise than the application has its reset, and an
   edit not yet on the device its revert (`PUT .../comobject-flags`, `POST .../revert-comobject-flags`).
-  An edit counts as a change until a verified full download adopts it; the other flashes refuse
-  while one is pending, and the flash dialog offers the full download
-  ([load-procedures.md](load-procedures.md#project-level-com-object-flags)).
+  An edit counts as a change until a verified group-address flash, structural flash or full download
+  adopts it; the flash dialog says when the group-address flash writes it and when a parameter flash
+  leaves it pending ([load-procedures.md](load-procedures.md#project-level-com-object-flags)).
 - **The dangerous dialogs step.** `CommissionDialog` gates each of its three steps (find the device
   in programming mode, assign the address, download) on the previous one having been *verified*; a
   `verified: false` renders as a terminal failure, never as success.

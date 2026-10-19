@@ -3,7 +3,10 @@
 // writes that change them as the device would (load-state events on PID 5, a System 7 segment
 // declaration moving a table reference, memory). It answers only what the collection holds: a read of
 // memory or a property the collection did not read throws, so no path runs on invented bytes.
-import { STATE, type KnxDevice } from "@busforge/knx";
+import { STATE, transferChunks, type KnxDevice } from "@busforge/knx";
+import { isMemoryMappedLsm } from "../src/masks.ts";
+
+const MM_CTRL = 0x0104, MM_STATE = 46825;
 
 // One record of a collection, as far as the emulator reads it.
 export interface CollectedRecord { step: string; space: string; target: { object?: number; pid?: number; start?: number; count?: number; address?: number; length?: number }; outcome: string; bytes?: string }
@@ -43,6 +46,12 @@ export class CollectedUnit {
   setExtendedMemoryServices() {}
   acceptUnprovenRestart() {}
   async propValueDataMax() { return 10; }
+  // The maximum APDU the unit declares (object 0 PID 56), or none where it refused it, as KnxDevice reads it.
+  async classicReadChunk() {
+    const v = this.prop(0, 56);
+    if (v !== null && v.length === 0) throw new Error("the collection holds an empty maximum APDU length (object 0 PID 56)");
+    return transferChunks(v === null ? null : v.length >= 2 ? v.readUInt16BE(0) : v[0], false).classicRead;
+  }
   async tableAddr(obj: number) { let a = 0; for (const x of this.prop(obj, 7) ?? []) a = (a << 8) | x; return a; }
   async memRead(addr: number, len: number) {
     const out = Buffer.alloc(len);
@@ -54,6 +63,23 @@ export class CollectedUnit {
     return out;
   }
   async memWrite(addr: number, data: Buffer) {
+    // A memory-mapped System 7 unit (MV-0700/0701) takes its load controls at 0x0104 and answers each
+    // load-state machine's state at 46825 + LSM (packages/knx/src/flash.ts), and on PID 5 as well.
+    if (addr === MM_CTRL && isMemoryMappedLsm(this.mask)) {
+      const lsm = data[0] >> 4, event = data[0] & 0x0f;
+      if (event === 3 && data[1] === 0) { this.props.set(`${lsm}/7/1`, data.subarray(3, 5)); this.ops.push(`absSegment:${lsm}`); }
+      else if (event === 3) this.ops.push(`segment:${lsm}:${data[1]}`);
+      else {
+        const ev = ({ 1: "load", 2: "loadCompleted", 4: "unload" } as Record<number, string>)[event];
+        if (!ev) throw new Error(`unexpected load-state event ${data.toString("hex")} on LSM ${lsm}`);
+        if (!this.mem.has(MM_STATE + lsm)) throw new Error(`the collection did not read the state of LSM ${lsm} at ${MM_STATE + lsm}`);
+        const state = event === 1 ? STATE.LOADING : event === 2 ? STATE.LOADED : STATE.UNLOADED;
+        this.mem.set(MM_STATE + lsm, state);
+        this.props.set(`${lsm}/5/1`, Buffer.from([state]));
+        this.ops.push(`${ev}:${lsm}`);
+      }
+      return;
+    }
     if (this.ops.at(-1) !== "write") this.ops.push("write");
     data.forEach((b, i) => this.mem.set(addr + i, b));
   }

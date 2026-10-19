@@ -270,6 +270,24 @@ const relXml = `<?xml version="1.0" encoding="utf-8"?>
 </ParameterBlock></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
+// relXml with an Access="None" parameter P-4 (value 170) at offset 4, placed at the top of the dynamic tree.
+const relMarker = (edit: (x: string) => string = (x) => x) => parseAppConfig(edit(relXml
+  .replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-4" ParameterType="M-0005_A-0001-01-0001_PT-8" Access="None" Text="Marker" Value="170"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="4" BitOffset="0"/></Parameter></Parameters>')
+  .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-4_R" RefId="M-0005_A-0001-01-0001_P-4"/></ParameterRefs>')
+  .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/>')));
+
+test("relative target: a constant parameter's bits are constant only at its value, alone on its bits, read by no calculation, in a fully parsed tree", () => {
+  const constantAt4 = (app: ReturnType<typeof parseAppConfig>, values = new Map<string, string>()) => buildRelativeSegmentTarget(app, values, 4)!.constant[4];
+  expect(constantAt4(relMarker())).toBe(0xff);
+  expect(constantAt4(relMarker(), new Map([["M-0005_A-0001-01-0001_P-4_R", "171"]]))).toBe(0);
+  expect(constantAt4(relMarker((x) => x.replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-5" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Other" Value="0"><Memory CodeSegment="M-0005_A-0001-01-0001_RS-1" Offset="4" BitOffset="0"/></Parameter></Parameters>')))).toBe(0);
+  expect(constantAt4(relMarker((x) => x.replace("</Static>", '<ParameterCalculations><ParameterCalculation Id="M-0005_A-0001-01-0001_PC-1" Language="JavaScript" Name="c"><LParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R" AliasName="p1"/></LParameters><RParameters/></ParameterCalculation></ParameterCalculations></Static>')))).toBe(0);
+  expect(constantAt4(relMarker((x) => x.replace("</ParameterBlock>", "<Unknown/></ParameterBlock>")))).toBe(0);
+  // A unit differing in the marker alone is unchanged; the image still carries it.
+  const { image, diffBytes } = mergeRelativeTarget(Buffer.from([7, 0, 3, 5, 0]), buildRelativeSegmentTarget(relMarker(), new Map(), 4)!);
+  expect([diffBytes, image[4]]).toEqual([0, 0xaa]);
+});
+
 test("relative target: visible owned (active+inactive), Access=None-inactive preserved, union active-only", () => {
   const app = parseAppConfig(relXml);
   const t = buildRelativeSegmentTarget(app, new Map(), 4)!;
@@ -355,9 +373,9 @@ describe("a BinaryValue parameter writes its enumeration's bytes", () => {
 
 // The flash merge writes only owned bytes over the live device read and preserves the
 // rest; diffBytes counts only the owned bytes that actually change.
-const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned): RelativeSegmentTarget => {
+const relTarget = (owned: (boolean | number)[], bytes: number[], verify: (boolean | number)[] = owned, constant: number[] = owned.map(() => 0)): RelativeSegmentTarget => {
   const bits = (m: (boolean | number)[]) => m.map((o) => (o === true ? 0xff : o === false ? 0 : o));
-  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0), defaulted: new Set() };
+  return { lsm: 4, size: owned.length, bytes: Buffer.from(bytes), owned: bits(owned), verify: bits(verify), markers: owned.map(() => 0), constant, defaulted: new Set() };
 };
 
 test("mergeRelativeTarget overlays owned bytes, preserves unowned, counts owned changes", () => {
@@ -374,6 +392,16 @@ test("mergeRelativeTarget on an unchanged config is a no-op (diffBytes 0)", () =
   const target = relTarget([true, false, true], [5, 0, 7]); // owned values already match the device
   const { diffBytes } = mergeRelativeTarget(current, target);
   expect(diffBytes).toBe(0);
+});
+
+// The Theben MIX 2's download marker P-199 (Access="None", value 1, bit 0x80 of its byte, cleared by
+// the unit after a download): a constant bit, owned and written with the image, not counted alone.
+test("a unit that differs only in constant bits is no change, and they still go out with one", () => {
+  const target = relTarget([0x80, 0xff], [0x80, 7], [0, 0xff], [0x80, 0]);
+  const same = mergeRelativeTarget(Buffer.from([0x11, 7]), target);
+  expect([same.diffBytes, [...same.image]]).toEqual([0, [0x91, 7]]);
+  const changed = mergeRelativeTarget(Buffer.from([0x11, 6]), target);
+  expect([changed.diffBytes, [...changed.image]]).toEqual([1, [0x91, 7]]);
 });
 
 test("a byte shared with bits no parameter owns takes only the owned bits; the rest stay as the device holds them", () => {

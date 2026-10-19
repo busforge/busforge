@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, relativeComObjWriteSet, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, relativeComObjWriteSet, constantParams, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
@@ -590,6 +590,17 @@ corpusDescribe("Jung 400021SE full download on a loaded unit against ETS", () =>
     }
     // The revert leaves the unit where it started.
     for (const l of [1, 2, 3, 4]) expect(unit.get(l)!.toString("hex")).toBe(snapshot.segments[l].hex);
+  });
+
+  // ETS's download with no change still writes the marker P-1 (byte 7700, its own region with CRC control
+  // 1) and restarts the unit, as a full download of Busforge's does (above). Busforge's parameter flash
+  // writes only a change: the cleared marker alone is none (constantParams), so it is unchanged.
+  test("parameter flash with nothing changed: the cleared download marker alone is no change", () => {
+    expect(constantParams(cfg).get(K("P-1"))).toBe("1");
+    const unit = Buffer.from(snapshot.segments[4].hex, "hex");
+    const target = buildRelativeSegmentTarget(cfg, new Map(base), 4, { ownIdleUnionDefaults: true })!;
+    const { image, diffBytes } = mergeRelativeTarget(unit, target);
+    expect([[...image.keys()].filter((o) => image[o] !== unit[o]), diffBytes]).toEqual([[7700], 0]);
   });
 });
 
@@ -1561,6 +1572,12 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     expect([ets.get(0x4800), ets.get(0x4813)]).toEqual([0xaa, 0x01]);
   });
 
+  test("parameter flash with nothing changed: the cleared download marker alone is no change, nothing is written", () => {
+    expect(constantParams(cfg).get("M-0048_A-107E-12-5B58_P-2228")).toBe("170");
+    const { plan, changedBytes } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit]]));
+    expect([changedBytes, bytesOf(plan).size]).toEqual([0, 0]);
+  });
+
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
     { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
   // The test group address the links download added: the one address of its table no baseline link uses.
@@ -1760,6 +1777,12 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     expect([...bytesOf(plan)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
     expect([...wire(PARTIAL)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
+  });
+
+  test("parameter flash with nothing changed: the cleared download marker alone is no change, nothing is written", () => {
+    expect(constantParams(cfg).get("M-0048_A-140C-14-EB70_P-2228")).toBe("170");
+    const { plan, changedBytes } = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, onUnit], [otherParams.id, held4c]]));
+    expect([changedBytes, bytesOf(plan).size]).toEqual([0, 0]);
   });
 
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
@@ -2003,6 +2026,17 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect(sorted(ours)).toEqual(sorted(log("partial-params").get(4)!));
         expect([...ours].filter(([o, b]) => held[o] !== b).map(([o]) => o)).toEqual([DOWNLOADED, p.par.offset]);
         expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-params"), ia));
+      });
+
+      // The unit as ETS's full download left it, under the configuration of that download: its image
+      // differs from the unit in the cleared marker alone, which is no change (constantParams), so a
+      // parameter flash is unchanged and writes nothing.
+      test("parameter flash with nothing changed: the cleared download marker alone is no change", () => {
+        const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!;
+        const { image, diffBytes } = mergeRelativeTarget(held, target);
+        expect([...image.keys()].filter((o) => image[o] !== held[o])).toEqual([DOWNLOADED]);
+        expect(diffBytes).toBe(0);
+        expect(constantParams(cfg).get(`${A}_P-199`)).toBe("1");
       });
 
       test("group-address flash: ETS's tables and com-object table, in ETS's bracket", () => {

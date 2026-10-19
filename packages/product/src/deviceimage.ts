@@ -1,4 +1,4 @@
-import type { AppConfig, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgParamRef, DynNode, ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -43,6 +43,81 @@ function markOwned(owned: number[], verify: number[], offset: number, bitOffset:
   }
 }
 
+// The Access="None" parameters whose value no configuration of the application changes, by their
+// Parameter id with that value: every ParameterRef carries the same value, no <Assign> targets one,
+// no <ParameterCalculation> reads or sets one, and one of them is placed outside every choose and
+// module, so the parameter is active whatever the configuration. A dynamic tree holding an element
+// Busforge does not parse (an `unsupported` node, which may hide an <Assign>) or a <Button>, whose
+// script may set parameters, has none. Their bits in an image are therefore the same for every project of the
+// application, and a unit that holds other bits there holds them by its own doing: the download
+// markers ETS writes in every download and the unit clears once it has seen one (Theben TheLuxa P300
+// and Meteodata 140 S P-2228 $AA, Theben MIX 2 P-199, Jung 400021SE P-1). A difference in such bits
+// alone is no change of the configuration (ETS compares against its record of what it wrote, which
+// holds the value); with any other change they are written, as ETS writes them in every download.
+const constantCache = new WeakMap<AppConfig, Map<string, string>>();
+export function constantParams(app: AppConfig): Map<string, string> {
+  const hit = constantCache.get(app);
+  if (hit) return hit;
+  const assigned = new Set<string>();
+  const placed = new Set<string>();
+  let opaque = false;
+  const walk = (nodes: DynNode[], unconditional: boolean) => {
+    for (const n of nodes) {
+      if (n.kind === "unsupported" || n.kind === "button") opaque = true;
+      else if (n.kind === "assign") assigned.add(n.target);
+      else if (n.kind === "paramRef" && unconditional) placed.add(n.refId);
+      else if (n.kind === "block" || n.kind === "container") walk(n.children, unconditional);
+      else if (n.kind === "choose") for (const w of n.whens) walk(w.children, false);
+    }
+  };
+  walk(app.dynamic, true);
+  for (const d of app.moduleDefs.values()) walk(d.dynamic, false);
+  const refsOf = new Map<string, CfgParamRef[]>();
+  for (const r of app.refs.values()) refsOf.set(r.paramId, [...(refsOf.get(r.paramId) ?? []), r]);
+  const out = new Map<string, string>();
+  for (const p of opaque ? [] : app.params.values()) {
+    if (p.access !== "None" || !p.hasMemory || p.onProperty || p.union || p.moduleDefId) continue;
+    const refs = refsOf.get(p.id) ?? [];
+    const values = new Set(refs.map((r) => r.value ?? p.value));
+    if (values.size !== 1 || refs.some((r) => assigned.has(r.id) || app.calculationRefs.has(r.id) || (r.access !== undefined && r.access !== "None"))) continue;
+    if (!refs.some((r) => placed.has(r.id))) continue;
+    const [value] = values;
+    if (value !== undefined) out.set(p.id, value);
+  }
+  constantCache.set(app, out);
+  return out;
+}
+
+// The constant parameters (constantParams) of one segment that hold their bits alone: no other
+// parameter placed there (a union member, a module instance's parameter) shares one of them. A colour
+// in the RGB or HSV space holds three bytes (colorBits); a segment that holds a parameter of any other
+// unknown width has none, since that parameter's bits cannot be told.
+function constantsAlone(app: AppConfig, params: { typeId: string; offset?: number; bitOffset?: number; id: string }[], types: Map<string, { sizeInBit: number }>, size: number): Set<string> {
+  const constants = constantParams(app);
+  const users = new Array<number>(size * 8).fill(0);
+  const span = (p: (typeof params)[number]) => {
+    if (p.offset === undefined) return null;
+    const declared = types.get(p.typeId)?.sizeInBit;
+    const width = declared && Number.isFinite(declared) ? declared : colorBits(app, p.typeId);
+    if (!width) return "unknown" as const;
+    const from = p.offset * 8 + (p.bitOffset ?? 0);
+    return { from, to: Math.min(from + width, size * 8) };
+  };
+  const all = params.map(span);
+  if (all.includes("unknown")) return new Set();
+  const spans = all.filter((s) => s !== "unknown");
+  for (const s of spans) if (s) for (let b = s.from; b < s.to; b++) users[b]++;
+  const out = new Set<string>();
+  for (const [k, p] of params.entries()) {
+    const s = constants.has(p.id) ? spans[k] : null;
+    if (!s || s.to <= s.from) continue;
+    let alone = true;
+    for (let b = s.from; b < s.to; b++) if (users[b] !== 1) alone = false;
+    if (alone) out.add(p.id);
+  }
+  return out;
+}
+
 // A byte built from `want` where `mask` owns bits and from `have` everywhere else.
 export function mergeOwnedBits(have: number, want: number, mask: number): number {
   return (have & ~mask) | (want & mask);
@@ -66,7 +141,9 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // We still WRITE those bytes (they are part of the correct image), but the device overwrites
 // them on download, so checking them in verify would report every successful flash as failed.
 // User-facing parameters (Access != None) stay in `verify`, so a real mis-write still fails.
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; }
+// `constant` is the subset of owned bits that hold a constant parameter's value (constantParams): a
+// unit differing from the image only there holds the configuration.
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; }
 
 export function buildAbsoluteSegmentImages(
   app: AppConfig,
@@ -128,6 +205,8 @@ export function buildAbsoluteSegmentTargets(
     }
     const owned = new Array<number>(seg.size).fill(0);
     const verify = new Array<number>(seg.size).fill(0);
+    const constant = new Array<number>(seg.size).fill(0);
+    const constants = constantsAlone(app, [...model.params.values()].filter((p) => p.codeSegment === segId), model.types, seg.size);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -155,8 +234,9 @@ export function buildAbsoluteSegmentTargets(
       // re-stamps); they stay owned/written but are excluded from `verify` (see the type).
       const verifiable = app.params.get(ref.paramId)?.access !== "None";
       markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
+      if (constants.has(param.id) && constantParams(app).get(param.id) === v) markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify });
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant });
   }
   return out.sort((a, b) => a.address - b.address);
 }
@@ -206,8 +286,9 @@ const leavesOutInvisible = (app: AppConfig): boolean => app.downloadInvisiblePar
 // `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
 // set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
 // offset 39). Written, never asserted.
+// `constant`: the owned bits of constant parameters, as DeviceSegmentTarget.constant.
 // `defaulted`: inactive parameters written at their default although the values hold another value for them.
-export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; defaulted: Set<string>; }
+export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; constant: number[]; defaulted: Set<string>; }
 
 export function buildRelativeSegmentTarget(
   app: AppConfig,
@@ -261,6 +342,8 @@ export function buildRelativeSegmentTarget(
   const owned = new Array<number>(seg.size).fill(0);
   const verify = new Array<number>(seg.size).fill(0);
   const markers = new Array<number>(seg.size).fill(0);
+  const constant = new Array<number>(seg.size).fill(0);
+  const constants = constantsAlone(app, [...model.params.values()].filter((p) => !p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === lsm), model.types, seg.size);
   const defaulted = new Set<string>();
 
   for (const ref of model.refs.values()) {
@@ -312,8 +395,9 @@ export function buildRelativeSegmentTarget(
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
+    if (constants.has(param.id) && constantParams(app).get(param.id) === v) markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
   }
-  return { lsm, size: seg.size, bytes: img, owned, verify, markers, defaulted };
+  return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, defaulted };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write
@@ -321,12 +405,13 @@ export function buildRelativeSegmentTarget(
 // image to flash (the bytes a download may write or keep) and the count of
 // bytes that differ from `current` (== owned bytes we are actually changing; 0 means a
 // no-op reconfiguration). `current` is the device read, guaranteed `target.size` long.
+// A byte differing only in constant bits (`target.constant`) goes into the image but is not counted.
 export function mergeRelativeTarget(current: Buffer, target: RelativeSegmentTarget): { image: Buffer; diffBytes: number } {
   const image = Buffer.from(current);
   let diffBytes = 0;
   for (let i = 0; i < target.size; i++) {
     image[i] = mergeOwnedBits(current[i], target.bytes[i], target.owned[i]);
-    if (image[i] !== current[i]) diffBytes++;
+    if (((image[i] ^ current[i]) & ~target.constant[i]) !== 0) diffBytes++;
   }
   return { image, diffBytes };
 }

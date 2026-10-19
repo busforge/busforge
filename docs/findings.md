@@ -819,8 +819,10 @@ which holds `00`. The device clears that byte itself. P-1 is the application's `
 (`Access="None"`, value 1), a download marker by its name, and it sits alone in a region whose
 CRC-control byte is 1, so ETS sends it in every download, its partial form included, although its own
 record of the last download already holds `01` ([load-procedures.md](load-procedures.md#the-rules-by-level),
-R16). A Busforge parameter-flash dry run after a download therefore reports that one byte as differing,
-and writes it, as ETS does.
+R16). ETS's download with nothing changed sends that byte alone and restarts the unit; so does a
+Busforge full download. A Busforge parameter flash counts the cleared byte alone as no change, since
+P-1 holds the same value in every configuration of the application (R17), and writes it with any
+other change.
 
 ## 28. What ETS writes when a parameter change alters the com-object table
 

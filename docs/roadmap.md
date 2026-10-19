@@ -15,11 +15,9 @@ depends on is hardware-proven.
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
-- **Com-object flag edits through ETS's partial download.** A flag or priority edited on the device
-  page goes only by the full download today; the parameter, group-address and structural flashes
-  refuse while one is pending. Next: ETS captures of a flag-only change and its revert on a System B
-  and a System 7 device, plus which flags ETS's object properties offer per family, then the partial
-  path they show.
+- **Communication and update flags on System 7.** ETS's object panel lets the user change them; what
+  its group-address download writes for them (the linked bit, the update bit `0x80`) is not captured,
+  so the device page does not offer them. Next: an ETS capture of each, then the same rule.
 - **Read-back of com-object flags.** No family's read-back reads the com-object table, so a flag set on
   the device by another tool never shows as drift. Reading it (System B and System 7 read it already
   for the group-address flash) and comparing flags and priority against the project's would close that.
@@ -113,14 +111,6 @@ depends on is hardware-proven.
   the byte read-back as fallback. The read-back stays the evidence behind `verified`.
 - **Traffic capture in the gateway process.** The tap points and decoders exist; the `--capture`
   flag that writes a decoded transaction log does not.
-- **A download marker the device clears is no change.** A parameter flash dry run counts the bits of an
-  `Access="None"` marker the unit clears after every download (Theben TheLuxa P300 and Meteodata 140 S
-  `P-2228`, Theben MIX 2 `P-199`) as bytes to write, so on such a unit it never reports `unchanged`: a
-  read-back cannot take the unit over (its assumed values are refused, it stays never programmed), and
-  the device-in-service specs of these products stop before their first write
-  (`tools/smoke/inservice-specs.test.ts`). Counting only the bits a read-back verifies, and writing the
-  marker with every other change as ETS does, would end it; the DALI-Gateway's `P-1` note in
-  [findings.md](findings.md) describes the current behaviour.
 - **Read a System B device's com-object table.** The read-back skips it, so flags the device's project
   sets on its objects (a read flag) are not taken over; a group-address flash, which writes the table
   whole, would clear them. On the Theben HMG 6 T the dry run shows it before any write.

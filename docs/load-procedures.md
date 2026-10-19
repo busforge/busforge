@@ -332,6 +332,7 @@ which device is in [status.md](status.md).
 | R14 | **Parameters the configuration does not show**: where the application says so, ETS leaves out an inactive parameter every placement of which lies in a branch of an evaluated `choose` that was not taken; its bytes keep the allocation fill in a full download and are not in a parameter download. So a parameter a change activated keeps, after that change is reverted, the value the change wrote: neither tool writes it once it is inactive again, and only a full download that reallocates with fill clears it. Elsewhere such a parameter is written at its parameter default, not at a value the project still stores for it (System B, `buildRelativeSegmentTarget`) | catalogue | `<Options DownloadInvisibleParameters="None">` | Theben MIX 2 (it shows the difference), Jung 400021SE (declares it, its captures unchanged by it); without it the GVS AMMA's downloads write the defaults, the MEAN WELL power supply reads back with them, and the MDT IP Interface/Router's full download writes the defaults of inactive texts and flags its project holds other values for |
 | R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products, the Theben DALI-Gateway, the MDT BE-06001.02 and the MEAN WELL power supply |
 | R16 | **What a differential download sends into a segment the unit keeps**, region by region of the segment's memory-control block (PID 27): where the region's CRC-control byte is 0, the bytes that differ from the unit; where it is not 0, past the regions, or on a segment that reports none, every byte the image carries. The application's regions are the ones it declares (its `LdCtrlWriteProp` to PID 27), the com-object table's the ones the unit reports. It holds for the partial form of the full download, the parameter download and the group-address download (whose com-object table is a segment the unit keeps). ETS compares against its own record of the last download, Busforge against the unit it reads, so the two send the same bytes whenever that record equals the unit (`differentialMask`). The verify reads the whole segment back and checks every owned bit against the configuration and every other bit against the unit's read, except the `Access="None"` bytes the device sets itself | KNX-wide (System B) | the memory-control block's CRC-control byte | Jung 400021SE: the application's 7700-byte region (control 0) only where it changed, its declared one-byte region (control 1) in every download, the com-object table (control 0) only when it changed, one byte; Theben DALI-Gateway: the com-object table (control 1) whole although unchanged, the application (control 0) unchanged and not reloaded; OpenKNX RaumController parameter downloads: the application (control 0) differential, the com-object table (no memory-control block) whole; MEAN WELL power supply group-address download: the com-object table (control 0) one byte, the record's stamps equal and its download a full one |
+| R17 | **A download marker the unit clears is no change.** An `Access="None"` parameter that holds the same value in every configuration (every ParameterRef the same value, no `<Assign>` targets one, placed outside every `choose` and module, no other parameter on its bits) is written by every download, and the unit may clear it once it has seen one. ETS compares with its record, which holds the value; Busforge compares with the unit, so a unit that differs from the configuration only in such bits holds it: the parameter flash and its dry run (and System B's structural flash) report `unchanged` and write nothing, and with any other change the bits are written with it (`constantParams`). An `Access="None"` parameter a configuration does set (an assigned one, one a `<ParameterCalculation>` reads or sets, one inside a `choose`) differs as a change, and an application whose dynamic tree holds an element Busforge does not parse has no constant parameter. A full download writes the marker whether or not anything else changed, and System 7's structural flash counts it as a change | KNX-wide | the parameter's `Access`, its refs' values, its placement | Theben TheLuxa P300 and Meteodata 140 S (`P-2228`, `$AA`, read back `00` after each of ETS's downloads), Theben MIX 2 (`P-199`, bit `0x80`, cleared): every parameter download writes the marker with the change; Jung 400021SE (`P-1`, cleared to `00`): the download with no change writes it alone and restarts |
 
 **Which bytes of a data segment**, the rule behind R1 and R2 ([below](#which-bytes-ets-writes)):
 a segment ETS loads afresh carries the bytes its `<Mask>` marks and every byte a parameter covers
@@ -687,7 +688,7 @@ the device's own address, though `AS-4000` declares no `<Mask>`, and the associa
 values (`tools/etsdiff.test.ts`, "Theben TheLuxa P300"). `AS-4800` offset 0 is `P-2228`, a download
 marker (`Access="None"`, `$AA`): ETS writes `AA` in every download and the unit clears it to `00`
 afterwards, so the full download reads that byte back without comparing it, and the parameter flash writes it with
-every changed byte, as ETS does. The com-object table writes object 116's update flag in `0x80`
+every changed byte, as ETS does; the cleared byte alone is no change (R17). The com-object table writes object 116's update flag in `0x80`
 ([device-memory-model.md](device-memory-model.md#the-com-object-table-l3)).
 
 The parameter download is `Load` 3, the 338 parameter-covered bytes of `AS-4800`, `LoadCompleted` 3,
@@ -940,6 +941,8 @@ write them into the com-object table.
                                               ▼            of the current configuration
         full download · structural flash · System B group-address flash
                      withInstanceOverrides(application flags, overrides) → com-object table
+        System 7 group-address flash: the objects whose flags changed since the last write
+                     (changedComObjNumbers) → their read/write/transmit bits and priority
 ```
 
 Busforge imports them (also in the `.busforge` export, which refuses an artifact without them) and
@@ -961,23 +964,34 @@ the form that baseline holds (`device_comobj_override_base`), so the object coun
 the bits the family's full download writes are offered (`comObjOverridableBits`): every flag and the
 priority on System B, where the communication flag of an object without a group address is written
 off whatever the project sets, as for the application's own flags; read, write, transmit and priority
-on System 7 where the application names its com-object table's segment; none elsewhere. An edited flag is written only by the full download, which
-adopts it as the device's once verified. No ETS capture shows yet which partial download ETS writes a
-flag-only change with, so while one is pending the parameter, group-address and structural flashes
-refuse (`COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD`, the flash dialog offers the full download). A
+on System 7 where the application names its com-object table's segment; none elsewhere. ETS's own
+object panel offers more on System 7 (communication and update, read-on-init greyed); what it writes
+for those is not captured, so the device page does not offer them.
+
+ETS writes a flag change alone with its group-address download (its log names it
+`PartialLoadGroupCommunication`; captures of a read flag off and back on, on the MDT BE-02001.02 and
+the Jung 400021SE): the address, association and com-object tables (System B: with the security object,
+then a restart), and in the com-object table only the changed object's byte differs. Busforge does the
+same: the group-address flash carries an edited flag. On System B it writes every object's flags from
+the project, the table equal to ETS's in both captures; on System 7 it writes the read, write and
+transmit bits and the priority of each object whose flags changed since the device was last written
+(the update bit of such an object set otherwise is refused, `COM_OBJECT_OVERRIDE_UNWRITABLE`), its
+linked bit from the links, and leaves every other bit as the device holds it, equal to ETS's table in
+the capture. The structural flash and the full download write them too. A verified write of any of
+the three adopts the flags it was submitted with as what the device holds. The parameter flash does
+not write flags; an edit stays pending through it, and the flash dialog says which flash writes it. A
 read-back takes no flag into the baseline; where it checks the image by a group-address flash dry run
 (System B, which builds the table with the project's flags), a pending flag edit counts as bytes the
 device does not hold.
 
 The surgical parameter flashes keep the table the device holds. The System 7 group-address flash
-keeps it too, but sets each object's communication bit from the links; a project that sets an
-object's communication flag differently from the application is refused there as well. Its other
-flags stay as the device holds them. A product replacement drops the old application's overrides with its other
-configuration.
+keeps it too, apart from the bits above: it sets each object's communication bit from the links, and
+a project that sets an object's communication flag differently from the application is refused there
+as well. A product replacement drops the old application's overrides with its other configuration.
 
-On hardware an override has been written only by a System 7 full download, onto a device that
-already held that value. The System B paths (full
-download, group-address flash) and the structural flash with an override are tested offline only.
+On hardware an override has been written by a System 7 full download, onto a device that already
+held that value, and by ETS's group-address download in the captures above, whose bytes Busforge's
+group-address flash matches offline; Busforge's own flash of an edited flag has not run on a device.
 
 ## System B as the Theben MIX 2's captures show it
 

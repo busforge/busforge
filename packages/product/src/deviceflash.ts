@@ -70,11 +70,8 @@ export function planAbsoluteSegmentFlash(
     const current = opts.current?.get(t.id);
     // A byte is written iff it holds an owned (authoritative) bit and, when we know the device's
     // current memory, actually differs from it. An owned byte the device already holds correctly
-    // is skipped, so a no-op reconfiguration produces an empty plan, except where the device rewrites
-    // a byte itself after each download: the Theben TheLuxa P300 clears its download marker P-2228
-    // (Access="None", $AA) to 00, so that byte differs every time and is written every time, as ETS
-    // writes it in every download. Bits of a written byte that no parameter owns are carried over
-    // from the device.
+    // is skipped, so a no-op reconfiguration produces an empty plan. Bits of a written byte that no
+    // parameter owns are carried over from the device.
     if (opts.current && (!current || current.length !== t.size)) {
       throw new ProductError("PARAM_SEGMENT_NOT_READ", `the device's ${t.id} was not read in full (${current?.length ?? 0} of ${t.size} B); refusing to write its shared bytes without the bits it holds`);
     }
@@ -95,6 +92,13 @@ export function planAbsoluteSegmentFlash(
     });
   }
   segments.sort((a, b) => a.address - b.address);
+  // A unit differing from the image only in constant bits (the download marker the Theben TheLuxa P300
+  // and Meteodata 140 S clear after each download, deviceimage.ts constantParams) holds the
+  // configuration: nothing is written. With any other change those bytes go out with it, as ETS's
+  // parameter downloads of both write the marker.
+  if (opts.current && !targets.some((t) => { const s = segments.find((x) => x.id === t.id)!; const cur = opts.current!.get(t.id)!; return t.owned.some((own, i) => ((s.image[i] ^ cur[i]) & own & ~t.constant[i]) !== 0); })) {
+    for (const s of segments) { s.runs = []; s.writtenBytes = 0; }
+  }
   return { segments, totalWrittenBytes: segments.reduce((n, s) => n + s.writtenBytes, 0) };
 }
 

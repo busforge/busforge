@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { parseAppConfig, buildDeviceConfig } from "../src/index.ts";
 import { planAbsoluteSegmentFlash, planAbsoluteFullDownload } from "../src/deviceflash.ts";
 import { parseLoadProcedures } from "../src/loadproc.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, constantParams } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
 
@@ -103,6 +103,72 @@ test("a device already matching the config yields an empty plan (no writes)", ()
   const plan = planAbsoluteSegmentFlash(app, new Map(), { current });
   expect(plan.totalWrittenBytes).toBe(0);
   expect(plan.segments[0].runs).toEqual([]);
+});
+
+// The minimal app with one more Access="None" parameter at offset 3 (value $AA, as the Theben
+// TheLuxa P300's download marker P-2228), placed by `placement`, plus `extra` dynamic nodes.
+const withNoneXml = (placement: "top" | "choose", extra = "") => xml
+  .replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-4" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Marker" Value="170" Access="None"><Memory CodeSegment="M-0005_A-0001-01-0001_AS-1" Offset="3" BitOffset="0"/></Parameter></Parameters>')
+  .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-4_R" RefId="M-0005_A-0001-01-0001_P-4"/></ParameterRefs>')
+  .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/>', `<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/>${placement === "top"
+    ? '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/>'
+    : '<choose ParamRefId="M-0005_A-0001-01-0001_P-1_R"><when test="5"><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/></when></choose>'}${extra}`);
+const withNone = (placement: "top" | "choose", extra = "") => parseAppConfig(withNoneXml(placement, extra));
+const SEG = "M-0005_A-0001-01-0001_AS-1";
+const plan = (a: ReturnType<typeof parseAppConfig>, unit: number[]) => planAbsoluteSegmentFlash(a, new Map(), { current: new Map([[SEG, Buffer.from(unit)]]) });
+const runs = (p: ReturnType<typeof planAbsoluteSegmentFlash>) => p.segments[0].runs.map((r) => [r.address, [...r.bytes]]);
+
+test("a unit that differs only in a constant Access=\"None\" parameter (a download marker it clears) gets an empty plan", () => {
+  const p = plan(withNone("top"), [5, 0xff, 7, 0x00]);
+  expect([p.totalWrittenBytes, runs(p)]).toEqual([0, []]);
+});
+
+test("with any other change the constant parameter is written with it, as ETS writes the download marker in every download", () => {
+  const p = plan(withNone("top"), [5, 0xff, 0, 0x00]);
+  expect(runs(p)).toEqual([[102, [7, 0xaa]]]);
+  expect(p.totalWrittenBytes).toBe(2);
+});
+
+test("an Access=\"None\" parameter a configuration can set is a change on its own: one an <Assign> sets, one placed in a choose", () => {
+  const assigned = withNone("top", '<choose ParamRefId="M-0005_A-0001-01-0001_P-1_R"><when test="6"><Assign TargetParamRefRef="M-0005_A-0001-01-0001_P-4_R" Value="1"/></when></choose>');
+  expect(runs(plan(assigned, [5, 0xff, 7, 0x00]))).toEqual([[103, [0xaa]]]);
+  expect(runs(plan(withNone("choose"), [5, 0xff, 7, 0x00]))).toEqual([[103, [0xaa]]]);
+});
+
+test("a constant parameter is a change on its own where its value is not the constant, another parameter shares its bits, a calculation reads it, or the dynamic tree is not fully parsed", () => {
+  const unit = [5, 0xff, 7, 0x00];
+  expect(runs(planAbsoluteSegmentFlash(withNone("top"), new Map([["M-0005_A-0001-01-0001_P-4_R", "171"]]), { current: new Map([[SEG, Buffer.from(unit)]]) }))).toEqual([[103, [0xab]]]);
+  const shared = parseAppConfig(xml
+    .replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-4" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Marker" Value="170" Access="None"><Memory CodeSegment="M-0005_A-0001-01-0001_AS-1" Offset="3" BitOffset="0"/></Parameter><Parameter Id="M-0005_A-0001-01-0001_P-5" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="Other" Value="0"><Memory CodeSegment="M-0005_A-0001-01-0001_AS-1" Offset="3" BitOffset="0"/></Parameter></Parameters>')
+    .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-4_R" RefId="M-0005_A-0001-01-0001_P-4"/><ParameterRef Id="M-0005_A-0001-01-0001_P-5_R" RefId="M-0005_A-0001-01-0001_P-5"/></ParameterRefs>')
+    .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R"/>'));
+  expect(runs(plan(shared, unit))).toEqual([[103, [0xaa]]]);
+  const calculated = parseAppConfig(withNoneXml("top").replace("</Static>", '<ParameterCalculations><ParameterCalculation Id="M-0005_A-0001-01-0001_PC-1" Language="JavaScript" Name="c"><LParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-4_R" AliasName="p1"/></LParameters><RParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R" AliasName="p2"/></RParameters></ParameterCalculation></ParameterCalculations></Static>'));
+  expect(runs(plan(calculated, unit))).toEqual([[103, [0xaa]]]);
+  expect(runs(plan(withNone("top", "<Unknown/>"), unit))).toEqual([[103, [0xaa]]]);
+  expect([withNone("top"), calculated, withNone("top", "<Unknown/>")].map((a) => constantParams(a).has("M-0005_A-0001-01-0001_P-4"))).toEqual([true, false, false]);
+  // A colour parameter of a space whose width no capture shows (RGBW) in the segment: its bits cannot be
+  // told, so none is constant there, though it lies apart from the marker.
+  const colour = parseAppConfig(withNoneXml("top")
+    .replace("</ParameterTypes>", '<ParameterType Id="M-0005_A-0001-01-0001_PT-C"><TypeColor ColorSpace="RGBW"/></ParameterType></ParameterTypes>')
+    .replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-6" ParameterType="M-0005_A-0001-01-0001_PT-C" Text="Colour" Value="#00000000"><Memory CodeSegment="M-0005_A-0001-01-0001_AS-1" Offset="1" BitOffset="0"/></Parameter></Parameters>'));
+  expect(colour.types.get("M-0005_A-0001-01-0001_PT-C")?.sizeInBit).toBe(0);
+  expect(runs(plan(colour, unit))).toEqual([[103, [0xaa]]]);
+});
+
+// The Gira M-0008's status LED function (P-579) has no memory; what it changes in the image are
+// Access="None" parameters ETS computes from it (LED_Aktion and its kin). A change of it reaches the
+// unit only through them, so they are a change, not a marker.
+corpusTest("a memoryless parameter that changes only Access=\"None\" bytes is a change", () => {
+  const gira = parseAppConfig(readRealFixture("M-0008_A-10D7-11-2783-O000A.xml.gz"));
+  const P = "M-0008_A-10D7-11-2783-O000A_";
+  const values = (led: string) => new Map([[`${P}P-224_R-224`, "2"], [`${P}P-2194_R-2194`, "2"], [`${P}P-579_R-579`, led], [`${P}P-1286_R-1286`, "3"]]);
+  const unit = new Map(buildAbsoluteSegmentTargets(gira, values("3")).map((t) => [t.id, Buffer.from(t.bytes)]));
+  expect(planAbsoluteSegmentFlash(gira, values("3"), { current: unit }).totalWrittenBytes).toBe(0);
+  const changed = buildAbsoluteSegmentTargets(gira, values("0"));
+  const differing = changed.flatMap((t) => t.owned.flatMap((own, i) => ((t.bytes[i] ^ unit.get(t.id)![i]) & own ? [t.verify[i] & own] : [])));
+  expect([differing.length > 0, differing.every((v) => v === 0)]).toEqual([true, true]);
+  expect(planAbsoluteSegmentFlash(gira, values("0"), { current: unit }).totalWrittenBytes).toBe(differing.length);
 });
 
 corpusTest("adjacent owned bytes coalesce into a single contiguous run", () => {
