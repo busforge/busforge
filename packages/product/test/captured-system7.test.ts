@@ -213,6 +213,26 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(dev.mem.get(l3.address + 3 + 2)).toBe(held & ~0x04);
   }, 20_000);
 
+  // The captures show a project's communication flag off over an application's on; what ETS writes for a
+  // linked object whose application itself sets communication off is not captured.
+  test("a linked object whose application sets communication off is refused by every write that authors its linked bit, before any write", async () => {
+    const ref0 = buildDeviceConfig(cfg, new Map()).imageComObjects.get(0)!.refId;
+    const offCfg = { ...cfg, comObjectRefs: new Map([...cfg.comObjectRefs].map(([k, r]) => [k, r.id === ref0 ? { ...r, flags: { ...r.flags, comm: false } } : r])) };
+    expect(buildDeviceConfig(offCfg, new Map()).imageComObjects.get(0)!.flags.comm).toBe(false);
+    for (const run of [
+      (d: GiraDevice) => classify(offCfg).flashGroupTables(asDev(d), offCfg.mask, { ...base, links: twoObjects, baseParams: new Map() }),
+      (d: GiraDevice) => classify(offCfg).flashStructure(asDev(d), offCfg.mask, { ...base, links: twoObjects, baseParams: new Map() }),
+      (d: GiraDevice) => classify(offCfg).downloadFull(asDev(d), offCfg.mask, { ...base, links: twoObjects }),
+    ]) {
+      const dev = new GiraDevice(offCfg);
+      expect(await run(dev).catch((e: unknown) => e)).toMatchObject({ code: "COM_OBJECT_APP_COMM_OFF_LINKED" });
+      expect(dev.ops.filter((o) => o === "write")).toEqual([]);
+    }
+    // not linked: nothing to decide, the full download runs
+    const free = new GiraDevice(offCfg);
+    expect(await classify(offCfg).downloadFull(asDev(free), offCfg.mask, { ...base, links: twoObjects.filter((l) => l.comObjNum !== 0) })).toMatchObject({ verified: true });
+  }, 30_000);
+
   test("group-address flash: an object whose flags the project changed gets them as the project gives them; the rest stays as the unit holds it", async () => {
     const l3 = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
     const config = (d: GiraDevice, n: number) => d.mem.get(l3.address + 3 + n * 4 + 2)!;

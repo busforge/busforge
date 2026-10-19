@@ -3,7 +3,7 @@ import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
@@ -1943,6 +1943,7 @@ export class System7Profile extends DeviceProfile {
       const active = buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects;
       const changed = new Map([...(ctx.comObjectOverrides ?? [])].filter(([n]) => flagChanges.has(n)));
       refuseUnwritableOverrides(active, changed, MV0705_OVERRIDABLE, "the group-address flash's System 7 com-object table");
+      refuseAppCommOffLinks(active, new Set(ctx.links.map((l) => l.comObjNum)));
       const withProject = withInstanceOverrides(active, ctx.comObjectOverrides);
       linkedBits = linkedBitObjects(new Set(ctx.links.map((l) => l.comObjNum)), withProject);
       if (flagChanges.size) authored = new Map([...flagChanges].flatMap((n) => { const o = withProject.get(n); return o ? [[n, o] as const] : []; }));
@@ -2023,6 +2024,7 @@ export class System7Profile extends DeviceProfile {
     }
     refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, MV0705_OVERRIDABLE, "the System 7 com-object table");
     const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) };
+    refuseAppCommOffLinks(view.imageComObjects, comObjectTable.linked);
     const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
     const images = absoluteStructuralImages(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), { baseValues: ctx.baseParams, baseInstances, moduleInstances: instances, comObjectTable });
     await runDeclaredChecks(dev, coverage);
@@ -2107,6 +2109,7 @@ export class System7Profile extends DeviceProfile {
     const comObjectTable = cfg.groupTables.comObjectSegment !== undefined
       ? { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) }
       : undefined;
+    if (comObjectTable) refuseAppCommOffLinks(view.imageComObjects, comObjectTable.linked);
     refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, comObjectTable ? MV0705_OVERRIDABLE : [],
       comObjectTable ? "the System 7 com-object table" : "this full download, which writes the application's own com-object table");
     // These devices persist to EEPROM as each segment is written, so the closing A_Restart only

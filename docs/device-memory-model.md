@@ -417,9 +417,9 @@ config: bits0-1 priority | 0x04 linked | 0x08 read | 0x10 write | 0x40 transmit 
 There is no read-on-init bit. `0x04` is the object's communication flag: set on an object that has a
 group-address link and whose communication flag is on. ETS keeps the address and association of a
 linked object whose communication flag the project sets off and clears the bit, and sets it again when
-the flag is back on (MDT BE-02001.02, partial downloads of each). Busforge applies the same rule to
-an object whose application sets communication off; no capture shows that case, and no System 7
-application in the test corpus declares one. `0x80` is set in the manufacturer's template of many entries; on a
+the flag is back on (MDT BE-02001.02, partial downloads of each). A linked object whose application
+itself sets communication off is not captured; Busforge refuses to write its table
+(`COM_OBJECT_APP_COMM_OFF_LINKED`). No System 7 application in the test corpus declares one. `0x80` is set in the manufacturer's template of many entries; on a
 configured object it is the object's update flag, set where the resolved flags say `UpdateFlag` and
 cleared otherwise, on every System 7 application that names this table's segment (a family rule,
 [load-procedures.md](load-procedures.md#the-rules-by-level), R13). The captures that show it are of

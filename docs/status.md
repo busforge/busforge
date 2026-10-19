@@ -430,7 +430,8 @@ report a device family as working on the strength of a passing test suite.
   Busforge.** ETS writes a flag change with its group-address download; on the MDT BE-02001.02 and the
   Jung 400021SE, Busforge's group-address flash builds the com-object table ETS wrote for a read flag
   off and back on, and on the MDT BE-02001.02 for a linked object's communication flag off and back on
-  and its update flag on and back off (`tools/etsdiff-flags.test.ts`). Other flags, the priority, and the other products
+  and its update flag on and back off (`tools/etsdiff-flags.test.ts`). A System 7 object with a group
+  address whose application itself sets communication off is refused, as no capture shows it. Other flags, the priority, and the other products
   rest on the same table code, offline tests only.
 - **A read-back takes a device's com-object flags into the baseline, offline only.** The read of the
   com-object table and its decoding are pinned against the tables ETS wrote in the flag-change captures

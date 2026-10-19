@@ -269,6 +269,17 @@ export function linkedBitObjects(linked: ReadonlySet<number>, objects: ReadonlyM
   return new Set([...linked].filter((n) => objects.get(n)?.flags.comm !== false));
 }
 
+// Refuse a System 7 write that authors the linked bit of a linked object whose application itself sets
+// communication off (`app`: the objects with the application's flags, before the project's). The
+// captures show only a project's flag off over an application's on, so what ETS writes for such an
+// object is not known.
+export function refuseAppCommOffLinks(app: ReadonlyMap<number, CfgComObjImage>, linked: ReadonlySet<number>): void {
+  const off = [...linked].filter((n) => app.get(n)?.flags.comm === false).sort((a, b) => a - b);
+  if (off.length) {
+    throw new ProductError("COM_OBJECT_APP_COMM_OFF_LINKED", `communication object(s) ${off.map((n) => `#${n}`).join(", ")} carry a group-address link while the application sets their communication flag off; no ETS capture shows what the System 7 com-object table holds for such an object, so refusing to write it`);
+  }
+}
+
 // ── A device's own com-object flags (project level) ─────────────────────────
 //
 // ETS lets the project set an object's flags and priority per device, over what the application

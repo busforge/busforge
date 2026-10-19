@@ -105,6 +105,17 @@ corpusDescribe("a full download writes the project's com-object flags", () => {
     expect(changed(plan(file), plan(file, off))).toEqual([]);
   });
 
+  test("System 7: a linked object whose application sets communication off is refused, no capture shows what ETS writes for it; unlinked it is written", () => {
+    const xml = catalogueXml("M-0083_A-00B6-32-9642.xml.gz");
+    const cfg = parseAppConfig(xml);
+    const ref0 = cfg.comObjectRefs.get("M-0083_A-00B6-32-9642_MD-2_O-3-0_R-11")!;
+    const offCfg = { ...cfg, comObjectRefs: new Map([...cfg.comObjectRefs].map(([k, r]) => [k, r === ref0 ? { ...r, flags: { ...r.flags, comm: false } } : r])) };
+    expect(buildDeviceConfig(offCfg, new Map()).imageComObjects.get(0)!.flags.comm).toBe(false);
+    const plan = (links: { comObjNum: number; gaRaws: number[] }[]) => () => classify(offCfg).planFullDownload(offCfg.mask, { ia: "1.1.250", params: new Map(), links, proc: parseLoadProcedures(xml) });
+    expect(plan([{ comObjNum: 0, gaRaws: [0x0001] }])).toThrow(expect.objectContaining({ code: "COM_OBJECT_APP_COMM_OFF_LINKED" }));
+    expect(plan([])).not.toThrow();
+  });
+
   test("System B (Jung 400021SE): the object's flags byte, update and read-on-init included", () => {
     const file = "M-0004_A-7072-21-99A7-O000A.xml.gz";
     const { n, obj } = firstActive(file);

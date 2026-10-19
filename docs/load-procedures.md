@@ -961,6 +961,7 @@ where it cannot do that faithfully:
 | a ref id that is no object of the configuration's com-object table, nor of the application or an absent module instance (those are not written, and neither is their override) | `COM_OBJECT_OVERRIDE_UNRESOLVED` |
 | one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
 | System 7: read-on-init set differently from the application (the config byte has no read-on-init bit), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
+| System 7, not an override: an object with a group address whose application itself sets communication off, in every write that authors the com-object table (no capture shows what ETS writes for it) | `COM_OBJECT_APP_COMM_OFF_LINKED` |
 
 The device page edits them per object (`PUT .../devices/:id/comobject-flags`): a flag or the priority
 set otherwise than the application is stored as the attribute ETS stores, set back to the
@@ -985,8 +986,10 @@ read, write, transmit and update bits and the priority of each object whose flag
 device was last written, sets the linked bit on each linked object whose communication flag the
 project leaves on and clears it on every other, and leaves every other bit as the device holds it,
 equal to ETS's table in each capture. On an object without a group address, communication off writes
-nothing, as its linked bit is clear already; on an object whose application sets communication off,
-the same rule clears the bit, which no capture shows. The structural flash and the full download write them too. A verified write of any of
+nothing, as its linked bit is clear already. An object with a group address whose application itself
+sets communication off is refused by the full download, the structural flash and the group-address
+flash (`COM_OBJECT_APP_COMM_OFF_LINKED`), before any write: the captures show a project's flag off over
+an application's on, not that case. The structural flash and the full download write them too. A verified write of any of
 the three adopts the flags it was submitted with as what the device holds, and so does a group-address
 flash that finds the device already holding them (`unchanged`). The parameter flash does
 not write flags; an edit stays pending through it, and the flash dialog says which flash writes it.
