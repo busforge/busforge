@@ -390,6 +390,7 @@ spec states why no behaviour is observable.
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
+| `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | not proven | not proven | not proven | **not met** |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
