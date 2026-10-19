@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { buildDeviceConfig } from "@busforge/product";
-import { addDevice, setDeviceAddress, renameDevice, projectExists } from "../db/projects.ts";
+import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink } from "../db/deviceparams.ts";
@@ -92,7 +92,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 
-  // /api/projects/:id/devices/:deviceId/links  -> re-point a com-object to a GA
+  // /api/projects/:id/devices/:deviceId/links  -> set a com-object's group addresses, in order: the
+  // first is the address it sends on, the others it listens to
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "links" && req.method === "PUT") {
     const deviceId = decodeURIComponent(seg[4]);
     // allowPlain: the user confirmed that linking a device without security turns a secured
@@ -110,7 +111,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const knownComObjs = new Set<string>();
     for (const b of linkView.blocks) for (const it of b.items) if (it.kind === "comObject") knownComObjs.add(it.comObject.refId);
     if (!knownComObjs.has(fullRef(app.id, key))) return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
-    const gaRaws = body.gaRaws.map(Number);
+    if (!body.gaRaws.every((g) => Number.isInteger(g))) return err("COMOBJ_FIELDS_REQUIRED", "gaRaws must be group address numbers");
+    const gaRaws = body.gaRaws;
+    // The same address twice would give the object two association entries for one address.
+    if (new Set(gaRaws).size !== gaRaws.length) return err("LINK_GA_DUPLICATE", "a group address appears twice in the object's links");
+    const unknown = gaRaws.find((g) => !getGaMeta(db, id, g));
+    if (unknown !== undefined) return err("GA_NOT_FOUND", `group address ${unknown} is not in the project`, 404);
     db.transaction(() => {
       applyLinkSecurity(db, id, deviceId, key, gaRaws, { allowPlain: body.allowPlain === true }, state.masterKey);
       setDeviceLink(db, id, deviceId, key, gaRaws);

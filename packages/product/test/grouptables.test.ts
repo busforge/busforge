@@ -192,3 +192,21 @@ test("builder output follows the shared TableLayout descriptors (@busforge/knx)"
   expect(mv.addr.length).toBe(MV0705_TABLE.countBytes + 2 * MV0705_TABLE.entryBytes);
   expect(mv.assoc.length).toBe(MV0705_TABLE.countBytes + 1 * MV0705_TABLE.entryBytes);
 });
+
+// The device sends on the address its association table lists first for an object; the others
+// follow by group index. A read gives that address back first, so a different sending address on
+// the device is visible as one.
+describe("decoding keeps each object's sending address first", () => {
+  const links: ComObjectLink[] = [
+    { comObjNum: 2, gaRaws: [0x0a09, 0x0a03, 0x0a05] },
+    { comObjNum: 4, gaRaws: [0x0a03] },
+  ];
+  test("System B", () => {
+    const { addr, assoc } = buildGroupTables(links);
+    expect(decodeGroupTables(addr, assoc, true)).toEqual(links);
+  });
+  test("System 7", () => {
+    const { addr, assoc } = buildGroupTablesMv0705(links, 0x110a);
+    expect(decodeGroupTablesMv0705(addr, assoc)).toEqual(links);
+  });
+});

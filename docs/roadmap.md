@@ -178,8 +178,8 @@ where they are required; raw acquisition is not a way around access control. Wha
   the secured telegrams the monitor decrypts.
 - **Unresolved `Links` tokens at import** can shift the sending address; the PID 54 sender rule
   trusts the stored order.
-- **Project-level com-object flags outside the com-object table**: the PID 54 sender rule, the
-  group-address view and the device page still use the application's flags.
+- **Project-level com-object flags in the PID 54 sender rule**: it still uses the application's
+  flags; the device page and the group-address view show the project's.
 - **Handing a Busforge-activated device to other tools.** ETS 6 takes only certificates from a
   keyring ([findings.md](findings.md#29-ets-imports-only-the-certificates-from-a-keyring)); whether
   xknx or Calimero talk to such a device on the bus is not shown; a keyring names a lone sender

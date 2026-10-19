@@ -541,9 +541,11 @@ device reads them there. Where Busforge departs from ETS, deliberately:
 The captures also show the order of the association table for objects with several addresses: each
 object's first link by object number, then the other links by object number and group index
 ([R8](#the-rules-by-level)). `buildGroupTablesMv0705` and `buildGroupTables` write that order on every
-device, taking the first link as the project stores it (its sending address). One limit: in the
-captures every object's first address is also its lowest, so they do not tell "the sending address
-first" from "the lowest index first".
+device, taking the first link as the project stores it (its sending address, which the device page
+lets the user choose). A read-back gives each object's first association back as its first address,
+so a device sending elsewhere shows as drift. One limit: in the captures every object's first
+address is also its lowest, so they do not tell "the sending address first" from "the lowest index
+first"; a sending address above another of the object's addresses is written by this rule alone.
 
 What the byte comparisons prove: the tables, the com-object table and the wire sequence are checked
 against ETS directly. The parameter bytes are compared for a configuration Busforge decoded from
@@ -940,7 +942,8 @@ write them into the com-object table.
 ```
 
 Busforge imports them (also in the `.busforge` export, which refuses an artifact without them) and
-lays them over the application's flags in every write that authors the table. It refuses instead
+lays them over the application's flags in every write that authors the table. The device page and the
+group-address overlay show the same flags, a project's own marked as such (`effectiveComObjFlags`). It refuses instead
 where it cannot do that faithfully:
 
 | Case | Refusal |

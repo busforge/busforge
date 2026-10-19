@@ -6,6 +6,7 @@ import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceParams, getDeviceLinks, setDeviceLink, setDeviceParam, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { putBaggage } from "../src/db/baggage.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
+import { createGroupAddress, createGroupRange } from "../src/db/groupedit.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 
 // "Replace device": swap a project device's product for a catalog product, keeping
@@ -158,6 +159,15 @@ async function setup(): Promise<{ state: AppState; projectId: string; deviceId: 
   const dev = (await (await handleApi(jreq(`/api/projects/${proj.id}/devices`, "POST",
     { appRef: `${OLD}_H-1_HP-1`, productRef: `${OLD}_H-1_P-1`, name: "Sensor Bad" }), state))!.json()) as { id: string; ia: string };
   expect(dev.ia).toBe("1.1.1");
+
+  // The linked addresses exist in the project (0/1/1, 0/2/2, 0/2/3, 0/3/3).
+  const main = createGroupRange(state.db, proj.id, null, "Main", 0);
+  for (const raw of [GA_SWITCH, GA_DIM_A, GA_DIM_B, GA_HIDDEN]) {
+    const mid = (raw >> 8) & 0x07;
+    const rangeId = (state.db.query("SELECT id FROM group_ranges WHERE project_id = ? AND parent_id = ? AND range_start = ?").get(proj.id, main, raw & 0xff00) as { id: number } | null)?.id
+      ?? createGroupRange(state.db, proj.id, main, `Mid ${mid}`, mid);
+    expect(createGroupAddress(state.db, proj.id, rangeId, raw & 0xff, `GA ${raw}`, "1.001").raw).toBe(raw);
+  }
 
   // Links through the route (visible objects), plus a stored link on the HIDDEN
   // O-3 (GA-preserve: stored while invisible, flashed once parameters reveal it).

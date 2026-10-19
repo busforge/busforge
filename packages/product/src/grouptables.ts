@@ -71,11 +71,15 @@ export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number): G
   return { addr, assoc };
 }
 
+// An object's addresses as its association entries list them: the first entry is the address it
+// sends on and stays first; the others follow ascending, so the result does not depend on where
+// in the table they sit.
+const senderFirst = (gaRaws: number[]) => [gaRaws[0], ...gaRaws.slice(1).sort((a, b) => a - b)];
+
 // Read a device's links back out of its group tables. Inverse of
 // buildGroupTables: resolve each association's 1-based group index through the
 // address table to a GA, then group by com-object number. The caller normalizes
 // the long/short association format before passing it in (see readGroupTables).
-// gaRaws are sorted ascending so the result is stable regardless of table order.
 export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean): ComObjectLink[] {
   // The header count comes off the device and is trusted only up to the bytes
   // actually returned: a short or truncated table read (some devices return
@@ -99,7 +103,7 @@ export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean
     list.push(gas[gi - 1]);
     byCo.set(co, list);
   }
-  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: gaRaws.sort((a, b) => a - b) }));
+  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: senderFirst(gaRaws) }));
 }
 
 // Decode an MV-0705 (System 7) device's group tables. This mask uses a DIFFERENT layout
@@ -109,7 +113,7 @@ export function decodeGroupTables(addr: Buffer, assoc: Buffer, longForm: boolean
 // The first address-table entry is the device's own individual address, so group index gi
 // resolves to the gi-th GA after it. Counts are 1 byte (not the System B 2-byte count), and
 // each entry is 2 bytes, so the System B reader misreads the header as a huge count and the
-// offsets by one byte. gaRaws are sorted ascending for a stable, table-order-independent result.
+// offsets by one byte. Each object's sending address stays first (senderFirst).
 export function decodeGroupTablesMv0705(addr: Buffer, assoc: Buffer): ComObjectLink[] {
   const acount = addr.length >= 1 ? addr[0] : 0; // entries incl. the device IA at index 0
   const gas: number[] = []; // gas[gi] indexed by 1-based group index
@@ -128,5 +132,5 @@ export function decodeGroupTablesMv0705(addr: Buffer, assoc: Buffer): ComObjectL
     list.push(ga);
     byCo.set(co, list);
   }
-  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: gaRaws.sort((a, b) => a - b) }));
+  return [...byCo.entries()].map(([comObjNum, gaRaws]) => ({ comObjNum, gaRaws: senderFirst(gaRaws) }));
 }

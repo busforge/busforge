@@ -29,7 +29,9 @@ import { AddressDialog } from "./AddressDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GaCombobox, type GaOption } from "./GaCombobox.tsx";
+import { type GaOption } from "./GaCombobox.tsx";
+import { LinkEditor } from "./LinkEditor.tsx";
+import { addedLinks } from "@/lib/links.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
@@ -84,9 +86,14 @@ function hiddenAssignedCount(before: DeviceConfigView, after: DeviceConfigView):
   return n;
 }
 
-const flagWords = (f: CfgComObjView["flags"], t: TFn) =>
-  [f.comm && t("device.flagCommunication"), f.read && t("device.flagRead"), f.write && t("device.flagWrite"), f.transmit && t("device.flagTransmit"), f.update && t("device.flagUpdate"), f.readOnInit && t("device.flagReadOnInit")]
+// The flags the object gets on the device; one the project sets differently from the application
+// is starred.
+const flagWords = (co: CfgComObjView, t: TFn) => {
+  const f = co.flags, set = new Set(co.overriddenFlags ?? []);
+  const word = (k: keyof CfgComObjView["flags"], key: string) => (f[k] ? t(key) + (set.has(k) ? "*" : "") : null);
+  return [word("comm", "device.flagCommunication"), word("read", "device.flagRead"), word("write", "device.flagWrite"), word("transmit", "device.flagTransmit"), word("update", "device.flagUpdate"), word("readOnInit", "device.flagReadOnInit")]
     .filter(Boolean).join(", ");
+};
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
 const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && !!it.comObject.changed);
@@ -121,8 +128,9 @@ export function DeviceConfig() {
   // it to a single target, and only appears when both targets apply to this device.
   const [flashTargets, setFlashTargets] = useState<FlashTarget[] | null>(null);
   const [revertOpen, setRevertOpen] = useState(false);
-  // A link the server held back because it would turn a secured address plain, waiting for the user.
-  const [plainLink, setPlainLink] = useState<{ comObjRefId: string; gaRaw: number } | null>(null);
+  // A link edit the server held back because an address it adds would turn plain, waiting for the
+  // user: the object's whole new list, and the address it adds (the editor adds one at a time).
+  const [plainLink, setPlainLink] = useState<{ comObjRefId: string; gaRaws: number[]; added: number } | null>(null);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [commissionOpen, setCommissionOpen] = useState(false);
   const [secureOpen, setSecureOpen] = useState(false);
@@ -145,6 +153,7 @@ export function DeviceConfig() {
   // The writes the application itself keeps Busforge from running (its declared load procedure), with
   // the reason the server refuses them with, instead of a button that is merely missing or greyed out.
   const refusedNotes = Object.entries(view?.refusals ?? {}).map(([op, code]) => t("device.refusedItem", { op: t(`untested.op.${op}`), reason: t(`errors.${code}`) }));
+  if (view?.comObjFlagsRefused) refusedNotes.push(t("device.comObjFlagsRefused", { reason: t(`errors.${view.comObjFlagsRefused}`) }));
 
   // Honest read-back disclosure: every way the shown change state was NOT confirmed
   // against the hardware. Device-class limits (params/links unsupported) plus the
@@ -165,16 +174,17 @@ export function DeviceConfig() {
   }
 
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
-  const relink = (comObjRefId: string, gaRaw: number | null) =>
-    setLink.mutate({ comObjRefId, gaRaws: gaRaw == null ? [] : [gaRaw] }, {
+  const relink = (comObjRefId: string, before: number[], gaRaws: number[]) =>
+    setLink.mutate({ comObjRefId, gaRaws }, {
       onError: (e) => {
-        if (gaRaw != null && e instanceof ApiError && e.code === "SECURE_GA_TURNS_PLAIN") setPlainLink({ comObjRefId, gaRaw });
+        const added = addedLinks(before, gaRaws)[0];
+        if (added !== undefined && e instanceof ApiError && e.code === "SECURE_GA_TURNS_PLAIN") setPlainLink({ comObjRefId, gaRaws, added });
         else onError(e);
       },
     });
   const confirmPlainLink = () => {
     if (!plainLink) return;
-    setLink.mutate({ comObjRefId: plainLink.comObjRefId, gaRaws: [plainLink.gaRaw], allowPlain: true }, {
+    setLink.mutate({ comObjRefId: plainLink.comObjRefId, gaRaws: plainLink.gaRaws, allowPlain: true }, {
       onSuccess: () => setPlainLink(null),
       onError: (e) => { setPlainLink(null); onError(e); },
     });
@@ -365,11 +375,12 @@ export function DeviceConfig() {
     }
     if (item.kind === "comObject") {
       const co = item.comObject;
-      const flags = flagWords(co.flags, t);
+      // Where the project's own flags cannot be placed, the application's are not the device's: none shown.
+      const flags = view?.comObjFlagsRefused ? "" : flagWords(co, t);
       const dpt = co.dpt || co.objectSize || t("device.unknownDpt");
-      const info = flags
-        ? t("device.objectInfoFlags", { number: co.number, dpt, flags })
-        : t("device.objectInfo", { number: co.number, dpt });
+      const info = !flags
+        ? t("device.objectInfo", { number: co.number, dpt })
+        : t(co.overriddenFlags?.length ? "device.objectInfoFlagsOverridden" : "device.objectInfoFlags", { number: co.number, dpt, flags });
       return (
         <div
           key={key}
@@ -390,7 +401,7 @@ export function DeviceConfig() {
           </span>
           <div className="flex shrink-0 items-center gap-2">
             {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
-            <div className={cn("shrink-0", CONTROL_W)}><GaCombobox options={gaOptions} value={co.gaRaw ?? null} onChange={(raw) => relink(co.refId, raw)} testId={`link-${co.number}`} /></div>
+            <div className={cn("shrink-0", CONTROL_W)}><LinkEditor options={gaOptions} gaRaws={co.gaRaws ?? []} onChange={(next) => relink(co.refId, co.gaRaws ?? [], next)} disabled={saving} testId={`link-${co.number}`} levels={project?.groupAddressLevels ?? 3} /></div>
           </div>
         </div>
       );
@@ -634,7 +645,7 @@ export function DeviceConfig() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("device.plainLinkTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("device.plainLinkBody", { ga: gaOptions.find((o) => o.raw === plainLink?.gaRaw)?.address ?? "" })}
+              {t("device.plainLinkBody", { ga: gaOptions.find((o) => o.raw === plainLink?.added)?.address ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

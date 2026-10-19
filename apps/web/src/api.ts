@@ -73,9 +73,11 @@ export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
   comObjName: string; functionText: string; comObjNumber: number;
   flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
+  // The device's own com-object flags cannot be placed: `flags` are the application's (error code).
+  flagsRefused?: string;
 }
-// Which devices use a group address, split into senders (transmit) and receivers
-// (write), plus the address's readable range path.
+// Which devices use a group address, split into senders (transmit, on the object's first address)
+// and receivers (write), plus the address's readable range path.
 // interfaceSenders: the individual addresses the project assigns as senders besides the linked
 // objects (a tunnelling channel); a secured address's receivers list them in their security table.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; secured: boolean; interfaceSenders: { ia: string; source: "import" | "busforge" }[]; }

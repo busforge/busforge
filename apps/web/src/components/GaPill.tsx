@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 
 // A group-address pill that opens a details overlay on click: the address's
 // readable range path and datapoint type, plus the devices that use it, split
-// into senders (transmit) and receivers (write). Each device links to its
+// into senders (transmit flag, the object's first address) and receivers (write
+// flag), by the flags each device gets. Each device links to its
 // configuration. Wraps GaLabel so the resting appearance is unchanged; used
 // wherever a GA is shown standalone (group list, bus monitor).
 export function GaPill({ projectId, raw, name, address, fallback, className, onEdit }: {
@@ -98,6 +99,7 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
   emptyHint: string;
   onNavigate: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -119,6 +121,7 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
                 <span className="truncate pl-1 text-xs text-muted-foreground" title={[e.comObjName, e.functionText].filter(Boolean).join(" · ")}>
                   {e.comObjName}{e.functionText && e.functionText !== e.comObjName ? ` · ${e.functionText}` : ""}
                 </span>
+                {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t("gaDevices.flagsRefused")}</span>}
               </Link>
             </li>
           ))}

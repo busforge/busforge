@@ -317,6 +317,25 @@ export function placeComObjOverrides(app: AppConfig, view: Pick<DeviceConfigBuil
   return out;
 }
 
+// The flags the project gives each object of the configuration, by object number: the
+// application's with the project's overrides laid over them, placed as the writes that author the
+// com-object table place them (placeComObjOverrides). What a family's table write derives from the
+// links on top (comobjbuild's communication and linked bits) is not in them. `overridden` names the flags the project sets
+// differently from the application. Refuses as placeComObjOverrides does.
+export interface EffectiveComObjFlags { flags: ComObjFlags; overridden: (keyof ComObjFlags)[] }
+export function effectiveComObjFlags(app: AppConfig, view: Pick<DeviceConfigBuild, "blocks" | "imageComObjects">, rows: readonly { comObjRefId: string; attrs: Readonly<Record<string, string>> }[]): Map<number, EffectiveComObjFlags> {
+  const placed = placeComObjOverrides(app, view, rows);
+  const out = new Map<number, EffectiveComObjFlags>();
+  for (const b of view.blocks) for (const it of b.items) {
+    if (it.kind !== "comObject") continue;
+    const own = it.comObject.flags;
+    const o = placed.get(it.comObject.number)?.flags ?? {};
+    const overridden = (Object.keys(o) as (keyof ComObjFlags)[]).filter((k) => o[k] !== own[k]);
+    out.set(it.comObject.number, { flags: { ...own, ...o }, overridden });
+  }
+  return out;
+}
+
 // The active objects with the device's own flags and priority laid over the application's. An
 // override on an object the configuration does not activate is not written, as the object is not.
 export function withInstanceOverrides(active: ReadonlyMap<number, CfgComObjImage>, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined): Map<number, CfgComObjImage> {

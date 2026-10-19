@@ -54,6 +54,9 @@ export interface CfgComObjView {
   gaRaw?: number | null; // current GA link, filled in by the server from stored links
   gaRaws?: number[];     // every linked GA, in link order (gaRaw is the first); filled in by the server
   changed?: boolean; // GA link differs from the programmed baseline; filled in by the server
+  // The flags the project sets differently from the application (ComObjectInstanceRef); `flags`
+  // then carries them. Filled in by the server (effectiveComObjFlags).
+  overriddenFlags?: (keyof ComObjFlags)[];
 }
 // The minimal resolved facts the com-object-table (L3) build needs for one reached
 // com-object: its number, its datapoint size, and its RESOLVED flags. Captured for
@@ -139,6 +142,10 @@ export interface DeviceConfigView {
   // Device links the last read-back could not show on this page (-1: not counted since the check
   // was added). While non-zero the server refuses a group-address flash (LINK_BASELINE_INCOMPLETE).
   linkBaseGaps?: number;
+  // Why the project's own com-object flags cannot be laid over the application's (an error code,
+  // as every write that authors the com-object table refuses): the objects' flags are then the
+  // application's and must not be shown as the device's. Attached by the server.
+  comObjFlagsRefused?: string;
   // Present only on a read-back response: what the read actually covered. Attached by the
   // server (the read-back route), never by buildDeviceConfig.
   readback?: DeviceReadbackInfo;

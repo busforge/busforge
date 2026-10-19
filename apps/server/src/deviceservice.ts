@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, IMAGE_WRITABLE_BASES, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -301,6 +301,22 @@ export function untestedStatus(state: AppState, projectId: string, deviceId: str
   return { productRef, appProgramId: app.id, state: verdict.state, acknowledged: verdict.state === "tested" || isUntestedAcknowledged(state.db, projectId, productRef, app.id) };
 }
 
+// The flags the project gives each object of a device's configuration: the application's with the
+// project's own overrides laid over them (effectiveComObjFlags), for every view that shows or
+// splits by them. What a family's table write derives from the links on top (communication off on
+// an unlinked System B object, the System 7 linked bit) is not in them. Where the overrides cannot
+// be placed, the code the writes refuse with, and no flags: the application's would claim flags the
+// project does not give.
+export function deviceComObjFlags(state: AppState, projectId: string, deviceId: string, app: AppConfig, view: ReturnType<typeof buildDeviceConfig>):
+  { byNumber: Map<number, EffectiveComObjFlags> | null; refused: string | null } {
+  try {
+    return { byNumber: effectiveComObjFlags(app, view, getDeviceComObjOverrides(state.db, projectId, deviceId)), refused: null };
+  } catch (e) {
+    if (e instanceof ProductError && e.code.startsWith("COM_OBJECT_OVERRIDE_")) return { byNumber: null, refused: e.code };
+    throw e;
+  }
+}
+
 export interface ReadbackSummary { readback: DeviceReadbackInfo }
 export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary): DeviceConfigView {
   const { db } = state;
@@ -329,6 +345,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   }
   const links = getDeviceLinks(db, projectId, deviceId);
   const changed = getDeviceChangedKeys(db, projectId, deviceId);
+  const flags = deviceComObjFlags(state, projectId, deviceId, app, view);
   // For float params the override/baseline strings can differ purely in form (the UI
   // writes a canonical decimal, ETS stored scientific notation), which the string-based
   // change detection flags as drift. Compare those numerically so an unchanged float is
@@ -348,12 +365,14 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
       it.comObject.gaRaw = links.get(key)?.[0] ?? null;
       it.comObject.gaRaws = links.get(key) ?? [];
       it.comObject.changed = changed.links.has(key);
+      const eff = flags.byNumber?.get(it.comObject.number);
+      if (eff) { it.comObject.flags = eff.flags; it.comObject.overriddenFlags = eff.overridden; }
     }
   }
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId) };
+  const wire: DeviceConfigView = { blocks: view.blocks, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
   return extra ? { ...wire, ...extra } : wire;
 }
 
@@ -422,6 +441,9 @@ interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
   comObjName: string; functionText: string; comObjNumber: number;
   flags: ComObjFlags;
+  // The device's own com-object flags cannot be placed (deviceComObjFlags): `flags` are the
+  // application's, and the split by them is not the device's.
+  flagsRefused?: string;
 }
 export interface GaDevicesView {
   address: string; name: string; dpt: string; path: string[];
@@ -438,7 +460,7 @@ export interface GaDevicesView {
 // hidden objects are covered too (translated, text placeholders fed by the device's
 // values), then overridden by the module-resolved config view (module-instance
 // numbering). Mirrors buildDeviceView's key stripping (stripRef).
-function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>, lang?: string): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
+function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>, lang?: string, effective?: Map<number, EffectiveComObjFlags> | null): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
   const out = new Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }>();
   for (const [full, ref] of app.comObjectRefs) {
     const obj = app.comObjects.get(ref.refId);
@@ -452,17 +474,19 @@ function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind !== "comObject") continue;
     out.set(stripRef(app.id, it.comObject.refId), {
-      name: it.comObject.name, functionText: it.comObject.functionText, number: it.comObject.number, flags: it.comObject.flags,
+      name: it.comObject.name, functionText: it.comObject.functionText, number: it.comObject.number, flags: effective?.get(it.comObject.number)?.flags ?? it.comObject.flags,
     });
   }
   return out;
 }
 
-// Which devices use a group address, split by role. A linked com-object is a
-// sender when it has the transmit flag (it writes the address on change) and a
-// receiver when it has the write flag (it consumes writes); an object with both
-// appears in both lists. Links whose com-object resolves to neither flag fall
-// back to the receiver list (e.g. a read-only responder), so nothing is dropped.
+// Which devices use a group address, split by role, by the flags the project gives
+// (deviceComObjFlags). A linked com-object is a sender when it has the communication and
+// transmit flags and the address is its first (the one it sends on), and a receiver when it has the
+// write flag (it consumes writes on every address it has); an object with both
+// appears in both lists. Links whose com-object is no sender and has no write flag
+// fall back to the receiver list (e.g. a read-only responder, or a transmitting
+// object on a further address), so nothing is dropped.
 export function buildGaDevicesView(state: AppState, projectId: string, raw: number, lang?: string): GaDevicesView {
   const { db } = state;
   if (!projectExists(db, projectId)) throw new ApiError("PROJECT_NOT_FOUND", "project not found", 404);
@@ -470,27 +494,29 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
   if (!meta) throw new ApiError("GA_NOT_FOUND", "group address not found", 404);
 
   // Group the project-wide links by device, so each device's app is built once.
-  const byDevice = new Map<string, string[]>();
+  const byDevice = new Map<string, { refId: string; slot: number }[]>();
   for (const l of getGaLinks(db, projectId, raw)) {
     const a = byDevice.get(l.deviceId) ?? [];
-    a.push(l.comObjRefId);
+    a.push({ refId: l.comObjRefId, slot: l.slot });
     byDevice.set(l.deviceId, a);
   }
 
   const senders: GaComObj[] = [];
   const receivers: GaComObj[] = [];
-  for (const [deviceId, refIds] of byDevice) {
+  for (const [deviceId, links] of byDevice) {
     const dev = getDeviceForFlash(db, projectId, deviceId);
     const app = loadApp(state, projectId, deviceId);
     if (!dev || !app) continue; // a stale link to a removed device/app: skip, don't fail the overlay
-    const comObjs = comObjsByKey(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId)), lang);
-    for (const refId of refIds) {
+    const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
+    const flags = deviceComObjFlags(state, projectId, deviceId, app, view);
+    const comObjs = comObjsByKey(app, view, lang, flags.byNumber);
+    for (const { refId, slot } of links) {
       const co = comObjs.get(refId);
       if (!co) continue; // link to a com-object absent from the app model: skip
-      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags };
-      if (co.flags.transmit) senders.push(entry);
-      if (co.flags.write) receivers.push(entry);
-      else if (!co.flags.transmit) receivers.push(entry);
+      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags, ...(flags.refused ? { flagsRefused: flags.refused } : {}) };
+      const sends = co.flags.comm && co.flags.transmit && slot === 0;
+      if (sends) senders.push(entry);
+      if (co.flags.write || !sends) receivers.push(entry);
     }
   }
   const byIa = (a: GaComObj, b: GaComObj) => a.ia.localeCompare(b.ia, undefined, { numeric: true });
@@ -637,7 +663,12 @@ export function deviceConfigRefs(state: AppState, projectId: string, deviceId: s
   return { shown, active: new Set(view.imageValues.keys()) };
 }
 
-const sameGaSet = (a: number[], b: number[]) => { const x = [...a].sort((m, n) => m - n), y = [...b].sort((m, n) => m - n); return x.length === y.length && x.every((v, i) => v === y[i]); };
+// Two link lists of one object hold the same on the device when they send on the same address and
+// listen on the same set: the order behind the sending address is the table's, by group index.
+const sameLinks = (a: number[], b: number[]) => {
+  const x = [...a].sort((m, n) => m - n), y = [...b].sort((m, n) => m - n);
+  return a[0] === b[0] && x.length === y.length && x.every((v, i) => v === y[i]);
+};
 
 // Merge a device's read-back links into the sparse link baseline: copy the live
 // links, then override only where the device differs. When the device's com-object
@@ -655,7 +686,7 @@ export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<strin
   let gaps = 0;
   if (!observable) {
     for (const [key, dev] of device) {
-      if (live.has(key)) { if (!sameGaSet(live.get(key) ?? [], dev)) base.set(key, dev); }
+      if (live.has(key)) { if (!sameLinks(live.get(key) ?? [], dev)) base.set(key, dev); }
       else gaps++;
     }
   } else {
@@ -663,7 +694,7 @@ export function mergeLinkBaseline(live: Map<string, number[]>, device: Map<strin
       const proj = live.get(key) ?? [];
       const dev = device.get(key);
       if (dev === undefined && !observable.has(key)) continue;
-      if (!sameGaSet(proj, dev ?? [])) { if (dev?.length) base.set(key, dev); else base.delete(key); }
+      if (!sameLinks(proj, dev ?? [])) { if (dev?.length) base.set(key, dev); else base.delete(key); }
     }
   }
   return { base, gaps };

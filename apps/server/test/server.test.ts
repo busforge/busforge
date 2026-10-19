@@ -57,10 +57,12 @@ describe("mergeLinkBaseline (read-back link baseline)", () => {
   const obj = (x: Map<string, number[]>) => Object.fromEntries(x);
 
   test("known numbering: overrides differing, adds device-only, clears live-only", () => {
-    const live = m({ A: [1, 2], B: [5], D: [3] });
-    const device = m({ A: [2, 1], B: [9], C: [7] }); // A same set (reordered), B differs, C new, D gone
-    const r = mergeLinkBaseline(live, device, new Set(["A", "B", "C", "D"]));
-    expect(obj(r.base)).toEqual({ A: [1, 2], B: [9], C: [7] });
+    // A same set but sending on 2 (its first association), B differs, C new, D gone, E the same
+    // sending address with the further addresses in table order.
+    const live = m({ A: [1, 2], B: [5], D: [3], E: [4, 9, 6] });
+    const device = m({ A: [2, 1], B: [9], C: [7], E: [4, 6, 9] });
+    const r = mergeLinkBaseline(live, device, new Set(["A", "B", "C", "D", "E"]));
+    expect(obj(r.base)).toEqual({ A: [2, 1], B: [9], C: [7], E: [4, 9, 6] });
     expect(r.gaps).toBe(0); // 1:1 mapping, nothing dropped
   });
 

@@ -344,6 +344,19 @@ Conventions that hold across views:
 - **A gap is shown, never hidden.** An ETS element the engine does not handle renders as a visible
   marker in place; a parameter type it cannot edit keeps its row with a "not supported" badge and
   the raw stored value.
+- **A com-object holds its group addresses in order.** The device page lists them, the first
+  marked as the one the object sends on (and answers reads on), the others as the ones it listens
+  to; the user adds, removes, or makes another one the sending address. With one address the
+  picker replaces it in one step. Each edit sends the object's whole ordered list
+  (`PUT .../links`, `gaRaws`), which refuses an address twice (`LINK_GA_DUPLICATE`) or one the
+  project does not hold (`GA_NOT_FOUND`). The group-address overlay lists an object as a sender
+  only on its first address.
+- **Flags are the ones the project gives.** The device page and the group-address overlay show each
+  object's flags with the project's own overrides laid over the application's, resolved where the
+  writes resolve them (`effectiveComObjFlags`, [load-procedures.md](load-procedures.md#project-level-com-object-flags));
+  where they cannot be placed the page says so and shows none. What a table write derives from the
+  links on top (communication off on an unlinked System B object, the System 7 linked bit) is not
+  shown, and a family that cannot write an override refuses the write instead.
 - **The dangerous dialogs step.** `CommissionDialog` gates each of its three steps (find the device
   in programming mode, assign the address, download) on the previous one having been *verified*; a
   `verified: false` renders as a terminal failure, never as success.
