@@ -26,6 +26,8 @@ export interface ObservedRun {
   // The persistence check (persistence.ts), when the run reached it: A_Restart, an observed reboot,
   // then a read-back compared with the project.
   persistence?: { state: "pass" | "fail"; detail: string };
+  // A device in service (inservice.ts): the one write the persistence check covered.
+  persistenceOf?: string;
 }
 
 // What a passing driver actually established (capabilities.ts). A write passes on the server's
@@ -69,7 +71,11 @@ export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditi
     subject: { manufacturer: appProgramId.slice(0, 6), productRef: spec.device.productRef, appProgramId, mask: spec.device.mask, firmware: cond.firmware },
     medium: maskInfo(spec.device.mask)?.medium ?? "unknown", transport: cond.transport,
     build: { server: serverBuild(cond.server), runner: { name: "tools/smoke", revision: cond.runnerRevision }, spec: { name: spec.id, revision: specRevision(spec) } },
-    origin: { configuredBy: "busforge", reference: "self-written", priorBusforgeWrites: "some" },
+    // A device in service was configured by whoever commissioned it; the run's own writes compare
+    // with Busforge's image only.
+    origin: spec.provision === "in-service"
+      ? { configuredBy: "unknown", reference: "self-written", priorBusforgeWrites: "unknown" }
+      : { configuredBy: "busforge", reference: "self-written", priorBusforgeWrites: "some" },
     supersedes: [], supersedeReason: null,
     source: { kind: "smoke-report", ...cond.source },
   };
@@ -81,14 +87,18 @@ export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditi
       results: { transfer: NOT_ASSESSED, reference: NOT_ASSESSED, behaviour: NOT_ASSESSED, persistence: NOT_ASSESSED, ...results },
     }));
   };
-  const baseline = `spec baseline (${spec.configure.length} configure steps)`;
+  const baseline = spec.provision === "in-service"
+    ? "the device's own configuration, taken over by read-back"
+    : `spec baseline (${spec.configure.length} configure steps)`;
 
   // The persistence check runs right after the capabilities (runner.ts), so it reads back the
   // download's parameters and group tables with the link flashLinks placed on top. flashParams reverts
   // every change it makes, so what survives the reboot is not its own write, and it gets no result.
+  // A device in service names the one write its check covered (the link while it was placed).
   const persisted = (c: CapabilityResult): AxisResult => {
     const p = run.persistence;
     if (!p || c.state !== "pass" || !PERSISTS.has(c.capability)) return NOT_ASSESSED;
+    if (run.persistenceOf !== undefined && run.persistenceOf !== c.capability) return NOT_ASSESSED;
     return p.state === "pass" ? { state: "pass", method: PERSISTENCE_METHOD, ...detail(p.detail) } : { state: "fail", ...detail(p.detail) };
   };
   for (const c of run.capabilities) {

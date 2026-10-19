@@ -68,6 +68,30 @@ export interface FuzzPolicy {
   fullDownloadRounds?: number;
 }
 
+// A device in service (provision "in-service") is written only after it has shown it is the unit the
+// spec was written for, and only in the steps named here, each set back before the next. A write
+// capability the product claims needs its step here or an `unsafe` entry with the reason; the run
+// stops before its first write otherwise. See docs/testing.md "Devices in service".
+export interface InServiceSpec {
+  // Interface object properties read before anything else, each required to hold exactly `expect`
+  // (lower-case hex): the application id and a firmware version, so a unit holding another
+  // application or firmware stops the run. A unit of the same application and firmware passes it.
+  fingerprint: { name: string; object: number; pid: number; expect: string }[];
+  // flashParams: one parameter that leaves the com-object table alone, set to `value`, flashed, set
+  // back to the device's own value, flashed again.
+  param?: { paramRefId: string; value: string };
+  // flashLinks: one object the device holds unlinked, linked to the test group address the operator
+  // gives the run (--test-ga, an address no object of the device uses), flashed, observed by the
+  // spec's behaviours, restarted for the persistence check, unlinked, flashed again.
+  link?: { comObjRefId: string };
+  // structuralFlash: one parameter whose change alters the com-object table, written as a structural
+  // flash there and back.
+  structural?: { paramRefId: string; value: string };
+  // fullDownload: a full download of the device's own configuration (the bytes it holds, written
+  // again). Runs only when the operator also passes --full-download; otherwise reported unproven.
+  fullDownload?: true;
+}
+
 export interface DeviceSpec {
   id: string; // report key, e.g. "gvs-amma"
   device: {
@@ -83,7 +107,12 @@ export interface DeviceSpec {
   // BUSFORGE_SMOKE_KNXPROJ_PASSWORD, which is how a Data Secure device's keys reach the server; the
   // device must already answer on its IA. The run ends by restoring the imported configuration on the
   // device and proving it (dry runs `unchanged`), so the ETS project stays valid for it.
-  provision: "skip-if-present" | "require-prog-mode" | "import-knxproj";
+  // "in-service": a device that is commissioned and in use. The run takes the device's own
+  // configuration by read-back and writes only the steps of `inService`, each reverted; a full
+  // download only when the spec offers one and the operator asks for it (inservice.ts).
+  provision: "skip-if-present" | "require-prog-mode" | "import-knxproj" | "in-service";
+  // provision "in-service" only: what identifies the unit, and the two surgical writes.
+  inService?: InServiceSpec;
   // A named precondition printed before provisioning (e.g. an OpenKNX console erase). Human-run.
   precondition?: string;
   // The baseline configuration that brings the device to a known, linkable state (params that reveal

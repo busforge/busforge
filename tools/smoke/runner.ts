@@ -13,7 +13,7 @@
 // `bun run check`.
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, resolve, basename, relative, isAbsolute } from "node:path";
-import { Client, ApiError, allParams, allComObjects, type DeviceCapabilities } from "./client.ts";
+import { Client, ApiError, allParams, allComObjects, type DeviceCapabilities, type FlashResult } from "./client.ts";
 import { Witness } from "./witness.ts";
 import { UiDriver } from "./ui.ts";
 import { makePrng, gaAllocator } from "./generate.ts";
@@ -28,6 +28,7 @@ import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evide
 import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
 import { loadKnxproj } from "../../packages/project/src/index.ts";
 import { FaultProxy } from "./faultproxy.ts";
+import { runInService, planInService, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
 import { isMemoryMappedLsm, type Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
@@ -49,6 +50,10 @@ interface RunResult {
   // and the proof that the imported configuration is back on the device when the run ends.
   negatives?: { name: string; state: "pass" | "fail"; detail: string }[];
   restore?: { state: "pass" | "fail"; detail: string };
+  // Devices in service only: the write the persistence check covers, and the configuration the run
+  // found on the device before its first write.
+  persistenceOf?: "flashLinks" | "fullDownload";
+  found?: FoundConfiguration;
 }
 
 // A Data Secure device's tool-access credentials, from the imported project file. The runner's own
@@ -235,6 +240,63 @@ async function restoreToImport(client: Client, pid: string, did: string, links: 
   }
 }
 
+// The in-service sequence's view of this run: the API bound to the project, the channel under test,
+// and the runner's own bus connections (fingerprint, witness, reboot), each opened only while the
+// server holds no bus operation.
+function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did: string; channel: Channel; host: string; spec: DeviceSpec; witness: Witness; log: (m: string) => void; settle: (ms: number) => Promise<void> }): InServiceIo {
+  const { client, ui, pid, did, host, spec, witness, log, settle } = o;
+  const port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681);
+  const written = (r: FlashResult) => ({ structural: r.structural === true, result: r });
+  // The ui page holds the configuration it loaded; an API edit (the adoption, an unlink) is only
+  // seen after a reload, so every ui step starts from a fresh page.
+  const page = async () => { await ui!.gotoDevice(pid, did); };
+  const withWitness = async <T>(f: () => Promise<T>): Promise<T> => { await witness.connect(); try { return await f(); } finally { await witness.close(); } };
+  return {
+    api: {
+      readBack: () => client.readBack(pid, did, (p) => log(`read ${p}`)),
+      revert: () => client.revert(pid, did),
+      getConfig: () => client.getConfig(pid, did),
+      setParam: (ref, value) => client.setParam(pid, did, ref, value),
+      setLinks: (ref, gas) => client.setLinks(pid, did, ref, gas),
+      flashDry: () => client.flashDry(pid, did),
+      flashGaDry: () => client.flashGaDry(pid, did),
+      downloadDry: () => client.downloadDry(pid, did),
+      flashReal: () => client.flashReal(pid, did, (p) => log(`flash ${p}`)),
+      flashGaReal: () => client.flashGaReal(pid, did, (p) => log(`flash-ga ${p}`)),
+    },
+    chan: ui ? {
+      name: "ui",
+      setParam: async (ref, value) => { await page(); await ui.setParam(ref, value); },
+      link: async (obj, ga) => { await client.ensureGa(pid, ga); await page(); await ui.linkGa(obj.number, ga); },
+      flashParams: async () => { await page(); return ui.flash("params"); },
+      flashLinks: async () => { await page(); return ui.flash("ga"); },
+      fullDownload: async () => { await page(); await ui.flashDownload("params"); return { structural: false }; },
+      readBack: async () => { await page(); return ui.readBack(); },
+    } : {
+      name: "api",
+      setParam: async (ref, value) => { await client.setParam(pid, did, ref, value); },
+      link: async (obj, ga) => { await client.ensureGa(pid, ga); await client.link(pid, did, obj.refId, ga); },
+      flashParams: async () => written(await client.flashReal(pid, did, (p) => log(`flash ${p}`))),
+      flashLinks: async () => written(await client.flashGaReal(pid, did, (p) => log(`flash-ga ${p}`))),
+      fullDownload: async () => written(await client.downloadReal(pid, did, (p) => log(`download ${p}`))),
+      readBack: () => client.readBack(pid, did, (p) => log(`read ${p}`)),
+    },
+    bus: {
+      readProperty: async (object, pidNo) => {
+        const tun = KnxIpTunnel.tcp(host, port);
+        await tun.connect();
+        const dev = new KnxDevice(tun, spec.device.ia);
+        try { await dev.connect(); return await dev.propReadIfPresent(object, pidNo); }
+        finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
+      },
+      groupRead: (ga) => withWitness(() => witness.groupRead(ga)),
+      listen: (ga, windowMs) => withWitness(() => witness.listen(ga, windowMs)),
+      reboot: async () => { await settle(2000); return rebootOnBench(host, spec.device.ia, spec.device.mask, undefined); },
+    },
+    log, settle,
+  };
+}
+
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
 
 // The capabilities checked for a guard-the-guardrail refusal when the product does NOT claim them: an
@@ -246,7 +308,7 @@ const REFUSAL_PROBES: { key: keyof DeviceCapabilities; probe: (c: Client, pid: s
   { key: "fullDownload", probe: (c, pid, did) => c.downloadDry(pid, did) },
 ];
 
-async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promise<RunResult> {
+async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: InServiceOptions): Promise<RunResult> {
   const client = new Client();
   const host = process.env.BUSFORGE_BENCH_HOST ?? "";
   const witness = new Witness(host);
@@ -267,6 +329,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
   let persistence: RunResult["persistence"];
   let negatives: RunResult["negatives"];
   let restore: RunResult["restore"];
+  let persistenceOf: RunResult["persistenceOf"];
+  let found: RunResult["found"];
   // Set once an imported project is in place; run on every path out, a failed run included.
   let restoreImported: (() => Promise<NonNullable<RunResult["restore"]>>) | null = null;
   let creds: Creds;
@@ -299,11 +363,11 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       const proj = await client.importProject(bytes, basename(file), password);
       pid = proj.id;
       await client.attachConnection(pid, conn.id);
-      const found = (await client.projectDevices(pid)).find((d) => d.ia === spec.device.ia);
-      if (!found) throw new Stop("setup", `the imported project has no device at ${spec.device.ia}`);
-      did = found.id;
+      const placed = (await client.projectDevices(pid)).find((d) => d.ia === spec.device.ia);
+      if (!placed) throw new Stop("setup", `the imported project has no device at ${spec.device.ia}`);
+      did = placed.id;
       const project = loadKnxproj(bytes, password, basename(file));
-      const sec = project.deviceSecurity.find((d) => d.deviceId === found.id);
+      const sec = project.deviceSecurity.find((d) => d.deviceId === placed.id);
       creds = sec ? { toolKey: Buffer.from(sec.toolKey, "base64"), serial: Buffer.from(sec.serialNumber, "base64") } : undefined;
       groupKeys = new Map(project.groupKeys.map((g) => [g.raw, Buffer.from(g.key, "base64")]));
       log(`imported ${basename(file)}: ${creds ? "Data Secure device" : "plain device"}, ${groupKeys.size} secured group address(es)`);
@@ -333,7 +397,20 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
 
     const chan: ChanCtx = { client, ui, pid, did, channel, log, settle };
     const capCtx: CapCtx = { ...chan, spec, rnd, allocGa };
+    const inService = spec.provision === "in-service";
 
+    if (inService) {
+      // ── a device in service: its own configuration, two surgical writes, each reverted ──
+      process.stdout.write(`  → in-service sequence (${channel})\n`);
+      const r = await runInService(spec, inServiceIo({ client, ui, pid, did, channel, host, spec, witness, log, settle }), opts);
+      capabilities.push(...r.capabilities);
+      behaviours.push(...r.behaviours);
+      persistence = r.persistence;
+      persistenceOf = r.persistenceOf;
+      found = r.found;
+      restore = r.restore;
+      if (!r.ok) ok = false;
+    } else {
     // ── provision ────────────────────────────────────────────────────────────
     if (spec.precondition) process.stdout.write(`  ! precondition: ${spec.precondition}\n`);
     if (spec.provision === "skip-if-present" || spec.provision === "import-knxproj") {
@@ -408,6 +485,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
       persistence = checked;
       if (checked.state === "fail") ok = false;
     }
+    }
 
     // ── ui-click-through (lifecycle capability, UI surface only) ──────────────
     if (ui) {
@@ -419,7 +497,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
 
     // ── behaviours: prove the device ACTS on the bus ──────────────────────────
     const behCtx: BehaviourCtx = { ...chan, witness, spec, allocGa, groupKeys };
-    for (const b of spec.behaviours) {
+    // The in-service sequence observed its behaviours inside the link window.
+    for (const b of inService ? [] : spec.behaviours) {
       process.stdout.write(`  → behaviour ${b.kind}:${b.label} (${channel})\n`);
       await settle(2000);
       const res = await verifyBehaviour(behCtx, b);
@@ -428,8 +507,10 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     }
 
     // ── guard the guardrail: an UNCLAIMED write capability must be refused ─────
+    const claimed = (await client.getConfig(pid, did)).capabilities;
+    if (!claimed) throw new Stop("refusals", "device config carried no capabilities");
     for (const { key, probe } of REFUSAL_PROBES) {
-      if (caps[key]) continue; // claimed: exercised above, not refused
+      if (claimed[key]) continue; // claimed: exercised above, not refused
       try { await probe(client, pid, did); refusals.push({ capability: key, state: "fail", detail: "endpoint did NOT refuse an unclaimed capability" }); ok = false; }
       catch (e) { refusals.push({ capability: key, state: e instanceof ApiError ? "pass" : "fail", detail: e instanceof ApiError ? `refused: ${e.code}` : `unexpected error: ${e instanceof Error ? e.message : String(e)}` }); if (!(e instanceof ApiError)) ok = false; }
     }
@@ -456,7 +537,9 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     }
 
     // ── teardown (only a clean run tidies up; a failure keeps the project) ─────
-    if (ok) { await client.deleteProject(pid); pid = null; }
+    // A run on a device in service always keeps its project: the server's backups of the device
+    // live with it.
+    if (ok && !inService) { await client.deleteProject(pid); pid = null; }
   } catch (e) {
     ok = false;
     if (e instanceof Stop) capabilities.push({ capability: e.phase, channel, state: "fail", detail: e.detail });
@@ -470,7 +553,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number): Promis
     }
     if (ui) await ui.close().catch(() => undefined);
   }
-  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid, ipTransport, firmware, persistence, negatives, restore };
+  return { spec: spec.id, channel, seed, ok, startedAt, durationMs: Date.now() - startedAt, provision: spec.provision, capabilities, clickThrough, behaviours, refusals, pid, ipTransport, firmware, persistence, negatives, restore, persistenceOf, found };
 }
 
 function report(r: RunResult): void {
@@ -483,14 +566,14 @@ function report(r: RunResult): void {
   for (const g of r.refusals) console.log(`  ${mark(g.state)} guard ${g.capability} — ${g.detail}`);
   for (const n of r.negatives ?? []) console.log(`  ${mark(n.state)} secure ${n.name} — ${n.detail}`);
   if (r.restore) console.log(`  ${mark(r.restore.state)} restore — ${r.restore.detail}`);
-  if (!r.ok && r.pid) console.log(`  kept project ${r.pid} for post-mortem`);
+  if (r.pid) console.log(`  kept project ${r.pid} ${r.ok ? "with the server's backups of the device" : "for post-mortem"}`);
 }
 
 function writeReport(r: RunResult, dir: string): string {
   mkdirSync(dir, { recursive: true });
   const iso = new Date(r.startedAt).toISOString();
   const path = join(dir, `${r.spec}-${r.channel}-${iso.replace(/[:.]/g, "-")}.json`);
-  writeFileSync(path, reportText({ ...r, keptProjectId: r.ok ? null : r.pid, startedAt: iso }));
+  writeFileSync(path, reportText({ ...r, keptProjectId: r.pid, startedAt: iso }));
   return path;
 }
 
@@ -517,8 +600,24 @@ async function main() {
   const reportArg = args.find((a) => a === "--report" || a.startsWith("--report="));
   const reportDir = reportArg ? (reportArg.includes("=") ? reportArg.slice(reportArg.indexOf("=") + 1) : join(import.meta.dir, "reports")) : null;
   const ids = args.filter((a) => !a.startsWith("--"));
-  const chosen = ids.length ? SPECS.filter((s) => ids.includes(s.id)) : SPECS;
+  // A device in service is run only when named: a run of "every spec" stays on the bench.
+  const chosen = ids.length ? SPECS.filter((s) => ids.includes(s.id)) : SPECS.filter((s) => s.provision !== "in-service");
   if (!chosen.length) { console.error(`no spec matched ${ids.join(",")}; known: ${SPECS.map((s) => s.id).join(", ")}`); process.exit(2); }
+  // The full download of a device in service is the operator's decision per run, never the spec's alone.
+  // The test address of a link step belongs to the installation, so the operator gives it per run.
+  const testGa = args.find((a) => a.startsWith("--test-ga="))?.split("=")[1];
+  const opts: InServiceOptions = { fullDownload: args.includes("--full-download"), ...(testGa ? { testGa } : {}) };
+  // --plan: the writes each named device-in-service spec would make, without a server or a bus.
+  if (args.includes("--plan")) {
+    for (const spec of chosen) {
+      console.log(`\n=== plan: ${spec.id} (both channels run this sequence) ===`);
+      if (spec.provision !== "in-service") { console.log("  no fixed plan: a bench spec's writes follow the capabilities the product claims at run time (see docs/testing.md)"); continue; }
+      try { for (const st of planInService(spec, opts)) console.log(`  ${st.kind.padEnd(7)} ${st.text}`); }
+      catch (e) { console.error(`  refused: ${e instanceof Error ? e.message : String(e)}`); process.exit(2); }
+      console.log("  never   erase, baseline configuration, fuzzing; a full download only with the spec's offer and --full-download");
+    }
+    process.exit(0);
+  }
   let allOk = true;
   // Read before any run: the build that executes the runs, not whatever is up once they are over.
   // Without it no run's evidence could name its build, so the bench is not touched at all.
@@ -529,7 +628,7 @@ async function main() {
   if (reportDir && !server) { console.error("refused: the server's /api/version is not readable, so the run's evidence could not name the build"); process.exit(2); }
   for (const spec of chosen) {
     if (spec.channels && !spec.channels.includes(channel)) { console.log(`\n=== smoke: ${spec.id} [${channel}] — SKIP (spec channels: ${spec.channels.join(",")}) ===`); continue; }
-    const r = await runSpec(spec, channel, seed);
+    const r = await runSpec(spec, channel, seed, opts);
     report(r);
     if (reportDir) {
       try {

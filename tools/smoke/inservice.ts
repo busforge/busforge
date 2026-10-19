@@ -1,0 +1,555 @@
+// The smoke run for a device that is commissioned and in use (provision "in-service"). Unlike every
+// other spec it does not bring the device to a known state: the device's configuration IS the state,
+// so the run takes it over by read-back and writes only the steps the spec names (spec.ts
+// InServiceSpec), each set back and read back before the next. It never erases, never runs a
+// baseline configuration or the fuzzer, and runs a full download only when the spec offers one and
+// the operator asks for it on the command line. Anything that could make a write touch more than its
+// step stops the run before the first write.
+//
+// The run is a fixed sequence of phases (inServicePhases), so its writes can be listed without a
+// device (planInService, the runner's --plan), and runInService performs exactly that list.
+//
+// All device access goes through InServiceIo, so the sequence runs against a scripted device in
+// inservice.test.ts exactly as against hardware.
+import { gaToNum } from "../../packages/knx/src/index.ts";
+import type { DeviceReadbackInfo } from "../../packages/product/src/index.ts";
+import { allComObjects, allParams, findComObject, findParam, type ConfigView, type DeviceCapabilities, type FlashResult } from "./client.ts";
+import { judgeLoadStates, judgeRestoredConfig, type RebootObservation } from "./persistence.ts";
+import type { CapabilityResult } from "./capabilities.ts";
+import type { BehaviourResult } from "./behaviours.ts";
+import type { Channel, DeviceSpec } from "./spec.ts";
+import { serverDataPath } from "./evidence.ts";
+
+// The server's API, for the project bound to the device under test: the oracle and the plumbing
+// (adoption, dry runs, the unlink, the restore after a failure).
+export interface InServiceApi {
+  readBack(): Promise<DeviceReadbackInfo | null>;
+  // Discard the project's edits: every parameter and link takes the baseline the last read-back set.
+  revert(): Promise<unknown>;
+  getConfig(): Promise<ConfigView>;
+  setParam(paramRefId: string, value: string): Promise<unknown>;
+  setLinks(comObjRefId: string, gaRaws: number[]): Promise<unknown>;
+  flashDry(): Promise<FlashResult>;
+  flashGaDry(): Promise<FlashResult>;
+  downloadDry(): Promise<FlashResult>;
+  flashReal(): Promise<FlashResult>;
+  flashGaReal(): Promise<FlashResult>;
+}
+
+// The surface under test (api: the production endpoints, ui: the web app). A write on the ui channel
+// throws unless the dialog reported it verified, so it carries no FlashResult.
+export interface FlashOutcome { structural: boolean; result?: FlashResult }
+export interface InServiceChannel {
+  name: Channel;
+  setParam(paramRefId: string, value: string): Promise<void>;
+  link(obj: { refId: string; number: number }, ga: string): Promise<void>;
+  flashParams(): Promise<FlashOutcome>;
+  flashLinks(): Promise<FlashOutcome>;
+  fullDownload(): Promise<FlashOutcome>;
+  readBack(): Promise<DeviceReadbackInfo | null>;
+}
+
+// The runner's own connections to the device's bus, never while the server holds a bus operation.
+export interface InServiceBus {
+  // One interface object property of the device, null where it reports none.
+  readProperty(object: number, pid: number): Promise<Buffer | null>;
+  // GroupValueRead from the witness: the response value as hex, null when nothing answered.
+  groupRead(ga: string): Promise<string | null>;
+  // A telegram the device sends on `ga` within the window, as hex; null when none came.
+  listen(ga: string, windowMs: number): Promise<string | null>;
+  // A_Restart with the reboot observed, and the load states before and after it (runner.ts).
+  reboot(): Promise<{ reboot: RebootObservation; before: Map<number, number | null>; after: Map<number, number | null> }>;
+}
+
+export interface InServiceIo {
+  api: InServiceApi;
+  chan: InServiceChannel;
+  bus: InServiceBus;
+  log: (m: string) => void;
+  settle: (ms: number) => Promise<void>;
+}
+
+// What the operator gives this run on top of the spec: whether the offered full download runs, and
+// the test group address of the link step (an address of the installation, so never in the spec).
+export interface InServiceOptions { fullDownload: boolean; testGa?: string }
+
+// The configuration the device was found with, before the first write: every parameter value and
+// every object's links, as the read-back decoded them. Together with the server's own backups (the
+// `backup` of each FlashResult, kept with the project) it is what a recovery by hand starts from.
+export interface FoundConfiguration {
+  params: Record<string, string>;
+  links: Record<string, number[]>;
+  backups: string[];
+}
+
+export interface InServiceResult {
+  ok: boolean;
+  capabilities: CapabilityResult[];
+  behaviours: BehaviourResult[];
+  persistence?: { state: "pass" | "fail"; detail: string };
+  // The write whose result the persistence check covers (the link while it is placed, else the full download).
+  persistenceOf?: "flashLinks" | "fullDownload";
+  // The device's configuration back as it was found: after a clean run, the dry runs; after a
+  // failure, the undo of whatever the run had changed.
+  restore?: { state: "pass" | "fail"; detail: string };
+  found?: FoundConfiguration;
+  // Where the run stopped, if it did; nothing after it was attempted.
+  stopped?: { phase: string; detail: string };
+}
+
+export type Phase = "fingerprint" | "adopt" | "capabilities" | "params" | "links" | "structural" | "fullDownload" | "final";
+
+// One step of the plan. `write` and `restart` reach the device; `read` does not change it.
+export interface PlanStep { phase: Phase; kind: "read" | "write" | "restart"; op?: "flashParams" | "flashLinks" | "structuralFlash" | "fullDownload"; text: string }
+
+// The phases a spec runs, in order: smallest write first, the full download last.
+export function inServicePhases(spec: DeviceSpec, opts: InServiceOptions): Phase[] {
+  const s = spec.inService;
+  const out: Phase[] = ["fingerprint", "adopt", "capabilities"];
+  if (s?.param) out.push("params");
+  if (s?.link) out.push("links");
+  if (s?.structural) out.push("structural");
+  if (s?.fullDownload && opts.fullDownload) out.push("fullDownload");
+  out.push("final");
+  return out;
+}
+
+// What makes a spec fit for a device in service. Returns the problems; an empty list means fit.
+export function inServiceProblems(spec: DeviceSpec): string[] {
+  const out: string[] = [];
+  const s = spec.inService;
+  if (spec.provision !== "in-service") out.push(`provision is "${spec.provision}", not "in-service"`);
+  if (!s) return [...out, "no inService block: the fingerprint and the writes are missing"];
+  if (!s.fingerprint.length) out.push("the fingerprint is empty: nothing would tell this unit from another");
+  for (const f of s.fingerprint) if (!/^([0-9a-f]{2})+$/.test(f.expect)) out.push(`fingerprint ${f.name}: expect "${f.expect}" is not lower-case hex bytes`);
+  if (!s.param && !s.link && !s.structural && !s.fullDownload) out.push("no step: the run would write nothing and prove nothing");
+  if (spec.precondition) out.push("a precondition (a human step before the run) has no place on a device in service");
+  if (spec.configure.length) out.push("configure steps would write the device beyond the spec's steps");
+  if (spec.fuzz) out.push("a fuzz policy has no place on a device in service");
+  if (spec.structuralTrigger) out.push("structuralTrigger is for the bench specs; a device in service names its structural step in inService.structural");
+  if (s.param && s.structural && s.param.paramRefId === s.structural.paramRefId) out.push("param and structural name the same parameter");
+  for (const b of spec.behaviours) {
+    if (b.kind !== "output" && b.kind !== "heartbeat") { out.push(`behaviour ${b.label}: only output and heartbeat behaviours observe the linked object`); continue; }
+    if (!s.link) { out.push(`behaviour ${b.label}: there is no link to observe it on`); continue; }
+    if (b.ga || b.enable?.length) out.push(`behaviour ${b.label}: a fixed address or enable parameters would need writes of their own`);
+    if (b.comObjRefId !== s.link.comObjRefId) out.push(`behaviour ${b.label}: observes ${b.comObjRefId}, not the linked object ${s.link.comObjRefId}`);
+  }
+  const unsafe = new Set((spec.unsafe ?? []).map((u) => u.capability));
+  const steps: [string, unknown][] = [["flashParams", s.param], ["flashLinks", s.link], ["structuralFlash", s.structural], ["fullDownload", s.fullDownload]];
+  for (const [cap, step] of steps) if (step && unsafe.has(cap)) out.push(`${cap} has a step and is declared unsafe`);
+  return out;
+}
+
+const short = (ref: string) => ref.split("_").slice(-2).join("_");
+
+// What the operator's options must hold for this spec: a link step needs a valid test address.
+export function optionProblems(spec: DeviceSpec, opts: InServiceOptions): string[] {
+  if (!spec.inService?.link) return [];
+  if (!opts.testGa) return ["the link step needs the test group address (--test-ga=<main/middle/sub>)"];
+  // Three levels: the link step creates it as a project group address, which takes main/middle/sub.
+  const bad = [`--test-ga=${opts.testGa} is not a group address of the form main/middle/sub`];
+  if (!/^\d+\/\d+\/\d+$/.test(opts.testGa)) return bad;
+  try { gaToNum(opts.testGa); return []; } catch { return bad; }
+}
+
+// The sequence runInService performs, without a device. Values the device holds are named, not
+// known: the run reads them.
+export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanStep[] {
+  const problems = [...inServiceProblems(spec), ...optionProblems(spec, opts)];
+  if (problems.length) throw new Error(`spec ${spec.id} is not fit for a device in service: ${problems.join("; ")}`);
+  const ga = opts.testGa ?? "";
+  const s = spec.inService!;
+  const out: PlanStep[] = [];
+  for (const phase of inServicePhases(spec, opts)) {
+    const read = (text: string) => out.push({ phase, kind: "read", text });
+    const write = (op: PlanStep["op"], text: string) => out.push({ phase, kind: "write", op, text });
+    if (phase === "fingerprint") read(`fingerprint: ${s.fingerprint.map((f) => `object ${f.object} PID ${f.pid} (${f.name}) = ${f.expect}`).join(", ")}`);
+    if (phase === "adopt") read("read-back; the project takes the device's values; a second read-back under them must resolve every association; the parameter and GA flash dry runs must report unchanged (the server keeps their backups); the configuration found is recorded");
+    if (phase === "capabilities") read(`every claimed write capability has its step in the spec or is declared unsafe; readParams and readLinks are claimed; every step's target is visible on the device${s.link ? "; the test address: no object of the unit uses it, nothing on the bus answers a read of it or sends on it within 5 s" : ""}`);
+    if (phase === "params" || phase === "links" || phase === "structural" || phase === "fullDownload") read("before each write: the project holds the configuration found plus this step only, and the other kind of write reports unchanged");
+    if (phase === "params") {
+      const p = s.param!;
+      write("flashParams", `parameter flash: ${short(p.paramRefId)} from the device's value to ${p.value} (dry run first: surgical)`);
+      write("flashParams", `parameter flash: ${short(p.paramRefId)} back to the device's value (dry run first: surgical)`);
+      read("read-back: nothing differs from the configuration found");
+    }
+    if (phase === "links") {
+      const l = s.link!;
+      write("flashLinks", `GA flash: ${short(l.comObjRefId)} (unlinked on the device) linked to ${ga} (dry run first: surgical)`);
+      read(`read-back: ${short(l.comObjRefId)} carries ${ga} alone${spec.behaviours.length ? `; witness: ${spec.behaviours.map((b) => b.label).join(", ")}` : "; no behaviour declared, the link is shown to the byte only"}`);
+      out.push({ phase, kind: "restart", text: "A_Restart, reboot observed, load objects LOADED after it, read-back equal to the project (the link persists)" });
+      write("flashLinks", `GA flash: ${short(l.comObjRefId)} unlinked again (dry run first: surgical)`);
+      read("read-back: nothing differs from the configuration found");
+    }
+    if (phase === "structural") {
+      const t = s.structural!;
+      write("structuralFlash", `structural flash: ${short(t.paramRefId)} from the device's value to ${t.value} (dry run first: structural)`);
+      write("structuralFlash", `structural flash: ${short(t.paramRefId)} back to the device's value (dry run first: structural)`);
+      read("read-back: nothing differs from the configuration found");
+    }
+    if (phase === "fullDownload") {
+      write("fullDownload", "full download of the configuration found (requested with --full-download)");
+      read("read-back: nothing differs from the configuration found");
+      if (!s.link) out.push({ phase, kind: "restart", text: "A_Restart, reboot observed, load objects LOADED after it, read-back equal to the project" });
+    }
+    if (phase === "final") read("parameter and GA flash dry runs report unchanged: the device holds the configuration it was found with");
+  }
+  return out;
+}
+
+class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
+
+const errText = (e: unknown): string => {
+  const code = (e as { code?: unknown })?.code;
+  const msg = e instanceof Error ? e.message : String(e);
+  return typeof code === "string" && !msg.includes(code) ? `${code}: ${msg}` : msg;
+};
+const sameLinks = (a: number[], b: number[]) => a.length === b.length && a.every((g, i) => g === b[i]);
+const drift = (view: ConfigView): string[] => [
+  ...allParams(view).filter((p) => p.changed).map((p) => p.refId.split("_").pop() ?? p.refId),
+  ...allComObjects(view).filter((c) => c.changed).map((c) => `object ${c.number}`),
+];
+
+// A read-back that must have covered parameters and links completely and found nothing that differs
+// from the project.
+async function noDrift(io: InServiceIo, coverage: DeviceReadbackInfo | null, what: string): Promise<string | null> {
+  if (!coverage) return `${what}: the read-back did not report what it covered`;
+  if (!coverage.paramsRead || !coverage.linksRead) return `${what}: the read-back did not cover both parameters and links`;
+  if (coverage.linkGaps > 0) return `${what}: ${coverage.linkGaps} association(s) did not resolve`;
+  const d = drift(await io.api.getConfig());
+  return d.length ? `${what}: the device differs from the project in ${d.slice(0, 5).join(", ")}${d.length > 5 ? ` and ${d.length - 5} more` : ""}` : null;
+}
+
+// Where the project differs from the configuration the run found, apart from the step under way: a
+// parameter or link edit the run did not ask for (a dependent default, a value the UI reformatted, an
+// edit a stopped step left behind) would otherwise go out with the step's write.
+function apartFromStep(view: ConfigView, found: FoundConfiguration, step: { param?: [string, string]; link?: [string, number[]] } = {}): string[] {
+  const out: string[] = [];
+  for (const p of allParams(view)) {
+    const want = step.param?.[0] === p.refId ? step.param[1] : found.params[p.refId];
+    if (want !== undefined && p.value !== want) out.push(`${p.refId.split("_").pop() ?? p.refId} = ${p.value}`);
+  }
+  for (const c of allComObjects(view)) {
+    const want = step.link?.[0] === c.refId ? step.link[1] : (found.links[c.refId] ?? []);
+    if (!sameLinks(c.gaRaws ?? [], want)) out.push(`object ${c.number} links`);
+  }
+  return out;
+}
+
+// The dry run before a write: it must find a change to write, of the expected kind. A coded refusal
+// (e.g. the com-object table would go stale) ends the run here; it is never routed to a download.
+async function dryBeforeWrite(dry: () => Promise<FlashResult>, phase: string, structural: boolean): Promise<void> {
+  let r: FlashResult;
+  try { r = await dry(); } catch (e) { throw new Stop(phase, `dry run refused: ${errText(e)}`); }
+  if (r.kind !== "dryRun") throw new Stop(phase, `dry run reported ${r.kind}, expected a change to write`);
+  if (!!r.structural !== structural) throw new Stop(phase, structural ? "the dry run is not a structural flash; this step is approved as one" : "the dry run would be a structural flash (com-object table and group tables); this step is approved as a surgical flash only");
+}
+
+function checkWritten(o: FlashOutcome, phase: string, structural: boolean): string {
+  if (o.structural !== structural) throw new Stop(phase, structural ? "the write did not go out as a structural flash" : "the write went out as a structural flash");
+  if (o.result && (o.result.kind !== "flashed" || o.result.verified !== true)) throw new Stop(phase, `${o.result.kind}, verified=${String(o.result.verified)}`);
+  const n = o.result?.kind === "flashed" ? o.result.diffBytes : undefined;
+  return `${n !== undefined ? `${n} B, ` : ""}verified${o.result?.kind === "flashed" && o.result.restartUnproven ? ", restart not confirmed by the device" : ""}`;
+}
+
+// What the run has changed on the device (or may have) and not yet set back; the undo after a
+// failure sets back exactly these, with the same kind of write.
+interface Outstanding { params: Map<string, { value: string; structural: boolean }>; links: Map<string, number[]> }
+
+export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InServiceOptions): Promise<InServiceResult> {
+  const channel = io.chan.name;
+  const capabilities: CapabilityResult[] = [];
+  const behaviours: BehaviourResult[] = [];
+  const out: Outstanding = { params: new Map(), links: new Map() };
+  let persistence: InServiceResult["persistence"];
+  let persistenceOf: InServiceResult["persistenceOf"];
+  let restore: InServiceResult["restore"];
+  let found: FoundConfiguration | undefined;
+  let stopped: InServiceResult["stopped"];
+  let view: ConfigView | null = null;
+  // A read-back of the channel under test decoded parameters and links completely and matched.
+  let channelReadOk = false;
+  // A full download was sent and has not come back verified.
+  let downloadOut = false;
+  // The phase a failure that is not a Stop (a channel, the server, the bus) is reported in.
+  let at = "spec";
+  const cap = (capability: string, state: CapabilityResult["state"], detail: string, evidence?: Record<string, unknown>) =>
+    capabilities.push({ capability, channel, state, detail, ...(evidence ? { evidence } : {}) });
+  const s = spec.inService;
+  // A failure of the runner's own connections, not of the device: reported, no evidence record.
+  const harness = (what: string, detail: string) => { io.log(`${what}: ${detail}`); cap(`harness: ${what}`, "fail", detail); };
+
+  // A_Restart and a read-back that must equal the project. A failure is recorded; the run goes on, so
+  // whatever is placed is still set back.
+  const persist = async (): Promise<InServiceResult["persistence"]> => {
+    const r = await (async (): Promise<NonNullable<InServiceResult["persistence"]>> => {
+      const { reboot, before, after } = await io.bus.reboot();
+      if (!reboot.rebooted) return { state: "fail", detail: reboot.detail };
+      const states = judgeLoadStates(before, after);
+      await io.settle(3000);
+      const coverage = await io.api.readBack();
+      const judged = judgeRestoredConfig(await io.api.getConfig(), coverage);
+      await io.settle(3000);
+      return { state: states.state === "pass" && judged.state === "pass" ? "pass" : "fail", detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
+    })().catch((e) => { harness("persistence", `the persistence check broke off: ${errText(e)}`); return undefined; });
+    if (r) io.log(`persistence: ${r.detail}`);
+    return r;
+  };
+
+  // The project, before a write, must hold the configuration found plus the step and nothing else, and
+  // the other kind of write must have nothing to do; after a step it must hold exactly what was found.
+  const onlyTheStep = async (phase: string, step: Parameters<typeof apartFromStep>[2], other: () => Promise<FlashResult>): Promise<void> => {
+    const extra = apartFromStep(await io.api.getConfig(), found!, step);
+    if (extra.length) throw new Stop(phase, `the project holds more than this step before its write: ${extra.slice(0, 5).join(", ")}`);
+    const o = await other();
+    if (o.kind !== "unchanged") throw new Stop(phase, `the other kind of write reports ${o.kind} before this step's write; the write would carry more than the step`);
+  };
+  // A read-back of the channel under test after a step: complete, equal to the project, and the
+  // project equal to the configuration found.
+  const settled = async (phase: string, what: string): Promise<void> => {
+    const left = await noDrift(io, await io.chan.readBack(), what);
+    await io.settle(3000);
+    if (left) throw new Stop(phase, left);
+    const extra = apartFromStep(await io.api.getConfig(), found!);
+    if (extra.length) throw new Stop(phase, `${what}: the device differs from the configuration found in ${extra.slice(0, 5).join(", ")}`);
+    channelReadOk = true;
+  };
+
+  // A parameter there and back, surgical or structural, then a read-back without drift.
+  const thereAndBack = async (phase: "flashParams" | "structuralFlash", step: { paramRefId: string; value: string }, original: string): Promise<void> => {
+    const structural = phase === "structuralFlash";
+    io.log(`${phase}: ${step.paramRefId} ${original} → ${step.value}`);
+    at = `${phase} preflight`;
+    out.params.set(step.paramRefId, { value: original, structural });
+    await io.chan.setParam(step.paramRefId, step.value);
+    await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, () => io.api.flashGaDry());
+    await dryBeforeWrite(() => io.api.flashDry(), `${phase} preflight`, structural);
+    at = phase;
+    const there = checkWritten(await io.chan.flashParams(), phase, structural);
+    await io.settle(2000);
+    await io.chan.setParam(step.paramRefId, original);
+    await onlyTheStep(phase, {}, () => io.api.flashGaDry());
+    await dryBeforeWrite(() => io.api.flashDry(), phase, structural);
+    const back = checkWritten(await io.chan.flashParams(), phase, structural);
+    out.params.delete(step.paramRefId);
+    await io.settle(2000);
+    await settled(phase, `after the ${phase} revert`);
+    cap(phase, "pass", `${short(step.paramRefId)} ${original}→${step.value} (${there}) →${original} (${back}), zero drift on read-back`,
+      { swept: [{ ref: step.paramRefId, from: original, to: step.value }] });
+  };
+
+  try {
+    const problems = [...inServiceProblems(spec), ...optionProblems(spec, opts)];
+    if (problems.length) throw new Stop("spec", problems.join("; "));
+    const testGa = opts.testGa ?? "";
+    const si = s!;
+    for (const phase of inServicePhases(spec, opts)) {
+      at = phase;
+      if (phase === "fingerprint") {
+        // The unit the spec was written for, before anything else touches it.
+        for (const f of si.fingerprint) {
+          const got = await io.bus.readProperty(f.object, f.pid).catch((e) => { throw new Stop(phase, `${f.name} (object ${f.object} PID ${f.pid}) not read: ${errText(e)}`); });
+          const hex = got ? Buffer.from(got).toString("hex") : null;
+          if (hex !== f.expect) throw new Stop(phase, `${f.name} (object ${f.object} PID ${f.pid}) reads ${hex ?? "nothing"}, the spec expects ${f.expect}: not the unit this spec was written for`);
+        }
+        io.log(`fingerprint: ${si.fingerprint.map((f) => `${f.name} ${f.expect}`).join(", ")}`);
+      }
+
+      if (phase === "adopt") {
+        // The project takes the device's configuration, and the writes must then find nothing to do.
+        // A freshly placed device shows the catalogue defaults, under which objects the unit uses may
+        // be hidden, so their links count as unresolved on the first read. The project first takes
+        // the device's parameters, and a second read must then resolve every link.
+        const first = await io.api.readBack();
+        if (!first?.paramsRead || !first.linksRead) throw new Stop(phase, "the read-back did not cover both parameters and links, so the project cannot take the device's configuration");
+        await io.settle(3000);
+        await io.api.revert();
+        const second = await io.api.readBack();
+        if (!second?.paramsRead || !second.linksRead) throw new Stop(phase, "the second read-back did not cover both parameters and links");
+        if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration; a GA flash would drop them`);
+        await io.settle(3000);
+        await io.api.revert();
+        const paramsDry = await io.api.flashDry();
+        const gaDry = await io.api.flashGaDry();
+        if (paramsDry.kind !== "unchanged" || gaDry.kind !== "unchanged") throw new Stop(phase, `with the device's configuration taken over, the parameter flash dry run reports ${paramsDry.kind} and the GA flash dry run ${gaDry.kind}; both must be unchanged before a write`);
+        view = await io.api.getConfig();
+        if (allComObjects(view).some((c) => c.gaRaws === undefined)) throw new Stop(phase, "the server's config view carries no gaRaws (an older build); the run could not see the links it must leave alone");
+        const backups = [paramsDry.backup, gaDry.backup].filter((b): b is string => !!b).map(serverDataPath);
+        found = {
+          params: Object.fromEntries(allParams(view).map((p) => [p.refId, p.value])),
+          links: Object.fromEntries(allComObjects(view).filter((c) => c.gaRaws!.length).map((c) => [c.refId, c.gaRaws!])),
+          backups,
+        };
+        if (backups.length < 2) throw new Stop(phase, "the dry runs reported no backup of the device's memory; no write without one");
+      }
+
+      if (phase === "capabilities") {
+        const caps = view!.capabilities;
+        if (!caps) throw new Stop(phase, "device config carried no capabilities");
+        if (!caps.readParams || !caps.readLinks) throw new Stop(phase, "the product does not claim reading parameters and links, so the run cannot take over or check the device's configuration");
+        const unsafe = new Map((spec.unsafe ?? []).map((u) => [u.capability, u.reason]));
+        const step: Record<keyof DeviceCapabilities, boolean> = { readParams: true, readLinks: true, flashParams: !!si.param, flashLinks: !!si.link, structuralFlash: !!si.structural, fullDownload: !!si.fullDownload };
+        for (const key of Object.keys(step) as (keyof DeviceCapabilities)[]) {
+          if (step[key] && !caps[key]) throw new Stop(phase, `the spec has a ${key} step, but the product does not claim ${key}`);
+          if (!caps[key] || step[key]) continue;
+          if (!unsafe.has(key)) throw new Stop(phase, `the product claims ${key}, but the spec has no step for it and does not declare it unsafe with a reason`);
+          cap(key, "unsafe", unsafe.get(key)!);
+        }
+        if (si.fullDownload && !opts.fullDownload) cap("fullDownload", "unproven", "the spec offers a full download of the configuration found; not requested for this run (--full-download)");
+        // Every target, checked before the first write.
+        for (const p of [si.param, si.structural]) {
+          if (!p) continue;
+          const v = findParam(view!, p.paramRefId);
+          if (!v) throw new Stop(phase, `parameter ${p.paramRefId} is not visible in the device's configuration`);
+          if (v.refId !== p.paramRefId) throw new Stop(phase, `parameter ${p.paramRefId} matches ${v.refId} only by its end; give the full ref verbatim`);
+          if (v.readOnly) throw new Stop(phase, `parameter ${p.paramRefId} is read-only`);
+          if (v.value === p.value) throw new Stop(phase, `parameter ${p.paramRefId} already holds ${p.value} on the device; the flash would write nothing`);
+        }
+        if (si.link) {
+          const obj = findComObject(view!, si.link.comObjRefId);
+          if (!obj) throw new Stop(phase, `com-object ${si.link.comObjRefId} is not visible in the device's configuration`);
+          if (obj.refId !== si.link.comObjRefId) throw new Stop(phase, `com-object ${si.link.comObjRefId} matches ${obj.refId} only by its end; give the full ref verbatim`);
+          if (obj.gaRaws!.length) throw new Stop(phase, `object ${obj.number} is linked on the device (${obj.gaRaws!.length} address(es)); the run links only an object the device holds unlinked`);
+          const users = allComObjects(view!).filter((c) => c.gaRaws!.includes(gaToNum(testGa))).map((c) => c.number);
+          if (users.length) throw new Stop(phase, `the test address is already used by object(s) ${users.join(", ")} of the device`);
+          // The linked object may send on the test address (on every restart, for one), so no other
+          // device may act on it: nothing must answer a read of it or send on it.
+          const heard = await (async () => [await io.bus.groupRead(testGa), await io.bus.listen(testGa, 5000)])()
+            .catch((e) => { throw new Stop(phase, `the test address could not be checked on the bus: ${errText(e)}`); });
+          if (heard.some((v) => v !== null)) throw new Stop(phase, "something on the bus answers or sends on the test address; give one no device of the installation uses");
+        }
+      }
+
+      if (phase === "params") await thereAndBack("flashParams", si.param!, findParam(view!, si.param!.paramRefId)!.value);
+
+      if (phase === "links") {
+        const obj = findComObject(view!, si.link!.comObjRefId)!;
+        const raw = gaToNum(testGa);
+        io.log(`flashLinks: object ${obj.number} → ${testGa}`);
+        at = "flashLinks preflight";
+        out.links.set(obj.refId, []);
+        await io.chan.link({ refId: obj.refId, number: obj.number }, testGa);
+        await onlyTheStep("flashLinks preflight", { link: [obj.refId, [raw]] }, () => io.api.flashDry());
+        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false);
+        at = "flashLinks";
+        const linked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
+        await io.settle(2000);
+        const placed = await io.chan.readBack();
+        await io.settle(3000);
+        if (!placed?.linksRead) throw new Stop("flashLinks", "the read-back after the link flash did not read the group tables");
+        const after = findComObject(await io.api.getConfig(), obj.refId);
+        if (!after || !sameLinks(after.gaRaws ?? [], [raw]) || after.changed) throw new Stop("flashLinks", `the device does not carry the test address on object ${obj.number} alone (differs from the project: ${String(after?.changed ?? "?")})`);
+        // Details name "the test address", never the address itself: it belongs to the installation
+        // and records ship publicly. The report keeps it in `gas`.
+        for (const b of spec.behaviours) {
+          if (b.kind !== "output" && b.kind !== "heartbeat") continue; // refused by inServiceProblems
+          let v: string | null;
+          try { v = await (b.kind === "heartbeat" ? io.bus.listen(testGa, b.windowMs) : io.bus.groupRead(testGa)); }
+          catch (e) { harness(`witness ${b.label}`, `the witness broke off: ${errText(e)}`); continue; }
+          const head = { kind: b.kind, label: b.label, gas: { object: testGa } };
+          const res: BehaviourResult = v === null
+            ? { ...head, state: "fail", detail: b.kind === "heartbeat" ? `no telegram on the test address within ${b.windowMs}ms` : "no GroupValueResponse on the test address" }
+            : b.expectValue && v !== b.expectValue
+              ? { ...head, state: "fail", detail: `the test address answered 0x${v}, expected 0x${b.expectValue}` }
+              : { ...head, state: "pass", detail: `the test address answered 0x${v}` };
+          behaviours.push(res);
+          io.log(`behaviour ${b.label}: ${res.detail}`);
+        }
+        persistence = await persist();
+        if (persistence) persistenceOf = "flashLinks";
+        await io.api.setLinks(obj.refId, []);
+        await onlyTheStep("flashLinks", {}, () => io.api.flashDry());
+        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks", false);
+        const unlinked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
+        out.links.delete(obj.refId);
+        await io.settle(2000);
+        await settled("flashLinks", "after the flashLinks revert");
+        cap("flashLinks", "pass", `linked object ${obj.number} to the test address (${linked}), read back; unlinked (${unlinked}), zero drift on read-back`, { object: obj.number });
+      }
+
+      if (phase === "structural") await thereAndBack("structuralFlash", si.structural!, findParam(view!, si.structural!.paramRefId)!.value);
+
+      if (phase === "fullDownload") {
+        // The configuration found, written whole. The dry run must offer a write; afterwards the
+        // device must hold exactly what it held.
+        let dry: FlashResult;
+        at = "fullDownload preflight";
+        await onlyTheStep("fullDownload preflight", {}, () => io.api.flashDry());
+        try { dry = await io.api.downloadDry(); } catch (e) { throw new Stop("fullDownload preflight", `dry run refused: ${errText(e)}`); }
+        if (dry.kind !== "dryRun") throw new Stop("fullDownload preflight", `dry run reported ${dry.kind}`);
+        downloadOut = true;
+        at = "fullDownload";
+        const done = checkWritten(await io.chan.fullDownload(), "fullDownload", false);
+        downloadOut = false;
+        await io.settle(3000);
+        await settled("fullDownload", "after the full download");
+        cap("fullDownload", "pass", `the configuration found, downloaded (${done}), zero drift on read-back`);
+        if (!si.link) { persistence = await persist(); if (persistence) persistenceOf = "fullDownload"; }
+      }
+
+      if (phase === "final") {
+        // The read-backs of the channel under test after each step decoded both parts completely and
+        // matched the configuration found.
+        if (channelReadOk) {
+          cap("readParams", "pass", "parameter image read back and decoded, equal to the configuration found");
+          cap("readLinks", "pass", "group tables read back and decoded, no gaps, equal to the configuration found");
+        }
+        const pDry = await io.api.flashDry();
+        const gDry = await io.api.flashGaDry();
+        restore = pDry.kind === "unchanged" && gDry.kind === "unchanged"
+          ? { state: "pass", detail: "the device holds the configuration it was found with: parameter and GA flash dry runs unchanged" }
+          : { state: "fail", detail: `after the run the parameter flash dry run reports ${pDry.kind} and the GA flash dry run ${gDry.kind}` };
+      }
+    }
+  } catch (e) {
+    stopped = e instanceof Stop ? { phase: e.phase, detail: e.detail } : { phase: at, detail: errText(e) };
+    io.log(`stopped in ${stopped.phase}: ${stopped.detail}`);
+    if (out.params.size || out.links.size) restore = await undo(io, out, found!);
+    else if (downloadOut) restore = { state: "fail", detail: "the full download broke off: the device may hold its application unloaded. Recover by hand from the configuration found and the server's backups" };
+  }
+
+  if (stopped) cap(stopped.phase, "fail", stopped.detail);
+  const ok = !stopped
+    && capabilities.every((c) => c.state !== "fail")
+    && behaviours.every((b) => b.state === "pass")
+    && (persistence === undefined || persistence.state === "pass")
+    && restore?.state === "pass";
+  return { ok, capabilities, behaviours, persistence, persistenceOf, restore, found, stopped };
+}
+
+// After a stop with a change still on the device (or possibly on it): set the whole project back to
+// the configuration found, then write the difference with the kind of flash the change went out
+// with, over the API. A dry run that finds nothing to write means the device never took the change.
+// Never a full download.
+async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration): Promise<NonNullable<InServiceResult["restore"]>> {
+  const done: string[] = [];
+  const fail = (d: string) => ({ state: "fail" as const, detail: `${done.length ? `${done.join("; ")}; ` : ""}${d}. Recover by hand from the configuration found and the server's backups` });
+  try {
+    const view = await io.api.getConfig();
+    for (const p of allParams(view)) if (found.params[p.refId] !== undefined && p.value !== found.params[p.refId]) await io.api.setParam(p.refId, found.params[p.refId]);
+    for (const c of allComObjects(view)) if (!sameLinks(c.gaRaws ?? [], found.links[c.refId] ?? [])) await io.api.setLinks(c.refId, found.links[c.refId] ?? []);
+    const left = apartFromStep(await io.api.getConfig(), found);
+    if (left.length) return fail(`the project could not be set back to the configuration found (${left.slice(0, 5).join(", ")}); nothing written`);
+    const structural = [...out.params.values()].some((p) => p.structural);
+    const pDry = await io.api.flashDry();
+    if (pDry.kind === "dryRun") {
+      if (!!pDry.structural !== structural) return fail(`the parameter revert would ${pDry.structural ? "" : "not "}be a structural flash, unlike the change; not written`);
+      const r = await io.api.flashReal();
+      if (r.kind !== "flashed" || r.verified !== true) return fail(`parameter revert ${r.kind}, verified=${String(r.kind === "flashed" ? r.verified : "-")}`);
+      done.push("parameters written back");
+      await io.settle(3000);
+    } else done.push(`parameters: dry run ${pDry.kind}, nothing to write back`);
+    const gDry = await io.api.flashGaDry();
+    if (gDry.kind === "dryRun") {
+      if (gDry.structural) return fail("the link revert would be a structural flash; not written");
+      const r = await io.api.flashGaReal();
+      if (r.kind !== "flashed" || r.verified !== true) return fail(`link revert ${r.kind}, verified=${String(r.kind === "flashed" ? r.verified : "-")}`);
+      done.push("links written back");
+      await io.settle(3000);
+    } else done.push(`links: dry run ${gDry.kind}, nothing to write back`);
+    const drift = await noDrift(io, await io.api.readBack(), "after the undo");
+    return drift ? fail(drift) : { state: "pass", detail: `${done.join("; ")}; read-back without drift` };
+  } catch (e) {
+    return fail(`undo aborted: ${errText(e)}`);
+  }
+}

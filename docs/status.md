@@ -147,9 +147,10 @@ What each row does not show:
   and the flash reads back only after the restart, because the firmware returns the old flash
   contents until then ([findings.md](findings.md) §16). It answers a group read on an object only once
   that object has had a value since the restart: a read before the object first sends goes
-  unanswered. Persistence is the restart each write ends with. The smoke spec keeps both surgical
-  capabilities out of automated runs, because recovering a failed run needs the device's serial
-  console.
+  unanswered. Persistence is the restart each write ends with. The from-factory smoke spec keeps both
+  surgical capabilities out of automated runs, because recovering a failed run needs the device's
+  serial console; the device-in-service spec drives them on a commissioned unit, each reverted, and
+  has not run.
 - **Theben DALI gateway.** ETS 6 was captured running a full download (after unloading the
   application), its partial form on a unit holding the application, a parameter, a group-address
   and a revert download. Busforge's plans equal them (`tools/etsdiff.test.ts`): ETS's bracket in each,
@@ -385,6 +386,7 @@ spec states why no behaviour is observable.
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure, plain | MV-07B0 | hardware | hardware | hardware, both channels | **met** in plain mode; not rerun since the device went secure (the plain spec needs a master reset first) |
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
+| `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted) | MV-07B0 | not proven | not proven | not proven | **not met** |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
@@ -397,7 +399,8 @@ spec states why no behaviour is observable.
   hardware-proven, driven through the production endpoints. It runs in a live installation, so the
   spec stays unrun: driving it would program a device somebody depends on. Its two surgical
   capabilities are excluded from automated runs, so even a green run could not clear the bar for
-  them.
+  them. The device-in-service spec drives exactly those two on a commissioned unit, each reverted, with the
+  full download declared unsafe there; it has not run.
 
 ## What green tests prove, and what they do not
 

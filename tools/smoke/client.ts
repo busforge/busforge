@@ -80,6 +80,9 @@ export class Client {
   deleteConnection(id: string) { return this.call<unknown>("DELETE", `/api/connections/${id}`); }
   // Set an object's links outright (an empty list unlinks it); the restore after a run uses it.
   setLinks(pid: string, did: string, comObjRefId: string, gaRaws: number[]) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws, lang: "de" }); }
+  // Discard the project's edits of the device: parameters and links take the baseline the last
+  // read-back set, i.e. what the device holds.
+  revert(pid: string, did: string) { return this.call<DeviceConfigView>("POST", `/api/projects/${pid}/devices/${did}/revert`, { lang: "de" }); }
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.submitAndWait<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>(pid, `/api/projects/${pid}/devices/${did}/assign-ia`, "assign-ia"); }

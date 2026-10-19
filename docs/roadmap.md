@@ -112,9 +112,17 @@ depends on is hardware-proven.
 
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
-- **OpenKNX surgical flashes under an automated run.** Compare surgical flash, full download and ETS
-  partial download (on a unit with a matching ETS project) on one RaumController, each followed by a
-  read-back, a bus check and a power cut.
+- **OpenKNX surgical flashes under an automated run.** The device-in-service spec
+  (`openknx-raumcontroller-in-service`) drives the parameter flash and the GA flash on a commissioned
+  unit, each reverted and read back, with a bus check and a restart; it has not run. Still open: the
+  comparison with the full download and an ETS partial download (on a unit with a matching ETS
+  project), and a power cut.
+- **Devices in service with KNX Data Secure.** The smoke runner's device-in-service mode opens its own
+  connections (fingerprint, witness, restart) in plain, so a secured unit stops at the fingerprint.
+  Taking the tool key from an imported project, as `import-knxproj` does, would let such a unit run.
+- **Input-to-output behaviours on a device in service.** The mode places one test link, so only a
+  behaviour of that one object (`output`, `heartbeat`) can be observed; an input driving an output
+  needs two.
 - **Devices that answer an opaque device descriptor** (IP interfaces) need a different read path or
   secure support; which one is not decided.
 - **KNX IP interfaces as targets.** Evaluate the captured ETS full download of the MDT IP

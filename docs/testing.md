@@ -230,7 +230,8 @@ what the product cannot know:
 | Field | Meaning |
 |---|---|
 | `device` | `appRef`, `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op |
-| `provision` | `skip-if-present` (the device already answers on its address, unattended), `require-prog-mode` (the operator presses the programming button) or `import-knxproj` (the project is imported from `device.knxprod`, password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; the only way a KNX Data Secure device's keys reach the server. The run ends with a restore to the file's configuration, also after a failure) |
+| `provision` | `skip-if-present` (the device already answers on its address, unattended), `require-prog-mode` (the operator presses the programming button), `import-knxproj` (the project is imported from `device.knxprod`, password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; the only way a KNX Data Secure device's keys reach the server. The run ends with a restore to the file's configuration, also after a failure) or `in-service` (a commissioned device in use, see [Devices in service](#devices-in-service)) |
+| `inService` | `in-service` only: the fingerprint and the steps the run may write |
 | `precondition` | A human-run step printed before provisioning |
 | `configure` | Ordered baseline steps (`set` a parameter, `link` a com-object) that bring the device to a known, linkable state |
 | `behaviours` | The bus-observable functions to prove. Empty means the device is proven to the byte only, which the report states plainly instead of hiding |
@@ -259,6 +260,119 @@ behaviours such a run adds:
 
 The saved connection is matched on host and port (`BUSFORGE_BENCH_HOST`, `BUSFORGE_BENCH_PORT`,
 default 3681), since one host can offer several interfaces.
+
+### Devices in service
+
+A device that is commissioned and in use (a unit in a building, not a bench device) gets a spec with
+`provision: "in-service"` (`tools/smoke/inservice.ts`). The run never brings such a device to a known
+state: the configuration it holds **is** the state. The run takes that configuration over by
+read-back and writes only the steps the spec names, each set back and read back before the next. It
+never erases, never runs a baseline configuration or the fuzzer, and runs a full download only when
+the spec offers one **and** the operator passes `--full-download`. Records go through the same
+evidence path as every other run, in both channels.
+
+#### The sequence
+
+```
+fingerprint     read the spec's interface object properties; any mismatch stops the run
+adopt           read-back; the project takes the device's values; a second read-back under them must
+                resolve every association; parameter and GA flash dry runs must report unchanged (the
+                server keeps a backup of the device's memory with each); the configuration found is
+                recorded
+capabilities    every write capability the product claims has a step in the spec or an `unsafe`
+                reason; readParams and readLinks are claimed; every step's target is checked
+params          parameter flash there, parameter flash back, read-back without drift
+links           GA flash of the unlinked object to the --test-ga address, read-back, witness behaviours,
+                A_Restart + read-back (persistence), GA flash back, read-back without drift
+structural      structural flash there, structural flash back, read-back without drift
+fullDownload    only with --full-download: the configuration found, downloaded, read-back without drift
+final           parameter and GA flash dry runs report unchanged
+```
+
+A phase runs only when the spec has its step. Every write is preceded by a dry run that must offer a
+change of the expected kind (surgical, or structural for the structural step); a coded refusal, such
+as `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, stops the run and is never routed to a download. Before
+each write the project must hold the configuration found plus the step and nothing else, and the
+other kind of write (parameters or group tables) must report `unchanged`, so an edit the step did not
+ask for never goes out with it. After each step the read-back must equal the configuration found.
+
+When the run stops with a change still out, it sets the whole project back to the configuration
+found and writes the difference with the same kind of flash over the API, then reads back; it never
+falls back to a full download. A full download that breaks off is not undone: the device may hold
+its application unloaded (a full download unloads before it loads), and the run reports exactly that.
+A stop it cannot undo says so and names the configuration found (in the report) and the server's
+backups (with the project, which a run on a device in service always keeps) as the starting point for
+a recovery by hand.
+
+A stop before a step's first write (`<capability> preflight`) and a failure of the runner's own
+connections (`harness: …`, a witness or restart that broke off) fail the run but produce no evidence
+record: the device did nothing the record could state. Records of a device in service name the
+configuration as "the device's own configuration, taken over by read-back", its origin as unknown,
+and never the test address.
+
+Persistence is checked once, while the test link is placed, and the record attributes it to the GA
+flash only. A spec without a link step but with a requested full download checks it after the
+download instead.
+
+#### Writing a spec
+
+One file per product in `tools/smoke/specs/`, registered in `specs/index.ts`. A spec declares device
+data and the steps, nothing else:
+
+```ts
+export const exampleInService: DeviceSpec = {
+  id: "<product>-in-service",
+  device: { appRef: "…", productRef: "…", ia: "1.1.x", mask: "MV-…" },   // verbatim, as for every spec
+  provision: "in-service",
+  inService: {
+    fingerprint: [
+      { name: "application id", object: 4, pid: 13, expect: "00faa01255" },
+      { name: "version", object: 0, pid: 25, expect: "0945" },
+    ],
+    param: { paramRefId: "…_R-…", value: "2" },                          // flashParams
+    link: { comObjRefId: "…_O-1_R-…" },                                  // flashLinks
+    structural: { paramRefId: "…_R-…", value: "1" },                     // structuralFlash, optional
+    fullDownload: true,                                                  // offered, optional
+  },
+  configure: [],
+  behaviours: [{ kind: "output", label: "…", comObjRefId: "…_O-1_R-…", expectValue: "01" }],
+  unsafe: [{ capability: "fullDownload", reason: "…" }],                 // each claimed write without a step
+};
+```
+
+| Field | Rule |
+|---|---|
+| `inService.fingerprint` | At least one property, `expect` as lower-case hex. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. Use the application id (the PID 13 record) and a firmware version the unit reports (object 0 PID 25 or PID 9; a record with outcome `refused` is a property the unit does not have) |
+| Refs | Every `paramRefId` and `comObjRefId` is the full ref as `GET .../config` lists it; a ref that matches only by its end is refused |
+| `inService.param` | A parameter the unit shows, writable, in the parameter image, whose change leaves the com-object table alone (a delay, a threshold, a number; not a channel function or anything that shows or hides objects). `value` must differ from what the unit holds. The run reads the unit's own value and writes it back |
+| `inService.link` | An object the unit holds **unlinked**, with its read flag set when the behaviour is an `output`. The test group address is not in the spec (it belongs to the installation): the operator gives it with `--test-ga=<main/middle/sub>`. It must be unused **in the whole installation**: the linked object may send on it (on every restart, for one), and any device listening there would act on it. The run refuses an address an object of the unit uses, or one on which anything answers a read or sends within 5 s, but it cannot see a device that only listens; checking that is the operator's job. The run refuses a linked object rather than add to or replace a link |
+| `inService.structural` | Only where the product claims `structuralFlash`: a parameter whose change alters the com-object table, and the value to set. The dry run must offer a structural flash |
+| `inService.fullDownload` | `true` offers a full download of the configuration found. It runs only with `--full-download` on the command line; without it the capability is reported `unproven` |
+| `behaviours` | `output` (a GroupValueRead on the test address is answered, optionally with `expectValue`) or `heartbeat` (the object sends on the test address within `windowMs`), on the linked object, without `ga` or `enable`. Empty leaves the link proven to the byte only, which the records state |
+| `unsafe` | Every write capability the product claims (`flashParams`, `flashLinks`, `structuralFlash`, `fullDownload`) without a step here, with the reason. The run stops before its first write when one is missing, and when a step names a capability the product does not claim |
+| Steps | At least one of `param`, `link`, `structural`, `fullDownload`. `readParams` and `readLinks` must be claimed by the product (the run takes the configuration over by reading it); they pass on the channel's own read-backs after the steps |
+| `configure`, `fuzz`, `structuralTrigger`, `precondition` | Must be empty or absent; the spec is refused otherwise |
+
+`bun test tools/smoke/inservice.test.ts` checks every registered device-in-service spec against
+these rules, so a spec that breaks one fails `bun run check`.
+
+Not supported in this mode: a KNX Data Secure device (the runner's own connections for the
+fingerprint, the witness and the restart are plain, so such a unit gets no answer and the run stops at
+the fingerprint), and `inputToOutput` behaviours (they need two links).
+
+#### Running it
+
+```bash
+bun run tools/smoke/runner.ts <spec-id> --plan --test-ga=<a/b/c>      # the sequence, no server, no bus
+BUSFORGE_BENCH=1 BUSFORGE_BENCH_HOST=<interface> bun run smoke <spec-id> --channel=api|ui --test-ga=<a/b/c> [--full-download]
+```
+
+`--plan` prints the reads and writes in the order the run performs them (and refuses a spec or
+options the run would refuse). `--test-ga` is needed whenever the spec has a link step. A device-in-service spec
+runs only when named: running every spec leaves it out. `BUSFORGE_BENCH_HOST`/`BUSFORGE_BENCH_PORT`
+name the interface that reaches the unit, which must be a saved IP connection. The runner's own
+connections (fingerprint, witness, restart) are KNXnet/IP tunnelling over TCP to that host and port;
+an interface without TCP tunnelling stops the run at the fingerprint.
 
 ### The run
 
@@ -335,7 +449,7 @@ BUSFORGE_BENCH=1 bun run smoke <spec-id> --channel=api|ui [--seed=N]
 | `BUSFORGE_API` | The server (default `http://localhost:3000`) |
 | `BUSFORGE_WEB` | The web app, `ui` channel only (default `http://localhost:5173`) |
 
-Omitting the spec id runs every spec. `--channel` selects one channel per invocation; a device
+Omitting the spec id runs every spec except the device-in-service ones. `--channel` selects one channel per invocation; a device
 counts as done only with both green, so it is run once per channel. `bun run smoke` implies
 `--report`, writing one JSON artifact per run under `tools/smoke/reports/` (git-ignored) with the
 spec, channel, seed, every verdict and the raw `FlashResult`s (`--report=<dir>` picks another directory
