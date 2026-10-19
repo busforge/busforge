@@ -37,7 +37,7 @@ limit, because it records drift only for the refs the view exposes.
 | `Module` instantiation | full | scope rewrite, text-argument substitution, com-object base numbering; arguments from the device's `0.xml`, or resolved from `<Allocators>` for a device placed from the catalog |
 | `Repeat` | full | transparent container; expands through module instances |
 | `Assign` / union | full | |
-| `TextParameterRefId` substitution | partial | `{{0}}` and `{{0:default}}` in the texts of `Channel`, `ParameterBlock`, `ParameterSeparator` and `ComObjectRef`/`ComObject`; see [Text placeholders](#text-placeholders). A `ParameterRef`'s own `Text` is not read, so its placeholder is not shown |
+| `TextParameterRefId` substitution | partial | `{{0}}` and `{{0:default}}` in the texts of `Channel`, `ParameterBlock`, `ParameterSeparator`, `ParameterRef` and `ComObjectRef`/`ComObject`; not in a `SuffixText`, and with the open cases listed under [Text placeholders](#text-placeholders) |
 | `ChannelIndependentBlock` | full | transparent container |
 | `Channel` | full | heading shown as a navigable section, with `{{0}}` / `{{0:default}}` substitution |
 | `Button` | parsed, inert | the scripted action is shown as a named element, not as an "unsupported" marker; it does nothing |
@@ -74,7 +74,8 @@ Read and honoured:
 | `Enumeration` | `DisplayOrder` | dropdown options in ETS order |
 | `ParameterRefRef` | `IndentLevel` | rows are nested; per-row `DisplayOrder` is a no-op because within a block document order already equals it |
 | `Channel` | `Text` / `Number` / `TextParameterRefId` | channel sections become navigable groups with `{{0}}` / `{{0:default}}` substituted |
-| `ParameterBlock`, `ParameterSeparator`, `ComObjectRef`, `ComObject` | `TextParameterRefId` | `{{0}}` / `{{0:default}}` substituted, see [Text placeholders](#text-placeholders) |
+| `ParameterBlock`, `ParameterSeparator`, `ParameterRef`, `ComObjectRef`, `ComObject` | `TextParameterRefId` | `{{0}}` / `{{0:default}}` substituted, see [Text placeholders](#text-placeholders) |
+| `ParameterRef` | `Text`, `SuffixText` | shown instead of its `Parameter`'s, as the parameter's label and unit and as the heading of a block named by `ParamRefId`; see [Parameter labels](#parameter-labels) |
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
@@ -85,7 +86,6 @@ Not read, with the reason:
 
 | Where | Attribute | Why it is still open |
 |---|---|---|
-| `ParameterRef` | `Text`, `TextParameterRefId` | a parameter is labelled by its `Parameter`'s text; the override a `ParameterRef` carries, and the placeholder in it, are not shown |
 | `ParameterBlock` | `ShowInComObjectTree` | a com-object grouping signal; the com-object list is flat today |
 | `Parameter` | `InitialValue` | present once in the catalogues, on a hidden `Access="None"` parameter and equal to `Value`. Honouring it would have zero visible effect. It matters only for "unchanged since factory" detection, which Busforge does not do. Left unread deliberately. |
 | `Parameter` | `BaseValue` | on read-only mirror parameters inside modules, pointing at a module `Argument`. The per-instance numbering it describes is resolved through the module offset path instead. |
@@ -98,6 +98,28 @@ self-checking is a re-runnable audit: a script that, given a project's applicati
 attributes present in the data but never read. That script does not exist
 ([roadmap.md](roadmap.md)). Until it does, a newly ignored attribute is found only by review, not
 automatically, and the risk this table is meant to remove stays open.
+
+## Parameter labels
+
+A parameter row is labelled by its `ParameterRef`'s own `Text` where the ref declares one, else by
+its `Parameter`'s; its unit is the ref's `SuffixText`, else the `Parameter`'s. Each is translated
+under the element it comes from, so a ref's text takes the ref's translation, and the ref's
+default-language text where the view's language has none. Leading spaces in
+either text indent the row, as on a `Parameter`. The ref's `TextParameterRefId` feeds the
+placeholder in its text: the OpenKNX RaumController labels a 1-Wire group `{{0:Gruppe 1}}`, which
+reads `Gruppe 1` until the group's name is filled in. A block headed by a parameter (`ParamRefId`)
+takes the same text; a ref without a `TextParameterRefId` of its own is fed by the block's. Module
+arguments in a ref's text and suffix are substituted, a placeholder in a suffix is not.
+
+An empty `SuffixText` clears the `Parameter`'s unit: the RaumController clears a temperature unit
+this way on refs that do not hold a temperature. An empty `Text` keeps the `Parameter`'s label.
+
+Not proven against ETS, because no ETS view of the case was compared: whether ETS shows an empty
+`Text` as a row without a label instead (some Theben catalogues author it on visible rows); which
+`TextParameterRefId` feeds a block heading taken from a ref when both the ref and the block name one
+(no catalogue in the corpus does); and that a ref without a `Text` of its own
+but with a translation of one (some catalogues carry these) takes its `Parameter`'s translated
+text, falling back to the ref's translation only while the `Parameter`'s text is empty.
 
 ## Text placeholders
 

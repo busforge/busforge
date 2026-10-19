@@ -51,7 +51,9 @@ export interface CfgParam {
   // (ModuleInstance args) or, for a from-scratch device, by re-running the allocators.
   baseOffsetArg?: string;
 }
-export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; }
+// `text`/`suffix` are the ref's own Text/SuffixText, which ETS shows instead of its Parameter's;
+// `textParamRefId` feeds the {{0}} / {{0:default}} placeholder in that text.
+export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; text?: string; suffix?: string; textParamRefId?: string; }
 export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; mask?: Buffer; }
 // An absolute-addressed memory segment (Code/AbsoluteSegment). Used by the MV-0705
 // parameter model, where parameters live in an EEPROM segment at a FIXED address
@@ -211,8 +213,8 @@ export interface AppConfig {
   allocators: Map<string, Allocator>; // Static/Allocators, for from-scratch instance resolution
   hasModules: boolean;
   dca?: DcaInfo;
-  // Leading whitespace from a Parameter Text used as a faux-indent (nesting a sub-parameter
-  // under the one above), keyed by Parameter Id. The XML parser trims attribute values, so
+  // Leading whitespace from a Parameter or ParameterRef Text used as a faux-indent (nesting a
+  // sub-parameter under the one above), keyed by Parameter or ParameterRef Id. The XML parser trims attribute values, so
   // this is captured from the raw source and reattached to the label. See parseParamFauxIndent.
   paramFauxIndent: Map<string, string>;
 }
@@ -244,14 +246,14 @@ function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
 const num = (s: string | undefined): number | undefined => (s === undefined ? undefined : Number(s));
 const bool = (s: string | undefined): boolean => s === "Enabled" || s === "true";
 
-// ETS app authors use leading whitespace in a Parameter's Text as a faux-indent to nest a
+// ETS app authors use leading whitespace in a Parameter's (or ParameterRef's) Text as a faux-indent to nest a
 // sub-parameter visually under the one above (a workaround for ETS's layout limits, e.g.
 // "    Send cyclically every" under "Cyclic sending"). The XML parser trims attribute values,
 // so we recover that leading whitespace from the raw source here and reattach it to the label
 // later, rendering the author's deliberate nesting faithfully. Intentional, not noise.
 function parseParamFauxIndent(xml: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /<Parameter\b([^>]*?)\/?>/g;
+  const re = /<Parameter(?:Ref)?\b([^>]*?)\/?>/g;
   for (let m; (m = re.exec(xml)); ) {
     const attrs = m[1];
     const id = /\bId="([^"]*)"/.exec(attrs)?.[1];
@@ -512,7 +514,7 @@ function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
   const container = firstByTag(staticKids, "ParameterRefs");
   for (const r of container ? childrenByTag(kidsOf(container), "ParameterRef") : []) {
     const a = attrsOf(r);
-    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access, displayOrder: a.DisplayOrder !== undefined ? Number(a.DisplayOrder) : undefined });
+    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access, displayOrder: a.DisplayOrder !== undefined ? Number(a.DisplayOrder) : undefined, text: a.Text, suffix: a.SuffixText, textParamRefId: a.TextParameterRefId });
   }
   return refs;
 }

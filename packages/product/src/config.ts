@@ -1,4 +1,4 @@
-import type { AppConfig, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import type { AppConfig, CfgParam, CfgParamRef, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
@@ -372,6 +372,17 @@ export function buildDeviceConfig(
     return def ? [def] : [];
   };
 
+  // A parameter's label as ETS shows it: the ParameterRef's own Text where it declares a non-empty
+  // one (in the view's language), else its Parameter's. An empty ref Text keeps the Parameter's:
+  // whether ETS clears the label instead is not known, and dropping a label ETS shows would hide it. The ref's TextParameterRefId feeds the {{0}} /
+  // {{0:default}} in it; a Parameter has no TextParameterRefId of its own. `fallbackTp` feeds a
+  // ref that names none (a block headed by a parameter passes its own).
+  const paramRefText = (defRefId: string, ref: CfgParamRef, param: CfgParam, scope: Scope, fallbackTp?: string): string => {
+    const text = ref.text ? tr(defRefId, "Text", ref.text) : tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text);
+    const tp = ref.textParamRefId ?? fallbackTp;
+    return fillTextParam(subst(text, scope), tp ? resolve(tp, scope) ?? "" : undefined);
+  };
+
   const buildParam = (defRefId: string, scope: Scope): CfgItem | null => {
     const ref = app.refs.get(defRefId);
     if (!ref) return null;
@@ -384,8 +395,9 @@ export function buildDeviceConfig(
     const value = resolve(defRefId, scope) ?? "";
     // Reattach the author's leading-space faux-indent (the XML parser trimmed it). cap()
     // tidies the visible text; the preserved whitespace nests the row under the one above.
-    const name = (app.paramFauxIndent.get(param.id) ?? "") + cap(subst(tr(param.id, "Text", param.text) || tr(defRefId, "Text", param.text), scope));
-    const suffix = param.suffix ? subst(tr(param.id, "SuffixText", param.suffix), scope) : undefined;
+    const name = (app.paramFauxIndent.get(ref.text ? defRefId : param.id) ?? "") + cap(paramRefText(defRefId, ref, param, scope));
+    const suffixText = ref.suffix !== undefined ? tr(defRefId, "SuffixText", ref.suffix) : param.suffix ? tr(param.id, "SuffixText", param.suffix) : "";
+    const suffix = suffixText ? subst(suffixText, scope) : undefined;
     // TypeNone is a display-only element (no datapoint). A nameless one is a pure
     // ETS layout spacer with nothing to show or support; drop only that case. A
     // named one falls through and is shown (as an unsupported "Display" row).
@@ -538,9 +550,9 @@ export function buildDeviceConfig(
     if (own) return fill(own);
     const ref = n.paramRefId ? app.refs.get(n.paramRefId) : undefined;
     const param = ref ? app.params.get(ref.paramId) : undefined;
-    if (param) {
-      const t = tr(param.id, "Text", param.text) || tr(n.paramRefId!, "Text", param.text);
-      if (t) return fill(t);
+    if (ref && param) {
+      const t = paramRefText(n.paramRefId!, ref, param, scope, n.textParamRefId);
+      if (t) return t;
     }
     return fill(n.name);
   };
