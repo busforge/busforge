@@ -482,7 +482,9 @@ report a device family as working on the strength of a passing test suite.
 - **A secured full download of the Jung 400021SE has once been closed by the device.** It ended with
   `DEVICE_CLOSED_CONNECTION` (the device sent `T_Disconnect` mid-request, [findings.md](findings.md)
   §24); the writes after it verified, and the same step passes otherwise. The cause is not known.
-- **UDP tunnelling against Busforge's bridge has failed twice, not reproduced since.** A full
-  download over UDP from the containerised server died in the runtime's datagram socket
-  (`kStateSymbol`) and the bridge dropped the channel; the same download over TCP verified. The cause
-  is not known.
+- **A UDP tunnel to Busforge's bridge closes when the server stops acknowledging for two seconds**
+  ([findings.md](findings.md) §35). A write parses the application before it opens the tunnel; what it
+  still computes inside the session (images and tables from the parsed application) stayed inside that
+  window for the Jung 400021SE's secured full download from a server limited to a quarter of a CPU
+  core. That is not shown for every application on every host. A closed tunnel ends the write with
+  `TUNNEL_CLOSED`; over TCP the bridge needs no acknowledgement.

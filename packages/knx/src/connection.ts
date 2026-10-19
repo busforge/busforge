@@ -93,6 +93,9 @@ export class KnxIpTunnel implements KnxTransport {
   // Counts connects: a heartbeat loop of an earlier channel stops once a later connect began.
   private generation = 0;
   private ackWaiter: { seq: number; resolve: () => void } | null = null;
+  // Every UDP send still waiting for its ACK (a T_ACK can go out beside a request), so a closing
+  // channel releases all of them, not only the one ackWaiter matches.
+  private ackReleases = new Set<() => void>();
   // Per-send wait for a tunnelling ACK over UDP; an instance field so a test can shorten it.
   private ackTimeoutMs = 1500;
   // TCP: the sends waiting for the gateway's L_Data.con, oldest first, and how long each may wait (an
@@ -159,9 +162,21 @@ export class KnxIpTunnel implements KnxTransport {
     });
   }
 
-  private closeSocket() {
-    if (this.mode === "tcp") this.tcpSock?.end();
-    else this.sock?.close();
+  // The socket a teardown began on: a reconnect while the teardown still awaits its DISCONNECT_REQ
+  // has replaced this.sock, and the new one must stay open.
+  private currentSocket(): { close: () => void } | undefined {
+    if (this.mode === "tcp") { const t = this.tcpSock; return t && { close: () => t.end() }; }
+    return this.sock;
+  }
+  private closeSocket(sock = this.currentSocket()) {
+    sock?.close();
+  }
+  // A send waiting for its tunnelling ACK on a channel that is closing gets none; it goes back to its
+  // loop at once, which then fails as TUNNEL_CLOSED.
+  private releaseAck() {
+    this.ackWaiter = null;
+    const pending = [...this.ackReleases]; this.ackReleases.clear();
+    for (const release of pending) release();
   }
 
   // Each connect opens a new channel: its sequence counter starts at 0, and the events of a socket
@@ -173,12 +188,14 @@ export class KnxIpTunnel implements KnxTransport {
     this.stopHeartbeat();
     if (this.mode === "tcp") return this.connectTcp();
     const sock = this.sock = this.createSocket();
+    // Open from here on, so a disconnect while the socket binds closes it.
+    this.closed = false;
     await new Promise<void>((r) => this.sock.bind(0, () => r()));
+    if (this.closed || sock !== this.sock) throw new KnxError("TUNNEL_CLOSED", "the tunnel was closed while it was connecting");
     // The socket callback wants void, so handing it the async handler dropped the promise: a
     // rejection inside (a failed TUNNEL_ACK send) escaped as an unhandled rejection with no clue
     // where it came from. Failing to answer ONE datagram is recoverable — the gateway retransmits —
     // so the tunnel stays up, but it is reported rather than swallowed.
-    this.closed = false;
     sock.on("message", (m) => {
       if (sock !== this.sock) return;
       void this.onMessage(m).catch((e: unknown) => {
@@ -327,6 +344,7 @@ export class KnxIpTunnel implements KnxTransport {
     if (this.closed) return;
     this.closed = true;
     this.failCons(new KnxError("TUNNEL_CLOSED", `the tunnel closed before the gateway confirmed the frame: ${reason}`));
+    this.releaseAck();
     this.stopHeartbeat();
     this.closeSocket();
     this.onClosed?.(reason);
@@ -414,11 +432,19 @@ export class KnxIpTunnel implements KnxTransport {
       return;
     }
     for (let i = 0; i < tries; i++) {
+      // The gateway can close the channel while an earlier try waits for its ACK (a DISCONNECT_REQUEST,
+      // a heartbeat that went unanswered); the socket is closed with it, and Bun's dgram answers a send
+      // into it with a bare TypeError instead of a coded error.
+      if (this.closed) throw new KnxError("TUNNEL_CLOSED", "the tunnel is closed");
       const seq = this.txSeq;
       const frame = knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi]));
-      const ack = new Promise<boolean>((resolve) => { this.ackWaiter = { seq, resolve: () => resolve(true) }; setTimeout(() => resolve(false), this.ackTimeoutMs); });
-      await this.send(frame);
-      if (await ack) { this.txSeq = (this.txSeq + 1) & 0xff; return; }
+      let release = (): void => undefined;
+      const ack = new Promise<boolean>((resolve) => { this.ackWaiter = { seq, resolve: () => resolve(true) }; release = () => resolve(false); setTimeout(release, this.ackTimeoutMs); });
+      this.ackReleases.add(release);
+      try {
+        await this.send(frame);
+        if (await ack) { this.txSeq = (this.txSeq + 1) & 0xff; return; }
+      } finally { this.ackReleases.delete(release); }
     }
     throw new KnxError("TUNNEL_ACK_TIMEOUT", "tunnelling ack timeout");
   }
@@ -466,14 +492,19 @@ export class KnxIpTunnel implements KnxTransport {
   }
 
   async disconnect() {
+    // Already torn down (by the gateway, see reap, or by an earlier disconnect): the socket is closed,
+    // and closing it again throws in Bun's dgram.
+    if (this.closed) return;
     // Stop answering FIRST. The DISCONNECT_REQ below still goes out, but anything that arrives from
     // here on belongs to a channel that is ending, and ACKing it would mean writing into a socket
     // this method is about to close.
     this.closed = true;
+    const sock = this.currentSocket();
     this.failCons(new KnxError("TUNNEL_CLOSED", "the tunnel was closed before the gateway confirmed the frame"));
+    this.releaseAck();
     this.stopHeartbeat();
     const controlHpai = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
     try { await this.send(knxFrame(SVC.DISCONNECT_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), controlHpai]))); } catch { /* teardown: the gateway may be gone; the channel is closed either way */ }
-    this.closeSocket();
+    this.closeSocket(sock);
   }
 }

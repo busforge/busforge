@@ -980,3 +980,26 @@ does not re-arm it. So two downloads with no read of PID 30 between them add 2, 
 read between add 4, whichever tool runs them. No download writes PID 30, and Busforge's
 download paths never read it; the collector does (`tools/collect.ts` reads the device object's
 properties), so a package taken between two downloads changes what the second one does to the counter.
+
+## 35. A UDP tunnel dies when its client stops to think
+
+Over KNXnet/IP UDP every TUNNELLING_REQUEST needs a TUNNELLING_ACK within 1 s; a server repeats an
+unacknowledged one once and then disconnects (3/8/4). That includes the `L_Data.con` of the client's own
+frame, which arrives a few tens of milliseconds after the client sent it. A client that starts a long
+computation right after a frame therefore loses its channel two seconds into it, without having sent
+anything wrong. Busforge's bridge enforces this exactly. Over TCP nothing is acknowledged, and the same
+pause costs nothing. Whether a given KNX IP interface enforces it is not known.
+
+Parsing an application program is such a computation: about a second on a fast machine for a large one
+(the OpenKNX RaumController's is 76 MB of XML), several on a slow host. A server limited to a quarter of
+a CPU core that parses the Jung 400021SE's application (26 MB) inside the device session loses its UDP
+channel to the bridge about 2.5 s after the tunnel opens, in every full download. Busforge parses the
+application before it opens the session and takes the load procedures from that parse; from the same
+server the same downloads verify.
+
+A send into the closed socket is no help in finding this. The tunnel closes its socket on the server's
+DISCONNECT_REQUEST, and Bun's `node:dgram` answers a later send with a bare `TypeError` (`null is not an
+object (evaluating 'kStateSymbol')`, the same on a second `close()`), where Node throws
+`ERR_SOCKET_DGRAM_NOT_RUNNING`. Neither names the closure. A send on a closed tunnel fails as
+`TUNNEL_CLOSED` without touching the socket, a send waiting for its acknowledgement when the channel
+closes included, and a disconnect of a closed tunnel does nothing.

@@ -80,6 +80,16 @@ frames (T_Connect, T_Disconnect, T_ACK) are sent without waiting. Confirmations 
 on hardware through the Busforge bridge and an MDT KNX IP interface; the timeout and a negative
 confirmation are tested against a scripted gateway only.
 
+**Over UDP the client must keep acknowledging while it works.** Every TUNNELLING_REQUEST the gateway
+sends, including the `L_Data.con` of the client's own last frame, needs its TUNNELLING_ACK within
+1 s; Busforge's bridge repeats it once and then closes the channel with a DISCONNECT_REQUEST, as the
+specification asks. A client process that is busy computing for two seconds therefore loses its UDP
+channel, while over TCP the same pause costs nothing. So a write parses the application program before
+it opens the tunnel (a large one takes seconds on a slow host) and takes its load procedures from that
+parse; inside the session it only derives the images and tables from the parsed application. Once the
+gateway has closed the channel, every further send fails as `TUNNEL_CLOSED`, a send already waiting for
+its acknowledgement included, and the device layer treats that as a link failure.
+
 ### Liveness: the client keeps its own status honest
 
 A tunnel can die under a client that never notices: the gateway reboots, the network drops, or a

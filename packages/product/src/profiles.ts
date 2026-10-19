@@ -7,7 +7,7 @@ import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceO
 import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { parseLoadProcedures, assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
+import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -1049,7 +1049,7 @@ export class SystemBProfile extends DeviceProfile {
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = this.requireCfg("full download").loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
     refuseTunnelingEntries(this.requireCfg("full download"));
     await runDeclaredChecks(dev, coverage);
@@ -1274,7 +1274,7 @@ export class SystemBProfile extends DeviceProfile {
     // The MergedProcedure fragments parameterize the proven base bracket; every
     // par-applicable fragment step must be dispositioned (executed/skip) or the flash
     // refuses. The declared CompareProp pre-flights run below, before any bus write.
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
     // Build + safety refusals. These run AFTER the session's connect/mask-check (vs before, in
     // the original), which is harmless: no device byte is written until below, and verifying we
@@ -1471,7 +1471,7 @@ export class SystemBProfile extends DeviceProfile {
   override async flashStructure(dev: KnxDevice, mask: string, ctx: StructureFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("structural flash");
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
     refuseColorChange(cfg, ctx);
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
@@ -1657,7 +1657,7 @@ export class System7Profile extends DeviceProfile {
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("parameter flash");
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = cfg.loadProcedures;
     refuse(absoluteParRefusal(proc));
     const coverage = assessParCoverage(proc, "absolute");
     // Same com-object-table staleness gate as System B: the absolute path keeps the device's
@@ -1835,7 +1835,7 @@ export class System7Profile extends DeviceProfile {
     refuseSecureTables(ctx, this.family);
     const cfg = this.requireCfg("structural flash");
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "absolute");
     refuseColorChange(cfg, ctx);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
@@ -1963,7 +1963,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
-    const proc = parseLoadProcedures(ctx.appXml);
+    const proc = cfg.loadProcedures;
     refuseTunnelingEntries(cfg);
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
