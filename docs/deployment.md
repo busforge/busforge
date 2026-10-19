@@ -4,6 +4,9 @@ Busforge ships as a **single Docker container**: the Bun server serves both the 
 web app. There is no separate frontend service, no database server, no message broker. State is one
 SQLite file plus the uploaded project files, in one directory.
 
+For a first installation, step by step, start at [install.md](install.md); this page is the
+reference behind it.
+
 ## Build
 
 ```bash

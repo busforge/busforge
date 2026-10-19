@@ -62,7 +62,18 @@ a live building. Busforge therefore refuses loudly rather than guessing quietly.
   back afterwards to verify. (A full download rebuilds every byte from the project, so its
   pre-unload backup is opt-in and off by default.)
 
-## Run it
+## Install
+
+Busforge runs as one Docker container. **[`docs/install.md`](docs/install.md)** takes you from
+nothing to a project on your bus: start the container, create an empty project or import your ETS
+project, bring in the manufacturers' product definitions, set up a KNXnet/IP or USB interface. It
+also lists the platforms Busforge has actually run on, and the update, backup and restore route.
+
+Busforge is an alpha. What it does not do yet, and the known issues, are in
+[`docs/limitations.md`](docs/limitations.md). Report a problem, or a device that works, as a
+[GitHub issue](https://github.com/busforge/busforge/issues).
+
+## Run it from source
 
 Requirements: [Bun](https://bun.sh), plus a KNXnet/IP or KNX-USB interface and your own
 `.knxproj` for the bus features.
@@ -87,16 +98,8 @@ bun run check          # last line: private corpus: present at /path/to/busforge
 
 See [`docs/testing.md`](docs/testing.md#the-private-corpus) for how those tests run and skip.
 
-Or self-host the container:
-
-```bash
-docker build -t busforge .
-docker run -p 3000:3000 -v busforge-data:/app/apps/server/data busforge
-```
-
-Then open the app, import a `.knxproj`, configure an interface, and go.
-See [`docs/deployment.md`](docs/deployment.md) for the runtime model and
-[`docs/development.md`](docs/development.md) for working on the code.
+For the container, see [Install](#install) and [`docs/deployment.md`](docs/deployment.md) for the
+runtime model; [`docs/development.md`](docs/development.md) covers working on the code.
 
 > **Writing to a device follows a real load procedure that unloads tables first.**
 > Busforge backs up the segment, writes only on a confirmed change and reads it back to
@@ -108,6 +111,8 @@ See [`docs/deployment.md`](docs/deployment.md) for the runtime model and
 Start at **[`docs/README.md`](docs/README.md)** for the full index. The most useful
 entry points:
 
+- [`docs/install.md`](docs/install.md): installation, first steps, tested platforms
+- [`docs/limitations.md`](docs/limitations.md): what Busforge does not do, and the known issues
 - [`docs/status.md`](docs/status.md): what works, on which hardware, and how far it is proven
 - [`docs/device-support.md`](docs/device-support.md): how a device is classified, and the full mask matrix
 - [`docs/findings.md`](docs/findings.md): the protocol knowledge (wire formats, load procedure, gotchas)
@@ -143,7 +148,7 @@ by, sponsored by, or certified by the KNX Association** or any device manufactur
   is legitimate interoperability.
 - The **source tree** carries no manufacturer catalogue files either: the tests that need
   real application programs read them from a private corpus outside the repository (see
-  [Run it](#run-it)). Its test suite does carry two keyring files from the xknx test suite
+  [Run it from source](#run-it-from-source)). Its test suite does carry two keyring files from the xknx test suite
   under the MIT license (`packages/project/test/fixtures/knxkeys`), which do not enter the
   container image.
 
