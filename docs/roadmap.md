@@ -203,7 +203,9 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **Hidden preserved links in the replace-device flow.** The dialog offers rows only for visible
   links, so a device with a link hidden by parameter visibility is refused with no way forward.
-- **Channel headings that stay a raw template** on one large application; reproduce before changing.
+- **Hidden linked com-objects of a module instance in the group-address device list.** A link on a
+  com-object that parameter visibility hides is listed only for objects outside module instances;
+  one inside a module instance is left out of the list without a word.
 - **A hidden parameter's old baseline shows as a change nothing can clear;** the change count should
   leave out a ref the configuration does not show, or the full download should settle it.
 - **Warn when the gateway is handed an address that is not the interface's own**, where a USB stick
