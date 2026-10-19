@@ -17,13 +17,14 @@ const UNPARSEABLE = "<";
 const untouched = new Proxy({}, { get: (_t, k) => () => { throw new Error(`the device was used: ${String(k)}`); } }) as unknown as KnxDevice;
 const failure = (p: Promise<unknown>) => p.then(() => null, (x: unknown) => x as { code?: string; message?: string });
 
+// The XML is read inside the corpus-guarded suite, never while this module loads.
 const cases = [
   // Theben DALI-Gateway KNX plus, System B: "Colour Control Type" (P-53) = 2 puts a colour in use.
-  { family: "System B", xml: catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), colourType: ["M-0048_A-9071-20-F258-O00EF_P-53_R-41", "2"] as const },
+  { family: "System B", xml: () => catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), colourType: ["M-0048_A-9071-20-F258-O00EF_P-53_R-41", "2"] as const },
   // MDT BE-06001.02, System 7, with "Time for long keypress" (P-8) declared an RGB colour.
   {
     family: "System 7",
-    xml: catalogueXml("M-0083_A-00B4-32-3919.xml.gz").replace(
+    xml: () => catalogueXml("M-0083_A-00B4-32-3919.xml.gz").replace(
       'ParameterType="M-0083_A-00B4-32-3919_PT-TimeforLongSwitch0.2C1.2D30s" Text="Time for long keypress (Basic setting)"',
       'ParameterType="M-0083_A-00B4-32-3919_PT-RGBColor" Text="Time for long keypress (Basic setting)"'),
     colourType: ["M-0083_A-00B4-32-3919_P-8_R-7", "#000000"] as const,
@@ -32,7 +33,7 @@ const cases = [
 
 for (const c of cases) {
   corpusDescribe(`${c.family}: a write takes its load procedures from the application parsed before the session`, () => {
-    const cfg = parseAppConfig(c.xml);
+    const cfg = parseAppConfig(c.xml());
     const profile = classify(cfg);
     const base = new Map<string, string>([c.colourType]);
     const [colourRef] = [...activeColorValues(cfg, base, [])].map(([ref]) => ref);
