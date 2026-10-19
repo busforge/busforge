@@ -18,6 +18,9 @@ export class CollectedUnit {
   // "object/pid/start" -> the element as answered; null where the unit refused the property.
   props = new Map<string, Buffer | null>();
   ops: string[] = [];
+  // Objects whose PID 5 no longer answers as collected: a memory-mapped load event changed their state,
+  // and no capture shows whether the unit's PID 5 follows it.
+  private pid5Unknown = new Set<number>();
   constructor(c: Collection) {
     this.mask = c.mask;
     for (const r of c.records) {
@@ -28,11 +31,20 @@ export class CollectedUnit {
     }
   }
   private prop(obj: number, pid: number, start = 1): Buffer | null {
+    if (pid === 5 && start === 1 && this.pid5Unknown.has(obj)) throw new Error(`PID 5 of object ${obj} after a memory-mapped load event: no capture shows whether the unit's PID 5 follows its state at ${MM_STATE + obj}`);
     const k = `${obj}/${pid}/${start}`;
     if (!this.props.has(k)) throw new Error(`the collection did not read property ${obj}/${pid} element ${start}`);
     return this.props.get(k)!;
   }
   state(obj: number): number { return this.prop(obj, 5)?.[0] ?? STATE.UNLOADED; }
+  // A load-state machine's state where the unit reports it: on a memory-mapped mask the byte at
+  // 46825 + LSM, else PID 5.
+  loadState(obj: number): number {
+    if (!isMemoryMappedLsm(this.mask)) return this.state(obj);
+    const b = this.mem.get(MM_STATE + obj);
+    if (b === undefined) throw new Error(`the collection did not read the state of LSM ${obj} at ${MM_STATE + obj}`);
+    return b;
+  }
 
   async connect() {}
   async disconnect() {}
@@ -64,7 +76,9 @@ export class CollectedUnit {
   }
   async memWrite(addr: number, data: Buffer) {
     // A memory-mapped System 7 unit (MV-0700/0701) takes its load controls at 0x0104 and answers each
-    // load-state machine's state at 46825 + LSM (packages/knx/src/flash.ts), and on PID 5 as well.
+    // load-state machine's state at 46825 + LSM (packages/knx/src/flash.ts). Its PID 5 agrees with that
+    // byte at rest (the Meteodata 140 S collection); no capture reads it during a load, so after an event
+    // it refuses its PID 5.
     if (addr === MM_CTRL && isMemoryMappedLsm(this.mask)) {
       const lsm = data[0] >> 4, event = data[0] & 0x0f;
       if (event === 3 && data[1] === 0) { this.props.set(`${lsm}/7/1`, data.subarray(3, 5)); this.ops.push(`absSegment:${lsm}`); }
@@ -75,7 +89,7 @@ export class CollectedUnit {
         if (!this.mem.has(MM_STATE + lsm)) throw new Error(`the collection did not read the state of LSM ${lsm} at ${MM_STATE + lsm}`);
         const state = event === 1 ? STATE.LOADING : event === 2 ? STATE.LOADED : STATE.UNLOADED;
         this.mem.set(MM_STATE + lsm, state);
-        this.props.set(`${lsm}/5/1`, Buffer.from([state]));
+        this.pid5Unknown.add(lsm);
         this.ops.push(`${ev}:${lsm}`);
       }
       return;
@@ -91,6 +105,7 @@ export class CollectedUnit {
     return { objectIndex: obj, pid, count, start, value };
   }
   async propWrite(obj: number, pid: number, data: Buffer, start = 1) {
+    if (pid === 5 && isMemoryMappedLsm(this.mask)) throw new Error(`a PID 5 write to object ${obj} on memory-mapped mask ${this.mask}: its load controls go to 0x0104, and no capture shows how it takes this`);
     if (pid === 5) {
       const set = (s: number) => this.props.set(`${obj}/5/1`, Buffer.from([s]));
       if (data[0] === 3 && data[1] === 0) { this.props.set(`${obj}/7/1`, data.subarray(2, 4)); this.ops.push(`absSegment:${obj}`); }

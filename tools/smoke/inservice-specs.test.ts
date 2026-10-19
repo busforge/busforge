@@ -149,7 +149,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         groupRead: async (ga) => ((await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links.some((l) => l.gaRaws.includes(gaRaw(ga))) ? answer : null),
         listen: async () => null,
         reboot: async () => {
-          const states = () => new Map([1, 2, 3, 4].map((o) => [o, dev.state(o) as number | null]));
+          const states = () => new Map([1, 2, 3, 4].map((o) => [o, dev.loadState(o) as number | null]));
           const before = states();
           await dev.restart();
           log.push("restart");

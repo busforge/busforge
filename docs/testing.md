@@ -384,7 +384,9 @@ these rules, so a spec that breaks one fails `bun run check`.
 `tools/smoke/inservice-specs.test.ts` (private corpus) runs every registered device-in-service spec
 against the real server routes and the real read and write paths of its family, on its unit emulated
 from a read-only collection taken before any write (`packages/product/test/collected-unit.ts`: it
-answers only what the collection holds and refuses any other read). The run must pass, make the
+answers only what the collection holds and refuses any other read; on a memory-mapped mask,
+MV-0700/0701, it keeps each load-state machine's state in the bytes at `46825 + LSM` and, after a load
+event, refuses that machine's PID 5, as no capture shows whether the unit's PID 5 follows). The run must pass, make the
 writes its plan lists, and leave the unit's memory as it found it, but for table residues, on a System B application that declares
 `DownloadInvisibleParameters="None"` the bits of parameters a reverted step left inactive, holding the
 step's value (R14), and the bits of a download marker the real unit clears after a download and the
