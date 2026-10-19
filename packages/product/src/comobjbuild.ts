@@ -232,17 +232,27 @@ export function programIdStamp(app: AppConfig): Buffer {
 // (config 0x04) following the links, set on linked objects and cleared on the rest. ETS rewrites L3
 // on a group-address download on both LSM styles (partial-download captures: the whole table on
 // the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device holding a
-// correct table both equal this. Every other byte stays as the device holds it. Layout as in
-// buildComObjectTableMv0705.
-export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>): Buffer {
+// correct table both equal this. `authored`: the objects whose flags or priority the project changed
+// since the device was last written, with the flags it gives them; their read, write and transmit
+// bits and their priority are written as the project gives them, as ETS's group-address download
+// writes a flag change (captures/mdt-be02001-ets-partial-flag-read-{off,on}.log). Every other byte
+// stays as the device holds it. Layout as in buildComObjectTableMv0705.
+export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>, authored?: ReadonlyMap<number, CfgComObjImage>): Buffer {
   if (deviceTable.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table is ${deviceTable.length} B; too short to hold its 3-byte header`);
   const out = Buffer.from(deviceTable);
   const count = out[0];
   if (3 + count * 4 > out.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table declares ${count} entries but is only ${out.length} B`);
   const beyond = [...linked].filter((n) => n >= count);
   if (beyond.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyond)} is beyond the ${count}-entry com-object table; refusing to link it`);
+  const beyondAuthored = [...(authored?.keys() ?? [])].filter((n) => n >= count);
+  if (beyondAuthored.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyondAuthored)} is beyond the ${count}-entry com-object table; refusing to write its flags`);
   for (let n = 0; n < count; n++) {
     const at = 3 + n * 4 + 2;
+    const obj = authored?.get(n);
+    if (obj) {
+      const f = obj.flags;
+      out[at] = (out[at] & ~(0x03 | 0x08 | 0x10 | 0x40)) | PRIORITY_BITS[obj.priority] | (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0);
+    }
     if (linked.has(n)) out[at] |= 0x04;
     else out[at] &= ~0x04;
   }

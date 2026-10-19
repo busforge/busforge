@@ -1286,25 +1286,49 @@ corpusDescribe("a Data Secure device: addressing and activation", () => {
 });
 
 
-// A com-object flag edited on the device page: the full download writes it (it receives the edit by
-// object number) and only a verified one adopts it as what the device holds; the surgical flashes
-// are refused while it is pending.
+// A com-object flag edited on the device page: the group-address flash writes it, as ETS's group-address
+// download does, and so does the full download; each receives the edit by object number and only a
+// verified one adopts it as what the device holds. The parameter flash does not write flags: it runs,
+// and the edit stays pending.
 corpusDescribe("an edited com-object flag", () => {
-  test("goes to the full download, which adopts it only when verified", async () => {
+  test("goes to the group-address flash and the full download, which adopt it only when verified; the parameter flash leaves it pending", async () => {
     const state = freshState();
     const { projectId, deviceId } = await mdtProject(state);
     const base = `/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}`;
     const view = (await (await handleApi(req(`${base}/config`), state))!.json()) as any;
     const o = view.blocks.flatMap((b: any) => b.items).find((i: any) => i.kind === "comObject").comObject;
-    const r = await handleApi(req(`${base}/comobject-flags`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId: o.refId, flags: { read: !o.flags.read } }) }), state);
-    expect(r!.status).toBe(200);
-    paramFlashImpl = async () => { throw new Error("the parameter flash must not be reached"); };
-    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
-    for (const route of ["flash", "flash-ga", "flash?dry=1"]) {
-      const res = (await post(state, `${base}/${route}`))!;
-      expect(res.status).toBe(409);
-      expect(((await res.json()) as any).error.code).toBe("COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD");
-    }
+    const setRead = (read: boolean | null) =>
+      handleApi(req(`${base}/comobject-flags`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId: o.refId, flags: { read } }) }), state);
+    const pending = () => getDeviceChangedKeys(state.db, projectId, deviceId).flags.size;
+    expect((await setRead(!o.flags.read))!.status).toBe(200);
+    try {
+      paramFlashImpl = async () => flashed(true);
+      await programmed(state, post(state, `${base}/flash`));
+      expect(pending()).toBe(1);
+      let ga: { changes?: ReadonlySet<number>; override?: unknown } = {};
+      gaFlashImpl = async (opts) => { ga = { changes: opts.comObjectFlagChanges, override: opts.comObjectOverrides.get(o.number) }; return flashed(false); };
+      await programmed(state, post(state, `${base}/flash-ga`));
+      expect(ga).toEqual({ changes: new Set([o.number]), override: { flags: { read: !o.flags.read } } });
+      expect(pending()).toBe(1); // not verified: nothing adopted
+      gaFlashImpl = async () => flashed(true);
+      await programmed(state, post(state, `${base}/flash-ga`));
+      expect(pending()).toBe(0);
+      // the edit back goes the same way
+      await setRead(null);
+      expect(pending()).toBe(1);
+      await programmed(state, post(state, `${base}/flash-ga`));
+      expect(pending()).toBe(0);
+      // a device found already holding the edit (unchanged against the tables built with it) takes it too
+      await setRead(!o.flags.read);
+      gaFlashImpl = async () => ({ kind: "unchanged", mask: "MV-0705", imageBytes: 1 } as FlashResult);
+      await programmed(state, post(state, `${base}/flash-ga`)).catch(() => undefined);
+      expect(pending()).toBe(0);
+      await setRead(null);
+      gaFlashImpl = async () => flashed(true);
+      await programmed(state, post(state, `${base}/flash-ga`));
+      expect(pending()).toBe(0);
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+    await setRead(!o.flags.read);
     let seen: unknown;
     try {
       downloadImpl = async (opts) => { seen = opts.comObjectOverrides.get(o.number); return flashed(false); };
@@ -1322,5 +1346,14 @@ corpusDescribe("an edited com-object flag", () => {
       await programmed(state, post(state, `${base}/download`));
       expect(getDeviceChangedKeys(state.db, projectId, deviceId).flags.size).toBe(0);
     } finally { downloadImpl = realDownload; paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+    // the structural flash writes the com-object table from the project as well, and adopts the same way
+    setDeviceParam(state.db, projectId, deviceId, "M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", "7"); // input B: two objects, the com-object table changes
+    await setRead(null);
+    expect(pending()).toBe(1);
+    try {
+      structureImpl = async () => flashed(true);
+      expect((await programmed(state, post(state, `${base}/flash`))).kind).toBe("flash-structure");
+      expect(pending()).toBe(0);
+    } finally { structureImpl = realStructure; }
   });
 });

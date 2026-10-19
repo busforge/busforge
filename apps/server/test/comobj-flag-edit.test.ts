@@ -5,12 +5,11 @@ import { join } from "node:path";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest as test } from "../../../tools/corpus-test.ts";
 import { createState, handleApi, type AppState } from "../src/app.ts";
-import { getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "../src/db/deviceparams.ts";
+import { getDeviceComObjOverrides } from "../src/db/deviceparams.ts";
 
 // Editing a com-object's flags and priority on the device page: the bits offered are the ones the
 // family's full download writes; an edit is stored as ETS stores it and counts as a change until a
-// write that authors the com-object table carries it; every write that keeps the table refuses while
-// one is pending.
+// write that authors the com-object table carries it.
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -37,8 +36,7 @@ async function setup(appFile?: string) {
   const base = `/api/projects/${id}/devices/${encodeURIComponent(deviceId)}`;
   const view = async () => j(await handleApi(req(`${base}/config`), state));
   const edit = (body: unknown) => handleApi(jreq(`${base}/comobject-flags`, "PUT", body), state);
-  const post = (op: string) => handleApi(req(`${base}/${op}?dry=1`, { method: "POST" }), state);
-  return { state, id, deviceId, base, view, edit, post };
+  return { state, id, deviceId, base, view, edit };
 }
 
 plainTest("a family whose full download cannot write the com-object table offers no flag to edit and refuses an edit", async () => {
@@ -93,17 +91,7 @@ test("malformed edits and unknown objects are refused", async () => {
   expect((await j(await s.edit({ comObjRefId: "M-TEST_A-1_O-999_R-999", flags: { read: true } }))).error.code).toBe("COMOBJ_NOT_FOUND");
 });
 
-test("while a flag edit is pending, the writes that keep the com-object table refuse and point at the full download; the download's preview runs", async () => {
+test("System B (Jung 400021SE): every flag and the priority are offered", async () => {
   const s = await setup("M-0004_A-7072-21-99A7-O000A.xml.gz");
-  const v = await s.view();
-  expect(v.comObjFlagsEditable).toEqual(["read", "write", "comm", "transmit", "update", "readOnInit", "priority"]);
-  const [o] = objects(v);
-  await s.edit({ comObjRefId: o.refId, flags: { readOnInit: !o.flags.readOnInit } });
-  for (const op of ["flash", "flash-ga"]) {
-    const r = await s.post(op);
-    expect(r!.status).toBe(409);
-    expect((await j(r)).error.code).toBe("COM_OBJECT_FLAGS_PENDING_USE_DOWNLOAD");
-  }
-  // nothing adopted by a refusal
-  expect(getDeviceComObjOverrideBase(s.state.db, s.id, s.deviceId)).toEqual([]);
+  expect((await s.view()).comObjFlagsEditable).toEqual(["read", "write", "comm", "transmit", "update", "readOnInit", "priority"]);
 }, 60_000);

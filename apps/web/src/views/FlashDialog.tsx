@@ -247,6 +247,12 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
               {partLine(tg, p)}
             </div>
           ))}
+          {/* Flags edited on the device page go with every write of the com-object table (the group-address
+              flash, as ETS's group-address download writes them, the structural flash, the full download);
+              a parameter flash alone leaves them for later. */}
+          {!!device.changes?.flags && (
+            <p className="text-xs text-muted-foreground" data-testid="flash-flags-note">{t("flash.flagsPending", { count: device.changes.flags })}</p>
+          )}
           {/* The hint ends in "retry", which a device left unloaded is not offered. */}
           {isConnError && !footer.unloaded && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
           {needsEts && <p className="text-xs text-muted-foreground" data-testid="flash-needs-ets">{t("flash.etsCompletesLoad")}</p>}

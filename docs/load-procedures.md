@@ -978,7 +978,8 @@ transmit bits and the priority of each object whose flags changed since the devi
 (the update bit of such an object set otherwise is refused, `COM_OBJECT_OVERRIDE_UNWRITABLE`), its
 linked bit from the links, and leaves every other bit as the device holds it, equal to ETS's table in
 the capture. The structural flash and the full download write them too. A verified write of any of
-the three adopts the flags it was submitted with as what the device holds. The parameter flash does
+the three adopts the flags it was submitted with as what the device holds, and so does a group-address
+flash that finds the device already holding them (`unchanged`). The parameter flash does
 not write flags; an edit stays pending through it, and the flash dialog says which flash writes it. A
 read-back takes no flag into the baseline; where it checks the image by a group-address flash dry run
 (System B, which builds the table with the project's flags), a pending flag edit counts as bytes the

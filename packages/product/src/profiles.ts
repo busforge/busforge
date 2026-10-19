@@ -4,7 +4,7 @@ import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTa
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
-import { buildDeviceConfig, type DeviceCapabilities } from "./config.ts";
+import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
@@ -759,6 +759,9 @@ export interface GaFlashCtx extends WriteGate {
   // As ParamFlashCtx.stampRecord: with the unit's stamps equal to it, the com-object table goes differentially
   // (relativeComObjWriteSet). A group-address flash leaves the record as it was.
   stampRecord?: ImageStamp[];
+  // The object numbers whose flags or priority the project changed since the device was last written.
+  // System B writes every object's flags from the project anyway; System 7 writes them for these.
+  comObjectFlagChanges?: ReadonlySet<number>;
 }
 
 // A change that alters the com-object table, written without a full download: the parameters, the
@@ -1608,10 +1611,11 @@ export class System7Profile extends DeviceProfile {
   readonly memoryModel = "absolute" as const;
   constructor(readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
 
-  // Only where the full download authors the table (the application names its segment); a
-  // memory-mapped one writes the application's own table and refuses every override.
+  // Only where the writes author the table: the application names its segment and ships its template
+  // (<Data>). A memory-mapped one writes the application's own table and refuses every override.
   override comObjOverridableBits(): readonly OverridableBit[] {
-    return this.capabilities().fullDownload && this.cfg?.groupTables.comObjectSegment !== undefined ? MV0705_OVERRIDABLE : [];
+    const seg = this.cfg?.absoluteSegments.find((s) => s.id === this.cfg?.groupTables.comObjectSegment);
+    return this.capabilities().fullDownload && seg !== undefined && seg.data.length > 0 ? MV0705_OVERRIDABLE : [];
   }
 
   capabilities(): DeviceCapabilities {
@@ -1817,15 +1821,28 @@ export class System7Profile extends DeviceProfile {
     // linked object silent, so where the application names the table's segment only that bit is
     // changed in the table the device holds, and the table is verified with the group tables.
     // That bit is the object's communication flag; a project that sets it otherwise than the links do
-    // cannot be written by this flash, and the other bits stay as the device holds them.
-    if (scope.l3 && ctx.comObjectOverrides?.size) {
+    // cannot be written by this flash. An object whose flags the project changed since the device was
+    // last written (comObjectFlagChanges) gets its read, write and transmit bits and its priority as the
+    // project gives them, as ETS's group-address download writes a flag change; its update bit has no
+    // capture, so a change of it is refused. The other bits stay as the device holds them.
+    const flagChanges = ctx.comObjectFlagChanges ?? new Set<number>();
+    if (flagChanges.size && !scope.l3) {
+      throw new ProductError("COM_OBJECT_OVERRIDE_UNWRITABLE", `the project changed the flags of ${flagChanges.size} communication object(s), and this application names no com-object table segment the group-address flash could write them into`);
+    }
+    let authored: Map<number, CfgComObjImage> | undefined;
+    if (scope.l3 && (ctx.comObjectOverrides?.size || flagChanges.size)) {
       const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
-      refuseUnwritableOverrides(buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects, ctx.comObjectOverrides,
+      const active = buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects;
+      refuseUnwritableOverrides(active, ctx.comObjectOverrides,
         ["read", "write", "transmit", "update", "readOnInit", "priority"], "the group-address flash, which sets only the communication bit from the links");
+      const changed = new Map([...(ctx.comObjectOverrides ?? [])].filter(([n]) => flagChanges.has(n)));
+      refuseUnwritableOverrides(active, changed, MV0705_OVERRIDABLE, "the group-address flash's System 7 com-object table");
+      const withProject = withInstanceOverrides(active, ctx.comObjectOverrides);
+      authored = new Map([...flagChanges].flatMap((n) => { const o = withProject.get(n); return o ? [[n, o] as const] : []; }));
     }
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
-    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum))) } : null;
+    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, new Set(ctx.links.map((l) => l.comObjNum)), authored) } : null;
     const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3);
     // The change is counted over exactly the runs the plan writes, read where it writes them (the address
     // table's own individual address is neither written nor counted); a table the plan moves whose

@@ -373,8 +373,8 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // Project the internal build to the serializable wire view: imageValues / imageComObjects are
   // Maps (JSON.stringify would ship them as `{}`) and are server-internal, so they never cross the
   // wire. Only the fields the client's DeviceConfigView declares are returned.
-  // The bits an edit may set: those the family's full download writes (the only write that carries a
-  // flag edit), none where the device's full download is withheld or its overrides cannot be placed.
+  // The bits an edit may set: those the family's full download writes (the group-address flash writes
+  // the same), none where the device's full download is withheld or its overrides cannot be placed.
   const comObjFlagsEditable = view.capabilities.fullDownload && !flags.refused ? [...classify(app).comObjOverridableBits()] : [];
   const wire: DeviceConfigView = { blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
   return extra ? { ...wire, ...extra } : wire;
@@ -588,6 +588,22 @@ export function resolveComObjOverrides(state: AppState, projectId: string, devic
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
   return placeComObjOverrides(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId)), rows);
+}
+
+// The object numbers, in the device's configuration, whose flags or priority the project changed since
+// the device was last written (DeviceChangedKeys.flags). An object the configuration does not show is
+// not written, so it has no number here.
+export function changedComObjNumbers(state: AppState, projectId: string, deviceId: string): Set<number> {
+  const { db } = state;
+  const refs = getDeviceChangedKeys(db, projectId, deviceId).flags;
+  if (!refs.size) return new Set();
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId));
+  const numByRef = new Map<string, number>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
+  for (const o of view.imageComObjects.values()) numByRef.set(o.refId, o.number);
+  return new Set([...refs].flatMap((r) => { const n = numByRef.get(fullRef(app.id, r)); return n === undefined ? [] : [n]; }));
 }
 
 // One row of a "replace device" com-object mapping: `from` is a com-object ref of the

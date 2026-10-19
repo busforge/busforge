@@ -100,8 +100,9 @@ link or newly added override remains distinguishable from the programmed snapsho
 otherwise unwritten fields retain their previous baseline, even when absent from a sparse submission.
 Full-download adoption of parameters and links is atomic. Dry-run requests never adopt a baseline.
 The com-object flags follow the same model: `device_comobj_override_base` is seeded from the import
-and adopted only by a verified full download, the one write that carries a flag edit; a read-back does
-not read the com-object table and leaves it as it is.
+and adopted by a verified write that carries a flag edit (group-address flash, structural flash, full
+download); a parameter flash leaves it, and a read-back does not read the com-object table and leaves
+it as it is.
 
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import

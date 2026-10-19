@@ -205,6 +205,28 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(dev.ops).toEqual([]);
   });
 
+  test("group-address flash: an object whose flags the project changed gets them as the project gives them; the rest stays as the unit holds it", async () => {
+    const l3 = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
+    const config = (d: GiraDevice, n: number) => d.mem.get(l3.address + 3 + n * 4 + 2)!;
+    const app0 = buildDeviceConfig(cfg, new Map()).imageComObjects.get(0)!;
+    const flipped = new Map([[0, { flags: { read: !app0.flags.read }, priority: app0.priority === "Alert" ? "Low" as const : "Alert" as const }]]);
+    // not a change since the last write: the unit keeps its bits, only the linked bit follows the links
+    const kept = new GiraDevice(cfg);
+    const before = config(kept, 0);
+    expect(await classify(cfg).flashGroupTables(asDev(kept), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped })).toMatchObject({ kind: "flashed", verified: true });
+    expect(config(kept, 0)).toBe(before | 0x04);
+    // a change: read and priority as the project gives them
+    const changed = new GiraDevice(cfg);
+    expect(await classify(cfg).flashGroupTables(asDev(changed), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped, comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
+    const prio = { Low: 0b11, High: 0b01, Alert: 0b10 }[flipped.get(0)!.priority];
+    expect(config(changed, 0)).toBe((before & ~0x0b) | (app0.flags.read ? 0 : 0x08) | prio | 0x04);
+    // an update flag the project changes has no capture: refused before any write
+    const upd = new GiraDevice(cfg);
+    expect(await classify(cfg).flashGroupTables(asDev(upd), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: new Map([[0, { flags: { update: !app0.flags.update } }]]), comObjectFlagChanges: new Set([0]) }).catch((e: unknown) => e))
+      .toMatchObject({ code: "COM_OBJECT_OVERRIDE_UNWRITABLE" });
+    expect(upd.ops).toEqual([]);
+  }, 20_000);
+
   test("parameter flash: one bracket on the application, the stamps, the restart", async () => {
     const dev = new GiraDevice(cfg);
     const ref = "M-0008_A-10D7-11-2783-O000A_P-3764_R-3764";
