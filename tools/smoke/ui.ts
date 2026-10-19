@@ -67,15 +67,42 @@ export class UiDriver {
     const trigger = `[data-testid="link-${comObjNumber}"]`;
     await page.waitForSelector(trigger, { timeout: 15_000 });
     // The light trigger mounts AND opens the popover in one click (setActive+setOpen); a second
-    // click would toggle it shut. Type the address to filter, then pick the single match. The
-    // option label renders both the GA name and its address, so match the address as a substring.
+    // click would toggle it shut.
     await page.click(trigger);
+    await this.pickGa(gaAddress);
+  }
+
+  // Add a group address behind a com-object's `ownCount` own addresses through the device page's
+  // editor: with one address its "add another" button opens the add picker, with several the add
+  // picker is on the list. Done when the editor lists the address at position `ownCount`; a secured
+  // address the edit would turn plain opens a confirmation instead, which stops the run.
+  async addGa(comObjNumber: number, gaAddress: string, ownCount: number): Promise<void> {
+    const page = this.req();
+    await page.waitForSelector(`[data-testid="link-${comObjNumber}"]`, { timeout: 15_000 });
+    const more = page.locator(`[data-testid="link-${comObjNumber}-more"]`);
+    if (await more.count()) await more.click();
+    else await page.click(`[data-testid="link-${comObjNumber}-add"]`);
+    await this.pickGa(gaAddress);
+    const placed = page.locator(`[data-testid="link-${comObjNumber}-ga-${ownCount}"]`).filter({ hasText: gaAddress });
+    const removable = page.locator(`[data-testid="link-${comObjNumber}-remove-${ownCount}"]:not([disabled])`);
+    const plain = page.locator('[data-testid="confirm-plain-link"]');
+    for (const until = Date.now() + 15_000; Date.now() < until; await page.waitForTimeout(250)) {
+      if (await plain.count()) throw new Error(`adding ${gaAddress} to object ${comObjNumber}: the editor asks to turn a secured address plain`);
+      if (await placed.count() && await removable.count()) return;
+    }
+    throw new Error(`adding ${gaAddress} to object ${comObjNumber}: the editor does not list it behind the object's ${ownCount} own address(es) within 15 s`);
+  }
+
+  // Type the address into the open picker's search to filter, then pick the single match. The
+  // option label renders both the GA name and its address, so match the address as a substring.
+  private async pickGa(gaAddress: string): Promise<void> {
+    const page = this.req();
     const search = page.getByPlaceholder(/gruppenadresse|group address|suchen|search/i);
     await search.waitFor({ state: "visible", timeout: 10_000 });
     await search.fill(gaAddress);
-    // Match the address but NOT a longer one that shares this prefix: filtering "1/1/1" still leaves
-    // "1/1/10", "1/1/11", … in the list, so forbid a digit or slash right after (tail-anchor).
-    await page.getByRole("option", { name: new RegExp(gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])") }).first().click();
+    // Match the address but NOT a longer one that contains it: filtering "1/1/1" still leaves
+    // "1/1/10" and "11/1/1" in the list, so forbid a digit or slash on either side.
+    await page.getByRole("option", { name: new RegExp("(?<![0-9/])" + gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])") }).first().click();
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(300);
   }

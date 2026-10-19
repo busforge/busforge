@@ -25,7 +25,7 @@ import { SPECS } from "./specs/index.ts";
 import { runEvidence, reportText } from "./evidence.ts";
 import { observeReboot, judgeRestoredConfig, judgeLoadStates, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
-import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
+import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, gaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
 import { loadKnxproj } from "../../packages/project/src/index.ts";
 import { FaultProxy } from "./faultproxy.ts";
 import { runInService, planInService, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
@@ -269,6 +269,8 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       name: "ui",
       setParam: async (ref, value) => { await page(); await ui.setParam(ref, value); },
       link: async (obj, ga) => { await client.ensureGa(pid, ga); await page(); await ui.linkGa(obj.number, ga); },
+      // The editor adds behind the links the project holds, which the step's preflight pins to `own`.
+      addLink: async (obj, ga, own) => { await client.ensureGa(pid, ga); await page(); await ui.addGa(obj.number, ga, own.length); },
       flashParams: async () => { await page(); return ui.flash("params"); },
       flashLinks: async () => { await page(); return ui.flash("ga"); },
       fullDownload: async () => { await page(); await ui.flashDownload("params"); return { structural: false }; },
@@ -277,6 +279,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       name: "api",
       setParam: async (ref, value) => { await client.setParam(pid, did, ref, value); },
       link: async (obj, ga) => { await client.ensureGa(pid, ga); await client.link(pid, did, obj.refId, ga); },
+      addLink: async (obj, ga, own) => { await client.ensureGa(pid, ga); await client.setLinks(pid, did, obj.refId, [...own, gaToNum(ga)]); },
       flashParams: async () => written(await client.flashReal(pid, did, (p) => log(`flash ${p}`))),
       flashLinks: async () => written(await client.flashGaReal(pid, did, (p) => log(`flash-ga ${p}`))),
       fullDownload: async () => written(await client.downloadReal(pid, did, (p) => log(`download ${p}`))),

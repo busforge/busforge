@@ -101,6 +101,7 @@ function scripted(sc: Script = {}) {
       name: "api",
       setParam: async (ref, value) => { project.params[ref] = value; if (sc.sideEffect && ref === PARAM && value !== device.params[PARAM]) project.params[STRUCT] = "5"; },
       link: async (obj, ga) => { project.links[obj.refId] = [gaToNum(ga)]; },
+      addLink: async (obj, ga, own) => { calls.push("chan.addLink"); project.links[obj.refId] = [...own, gaToNum(ga)]; },
       flashParams: async () => { if (sc.chanThrowsOnSecondParamFlash && calls.filter((c) => c === "flashParams").length === 1) { calls.push("flashParams"); device.params = { ...project.params }; throw new Error("dialog closed"); } const r = await io.api.flashReal(); return { structural: r.structural === true, result: r }; },
       flashLinks: async () => { const r = await io.api.flashGaReal(); return { structural: false, result: r }; },
       fullDownload: async () => { calls.push("fullDownload"); if (sc.downloadBreaks) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); device.params = { ...project.params }; device.links = structuredClone(project.links); return { structural: false, result: result("flashed", { verified: true }) }; },
@@ -445,6 +446,8 @@ describe("a device in service: the test address added to a linked object", () =>
     expect(writesOf(calls)).toEqual(planned(add, NO_FULL));
     expect(objOnDevice).toEqual([[OWN, TEST_GA], [OWN]]);
     expect(device).toEqual(start);
+    // The addition goes through the channel under test (the device page's editor on the ui channel).
+    expect(calls.filter((c) => c === "chan.addLink")).toHaveLength(1);
     expect(r.behaviours.map((b) => b.state)).toEqual(["pass"]);
     expect(r.capabilities.find((c) => c.capability === "flashLinks")?.detail).toContain("beside its 1 own address(es), own sending address first");
     const plan = planInService(add, NO_FULL).map((p) => p.text).join("\n");
@@ -452,8 +455,8 @@ describe("a device in service: the test address added to a linked object", () =>
     expect(plan).toContain("lies above every address of the object");
   });
 
-  // The scripted read-back keeps the project's order, the server's sorts each object's addresses;
-  // the two agree because the test address must lie above the object's own.
+  // The scripted read-back keeps the project's order, the server's keeps each object's first address
+  // first and sorts the others; the two agree because the test address must lie above the object's own.
   test("an object with several own addresses keeps all of them, in their order, beside another object's", async () => {
     const own = [gaToNum("2/0/1"), gaToNum("3/0/1")];
     const { io, calls, device, start, objOnDevice } = scripted({ links: { [OBJ]: own, [OTHER_OBJ]: [gaToNum("4/0/1")] } });

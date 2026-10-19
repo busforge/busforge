@@ -134,6 +134,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         name: "api",
         setParam: async (paramRefId, value) => { await call(state, "PUT", `${d}/params`, { paramRefId, value, lang: "de" }); },
         link: async (obj, ga) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [gaRaw(ga)], lang: "de" }); },
+        addLink: async (obj, ga, own) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [...own, gaRaw(ga)], lang: "de" }); },
         flashParams: async () => written(await wait(`${d}/flash`)),
         flashLinks: async () => written(await wait(`${d}/flash-ga`)),
         fullDownload: async () => written(await wait(`${d}/download`)),

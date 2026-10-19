@@ -46,6 +46,9 @@ export interface InServiceChannel {
   name: Channel;
   setParam(paramRefId: string, value: string): Promise<void>;
   link(obj: { refId: string; number: number }, ga: string): Promise<void>;
+  // Add `ga` behind the object's own addresses `own` (in the project already), which stay, the first
+  // still the one the object sends on.
+  addLink(obj: { refId: string; number: number }, ga: string, own: number[]): Promise<void>;
   flashParams(): Promise<FlashOutcome>;
   flashLinks(): Promise<FlashOutcome>;
   fullDownload(): Promise<FlashOutcome>;
@@ -525,9 +528,10 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         at = "flashLinks preflight";
         out.links.set(obj.refId, own);
         if (si.link!.addToLinked) {
-          // The device page edits one address per object (choosing one replaces the others), so the
-          // addition is an API edit in both channels; the GA flash itself goes through the channel.
-          await setLinks(io, obj.refId, placedLinks);
+          // The project takes a link only to an address it holds, so the object's own come first.
+          for (const g of own) await io.api.ensureGa(numToGa(g));
+          await io.api.ensureGa(testGa);
+          await io.chan.addLink({ refId: obj.refId, number: obj.number }, testGa, own);
         } else await io.chan.link({ refId: obj.refId, number: obj.number }, testGa);
         await onlyTheStep("flashLinks preflight", { link: [obj.refId, placedLinks] }, () => io.api.flashDry());
         await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false);
