@@ -387,6 +387,7 @@ spec states why no behaviour is observable.
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted) | MV-07B0 | not proven | not proven | not proven | **not met** |
+| `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
