@@ -92,6 +92,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | devices, group ranges, group addresses, building structure | the derived browsable product rows, which are rebuilt from the devices on import |
 | live parameter values and links | |
 | the **programmed baselines** for both, so drift survives the move | |
+| the marks on baseline values a read-back assumed, not proven | |
 | device module instances | |
 | the referenced catalog application programs | |
 | DCA baggage | |
@@ -100,7 +101,10 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | KNX Data Secure tool keys | |
 
 Several fields are optional in the schema (building structure, restore points, bus log, tool keys,
-source), and an artifact without them imports. A re-imported project
+source), and an artifact without them imports. The marks on assumed baseline values
+(`deviceParamAssumed`) are required, as the baselines are: an artifact without them is refused, and
+so is one with a mark on a parameter that is not a parameter without a memory or property location
+of its device's carried application (`BUSFORGE_ASSUMED_NOT_MEMORYLESS`). A re-imported project
 keeps the source its artifact carries, the file the project was first imported from; an artifact
 without one (a project created in Busforge, say) is recorded as the source itself. The project list shows the
 source file's name, with its kind, size and SHA-256 on hover, so a project can be traced back to the

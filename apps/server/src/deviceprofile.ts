@@ -194,7 +194,8 @@ export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: 
 //   to write; the second compares the tables a GA flash writes, the com-object table among them where
 //   the family writes it. This is what shows a parameter the device does not hold has the value the
 //   project gives it, where it decides bytes Busforge writes. Null where the product has no such flash
-//   or the check could not run; the reason is in `imageRefused`. `constantsDiffer`: where the image
+//   or the check could not run; the reason is in `imageRefused`, its code in `imageRefusedCode` (the
+//   error's code, READBACK_IMAGE_NO_FLASH; none for a read that missed a part). `constantsDiffer`: where the image
 //   matches, the constant parameters the device differs in, no change (FlashResult.constantsDiffer).
 // Where the read covers the com-object table, `comObjOverrideBase` is the flag baseline it sets: the
 // stored one (`comObjectOverrideBaseRows`) with each object the configuration of its parameter baseline
@@ -203,7 +204,7 @@ export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: 
 // its flags come from the device and show nothing about the parameters (see deviceops.ts distinguishable).
 type OverrideRows = { comObjRefId: string; attrs: Record<string, string> }[];
 export type ReadStateOpts = ReadStateCtx & { appXml: string; deviceId: string; ia: string; holds?: boolean; comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>; comObjectOverrideBaseRows?: OverrideRows };
-export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string; constantsDiffer?: ConstantDifference[]; comObjOverrideBase?: OverrideRows; comObjFlagsUndecoded?: number[] };
+export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string; imageRefusedCode?: string; constantsDiffer?: ConstantDifference[]; comObjOverrideBase?: OverrideRows; comObjFlagsUndecoded?: number[] };
 export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateOpts): Promise<DeviceStateRead> {
   const cfg = parseAppConfig(opts.appXml);
   const profile = classify(cfg);
@@ -230,6 +231,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
   let loaded = false;
   let imageMatches: boolean | null = null;
   let imageRefused: string | undefined;
+  let imageRefusedCode: string | undefined;
   let constantsDiffer: ConstantDifference[] = [];
   try {
     const object = planForMask(mask).applicationObject;
@@ -241,7 +243,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
     loaded = all;
     const caps = profile.capabilities();
     if (!read.paramsRead || !read.linksRead) imageRefused = "the read did not cover both parameters and links";
-    else if (!caps.flashParams || !caps.flashLinks) imageRefused = "the product has no parameter or group-address flash to compare with";
+    else if (!caps.flashParams || !caps.flashLinks) { imageRefused = "the product has no parameter or group-address flash to compare with"; imageRefusedCode = "READBACK_IMAGE_NO_FLASH"; }
     else {
       const values = read.paramBase;
       const moduleInstances = instancesFor(values);
@@ -259,8 +261,9 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
     if (opts.signal?.aborted) throw e;
     imageMatches = null;
     imageRefused = why(e);
+    imageRefusedCode = (e as { code?: string }).code;
   }
-  return { ...read, ...flags, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}), ...(imageMatches === true && constantsDiffer.length ? { constantsDiffer } : {}) };
+  return { ...read, ...flags, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}), ...(imageRefusedCode ? { imageRefusedCode } : {}), ...(imageMatches === true && constantsDiffer.length ? { constantsDiffer } : {}) };
 }
 
 // Identify a device and read its security mode: its device descriptor, serial and the security

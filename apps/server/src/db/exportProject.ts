@@ -47,6 +47,9 @@ export interface ProjectExport {
   deviceComObjOverrides: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
   // Their programmed baseline (device_comobj_override_base). Required, like the other baselines.
   deviceComObjOverrideBase: { deviceId: string; seq: number; comObjRefId: string; attrs: Record<string, string> }[];
+  // Baseline values a read-back took as assumed, not proven (device_param_assumed; value null: the
+  // parameter's default). Required, like the baselines they qualify.
+  deviceParamAssumed: { deviceId: string; paramRefId: string; value: string | null }[];
   // A KNXnet/IP device's settings from the project (device_knxip, @busforge/project DeviceKnxIp). Optional so
   // artifacts from before they were kept still import; such a device's download that writes them is refused.
   deviceKnxIp?: DeviceKnxIp[];
@@ -149,6 +152,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceModules,
     deviceComObjOverrides: overrideRows(db, "device_comobj_overrides", projectId),
     deviceComObjOverrideBase: overrideRows(db, "device_comobj_override_base", projectId),
+    deviceParamAssumed: db.query("SELECT device_id AS deviceId, param_ref_id AS paramRefId, value FROM device_param_assumed WHERE project_id = ? ORDER BY device_id, param_ref_id")
+      .all(projectId) as ProjectExport["deviceParamAssumed"],
     deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
       .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
     catalog,

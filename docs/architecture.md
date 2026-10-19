@@ -337,7 +337,12 @@ value the other way.
   a property location, kept only in the project (a rocker's function, a status LED's mode), has no
   byte on the device, so the read leaves its baseline as it was. When such a parameter hides objects the device links, those
   links stay unresolved: the read reports them (`linkGaps`, with their object numbers in
-  `unresolvedObjects`) and the group-address flash is refused until they resolve. The read can be
+  `unresolvedObjects`) and the group-address flash is refused until they resolve. It splits them by
+  what resolves them: `unplacedObjects` no object of the device's own configuration takes (only
+  another value of a parameter no read sees places them, an assumption), `hiddenObjects` the device's
+  configuration places and only the project's own values hide (Revert, then read again), and
+  `unknownObjects` the read cannot place without the device's parameters (a read that did not cover
+  them). The read can be
   asked to **assume** values for such parameters (`assume: [{ paramRefId, value }]`): it reads
   under them, and takes them into the project and the baseline only if the device's configuration
   (its read values and the assumed ones) then shows each assumed parameter and an object for every
@@ -349,26 +354,39 @@ value the other way.
   rocker's "Dimmen" and "Jalousie" both use its objects), so the links alone prove little; the image
   decides. A value that another value of the parameter writes the same (a DALI ECG's group, where only
   "assigned or not" shows in the com-object table) is taken, since no byte Busforge writes depends on
-  the difference, and named in `unprovenAssumptions`; so is a numeric one, whose values are not tried. A parameter with a memory or property location cannot be assumed
+  the difference, and named in `unprovenAssumptions`; so is a numeric one, whose values are not tried.
+  Such a value stays marked on its parameter as assumed, not proven, in the store
+  ([storage-and-snapshots.md](storage-and-snapshots.md)) and on the device page's row, until a later
+  read assumes it again and proves it or a read-back records another value; a proven value loses
+  an earlier mark. A verified write never ends it: only a read that proves the value does, even where
+  a write records another value that changes bytes it writes. Such a write moves the mark to the
+  value it records. A parameter with a memory or property location cannot be assumed
   (`READBACK_ASSUMPTION_HAS_MEMORY`); an unknown one, a value its type does not take or one named
   twice is refused before the bus is reached. A
   link on an object only the project's own values hide resolves once the project takes the device's
   values (**Revert**) and the device is read again.
-- **The device page offers the assumption.** After a read that leaves objects unresolved, the page
-  names their numbers and lists the parameters it shows without a memory or property location (the
-  view marks them `memoryless`; enumerated and whole-number ones, the values the server takes), each
-  "Not assumed" until a value is chosen. An object the project's own values hide resolves by
-  **Revert**, not by an assumption. **Read back with these values** repeats the read with the chosen
+- **The device page offers the assumption.** After a read that leaves objects unplaced on the device
+  (`unplacedObjects`), the page names their numbers and lists the parameters it shows without a
+  memory or property location (the view marks them `memoryless`; enumerated and whole-number ones,
+  the values the server takes), each "Not assumed" until a value is chosen. Objects the project's own
+  values hide (`hiddenObjects`) get a note pointing to **Revert** instead, objects the read could not
+  place (`unknownObjects`) a note that neither is known to help, and unplaced objects where the page
+  shows no parameter to assume a note saying so. **Read back with these values** repeats the read with the chosen
   ones as `assume`; a number that is no whole number within the parameter's range is not sent. The
   values are taken only if the device's configuration with them places an object for every link the
   device holds and the dry runs under them find nothing to write; objects still unresolved after
-  that read are named (the project's own values may hide them, or the read may not have placed
-  them). A refusal is shown in the panel with its reason, and for `READBACK_ASSUMPTION_UNRESOLVED`
-  with the objects that still do not resolve; nothing is stored. A taken value the device cannot
-  tell apart from another (`unprovenAssumptions`) is shown as **Assumed, not proven**, named by its
-  parameter, until the user edits or reverts that parameter or a later read assumes it again and
-  proves it; a read that assumes other parameters or none keeps it. The note shows only on this page
-  since that read: after leaving the page or reloading it, the assumed value is no longer marked.
+  that read are named, with the notes above saying what resolves them. A refusal is shown in the
+  panel with its reason, and for `READBACK_ASSUMPTION_UNRESOLVED` with the objects that still do not
+  resolve; nothing is stored. A row whose value a read took as assumed, not proven, carries the
+  view's `assumed` mark while it shows that value (an edit shows the edited value unmarked, a revert
+  brings the marked one back), and the page names those parameters under **Assumed, not proven**,
+  counting those its configuration does not show (`assumedHidden`). A mark counts only while the
+  baseline holds the value it is about (no row is the parameter's default, a float compares by
+  number). The notes of a read go when a later plain read fails, and when a verified write may have
+  changed what the device holds. An edit or a revert removes those judged against the project's
+  values (the unresolved objects; the never-programmed reasons `linksUnresolved`, `imageDiffers`,
+  `imageNotCompared`) and keeps what the device reported (`readIncomplete`, `otherApplication`,
+  `applicationIdNotReported`, `notLoaded`).
   The page cannot tell which parameter hides which object: the user chooses from the device's
   documentation or its ETS project.
 - **It can end "never programmed".** A read of a never-programmed device also reads, in the same
@@ -383,7 +401,12 @@ value the other way.
   download marker the device clears itself after each download (Theben TheLuxa P300, Meteodata
   140 S, MIX 2) is no change, so it does not fail the dry run (rule 9). A check that cannot run (the
   device refuses a property, the product has no such flash) leaves the flag as it is and the read
-  stands. The read says why the flag stays (`neverProgrammedKept`). The check reads the parameter
+  stands. The read says why the flag stays (`neverProgrammedKept`, one entry per reason: `readIncomplete`,
+  `linksUnresolved`, `otherApplication`, `applicationIdNotReported`, `notLoaded`, `imageDiffers`,
+  `imageNotCompared` with the error code of the cause as `code` where the read knows one;
+  `imageNotCompared` is left out where `readIncomplete` already says the read missed a part), and the
+  device page lists those reasons, with the error text of the code where it has one (else naming the code), while the device
+  still counts as never programmed. The check reads the parameter
   segments a second time.
 
 Interpreting a byte that differs is [verification.md](verification.md).

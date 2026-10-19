@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { appProgramId } from "@busforge/project";
+import { parseAppConfig, type AppConfig } from "@busforge/product";
 import { ApiError } from "../errors.ts";
 import { putAppProgram } from "./catalog.ts";
 import { putBaggage, checkBaggageSize } from "./baggage.ts";
@@ -45,7 +46,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   if (project.connectionId !== undefined && project.connectionId !== null && typeof project.connectionId !== "string") {
     throw new ApiError("BUSFORGE_INVALID", "malformed project connectionId");
   }
-  for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "deviceComObjOverrides", "deviceComObjOverrideBase", "baggage"]) {
+  for (const key of ["devices", "groupRanges", "groupAddresses", "deviceParameters", "deviceParamBase", "deviceLinks", "deviceLinkBase", "deviceModules", "deviceComObjOverrides", "deviceComObjOverrideBase", "deviceParamAssumed", "baggage"]) {
     if (!Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `missing ${key}`);
   }
   for (const name of ["deviceComObjOverrides", "deviceComObjOverrideBase"]) {
@@ -59,6 +60,16 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
         throw new ApiError("BUSFORGE_INVALID", `malformed ${name} entry`);
       }
     }
+  }
+  const exportedIds = new Set((d.devices as Record<string, unknown>[]).map((dev) => dev?.id));
+  const assumedKeys = new Set<string>();
+  for (const a of d.deviceParamAssumed as Record<string, unknown>[]) {
+    if (typeof a?.deviceId !== "string" || !exportedIds.has(a.deviceId) || typeof a.paramRefId !== "string" || (a.value !== null && typeof a.value !== "string")) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed deviceParamAssumed entry");
+    }
+    const key = `${a.deviceId}\u0000${a.paramRefId}`;
+    if (assumedKeys.has(key)) throw new ApiError("BUSFORGE_INVALID", "duplicate deviceParamAssumed entry");
+    assumedKeys.add(key);
   }
   // Validate each device's identity/reference fields so a crafted artifact fails as a clean
   // 400 rather than crashing later: busforgeGaps calls appProgramId(appRef).split(...) and
@@ -142,6 +153,23 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
+  // Only a parameter without a memory or property location can be assumed (the read-back's `assume`), so a
+  // mark must name one of its device's carried application.
+  const catalog = d.catalog as Record<string, unknown>;
+  const appOf = new Map((d.devices as { id: string; appRef: string }[]).map((dev) => [dev.id, appProgramId(dev.appRef)]));
+  const apps = new Map<string, AppConfig>();
+  for (const a of d.deviceParamAssumed as { deviceId: string; paramRefId: string }[]) {
+    const appId = appOf.get(a.deviceId)!;
+    const xml = Object.hasOwn(catalog, appId) ? catalog[appId] : undefined;
+    if (typeof xml !== "string") throw new ApiError("BUSFORGE_ASSUMED_NOT_MEMORYLESS", `${a.paramRefId} is marked assumed on a device whose application program the artifact does not carry`);
+    if (!apps.has(appId)) {
+      try { apps.set(appId, parseAppConfig(xml)); } catch (e) { throw new ApiError("BUSFORGE_INVALID", `the carried application program ${appId} does not parse: ${(e as Error).message}`); }
+    }
+    const app = apps.get(appId)!;
+    const ref = app.refs.get(a.paramRefId) ?? app.refs.get(a.paramRefId.replace(/_M-\d+_MI-\d+/, ""));
+    const param = ref ? app.params.get(ref.paramId) : undefined;
+    if (!param || param.hasMemory || param.onProperty) throw new ApiError("BUSFORGE_ASSUMED_NOT_MEMORYLESS", `${a.paramRefId} is marked assumed but is no parameter without a memory or property location of its device's application`);
+  }
 }
 
 // Gaps in a .busforge artifact, the analogue of importGaps for the knxproj path: devices
@@ -204,6 +232,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const o of data.deviceComObjOverrides) insOverride.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
     const insOverrideBase = db.prepare("INSERT INTO device_comobj_override_base (project_id, device_id, seq, com_obj_ref_id, attrs) VALUES (?, ?, ?, ?, ?)");
     for (const o of data.deviceComObjOverrideBase) insOverrideBase.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
+    const insAssumed = db.prepare("INSERT INTO device_param_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
+    for (const a of data.deviceParamAssumed) insAssumed.run(id, a.deviceId, a.paramRefId, a.value);
     const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
     for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
 

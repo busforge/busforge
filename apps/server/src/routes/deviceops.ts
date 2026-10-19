@@ -1,10 +1,10 @@
-import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -12,7 +12,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -389,18 +389,30 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         const programmed = read.paramsRead && read.linksRead && lb?.gaps === 0 && read.programIdMatches === true && read.loaded === true && read.imageMatches === true;
         db.transaction(() => {
           for (const a of assumed) { if (a.isDefault) deleteDeviceParam(db, id, deviceId, a.refId); else setDeviceParam(db, id, deviceId, a.refId, a.value); }
-          if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase));
+          if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase), paramValueSame(state, id, deviceId));
+          // Each assumed value takes this read's verdict: an unproven one is marked on the value the
+          // baseline now holds, a proven one loses an earlier mark.
+          for (const a of assumed) { if (unproven.includes(a.refId)) markParamAssumed(db, id, deviceId, a.refId, a.isDefault ? null : a.value); else clearParamAssumed(db, id, deviceId, a.refId); }
           if (lb) { replaceLinkBase(db, id, deviceId, lb.base); setLinkBaseGaps(db, id, deviceId, lb.gaps); }
           if (read.comObjOverrideBase) resetComObjOverrideBase(db, id, deviceId, read.comObjOverrideBase);
           if (programmed) clearNeverProgrammed(db, id, deviceId);
         })();
-        // Why a never-programmed device stays so, for the client and the log.
-        const kept = dev.neverProgrammed && !programmed
-          ? [!read.paramsRead || !read.linksRead ? "the read did not cover both parameters and links" : "", (lb?.gaps ?? 0) > 0 ? "links unresolved" : "",
-            read.programIdMatches !== true ? `application id ${read.programIdMatches === false ? "of another application" : "not reported"}` : "",
-            read.loaded !== true ? "a load state not LOADED" : "", read.imageMatches === false ? "a flash would write bytes the device does not hold" : read.imageMatches !== true ? `image not compared (${read.imageRefused ?? "unknown"})` : ""].filter(Boolean).join("; ")
-          : "";
-        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}) };
+        // Why a never-programmed device stays so, for the client.
+        const kept: NonNullable<DeviceReadbackInfo["neverProgrammedKept"]> = [];
+        if (dev.neverProgrammed && !programmed) {
+          if (!read.paramsRead || !read.linksRead) kept.push({ reason: "readIncomplete" });
+          if ((lb?.gaps ?? 0) > 0) kept.push({ reason: "linksUnresolved" });
+          if (read.programIdMatches === false) kept.push({ reason: "otherApplication" });
+          else if (read.programIdMatches !== true) kept.push({ reason: "applicationIdNotReported" });
+          if (read.loaded !== true) kept.push({ reason: "notLoaded" });
+          if (read.imageMatches === false) kept.push({ reason: "imageDiffers" });
+          // A read that missed a part compares no image; readIncomplete already says so.
+          else if (read.imageMatches !== true && read.paramsRead && read.linksRead) kept.push({ reason: "imageNotCompared", ...(read.imageRefusedCode ? { code: read.imageRefusedCode } : {}) });
+        }
+        const causes = lb?.byCause;
+        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}),
+          ...(causes?.unplaced.length ? { unplacedObjects: causes.unplaced } : {}), ...(causes?.hidden.length ? { hiddenObjects: causes.hidden } : {}), ...(causes?.unknown.length ? { unknownObjects: causes.unknown } : {}),
+          ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept.length ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}) };
       },
     );
     // `readback` tells the client what this read actually covered: `linkGaps` counts

@@ -83,6 +83,7 @@ and writes no programmed baseline.
 | `device_modules` | a device's resolved module instances |
 | `device_comobj_overrides` | the com-object flags and priority the project sets per device, the attributes as ETS stores them |
 | `device_param_base` / `device_link_base` / `device_comobj_override_base` | the **programmed baseline**: what the device was last known to hold |
+| `device_param_assumed` | baseline parameter values a read-back took as **assumed, not proven**, with the value each mark is about |
 | `snapshots` | configuration restore points, one JSON payload per row |
 | `app_programs` | the global catalog of decrypted application-program XML |
 | `catalog_products` | browsable product metadata, with the `pinned` flag |
@@ -104,6 +105,22 @@ and adopted by a verified write that carries a flag edit (group-address flash, s
 download); a parameter flash leaves it, and a read-back sets it to the flags the device's com-object
 table shows, on the objects the device's configuration activates (where the family's read covers the
 table), keeping the stored attributes of every bit and object the table does not show.
+
+**An assumed value stays marked.** A read-back asked to assume values for parameters the device does
+not hold takes them into the project and the baseline; one the device cannot tell from another value
+of its parameter (`unprovenAssumptions`) is recorded in `device_param_assumed` with the baseline value
+it is about (`NULL`: the parameter's default, which the baseline holds as no row). The mark belongs to
+the baseline value, not to the project's: an edit, a revert or a restore leaves it, and the device page
+marks the row **assumed** while it shows that value. Only a read-back ends it: one that assumes the
+parameter again and shows its value, or one whose baseline records another value for it; values
+compare as they decode (no row is the parameter's default, a float by number). A verified write
+(parameter, structural or full download) never ends it, even where the value it records changes
+bytes it writes: only a read that proves the value ends the mark. A write that records the
+same value keeps the mark; one that records another value moves the mark to that value. A product
+replacement drops the marks with the baselines; a `.busforge` export carries them. Its import
+refuses a mark on a parameter that is not a parameter without a memory or property location of its
+device's carried application: one with a memory or property location, one the application does not
+have, or one on a device whose application the artifact does not carry (`BUSFORGE_ASSUMED_NOT_MEMORYLESS`).
 
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import
@@ -172,7 +189,7 @@ explicit save anywhere in Busforge: every edit autosaves, so restore points are 
 ### Restore semantics: configuration only, baselines untouched
 
 A restore rewrites parameter values, links, project properties and the structural trees. It does
-**not** touch `device_param_base` / `device_link_base`.
+**not** touch `device_param_base` / `device_link_base`, nor the marks on assumed baseline values.
 
 This is the load-bearing decision. Restoring the baselines too would resurrect a stale notion of
 what the device holds and desynchronise the drift display from physical reality. By leaving them

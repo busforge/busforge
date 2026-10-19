@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { localizeError } from "../lib/apiError.ts";
 
+type KeptReasons = NonNullable<NonNullable<DeviceConfigView["readback"]>["neverProgrammedKept"]>;
+
 // A parameter the device does not hold (no memory or property location), shown and editable on the
 // device page, whose value a read-back can be asked to assume. The server takes enumerated and
 // whole-number values only.
@@ -61,9 +63,10 @@ export function assumeRefusal(e: unknown): AssumeRefusal {
 
 const cls = "h-8 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-64";
 
-// Offered after a read-back whose device links objects its configuration does not show under the
-// values read: the parameters that may decide this cannot be read, so the user names the values the
-// device runs and reads again with them. Nothing is taken unless that read proves them (server side).
+// Offered after a read-back whose device links objects no object of its own configuration takes under
+// the values read (`unplacedObjects`): the parameters that may decide this cannot be read, so the user
+// names the values the device runs and reads again with them. Nothing is taken unless that read proves
+// them (server side).
 export function AssumeValuesPanel({ candidates, unresolved, choices, onChoose, onSubmit, pending, error }: {
   candidates: AssumeCandidate[]; unresolved: number[]; choices: Record<string, string>;
   onChoose: (refId: string, value: string) => void; onSubmit: () => void; pending: boolean; error?: AssumeRefusal;
@@ -114,32 +117,76 @@ export function AssumeValuesPanel({ candidates, unresolved, choices, onChoose, o
   );
 }
 
-// Assumed values the read-back took although another value of the same parameter writes the same
-// bytes: the device cannot show them, so they stand as assumed, never as read. Named as the page
-// showed them around the read; a parameter it showed nowhere is named generically, never by its id.
-export function UnprovenAssumptionsNote({ params }: { params: { refId: string; name?: string }[] }) {
+// The parameters whose shown value a read-back took as assumed and the device could not tell from
+// another value (the view marks their rows `assumed`), each once, by their label.
+export function assumedParams(view?: DeviceConfigView): { refId: string; name: string }[] {
+  const out: { refId: string; name: string }[] = [], seen = new Set<string>();
+  for (const b of view?.blocks ?? []) for (const it of b.items) {
+    if (it.kind !== "param" || !it.param.assumed || seen.has(it.param.refId)) continue;
+    seen.add(it.param.refId);
+    out.push({ refId: it.param.refId, name: it.param.name.trim() });
+  }
+  return out;
+}
+
+// `hidden`: such parameters this configuration does not show (DeviceConfigView.assumedHidden).
+export function UnprovenAssumptionsNote({ params, hidden = 0 }: { params: { refId: string; name: string }[]; hidden?: number }) {
   const { t } = useTranslation();
-  if (!params.length) return null;
+  if (!params.length && !hidden) return null;
+  const names = params.map((p) => p.name).join(", ");
+  const unshown = hidden ? t("device.unprovenHiddenCount", { count: hidden }) : "";
   return (
     <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300" data-testid="unproven-assumptions">
       <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4 shrink-0" /> {t("device.unprovenTitle")}</p>
-      <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.unprovenBody", { params: params.map((p) => p.name ?? t("device.unprovenUnnamed")).join(", ") })}</p>
+      <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.unprovenBody", { params: names && unshown ? t("device.unprovenAndHidden", { names, unshown }) : names || unshown })}</p>
     </div>
   );
 }
 
-const paramNames = (view?: DeviceConfigView): Map<string, string> => {
-  const m = new Map<string, string>();
-  for (const b of view?.blocks ?? []) for (const it of b.items) if (it.kind === "param" && !m.has(it.param.refId)) m.set(it.param.refId, it.param.name.trim());
-  return m;
-};
+const noteCls = "flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300";
 
-// What the last read-back of the shown device left open: objects of device links its configuration
-// does not show, and assumed values the device could not tell apart; plus the offer's own state. A
-// result or edit for another device than the shown one is ignored.
+// Objects of device links the last read left unresolved that no assumption places: those the project's
+// own values hide (Revert takes the device's values), those the read could not tell without the device's
+// parameters, and those no parameter this page offers to assume could place.
+export function UnresolvedNotes({ hidden, unknown, unplacedUnoffered }: { hidden: number[]; unknown: number[]; unplacedUnoffered: number[] }) {
+  const { t } = useTranslation();
+  const notes = ([["unresolved-hidden", "device.unresolvedHidden", hidden], ["unresolved-unknown", "device.unresolvedUnknown", unknown], ["unresolved-unplaced", "device.unresolvedUnoffered", unplacedUnoffered]] as const)
+    .filter(([, , objects]) => objects.length > 0);
+  if (!notes.length) return null;
+  return (
+    <>
+      {notes.map(([id, key, objects]) => (
+        <div key={id} className={noteCls} data-testid={id}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{t(key, { objects: objects.join(", ") })}</span></div>
+      ))}
+    </>
+  );
+}
+
+// Why a device never programmed from this project still counts so after the last read.
+// The code of why the image was not compared is shown by its error text, else named as a code.
+export function NeverProgrammedKeptNote({ reasons }: { reasons: KeptReasons }) {
+  const { t, i18n } = useTranslation();
+  if (!reasons.length) return null;
+  return (
+    <div className={noteCls} data-testid="never-programmed-kept">
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+      <div className="space-y-0.5">
+        <p className="font-medium">{t("device.neverProgrammedKeptTitle")}</p>
+        <p className="text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.neverProgrammedKeptBody")}</p>
+        <ul className="list-disc pl-4 text-xs text-amber-700/90 dark:text-amber-300/90">
+          {reasons.map((r) => <li key={r.reason}>{t(`device.neverProgrammedReason.${r.reason}`)}{r.code ? ` (${i18n.exists(`errors.${r.code}`) ? t(`errors.${r.code}`) : t("device.errorCode", { code: r.code })})` : ""}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// What the last read-back of the shown device left open: the objects of device links it did not
+// resolve, by what resolves them, and why the device stays never programmed; plus the offer's own
+// state. A result or edit for another device than the shown one is ignored.
 export interface AssumeState {
   deviceId: string;
-  lastRead: { unresolved: number[]; unproven: { refId: string; name?: string }[] } | null;
+  lastRead: { unplaced: number[]; hidden: number[]; unknown: number[]; neverProgrammedKept: KeptReasons } | null;
   choices: Record<string, string>;
   error?: AssumeRefusal;
 }
@@ -147,12 +194,18 @@ export type AssumeAction =
   | { type: "device"; deviceId: string }
   | { type: "choose"; refId: string; value: string }
   | { type: "invalid"; names: string[] }
-  // `sent`: the parameters this read was asked to assume (none for a plain read).
-  | { type: "readOk"; deviceId: string; sent: string[]; result: DeviceConfigView; before?: DeviceConfigView }
+  // `assumed`: the read was asked to assume values.
+  | { type: "readOk"; deviceId: string; assumed: boolean; result: DeviceConfigView }
   | { type: "readFailed"; deviceId: string; assumed: boolean; error: unknown }
-  | { type: "paramChanged"; deviceId: string; refId: string };
+  // An edit or a revert changed what the last read's objects were judged against.
+  | { type: "stale"; deviceId: string }
+  // A verified write: it can change what the device holds too (its application, its load states).
+  | { type: "written"; deviceId: string };
 
 export const initialAssumeState = (deviceId: string): AssumeState => ({ deviceId, lastRead: null, choices: {} });
+
+// Never-programmed reasons that are facts about the device, not judgements of it against the project.
+const DEVICE_REASONS = new Set<KeptReasons[number]["reason"]>(["readIncomplete", "otherApplication", "applicationIdNotReported", "notLoaded"]);
 
 export function assumeReducer(s: AssumeState, a: AssumeAction): AssumeState {
   switch (a.type) {
@@ -161,18 +214,15 @@ export function assumeReducer(s: AssumeState, a: AssumeAction): AssumeState {
     case "invalid": return { ...s, error: { message: "", invalid: a.names } };
     case "readOk": {
       if (a.deviceId !== s.deviceId) return s;
-      // A read decides only the parameters it was asked to assume: an earlier unproven value of another
-      // parameter stays, one assumed again takes this read's verdict.
-      const after = paramNames(a.result), before = paramNames(a.before), sent = new Set(a.sent);
-      const unproven = [
-        ...(s.lastRead?.unproven ?? []).filter((u) => !sent.has(u.refId)),
-        ...(a.result.readback?.unprovenAssumptions ?? []).map((refId) => ({ refId, name: after.get(refId) ?? before.get(refId) })),
-      ];
-      return { ...s, lastRead: { unresolved: a.result.readback?.unresolvedObjects ?? [], unproven }, error: undefined, choices: a.sent.length ? {} : s.choices };
+      const rb = a.result.readback;
+      const lastRead = { unplaced: rb?.unplacedObjects ?? [], hidden: rb?.hiddenObjects ?? [], unknown: rb?.unknownObjects ?? [], neverProgrammedKept: rb?.neverProgrammedKept ?? [] };
+      return { ...s, lastRead, error: undefined, choices: a.assumed ? {} : s.choices };
     }
-    case "readFailed": return a.deviceId !== s.deviceId ? s : { ...s, error: a.assumed ? assumeRefusal(a.error) : undefined };
-    case "paramChanged":
-      if (a.deviceId !== s.deviceId || !s.lastRead?.unproven.some((u) => u.refId === a.refId)) return s;
-      return { ...s, lastRead: { ...s.lastRead, unproven: s.lastRead.unproven.filter((u) => u.refId !== a.refId) } };
+    // A refused assumption stores nothing, so the read before it still stands; a failed plain read does not.
+    case "readFailed": return a.deviceId !== s.deviceId ? s : a.assumed ? { ...s, error: assumeRefusal(a.error) } : { ...s, lastRead: null, error: undefined };
+    // The objects and the reasons judged against the project's values go; what the device reported stays.
+    case "stale": return a.deviceId !== s.deviceId || !s.lastRead ? s
+      : { ...s, lastRead: { unplaced: [], hidden: [], unknown: [], neverProgrammedKept: s.lastRead.neverProgrammedKept.filter((r) => DEVICE_REASONS.has(r.reason)) } };
+    case "written": return a.deviceId !== s.deviceId ? s : { ...s, lastRead: null };
   }
 }

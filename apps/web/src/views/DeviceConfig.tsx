@@ -32,7 +32,7 @@ import {
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
 import { FlagEditor } from "./FlagEditor.tsx";
-import { AssumeValuesPanel, UnprovenAssumptionsNote, assumeCandidates, assumeList, assumeReducer, initialAssumeState } from "./AssumeValues.tsx";
+import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
@@ -53,6 +53,16 @@ type TFn = (key: string, opts?: Record<string, unknown>) => string;
 // Small amber dot marking a row whose value differs from the programmed state.
 function ChangedDot({ title }: { title: string }) {
   return <span className="size-1.5 shrink-0 rounded-full bg-primary" title={title} />;
+}
+
+// The row shows a value a read-back took as assumed and the device could not tell apart (CfgParamView.assumed).
+function AssumedBadge({ refId }: { refId: string }) {
+  const { t } = useTranslation();
+  return (
+    <span className="inline-flex shrink-0 items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-300" title={t("device.assumedTitle")} data-testid={`assumed-${refId}`}>
+      {t("device.assumedBadge")}
+    </span>
+  );
 }
 
 // Per-row revert: discard one row's drift back to the device/baseline value.
@@ -148,6 +158,7 @@ export function DeviceConfig() {
   useEffect(() => dispatchAssume({ type: "device", deviceId: assumeKey }), [assumeKey]);
   const read = assume.deviceId === assumeKey ? assume.lastRead : null;
   const assumable = useMemo(() => (view ? assumeCandidates(view) : []), [view]);
+  const assumedNow = useMemo(() => assumedParams(view), [view]);
   // The device the page shows now, for read-back callbacks that end after it changed.
   const shownDevice = useRef(assumeKey);
   shownDevice.current = assumeKey;
@@ -204,14 +215,14 @@ export function DeviceConfig() {
   };
   const doRevert = () =>
     revert.mutate(undefined, {
-      onSuccess: () => { setRevertOpen(false); toast.success(t("device.reverted")); },
+      onSuccess: () => { setRevertOpen(false); dispatchAssume({ type: "stale", deviceId: assumeKey }); toast.success(t("device.reverted")); },
       onError: (e) => { setRevertOpen(false); onError(e); },
     });
   const readBackWith = (values?: AssumedValue[]) => {
-    const forDevice = assumeKey, before = view, assumed = !!values?.length;
+    const forDevice = assumeKey, assumed = !!values?.length;
     readBack.mutate(values, {
       onSuccess: (v) => {
-        dispatchAssume({ type: "readOk", deviceId: forDevice, sent: values?.map((a) => a.paramRefId) ?? [], result: v, before });
+        dispatchAssume({ type: "readOk", deviceId: forDevice, assumed, result: v });
         if (shownDevice.current !== forDevice) return;
         if (assumed) {
           const left = v.readback?.unresolvedObjects ?? [];
@@ -245,6 +256,7 @@ export function DeviceConfig() {
     else readBackWith(values);
   };
   const afterFlash = () => {
+    dispatchAssume({ type: "written", deviceId: assumeKey });
     void qc.invalidateQueries({ queryKey: qk.project(projectId) });
     void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
     void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) }); // a real flash captures an auto restore point
@@ -467,13 +479,13 @@ export function DeviceConfig() {
           setParam.mutate({ refId: item.param.refId, value: v }, {
             onError,
             onSuccess: (next) => {
-              dispatchAssume({ type: "paramChanged", deviceId: assumeKey, refId: item.param.refId });
+              dispatchAssume({ type: "stale", deviceId: assumeKey });
               const n = before ? hiddenAssignedCount(before, next) : 0;
               if (n > 0) toast.info(t("device.gaHidden", { count: n }), { description: t("device.gaHiddenHint") });
             },
           });
         }}
-        onRevert={() => revertParam.mutate(item.param.refId, { onError, onSuccess: () => dispatchAssume({ type: "paramChanged", deviceId: assumeKey, refId: item.param.refId }) })}
+        onRevert={() => revertParam.mutate(item.param.refId, { onError, onSuccess: () => dispatchAssume({ type: "stale", deviceId: assumeKey }) })}
       />
     );
   };
@@ -742,14 +754,16 @@ export function DeviceConfig() {
         </div>
       )}
 
-      {!!read?.unresolved.length && assumable.length > 0 && (
+      {!!read?.unplaced.length && assumable.length > 0 && (
         <AssumeValuesPanel
-          candidates={assumable} unresolved={read.unresolved} choices={assume.choices} pending={readBack.isPending} error={assume.error}
+          candidates={assumable} unresolved={read.unplaced} choices={assume.choices} pending={readBack.isPending} error={assume.error}
           onChoose={(refId, value) => dispatchAssume({ type: "choose", refId, value })}
           onSubmit={submitAssumed}
         />
       )}
-      {read && <UnprovenAssumptionsNote params={read.unproven} />}
+      {read && <UnresolvedNotes hidden={read.hidden} unknown={read.unknown} unplacedUnoffered={assumable.length ? [] : read.unplaced} />}
+      {read && device?.changes?.neverProgrammed && <NeverProgrammedKeptNote reasons={read.neverProgrammedKept} />}
+      <UnprovenAssumptionsNote params={assumedNow} hidden={view?.assumedHidden} />
 
       {(gaps.types.length > 0 || gaps.elements.length > 0) && (
         <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
@@ -960,12 +974,16 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
       )}
     >
       {compact ? (
-        param.changed ? <ChangedDot title={changedTitle} /> : null
+        <>
+          {param.changed ? <ChangedDot title={changedTitle} /> : null}
+          {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
+        </>
       ) : (
         <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
           {param.changed ? <ChangedDot title={changedTitle} /> : null}
           {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
           <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
+          {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
         </span>
       )}
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}

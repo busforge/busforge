@@ -8,7 +8,7 @@ import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase, getDeviceParamAssumed, markParamAssumed, clearParamAssumed } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -20,6 +20,8 @@ import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
 import { putGroupSenders, listGroupSenders, addGroupSender, removeGroupSender, sendersByGroup, nextSendSequence } from "../src/db/groupSenders.ts";
 import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
+import { parseAppConfig } from "@busforge/product";
+import { sameParamValue } from "../src/deviceservice.ts";
 import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
@@ -735,14 +737,14 @@ describe("device security persistence", () => {
   });
 
   test("validateExport rejects a malformed deviceSecurity entry as a coded 400", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [], baggage: [], catalog: {} };
     expect(() => validateExport({ ...base, deviceSecurity: [{ deviceId: "d" }] })).toThrow(/deviceSecurity/);
     try { validateExport({ ...base, deviceSecurity: [{ deviceId: "d", toolKey: "x", serialNumber: "y", sequenceNumber: "1", source: "bogus" }] }); expect.unreachable(); }
     catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
   });
 
   test("validateExport rejects a malformed device entry (missing string fields) as a coded 400", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [], baggage: [], catalog: {} };
     // A version-valid artifact with a device missing appRef must fail cleanly, not crash
     // later in busforgeGaps' appProgramId(appRef).split(...) as a generic 500.
     try { validateExport({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n" }] }); expect.unreachable(); }
@@ -752,7 +754,7 @@ describe("device security persistence", () => {
   });
 
   test("validateExport rejects a .busforge with duplicate device instance ids (same code as knxproj import)", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], baggage: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [], baggage: [], catalog: {} };
     // A tampered artifact with two devices sharing an id must fail cleanly with the coded
     // DUPLICATE_DEVICE_INSTANCE before insert, not hit the raw unique index mid-transaction
     // (a generic 500). Both import paths (knxproj + .busforge) refuse consistently.
@@ -902,7 +904,7 @@ describe("baggage (DCA blobs)", () => {
   });
 
   test("a .busforge artifact with an oversized baggage blob is refused before anything is stored", () => {
-    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], catalog: {} };
+    const base = { busforgeExport: 1, project: { name: "x" }, devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [], catalog: {} };
     const big = Buffer.alloc(32 * 1024 * 1024 + 3).toString("base64");
     expect(catchCode(() => validateExport({ ...base, baggage: [{ name: "DI-1_big.bin", dataBase64: big }] }))).toBe("BAGGAGE_TOO_LARGE");
     expect(() => validateExport({ ...base, baggage: [{ name: "DI-1_ok.bin", dataBase64: Buffer.from("ok").toString("base64") }] })).not.toThrow();
@@ -1162,5 +1164,103 @@ describe("connections", () => {
     expect(db.query("SELECT instance_id AS d, link_base_gaps AS g FROM devices ORDER BY d").all()).toEqual([{ d: "never", g: 0 }, { d: "read", g: -1 }]);
     db.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// A value a read-back took as assumed (read-back `assume`) without the device showing it: the mark
+// belongs to the baseline's value and stands as long as the baseline holds that value.
+describe("parameter values assumed, not proven", () => {
+  const dev = "P-TEST-0_DI-1", APP = "M-0048_A-1", A = `${APP}_P-7_R-7`, D = `${APP}_P-8_R-8`, HELD = `${APP}_P-9_R-9`;
+  const MK = Buffer.alloc(32, 3);
+  // The device's application: P-7 and P-8 without a memory location, P-9 in memory, P-10 in a property.
+  const param = (n: number, loc = "") => `<Parameter Id="${APP}_P-${n}" Name="P${n}" ParameterType="${APP}_PT-E" Text="P${n}" Value="0">${loc}</Parameter>`;
+  const appXml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-0048"><ApplicationPrograms><ApplicationProgram Id="${APP}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="T" DefaultLanguage="en-US"><Static>
+    <Code><RelativeSegment Id="${APP}_RS-4" LoadStateMachine="4" Size="4" Data="AAAAAA==" /></Code>
+    <ParameterTypes><ParameterType Id="${APP}_PT-E" Name="E"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="A" Value="0" Id="${APP}_PT-E_EN-0" /><Enumeration Text="B" Value="2" Id="${APP}_PT-E_EN-2" /></TypeRestriction></ParameterType></ParameterTypes>
+    <Parameters>${param(7)}${param(8)}${param(9, `<Memory CodeSegment="${APP}_RS-4" Offset="0" BitOffset="0" />`)}${param(10, '<Property ObjectIndex="0" PropertyId="78" Offset="0" BitOffset="0" />')}</Parameters>
+    <ParameterRefs>${[7, 8, 9, 10].map((n) => `<ParameterRef Id="${APP}_P-${n}_R-${n}" RefId="${APP}_P-${n}" />`).join("")}</ParameterRefs></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const seeded = () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    putAppProgram(db, APP, appXml);
+    setDeviceParam(db, "p1", dev, A, "2");
+    replaceParamBase(db, "p1", dev, new Map([[A, "2"]]));
+    // A: assumed "2"; D: assumed at its default, which the baseline holds as no row.
+    markParamAssumed(db, "p1", dev, A, "2");
+    markParamAssumed(db, "p1", dev, D, null);
+    return db;
+  };
+
+  test("a baseline write that keeps the assumed value keeps its mark; one that holds another value drops it", () => {
+    const db = seeded();
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map([[A, "2"], [D, null]]));
+    replaceParamBase(db, "p1", dev, new Map([[A, "2"], ["M-X_A-1_P-9_R-9", "1"]]));
+    resetParamBase(db, "p1", dev, new Map([[A, "2"]]));
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map([[A, "2"], [D, null]]));
+    replaceParamBase(db, "p1", dev, new Map([[A, "3"], [D, "1"]]));
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map());
+  });
+
+  test("a later read clears one it proves; another device or project keeps its own", () => {
+    const db = seeded();
+    markParamAssumed(db, "p1", "P-TEST-0_DI-2", A, "2");
+    clearParamAssumed(db, "p1", dev, A);
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map([[D, null]]));
+    expect(getDeviceParamAssumed(db, "p1", "P-TEST-0_DI-2")).toEqual(new Map([[A, "2"]]));
+  });
+
+  test("an edit, a revert and a snapshot restore change the project's values, not the baseline, and leave the mark", () => {
+    const db = seeded();
+    createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 2000);
+    setDeviceParam(db, "p1", dev, A, "5");
+    revertDeviceParam(db, "p1", dev, A);
+    setDeviceParam(db, "p1", dev, A, "5");
+    revertDevice(db, "p1", dev);
+    restoreSnapshot(db, "p1", listSnapshots(db, "p1")[0].id, 3000);
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map([[A, "2"], [D, null]]));
+  });
+
+  test("a .busforge round-trip carries the marks, an artifact without them or with a malformed one is refused, and a product replacement drops them", () => {
+    const db = seeded();
+    const data = exportProject(db, "p1", 5, MK)!;
+    expect(data.deviceParamAssumed).toEqual([{ deviceId: dev, paramRefId: A, value: "2" }, { deviceId: dev, paramRefId: D, value: null }]);
+    importProjectExport(db, data, "p2", 6, MK);
+    expect(getDeviceParamAssumed(db, "p2", dev)).toEqual(new Map([[A, "2"], [D, null]]));
+    const { deviceParamAssumed: _, ...without } = data;
+    expect(() => validateExport(without)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    for (const bad of [{ deviceId: dev, paramRefId: A, value: 2 }, { deviceId: dev, paramRefId: 1, value: "2" }, { deviceId: "ghost", paramRefId: A, value: "2" }]) {
+      expect(() => validateExport({ ...data, deviceParamAssumed: [bad] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    }
+    expect(() => validateExport({ ...data, deviceParamAssumed: [data.deviceParamAssumed[0], data.deviceParamAssumed[0]] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    // Only a parameter without a memory or property location of the device's carried application can be assumed.
+    for (const paramRefId of [HELD, `${APP}_P-10_R-10`, `${APP}_P-99_R-99`]) {
+      expect([paramRefId, (() => { try { validateExport({ ...data, deviceParamAssumed: [{ deviceId: dev, paramRefId, value: null }] }); return "taken"; } catch (e) { return (e as { code?: string }).code; } })()])
+        .toEqual([paramRefId, "BUSFORGE_ASSUMED_NOT_MEMORYLESS"]);
+    }
+    const { [APP]: _app, ...otherPrograms } = data.catalog;
+    expect(() => validateExport({ ...data, catalog: otherPrograms })).toThrow(expect.objectContaining({ code: "BUSFORGE_ASSUMED_NOT_MEMORYLESS" }));
+    // A carried application that does not parse is a malformed artifact, refused with its code.
+    const malformed = { ...data, deviceParamAssumed: [{ deviceId: dev, paramRefId: HELD, value: null }], catalog: { ...data.catalog, [APP]: "<KNX><ApplicationProgram" } };
+    expect(() => validateExport(malformed)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID", status: 400, message: expect.stringContaining("does not parse") }));
+    replaceDeviceProduct(db, "p1", dev, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map());
+  });
+});
+
+describe("whether two stored values of a parameter are one value", () => {
+  const xml = (def: string) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-T"><ApplicationPrograms><ApplicationProgram Id="M-T_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="T" DefaultLanguage="en-US"><Static>
+    <ParameterTypes><ParameterType Id="M-T_A-1_PT-F" Name="F"><TypeFloat Encoding="IEEE-754 Single" /></ParameterType></ParameterTypes>
+    <Parameters><Parameter Id="M-T_A-1_P-1" Name="F" ParameterType="M-T_A-1_PT-F" Text="F"${def} /></Parameters>
+    <ParameterRefs><ParameterRef Id="M-T_A-1_P-1_R-1" RefId="M-T_A-1_P-1" /></ParameterRefs></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const R = "M-T_A-1_P-1_R-1";
+
+  test("no row is the default, and a float compares by number", () => {
+    const same = sameParamValue(parseAppConfig(xml(' Value="1.5E+000"')));
+    expect([same(R, null, "1.5"), same(R, "1.5E+000", "1.50"), same(R, null, "2")]).toEqual([true, true, false]);
+  });
+
+  test("a parameter without a default is not the same as any value", () => {
+    const same = sameParamValue(parseAppConfig(xml("")));
+    expect([same(R, null, "0"), same(R, "0", null), same(R, null, null), same(R, "0", "0")]).toEqual([false, false, true, true]);
   });
 });

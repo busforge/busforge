@@ -861,7 +861,7 @@ describe("busforge re-import (export round-trip)", () => {
 
     // A version-1 artifact missing fields importProjectExport dereferences (catalog,
     // baggage) or with a malformed project must fail cleanly as 400, not crash mid-insert.
-    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [] };
+    const arrays = { devices: [], groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [] };
     for (const partial of [
       { busforgeExport: 1, project: { name: "x" }, ...arrays, baggage: [] }, // no catalog
       { busforgeExport: 1, project: { name: "x" }, ...arrays, catalog: {} }, // no baggage

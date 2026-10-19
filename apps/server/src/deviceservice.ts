@@ -4,7 +4,7 @@ import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -277,6 +277,24 @@ export function loadCatalogApp(state: AppState, programId: string): AppConfig | 
 
 // The default value of a parameter (ref/param default, ignoring user overrides),
 // resolved from the built config view so module-instance params work too.
+// Two stored values of a parameter are one value where they decode the same: no row is the parameter's
+// default, and a float compares by number (ETS stores it in scientific notation, the UI as a decimal).
+export function sameParamValue(app: AppConfig): SameParamValue {
+  return (refId, a, b) => {
+    const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
+    const param = ref ? app.params.get(ref.paramId) : undefined;
+    const def = ref?.value ?? param?.value ?? "";
+    const x = a ?? def, y = b ?? def;
+    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
+    return x === y || (x !== "" && y !== "" && !!param && app.types.get(param.typeId)?.base === "Float" && Number(x) === Number(y));
+  };
+}
+export function paramValueSame(state: AppState, projectId: string, deviceId: string): SameParamValue {
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  return sameParamValue(app);
+}
+
 export function resolveParamForEdit(state: AppState, projectId: string, deviceId: string, refId: string): { defaultValue?: string; float?: boolean } | undefined {
   const app = loadApp(state, projectId, deviceId);
   if (!app) return undefined;
@@ -352,6 +370,11 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // not shown as edited.
   const overrides = getDeviceParams(db, projectId, deviceId);
   const baseline = getDeviceParamBase(db, projectId, deviceId);
+  // Marks hold only where the baseline holds the value they are about (replaceParamBase keeps them so;
+  // an imported artifact is not checked against its baseline).
+  const same = sameParamValue(app);
+  const assumed = new Set([...getDeviceParamAssumed(db, projectId, deviceId)].filter(([ref, v]) => same(ref, baseline.get(ref) ?? null, v)).map(([ref]) => ref));
+  const shownParams = new Set<string>();
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind === "param") {
       let isChanged = changed.params.has(it.param.refId);
@@ -360,6 +383,8 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
         if (o !== undefined && bv !== undefined && Number(o) === Number(bv)) isChanged = false;
       }
       it.param.changed = isChanged;
+      if (!isChanged && assumed.has(it.param.refId)) it.param.assumed = true;
+      shownParams.add(it.param.refId);
     } else if (it.kind === "comObject") {
       const key = stripRef(app.id, it.comObject.refId);
       it.comObject.gaRaw = links.get(key)?.[0] ?? null;
@@ -376,7 +401,8 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // The bits an edit may set: those the family's full download writes (the group-address flash writes
   // the same), none where the device's full download is withheld or its overrides cannot be placed.
   const comObjFlagsEditable = view.capabilities.fullDownload && !flags.refused ? [...classify(app).comObjOverridableBits()] : [];
-  const wire: DeviceConfigView = { blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
+  const assumedHidden = [...assumed].filter((ref) => !shownParams.has(ref)).length;
+  const wire: DeviceConfigView = { ...(assumedHidden ? { assumedHidden } : {}), blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
   return extra ? { ...wire, ...extra } : wire;
 }
 
@@ -754,10 +780,12 @@ const objectOf = (key: string) => key.replace(/_R-[^_]+$/, "");
 // cannot appear on the device page. `unresolved` lists the object numbers of those links;
 // `unplacedOnDevice` those of the device links no object of the device's own configuration takes,
 // which only another configuration (another value of a parameter no read sees) could resolve.
+// `byCause` splits `unresolved` by what resolves it (DeviceReadbackInfo): unplaced on the device,
+// hidden by the project's own values, or unknown without the device's configuration.
 //
 // `projectParams` stands in for the project's stored values (a read-back under assumed values of
 // parameters without a memory location, which the project takes only if every link resolves).
-export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[], deviceConfig?: Map<string, string>, projectParams?: Map<string, string>): { base: Map<string, number[]>; gaps: number; unresolved: number[]; unplacedOnDevice: number[] } {
+export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[], deviceConfig?: Map<string, string>, projectParams?: Map<string, string>): { base: Map<string, number[]>; gaps: number; unresolved: number[]; unplacedOnDevice: number[]; byCause: { unplaced: number[]; hidden: number[]; unknown: number[] } } {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
@@ -804,5 +832,9 @@ export function readbackLinkBase(state: AppState, projectId: string, deviceId: s
   const unknown = observable ? [] : [...device.keys()].filter((k) => !live.has(k)).map((k) => numOf.get(k)!);
   const unresolved = [...new Set([...unplaced, ...(numberingKnown ? hidden : []), ...unknown])].sort((a, b) => a - b);
   const unplacedOnDevice = [...new Set(deviceLinks.map((l) => l.comObjNum).filter((n) => !devNum.has(n)))].sort((a, b) => a - b);
-  return { base: merged.base, gaps: merged.gaps + unplaced.length + (numberingKnown ? hidden.length : 0), unresolved, unplacedOnDevice };
+  const offDevice = new Set(unplacedOnDevice);
+  const byCause = deviceConfig === undefined
+    ? { unplaced: [], hidden: [], unknown: unresolved }
+    : { unplaced: unresolved.filter((n) => offDevice.has(n)), hidden: unresolved.filter((n) => !offDevice.has(n)), unknown: [] };
+  return { base: merged.base, gaps: merged.gaps + unplaced.length + (numberingKnown ? hidden.length : 0), unresolved, unplacedOnDevice, byCause };
 }

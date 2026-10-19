@@ -484,6 +484,20 @@ const MIGRATIONS: string[] = [
   );
   INSERT INTO device_comobj_override_base SELECT * FROM device_comobj_overrides;
   `,
+  // Parameter values a read-back took as assumed (its `assume`) although the device cannot tell them
+  // from another value of their parameter: the baseline holds them, the device never showed them.
+  // value: the baseline value the mark is about, NULL for the parameter's default (no baseline row).
+  // A mark follows the baseline value: a read-back that records another value ends it, a verified write
+  // moves it (replaceParamBase).
+  `
+  CREATE TABLE device_param_assumed (
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL,
+    param_ref_id TEXT NOT NULL,
+    value        TEXT,
+    PRIMARY KEY (project_id, device_id, param_ref_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

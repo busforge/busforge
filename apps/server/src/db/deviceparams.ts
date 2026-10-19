@@ -210,7 +210,7 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip", "device_param_assumed"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.
@@ -397,12 +397,43 @@ export function revertDevice(db: Database, projectId: string, deviceId: string):
 // caller passes a sparse map (rows that differ from the project plus the copied
 // live rows), so the existing live-vs-base diff then flags exactly the drift.
 
-export function replaceParamBase(db: Database, projectId: string, deviceId: string, values: Map<string, string>): void {
+// Whether two stored values of a parameter are one value (null: no row, the parameter's default).
+export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
+const sameText: SameParamValue = (_ref, a, b) => a === b;
+
+// Assumed-value marks follow the new values by `marks`: "drop" (a read-back) keeps a mark only where the
+// value stays (`same`, deviceservice.ts sameParamValue); "move" (a verified write) keeps every mark on the
+// value now recorded: only a read that proves the value ends a mark, never a write.
+export function replaceParamBase(db: Database, projectId: string, deviceId: string, values: Map<string, string>, same: SameParamValue = sameText, marks: "drop" | "move" = "drop"): void {
   db.transaction(() => {
     db.prepare("DELETE FROM device_param_base WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
     const ins = db.prepare("INSERT INTO device_param_base (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
     for (const [refId, value] of values) ins.run(projectId, deviceId, refId, value);
+    for (const [refId, value] of getDeviceParamAssumed(db, projectId, deviceId)) {
+      const now = values.get(refId) ?? null;
+      if (same(refId, now, value)) continue;
+      if (marks === "move") markParamAssumed(db, projectId, deviceId, refId, now);
+      else clearParamAssumed(db, projectId, deviceId, refId);
+    }
   })();
+}
+
+// --- Assumed, not proven ------------------------------------------------------
+// The parameters whose baseline value a read-back took as assumed (read-back `assume`) without the
+// device telling it from another value of the parameter (ref id -> that value; null: the default,
+// which the baseline holds as no row). The mark is the baseline's: an edit, a revert or a snapshot
+// restore changes the project's value, not it; replaceParamBase moves or ends it with the baseline value.
+export function getDeviceParamAssumed(db: Database, projectId: string, deviceId: string): Map<string, string | null> {
+  const rows = db.query("SELECT param_ref_id AS refId, value FROM device_param_assumed WHERE project_id = ? AND device_id = ?")
+    .all(projectId, deviceId) as { refId: string; value: string | null }[];
+  return new Map(rows.map((r) => [r.refId, r.value]));
+}
+export function markParamAssumed(db: Database, projectId: string, deviceId: string, refId: string, value: string | null): void {
+  db.prepare("INSERT OR REPLACE INTO device_param_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)").run(projectId, deviceId, refId, value);
+}
+// A later read that assumed the parameter again and showed its value.
+export function clearParamAssumed(db: Database, projectId: string, deviceId: string, refId: string): void {
+  db.prepare("DELETE FROM device_param_assumed WHERE project_id = ? AND device_id = ? AND param_ref_id = ?").run(projectId, deviceId, refId);
 }
 
 export function replaceLinkBase(db: Database, projectId: string, deviceId: string, links: Map<string, number[]>): void {
@@ -463,7 +494,7 @@ export function resetParamBase(db: Database, projectId: string, deviceId: string
       if (old === undefined) next.delete(ref);
       else next.set(ref, old);
     }
-    replaceParamBase(db, projectId, deviceId, next);
+    replaceParamBase(db, projectId, deviceId, next, sameText, "move");
   })();
 }
 

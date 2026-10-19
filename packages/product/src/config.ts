@@ -51,6 +51,10 @@ export interface CfgParamView {
   // The parameter has neither a memory nor a property location: the device does not hold it, so no
   // read-back recovers it (a read-back can only be asked to assume its value).
   memoryless?: true;
+  // The value shown is one a read-back took as assumed and the device could not tell from another value
+  // of the parameter (DeviceReadbackInfo.unprovenAssumptions): the baseline holds it, the device never
+  // showed it. Filled in by the server, only while the project holds that value.
+  assumed?: true;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -96,16 +100,22 @@ export interface CfgBlock {
 // buildDeviceConfig). Defined once here so the server's ReadbackSummary and the web client
 // bind to the SAME shape: a field renamed here breaks both sides at compile time instead of
 // silently leaving the client reading undefined.
-// `unresolvedObjects`: the object numbers of the device links counted in `linkGaps`, when there are any.
+// `unresolvedObjects`: the object numbers of the device links counted in `linkGaps`, when there are any,
+// split by what can resolve them: `unplacedObjects` no object of the device's own configuration takes
+// (only another value of a parameter no read sees, an assumption, can place them); `hiddenObjects` the
+// device's configuration places and only the project's own values hide (Revert, then read again);
+// `unknownObjects` the read cannot tell (it did not read the device's parameters).
 // `unprovenAssumptions`: assumed parameters (read-back `assume`) whose value another value of theirs
 // writes the same (objects, image), so the device could not tell them apart; taken all the same.
-// `neverProgrammedKept`: why a device never programmed from this project stays so after this read.
+// `neverProgrammedKept`: why a device never programmed from this project stays so after this read, each
+// reason once; `code` is the error code of why the image was not compared, where the read knows one.
 // `constantsDiffer`: the constant parameters (deviceimage.ts constantParams) the device holds other bits
 // in, which the image check counts as no change (FlashResult.constantsDiffer).
 // `flagsRead`: the read took each object's flags and priority from the device's com-object table into
 // the flag baseline; `flagsUndecoded`: the objects whose flags it could not take (their baseline kept);
 // `flagsUnreadable`: why the table gave no flags, where it gave none.
-export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string; constantsDiffer?: ConstantDifference[]; flagsRead?: boolean; flagsUndecoded?: number[]; flagsUnreadable?: string }
+export type NeverProgrammedReason = "readIncomplete" | "linksUnresolved" | "otherApplication" | "applicationIdNotReported" | "notLoaded" | "imageDiffers" | "imageNotCompared";
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unplacedObjects?: number[]; hiddenObjects?: number[]; unknownObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: { reason: NeverProgrammedReason; code?: string }[]; constantsDiffer?: ConstantDifference[]; flagsRead?: boolean; flagsUndecoded?: number[]; flagsUnreadable?: string }
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links. Defined here
@@ -162,6 +172,9 @@ export interface DeviceConfigView {
   // Device links the last read-back could not show on this page (-1: not counted since the check
   // was added). While non-zero the server refuses a group-address flash (LINK_BASELINE_INCOMPLETE).
   linkBaseGaps?: number;
+  // Parameters whose baseline value a read-back assumed, not proven, that this configuration does not
+  // show (so no row carries their `assumed` mark). Attached by the server; absent when none.
+  assumedHidden?: number;
   // Why the project's own com-object flags cannot be laid over the application's (an error code,
   // as every write that authors the com-object table refuses): the objects' flags are then the
   // application's and must not be shown as the device's. Attached by the server.

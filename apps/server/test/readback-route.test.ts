@@ -100,11 +100,13 @@ corpusDescribe("POST /read-back", () => {
       mask: "MV-0705", paramsRead: true, linksRead: true,
       paramBase: new Map<string, string>(),
       links: [{ comObjNum: 9999, gaRaws: [123] }],
+      deviceConfig: new Map<string, string>(),
     });
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], flagsRead: false });
+    // No configuration places an object 9999: only another one could, never a revert.
+    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], unplacedObjects: [9999], flagsRead: false });
 
     // The bogus association never entered device_link_base.
     const rows = state.db.query("SELECT ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { ga_raw: number }[];
@@ -168,7 +170,8 @@ corpusDescribe("POST /read-back", () => {
     const { projectId, deviceId } = await projectWithApp(state, realXml(`${MDT}.xml.gz`));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
     readImpl = reading("MV-0705", [{ comObjNum: 14, gaRaws: [0x77c9] }], new Map([[MDT_SHOWS_14, "1"]]));
-    expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
+    // The project's own value hides #14: a revert to the device's values resolves it.
+    expect(await readBack(state, projectId, deviceId)).toMatchObject({ linkGaps: 1, unresolvedObjects: [14], hiddenObjects: [14] });
     expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x77c9 }]);
   });
 
@@ -179,7 +182,7 @@ corpusDescribe("POST /read-back", () => {
     const { projectId, deviceId } = await projectWithApp(state, realXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
     readImpl = reading("MV-07B0", [{ comObjNum: 5, gaRaws: [0x77c9] }], new Map());
-    expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
+    expect(await readBack(state, projectId, deviceId)).toMatchObject({ linkGaps: 1, unresolvedObjects: [5], unplacedObjects: [5] });
     expect(rows(state, projectId, deviceId)).toEqual([]);
   });
 
@@ -188,7 +191,8 @@ corpusDescribe("POST /read-back", () => {
     const { projectId, deviceId } = await projectWithApp(state, realXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
     state.db.run("DELETE FROM device_links WHERE project_id = ? AND device_id = ?", [projectId, deviceId]);
     readImpl = reading("MV-07B0", [{ comObjNum: 254, gaRaws: [0x77c9] }]);
-    expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
+    // Without the device's configuration the read cannot tell what would resolve it.
+    expect(await readBack(state, projectId, deviceId)).toMatchObject({ linkGaps: 1, unresolvedObjects: [254], unknownObjects: [254] });
   });
 
   // M-0081: P-4 swaps the ComObjectRef of object 0 (O-0_R-63 by default, O-0_R-167 when set).
