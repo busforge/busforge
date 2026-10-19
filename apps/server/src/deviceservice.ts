@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, placeComObjOverrides, IMAGE_WRITABLE_BASES, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, IMAGE_WRITABLE_BASES, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -435,17 +435,16 @@ export interface GaDevicesView {
 
 // A device's com-objects keyed by their stored (stripped) ref id, carrying the
 // resolved name and read/write flags. Built from the flat application model so
-// hidden objects are covered too, then overridden by the module-resolved config
-// view (translated names, module-instance numbering). Mirrors buildDeviceView's
-// key stripping (stripRef).
-function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
+// hidden objects are covered too (translated, text placeholders fed by the device's
+// values), then overridden by the module-resolved config view (module-instance
+// numbering). Mirrors buildDeviceView's key stripping (stripRef).
+function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>, lang?: string): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
   const out = new Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }>();
   for (const [full, ref] of app.comObjectRefs) {
     const obj = app.comObjects.get(ref.refId);
     if (!obj) continue;
     out.set(stripRef(app.id, full), {
-      name: ref.text ?? obj.text ?? obj.name,
-      functionText: ref.functionText ?? obj.functionText,
+      ...comObjectRefTexts(app, full, lang, view.paramValue)!,
       number: obj.number,
       flags: { ...obj.flags, ...ref.flags },
     });
@@ -484,7 +483,7 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
     const dev = getDeviceForFlash(db, projectId, deviceId);
     const app = loadApp(state, projectId, deviceId);
     if (!dev || !app) continue; // a stale link to a removed device/app: skip, don't fail the overlay
-    const comObjs = comObjsByKey(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId)));
+    const comObjs = comObjsByKey(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId)), lang);
     for (const refId of refIds) {
       const co = comObjs.get(refId);
       if (!co) continue; // link to a com-object absent from the app model: skip

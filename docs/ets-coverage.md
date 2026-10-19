@@ -36,9 +36,10 @@ limit, because it records drift only for the refs the view exposes.
 | `ParameterSeparator` | full | rendered as heading, ruler or error by `UIHint` |
 | `Module` instantiation | full | scope rewrite, text-argument substitution, com-object base numbering; arguments from the device's `0.xml`, or resolved from `<Allocators>` for a device placed from the catalog |
 | `Repeat` | full | transparent container; expands through module instances |
-| `Assign` / union / `TextParameterRefId` substitution | full | |
+| `Assign` / union | full | |
+| `TextParameterRefId` substitution | partial | `{{0}}` and `{{0:default}}` in the texts of `Channel`, `ParameterBlock`, `ParameterSeparator` and `ComObjectRef`/`ComObject`; see [Text placeholders](#text-placeholders). A `ParameterRef`'s own `Text` is not read, so its placeholder is not shown |
 | `ChannelIndependentBlock` | full | transparent container |
-| `Channel` | full | heading shown as a navigable section, with `{{0}}` substitution |
+| `Channel` | full | heading shown as a navigable section, with `{{0}}` / `{{0:default}}` substitution |
 | `Button` | parsed, inert | the scripted action is shown as a named element, not as an "unsupported" marker; it does nothing |
 | Unknown or vendor element | surfaced | emitted as an `unsupported` marker, never dropped |
 
@@ -72,7 +73,8 @@ Read and honoured:
 | `ParameterRef` (block heading) | `DisplayOrder` | blocks are ordered by it, not by document order |
 | `Enumeration` | `DisplayOrder` | dropdown options in ETS order |
 | `ParameterRefRef` | `IndentLevel` | rows are nested; per-row `DisplayOrder` is a no-op because within a block document order already equals it |
-| `Channel` | `Text` / `Number` / `TextParameterRefId` | channel sections become navigable groups with `{{0}}` substituted |
+| `Channel` | `Text` / `Number` / `TextParameterRefId` | channel sections become navigable groups with `{{0}}` / `{{0:default}}` substituted |
+| `ParameterBlock`, `ParameterSeparator`, `ComObjectRef`, `ComObject` | `TextParameterRefId` | `{{0}}` / `{{0:default}}` substituted, see [Text placeholders](#text-placeholders) |
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
@@ -83,6 +85,7 @@ Not read, with the reason:
 
 | Where | Attribute | Why it is still open |
 |---|---|---|
+| `ParameterRef` | `Text`, `TextParameterRefId` | a parameter is labelled by its `Parameter`'s text; the override a `ParameterRef` carries, and the placeholder in it, are not shown |
 | `ParameterBlock` | `ShowInComObjectTree` | a com-object grouping signal; the com-object list is flat today |
 | `Parameter` | `InitialValue` | present once in the catalogues, on a hidden `Access="None"` parameter and equal to `Value`. Honouring it would have zero visible effect. It matters only for "unchanged since factory" detection, which Busforge does not do. Left unread deliberately. |
 | `Parameter` | `BaseValue` | on read-only mirror parameters inside modules, pointing at a module `Argument`. The per-instance numbering it describes is resolved through the module offset path instead. |
@@ -95,6 +98,29 @@ self-checking is a re-runnable audit: a script that, given a project's applicati
 attributes present in the data but never read. That script does not exist
 ([roadmap.md](roadmap.md)). Until it does, a newly ignored attribute is found only by review, not
 automatically, and the risk this table is meant to remove stays open.
+
+## Text placeholders
+
+An element with a `TextParameterRefId` may name that parameter's value in its text:
+
+| Placeholder | Shown |
+|---|---|
+| `{{0}}` | the parameter's value (empty while it is empty) |
+| `{{0:default}}` | the parameter's value, or `default` verbatim while the value is empty |
+
+The value is the device's own, else the `ParameterRef`'s, else the `Parameter`'s default. Module
+arguments are substituted first, so a default may carry one (`{{0:Button {{ChNo}}}}`). For example
+`Gerät 1: {{0: ...}}` reads `Gerät 1:  ...` until the device's name parameter is filled in, then
+`Gerät 1: Keller`. A `Channel` without a `TextParameterRefId` feeds its `Number`, and without
+either an empty value; on any other element a placeholder that nothing feeds stays visible as
+written, and so does one whose default still holds a module argument that could not be resolved.
+Com-objects outside module instances that the configuration view does not reach (a hidden object
+linked to a group address) are named the same way, from the device's values.
+
+Not proven against ETS, because no catalogue in the corpus shows the case and no ETS view of it was
+compared: whether a value of only spaces counts as empty (Busforge shows it), what ETS shows for a
+placeholder no `TextParameterRefId` feeds, and whether an enumeration parameter feeds its raw value
+(Busforge's) or its display text. Every catalogue in the corpus feeds placeholders from text parameters.
 
 ## One model, two projections
 

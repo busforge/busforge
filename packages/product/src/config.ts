@@ -170,6 +170,10 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // the firmware off the end of its array on boot (hardware-proven: the RaumController reverts).
   // The com-object-table build (comobjbuild.ts) sizes the table to this. See buildDeviceConfig.
   maxComObjectNumber: number;
+  // The value a top-level ParameterRef holds in this configuration, resolved like the view does
+  // (device value, a placed sibling ref's value, ref or parameter default) against the final
+  // working values after the walk. An unknown ref yields only a value stored under that id.
+  paramValue: (refId: string) => string | undefined;
 }
 
 interface Scope {
@@ -236,6 +240,15 @@ const codePoint = (m: string, n: number): string => (n >= 0 && n <= 0x10ffff ? S
 const decode = (s: string): string =>
   s.replace(/&#x([0-9a-fA-F]+);/g, (m, h) => codePoint(m, parseInt(h, 16)))
     .replace(/&#(\d+);/g, (m, d) => codePoint(m, Number(d)));
+
+// An ETS text names the value of the parameter its element's TextParameterRefId points at:
+// `{{0}}` is that value, `{{0:text}}` the value or, while it is empty, `text` verbatim. Index 0 is
+// the only one, since an element names one text parameter. Module arguments inside the default
+// ("{{0:Button {{ChNo}}}}") are substituted before this runs. `value` is undefined when nothing
+// feeds the placeholder; it then stays visible rather than being guessed away.
+const textParamPlaceholder = /\{\{0(?::([^{}]*))?\}\}/g;
+const fillTextParam = (text: string, value: string | undefined): string =>
+  value === undefined ? text : text.replace(textParamPlaceholder, (_m, def: string | undefined) => (value !== "" ? value : def ?? ""));
 
 export function buildDeviceConfig(
   app: AppConfig,
@@ -331,7 +344,7 @@ export function buildDeviceConfig(
     return decode(t);
   };
   const subst = (text: string, scope: Scope): string =>
-    text.replace(/\{\{([^}]+)\}\}/g, (m, k) => scope.textArgs.get(k) ?? m);
+    text.replace(/\{\{([^{}]+)\}\}/g, (m, k) => scope.textArgs.get(k) ?? m);
   // Tidy a display label: normalize newlines, drop the manufacturer's leading/
   // trailing whitespace (often a faux-indent), and upper-case the first letter in
   // the catalogue's language (some texts are authored lower-case). The leading faux-
@@ -438,10 +451,7 @@ export function buildDeviceConfig(
     if (!obj) return null;
     const pick = (r: string | undefined, o: string) => (r !== undefined ? r : o);
     const textParamRefId = ref?.textParamRefId ?? obj.textParamRefId;
-    const fill = (s: string) => {
-      const out = subst(s, scope);
-      return textParamRefId ? out.replace(/\{\{0\}\}/g, resolve(textParamRefId, scope) ?? "") : out;
-    };
+    const fill = (s: string) => fillTextParam(subst(s, scope), textParamRefId ? resolve(textParamRefId, scope) ?? "" : undefined);
     const elem = ref?.id ?? obj.id;
     const img = resolveComObjImage(defRefId, scope)!; // obj exists (guarded above)
     return {
@@ -496,7 +506,7 @@ export function buildDeviceConfig(
   const collect = (nodes: DynNode[], items: CfgItem[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "separator": items.push({ kind: "separator", text: subst(tr(n.id, "Text", n.text), scope), uiHint: n.uiHint, cell: n.cell }); break;
+        case "separator": items.push({ kind: "separator", text: fillTextParam(subst(tr(n.id, "Text", n.text), scope), n.textParamRefId ? resolve(n.textParamRefId, scope) ?? "" : undefined), uiHint: n.uiHint, cell: n.cell }); break;
         case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         // A scripted action. Carried through as itself (label + handler name) so the UI
@@ -523,15 +533,16 @@ export function buildDeviceConfig(
   // has none, from a referenced parameter's text (a common manufacturer pattern,
   // e.g. Theben push-buttons); only then fall back to the language-independent Name.
   const blockTitle = (n: Extract<DynNode, { kind: "block" }>, scope: Scope): string => {
+    const fill = (t: string) => fillTextParam(subst(t, scope), n.textParamRefId ? resolve(n.textParamRefId, scope) ?? "" : undefined);
     const own = tr(n.id, "Text", n.text);
-    if (own) return subst(own, scope);
+    if (own) return fill(own);
     const ref = n.paramRefId ? app.refs.get(n.paramRefId) : undefined;
     const param = ref ? app.params.get(ref.paramId) : undefined;
     if (param) {
       const t = tr(param.id, "Text", param.text) || tr(n.paramRefId!, "Text", param.text);
-      if (t) return subst(t, scope);
+      if (t) return fill(t);
     }
-    return subst(n.name, scope);
+    return fill(n.name);
   };
 
   // Build the section tree in document order (so Assign side effects and choose
@@ -591,8 +602,7 @@ export function buildDeviceConfig(
           const items: CfgItem[] = [];
           collect(n.children, items, scope);
           if (items.length) {
-            let name = blockTitle(n, scope);
-            if (n.textParamRefId) name = name.replace(/\{\{0\}\}/g, resolve(n.textParamRefId, scope) ?? "");
+            const name = blockTitle(n, scope);
             const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0, ...gridOf(n, scope) }, order: headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children, null, items);
@@ -611,14 +621,14 @@ export function buildDeviceConfig(
         case "container": {
           // A Channel with a heading text becomes a navigable section (e.g.
           // "GRUNDMODUL {{0}}" -> "Basic module HMG 6 T"); {{0}} is the channel's
-          // TextParameterRefId value, else its Number. A text-less container
+          // TextParameterRefId value, else its Number (see fillTextParam). A text-less container
           // (ChannelIndependentBlock, Repeat, generic Channel) stays transparent.
           // Its own leaves (outside every ParameterBlock) become the section's items; a text-less
           // container gets a section of its own, named by its Name, only when it has such leaves.
           const heading = n.text.trim();
           const own: CfgItem[] | null = loose === null ? null : [];
           if (heading) {
-            const name = cap(subst(n.text, scope).replace(/\{\{0\}\}/g, (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? ""));
+            const name = cap(fillTextParam(subst(n.text, scope), (n.textParamRefId ? resolve(n.textParamRefId, scope) : undefined) ?? n.number ?? ""));
             const items = own ?? [];
             const node: Node = { block: { id: scope.rewrite(n.id), name, items, level: 0 }, order: n.number ? Number(n.number) : 0, seq: seq++, children: [] };
             into.push(node);
@@ -825,7 +835,7 @@ export function buildDeviceConfig(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber };
+  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, paramValue: (refId) => resolve(refId, TOP) };
 }
 
 // One com-object of an application program's full declaration, resolved the way the
@@ -833,6 +843,27 @@ export function buildDeviceConfig(
 export interface ComObjUniverseEntry {
   refId: string; number: number; name: string; functionText: string;
   dpt: string; objectSize: string; flags: ComObjFlags;
+}
+
+// The display texts of one top-level ComObjectRef outside the config view (an object the view does
+// not reach): translated like buildComObj, its {{0}} / {{0:default}} fed by the value `valueOf` gives
+// for the TextParameterRefId (a device's DeviceConfigBuild.paramValue), else by that parameter's
+// default (ref value over param value), which is what an override-free device holds. Undefined for
+// a dangling ref.
+export function comObjectRefTexts(app: AppConfig, fullRefId: string, lang?: string, valueOf?: (refId: string) => string | undefined): { name: string; functionText: string } | undefined {
+  const ref = app.comObjectRefs.get(fullRefId);
+  const obj = ref ? app.comObjects.get(ref.refId) : undefined;
+  if (!ref || !obj) return undefined;
+  const language = resolveLanguage(app, lang);
+  const tr = (attr: string, base: string): string =>
+    decode(language === app.defaultLanguage ? base : app.translations.get(language)?.get(fullRefId)?.get(attr) ?? base);
+  const tpRef = ref.textParamRefId ?? obj.textParamRefId;
+  const tp = tpRef ? app.refs.get(tpRef) : undefined;
+  const value = tpRef ? valueOf?.(tpRef) ?? (tp ? tp.value ?? app.params.get(tp.paramId)?.value : undefined) ?? "" : undefined;
+  return {
+    name: fillTextParam(tr("Text", ref.text ?? obj.text) || obj.name, value),
+    functionText: fillTextParam(tr("FunctionText", ref.functionText ?? obj.functionText), value),
+  };
 }
 
 // The COMPLETE com-object universe of an application program: one entry per
@@ -843,7 +874,7 @@ export interface ComObjUniverseEntry {
 //
 // Resolution mirrors buildComObj/resolveComObjImage above (same precedence, same
 // translation lookup); `lang` resolves like the config view's (default = the
-// catalogue's own language). A {{0}} text placeholder resolves to its
+// catalogue's own language). A {{0}} / {{0:default}} text placeholder resolves against its
 // TextParameterRef's DEFAULT value: with no device there are no overrides.
 //
 // Module-def applications are REFUSED, not listed incompletely: their real
@@ -862,16 +893,6 @@ export function comObjectUniverse(app: AppConfig, lang?: string): ComObjUniverse
     throw new ProductError("COMOBJ_UNIVERSE_MODULES_UNSUPPORTED",
       "this application program builds its com-objects from channel modules; enumerating their per-instance objects is not supported yet, refusing to return an incomplete list");
   }
-  const language = resolveLanguage(app, lang);
-  const tr = (elemId: string, attr: string, base: string): string =>
-    decode(language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base);
-  // {{0}} in a com-object text is fed by its TextParameterRefId; without a device the
-  // parameter holds its default (ref value over param value), exactly what resolve()
-  // in buildDeviceConfig yields for an override-free device.
-  const textParamDefault = (refId: string | undefined): string => {
-    const ref = refId ? app.refs.get(refId) : undefined;
-    return (ref ? ref.value ?? app.params.get(ref.paramId)?.value : undefined) ?? "";
-  };
   const out: ComObjUniverseEntry[] = [];
   for (const [fullId, ref] of app.comObjectRefs) {
     const obj = app.comObjects.get(ref.refId);
@@ -884,16 +905,10 @@ export function comObjectUniverse(app: AppConfig, lang?: string): ComObjUniverse
       throw new ProductError("COMOBJ_ARG_UNRESOLVED",
         `com-object ${obj.id} numbering references module argument ${obj.baseNumber} outside any module instance`);
     }
-    // Substitute {{0}} only when a TextParameterRefId feeds it, exactly like
-    // buildComObj: without one, the literal placeholder stays visible rather than
-    // being silently stripped.
-    const tpRef = ref.textParamRefId ?? obj.textParamRefId;
-    const fill = (s: string) => (tpRef ? s.replace(/\{\{0\}\}/g, () => textParamDefault(tpRef)) : s);
     out.push({
       refId: fullId,
       number: obj.number,
-      name: fill(tr(fullId, "Text", ref.text ?? obj.text) || obj.name),
-      functionText: fill(tr(fullId, "FunctionText", ref.functionText ?? obj.functionText)),
+      ...comObjectRefTexts(app, fullId, lang)!,
       dpt: ref.dpt ?? obj.dpt,
       objectSize: ref.objectSize ?? obj.objectSize,
       flags: { ...obj.flags, ...ref.flags },

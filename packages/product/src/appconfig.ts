@@ -108,7 +108,7 @@ export type DynNode =
   // `repeatCount` is set only for a <Repeat> (its literal Count): the from-scratch
   // instance resolver replays the children that many times to allocate per-instance.
   | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; repeatCount?: number; children: DynNode[] }
-  | { kind: "separator"; id: string; text: string; uiHint: string; cell?: DynCell }
+  | { kind: "separator"; id: string; text: string; textParamRefId?: string; uiHint: string; cell?: DynCell }
   | { kind: "unsupported"; tag: string }
   | { kind: "paramRef"; refId: string; indent?: number; cell?: DynCell }
   | { kind: "comObjRef"; refId: string }
@@ -654,7 +654,7 @@ function parseDyn(n: ONode): DynNode | null {
       };
     }
     case "ParameterSeparator":
-      return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", uiHint: a.UIHint ?? "", cell: parseCell(a.Cell) };
+      return { kind: "separator", id: a.Id ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, uiHint: a.UIHint ?? "", cell: parseCell(a.Cell) };
     case "ParameterRefRef":
       return { kind: "paramRef", refId: a.RefId, indent: a.IndentLevel !== undefined ? Number(a.IndentLevel) : undefined, cell: parseCell(a.Cell) };
     case "ComObjectRefRef":
