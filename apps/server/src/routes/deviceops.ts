@@ -1,10 +1,10 @@
-import { parseAppConfig, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -18,6 +18,66 @@ import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
+
+// The values a read-back is asked to assume (see the read-back route): each names a parameter of the
+// application that the device does not hold, once, with a value its type allows. A parameter with a
+// memory or property location is refused: the device holds it, so a read decides its value.
+interface Assumed { refId: string; value: string; isDefault: boolean }
+function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
+  if (raw === undefined) return [];
+  const bad = (m: string) => new ApiError("READBACK_ASSUMPTION_INVALID", m);
+  if (!Array.isArray(raw)) throw bad("assume must be a list of { paramRefId, value }");
+  const out: Assumed[] = [];
+  for (const a of raw as { paramRefId?: unknown; value?: unknown }[]) {
+    if (typeof a?.paramRefId !== "string" || typeof a.value !== "string") throw bad("each assumed value needs a paramRefId and a value, both strings");
+    const refId = a.paramRefId, value = a.value;
+    if (out.some((o) => o.refId === refId)) throw bad(`${refId} is assumed more than once`);
+    // A module-instance ref resolves through its ModuleDef ref, as the parameter edit does.
+    const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
+    const param = ref ? app.params.get(ref.paramId) : undefined;
+    const type = param ? app.types.get(param.typeId) : undefined;
+    if (!ref || !param || !type) throw new ApiError("READBACK_ASSUMPTION_UNKNOWN_PARAM", `${refId} is no parameter of this application`);
+    if (param.hasMemory || param.onProperty) throw new ApiError("READBACK_ASSUMPTION_HAS_MEMORY", `${refId} has a ${param.hasMemory ? "memory" : "property"} location: the device holds its value, it cannot be assumed`);
+    const ok = type.enums.length ? type.enums.some((e) => String(e.value) === value)
+      : (type.base === "Number" || type.base === "Value") && /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
+    if (!ok) throw bad(`${value} is not a value ${refId} takes`);
+    out.push({ refId, value, isDefault: value === (ref.value ?? param.value) });
+  }
+  return out;
+}
+
+// Whether every other value of a parameter would change the bytes Busforge writes under `values`:
+// the parameter segments and what the com-object table encodes of each object. A value another one writes the same is one the
+// device cannot tell apart from it; so is a number, whose values are not enumerated, and a value
+// beside which an alternative cannot be built. Yields between builds: it runs inside a bus job.
+async function distinguishable(app: AppConfig, values: Map<string, string>, refId: string, modules: ModuleInstance[]): Promise<boolean> {
+  const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
+  const param = ref ? app.params.get(ref.paramId) : undefined;
+  const type = param ? app.types.get(param.typeId) : undefined;
+  if (!type || !type.enums.length) return false;
+  const written = (v: Map<string, string>): string | null => {
+    try {
+      const view = buildDeviceConfig(app, v, undefined, modules);
+      const segs = app.absoluteSegments.length
+        ? buildAbsoluteSegmentTargets(app, v, { moduleInstances: modules, textRefusals: "skip" }).map((t) => t.bytes.toString("hex")).join()
+        : buildRelativeSegmentTarget(app, v, 4, { ownIdleUnionDefaults: true, moduleInstances: modules })?.bytes.toString("hex") ?? "";
+      // What the com-object table encodes per object: its size, flags and priority.
+      const objects = [...view.imageComObjects].map(([n, c]) => [n, c.objectSize, c.flags, c.priority]);
+      return `${segs}|${JSON.stringify(objects)}`;
+    } catch { return null; }
+  };
+  const mine = written(values);
+  if (mine === null) return false;
+  const own = values.get(refId) ?? ref?.value ?? param?.value;
+  for (const e of type.enums) {
+    const o = String(e.value);
+    if (o === own) continue;
+    await Bun.sleep(0);
+    const other = written(new Map(values).set(refId, o));
+    if (other === null || other === mine) return false;
+  }
+  return true;
+}
 
 // The shared preamble of the on-bus device operations (read-back / flash /
 // flash-ga): resolve the device, require a ready bus connection, resolve the
@@ -244,10 +304,17 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
 
   // /api/projects/:id/devices/:deviceId/read-back  -> read the device's current
   // state off the bus and store it as the baseline, so drift shows as a change.
+  //
+  // `assume` gives values for parameters the device does not hold, which no read-back can see: the
+  // read runs under them, and they are taken into the project and the baseline only if the device's
+  // configuration then shows an object for every link the device holds and a parameter flash dry run
+  // under it finds nothing to write; otherwise nothing is stored and the read is refused
+  // (READBACK_ASSUMPTION_UNRESOLVED with the objects, READBACK_ASSUMPTION_IMAGE_DIFFERS).
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "read-back" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
-    const body = (await req.json().catch(() => ({}))) as { lang?: string };
+    const body = (await req.json().catch(() => ({}))) as { lang?: string; assume?: unknown };
+    const assumed = assumedValues(parseAppConfig(appXml), body.assume);
     // Refuse up front for device classes whose state we cannot read at all: reading anyway
     // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
     // and System 7 both read, System 1 where its application declares the EEPROM segment; a
@@ -267,23 +334,66 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const rb = await state.queue.enqueue(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
       async (progress, signal) => {
+        const live = getDeviceParams(db, id, deviceId), base = getDeviceParamBase(db, id, deviceId);
+        const withAssumed = (m: Map<string, string>) => {
+          const out = new Map(m);
+          for (const a of assumed) { if (a.isDefault) out.delete(a.refId); else out.set(a.refId, a.value); }
+          return out;
+        };
         const read = await readDeviceState({
-          ia: dev.ia, appXml,
+          ia: dev.ia, appXml, deviceId, holds: assumed.length > 0 || dev.neverProgrammed, comObjectOverrides: resolveComObjOverrides(state, id, deviceId),
           connection: conn, secure: secureCredsFor(state, id, deviceId),
-          liveParams: getDeviceParams(db, id, deviceId), baseParams: getDeviceParamBase(db, id, deviceId),
+          liveParams: withAssumed(live), baseParams: withAssumed(base),
           moduleInstances: modules, configFor, onProgress: progress, signal,
         });
         // Persist ONLY the aspects actually read off the device. An aspect we couldn't
         // read keeps its existing baseline rather than getting a fabricated/garbage one.
         // One transaction: a link baseline must never stand with a stale gap count.
-        const lb = read.linksRead ? readbackLinkBase(state, id, deviceId, read.links, read.deviceConfig) : null;
+        const lb = read.linksRead ? readbackLinkBase(state, id, deviceId, read.links, read.deviceConfig, assumed.length ? withAssumed(live) : undefined) : null;
         // A cancel accepted during the read leaves the baselines as they were.
         if (signal.aborted) throw new CancelledError();
+        if (assumed.length) {
+          // The assumed values must fit the device: each shown in the device's configuration (the
+          // device's values and the assumed ones), that configuration showing an object for every link
+          // the device holds, and its parameter image equal to the device's. A link on an object only
+          // the project's own values hide resolves once the project takes the device's values (revert),
+          // as on any read-back. A value that changes neither the objects nor the image stays unproven.
+          if (!read.paramsRead || !lb) throw new ApiError("READBACK_ASSUMPTION_UNPROVEN", "the read-back did not cover both parameters and links, so it cannot show the assumed values hold; nothing was stored");
+          const shown = configFor(read.deviceConfig ?? withAssumed(live)).shown;
+          const unshown = assumed.filter((a) => !shown.has(a.refId)).map((a) => a.refId);
+          if (unshown.length) throw new ApiError("READBACK_ASSUMPTION_NOT_SHOWN", `the configuration read does not show the assumed parameter(s) ${unshown.join(", ")}, so their values decide nothing; nothing was stored`);
+          if (lb.unplacedOnDevice.length) throw new ApiError("READBACK_ASSUMPTION_UNRESOLVED", `under the assumed values the device's configuration still shows no object for its links on object(s) ${lb.unplacedOnDevice.join(", ")}; nothing was stored`, 400, { objects: lb.unplacedOnDevice });
+          if (read.imageMatches !== true) throw new ApiError("READBACK_ASSUMPTION_IMAGE_DIFFERS", read.imageMatches === false ? "under the assumed values a parameter or group-address flash would write bytes the device does not hold, so the device does not run these values; nothing was stored" : `the image under the assumed values could not be compared with the device (${read.imageRefused ?? "unknown"}), so the read cannot show they hold; nothing was stored`);
+        }
+        // An assumed value that another value of its parameter writes the same is not shown by the
+        // device: it is taken, since the bytes Busforge writes do not depend on the difference, and
+        // named. Decided before anything is stored.
+        const unproven: string[] = [];
+        if (assumed.length) {
+          const app = parseAppConfig(appXml);
+          const values = withAssumed(read.paramBase);
+          const instances = modules.length ? modules : (app.hasModules ? resolveModuleInstances(app, values) : []);
+          for (const a of assumed) if (!(await distinguishable(app, values, a.refId, instances))) unproven.push(a.refId);
+        }
+        // The check above yields; a cancel accepted meanwhile leaves the baselines as they were.
+        if (signal.aborted) throw new CancelledError();
+        // A complete read that resolves every link, of a device that reports this application's id with
+        // its load-state machines LOADED, whose parameter image a flash would leave as it is: the device
+        // holds this project's application, parameters and links.
+        const programmed = read.paramsRead && read.linksRead && lb?.gaps === 0 && read.programIdMatches === true && read.loaded === true && read.imageMatches === true;
         db.transaction(() => {
-          if (read.paramsRead) replaceParamBase(db, id, deviceId, read.paramBase);
+          for (const a of assumed) { if (a.isDefault) deleteDeviceParam(db, id, deviceId, a.refId); else setDeviceParam(db, id, deviceId, a.refId, a.value); }
+          if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase));
           if (lb) { replaceLinkBase(db, id, deviceId, lb.base); setLinkBaseGaps(db, id, deviceId, lb.gaps); }
+          if (programmed) clearNeverProgrammed(db, id, deviceId);
         })();
-        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0 };
+        // Why a never-programmed device stays so, for the client and the log.
+        const kept = dev.neverProgrammed && !programmed
+          ? [!read.paramsRead || !read.linksRead ? "the read did not cover both parameters and links" : "", (lb?.gaps ?? 0) > 0 ? "links unresolved" : "",
+            read.programIdMatches !== true ? `application id ${read.programIdMatches === false ? "of another application" : "not reported"}` : "",
+            read.loaded !== true ? "a load state not LOADED" : "", read.imageMatches === false ? "a flash would write bytes the device does not hold" : read.imageMatches !== true ? `image not compared (${read.imageRefused ?? "unknown"})` : ""].filter(Boolean).join("; ")
+          : "";
+        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}) };
       },
     );
     // `readback` tells the client what this read actually covered: `linkGaps` counts

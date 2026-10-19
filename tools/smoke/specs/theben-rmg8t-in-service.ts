@@ -11,8 +11,9 @@ import type { DeviceSpec } from "../spec.ts";
 // Fingerprint: the application id, which this family reports on the application object (object 4,
 // PID 13), and the device object's version (object 0, PID 25). The unit does not report PID 9. The
 // HMG 6 T, JMG 4 T and RMG 8 T share application, firmware and hardware type, so the fingerprint
-// passes on any of them; the base module type of the configuration (expectParams) tells them apart
-// before the first write.
+// passes on any of them. The module types of the base module and the extension modules have no
+// memory location, so no read-back sees them: the run assumes the unit's (assumeParams), and a wrong
+// one leaves links unresolved or the dry runs finding bytes to write, before the first write.
 //
 // A unit taken over by read-back carries no stamp record, and the MIX 2 firmware clears its download
 // marker, so every parameter flash writes every byte the parameters own and every GA flash the
@@ -36,10 +37,15 @@ export const thebenRmg8tInService: DeviceSpec = {
       { name: "application id", object: 4, pid: 13, expect: "0048493b21" },
       { name: "version", object: 0, pid: 25, expect: "0800" },
     ],
-    expectParams: [
-      // "Art des Grundmoduls": 1 (RMG 8 S). This RMG 8 T unit's configuration names the RMG 8 S base
-      // module, so 2 (RMG 8 T) stops the run as well as the HMG 6 T's 6 and the JMG 4 T's 5.
+    // "Art des Grundmoduls": 1 (RMG 8 S). This RMG 8 T unit's configuration names the RMG 8 S base
+    // module; 2 (RMG 8 T), the HMG 6 T's 6 or the JMG 4 T's 5 would stop the run. With the unit's
+    // extension modules.
+    assumeParams: [
       { name: "base module type", paramRefId: "M-0048_A-493B-21-B471_P-57_R-57", value: "1" },
+      { name: "1st extension module type", paramRefId: "M-0048_A-493B-21-B471_P-200_R-200", value: "1" },
+      { name: "2nd extension module type", paramRefId: "M-0048_A-493B-21-B471_P-201_R-201", value: "4" },
+    ],
+    expectParams: [
       // Channel C5 drives an output that must never switch by itself: an impulse channel with a normally
       // open contact, off on a download and a bus failure, off on the bus's return, its lock and logic
       // functions off. These values decide its state on a download, a bus failure and the bus's return;

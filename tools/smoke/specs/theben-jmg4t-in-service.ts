@@ -11,8 +11,9 @@ import type { DeviceSpec } from "../spec.ts";
 // Fingerprint: the application id, which this family reports on the application object (object 4,
 // PID 13), and the device object's version (object 0, PID 25). The unit does not report PID 9. The
 // HMG 6 T, JMG 4 T and RMG 8 T share application, firmware and hardware type, so the fingerprint
-// passes on any of them; the base module type of the configuration (expectParams) tells them apart
-// before the first write.
+// passes on any of them. The module types of the base module and the extension modules have no
+// memory location, so no read-back sees them: the run assumes the unit's (assumeParams), and a wrong
+// one leaves links unresolved or the dry runs finding bytes to write, before the first write.
 //
 // A unit taken over by read-back carries no stamp record, and the MIX 2 firmware clears its download
 // marker, so every parameter flash writes every byte the parameters own and every GA flash the
@@ -36,8 +37,12 @@ export const thebenJmg4tInService: DeviceSpec = {
       { name: "application id", object: 4, pid: 13, expect: "0048493b21" },
       { name: "version", object: 0, pid: 25, expect: "0800" },
     ],
-    // "Art des Grundmoduls": 5 is the JMG 4 T (the HMG 6 T is 6, the RMG units 1 to 3 and 8).
-    expectParams: [{ name: "base module type", paramRefId: "M-0048_A-493B-21-B471_P-57_R-57", value: "5" }],
+    // "Art des Grundmoduls" 5 is the JMG 4 T (the HMG 6 T is 6, the RMG units 1 to 3 and 8), and the
+    // unit's extension module.
+    assumeParams: [
+      { name: "base module type", paramRefId: "M-0048_A-493B-21-B471_P-57_R-57", value: "5" },
+      { name: "1st extension module type", paramRefId: "M-0048_A-493B-21-B471_P-200_R-200", value: "4" },
+    ],
     // C3 "Laufzeit komplett Ab": 50 s to 51 s, a number in the parameter image that leaves the
     // com-object table alone. The run reads the unit's value and refuses if it already holds this one.
     param: { paramRefId: "M-0048_A-493B-21-B471_MD-6_M-16_MI-3_P-13_R-13", value: "51" },

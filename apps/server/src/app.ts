@@ -108,6 +108,6 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // anything else is an unexpected failure surfaced raw under INTERNAL.
     const code = errorCode(e);
     const status = e instanceof ApiError ? e.status : code ? 400 : 500;
-    return err(code ?? "INTERNAL", (e as Error).message, status);
+    return err(code ?? "INTERNAL", (e as Error).message, status, e instanceof ApiError ? e.details : undefined);
   }
 }

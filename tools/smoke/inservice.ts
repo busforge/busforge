@@ -11,7 +11,7 @@
 //
 // All device access goes through InServiceIo, so the sequence runs against a scripted device in
 // inservice.test.ts exactly as against hardware.
-import { gaToNum } from "../../packages/knx/src/index.ts";
+import { gaToNum, numToGa } from "../../packages/knx/src/index.ts";
 import { maskInfo, planForMask, type DeviceReadbackInfo, type SystemFamily } from "../../packages/product/src/index.ts";
 import { allComObjects, allParams, findComObject, findParam, type ConfigView, type DeviceCapabilities, type FlashResult } from "./client.ts";
 import { judgeLoadStates, judgeRestoredConfig, type RebootObservation } from "./persistence.ts";
@@ -23,7 +23,8 @@ import { serverDataPath } from "./evidence.ts";
 // The server's API, for the project bound to the device under test: the oracle and the plumbing
 // (adoption, dry runs, the unlink, the restore after a failure).
 export interface InServiceApi {
-  readBack(): Promise<DeviceReadbackInfo | null>;
+  // `assume`: values of parameters without a memory location for the read to assume (read-back route).
+  readBack(assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo | null>;
   // Discard the project's edits: every parameter and link takes the baseline the last read-back set.
   revert(): Promise<unknown>;
   getConfig(): Promise<ConfigView>;
@@ -82,6 +83,8 @@ export interface FoundConfiguration {
   params: Record<string, string>;
   links: Record<string, number[]>;
   backups: string[];
+  // Assumed parameters whose value another value of theirs writes the same: taken, not shown.
+  unprovenAssumptions?: string[];
 }
 
 export interface InServiceResult {
@@ -156,6 +159,13 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
   const expected = (s.expectParams ?? []).map((e) => e.paramRefId);
   for (const ref of new Set(expected.filter((r, i) => expected.indexOf(r) !== i))) out.push(`expectParams names ${ref} more than once`);
   for (const e of s.expectParams ?? []) if (!e.name || !e.paramRefId || !e.value) out.push(`expectParams: an entry needs a name, a paramRefId and a value (${e.name || e.paramRefId || "unnamed"})`);
+  const assumed = (s.assumeParams ?? []).map((e) => e.paramRefId);
+  for (const ref of new Set(assumed.filter((r, i) => assumed.indexOf(r) !== i))) out.push(`assumeParams names ${ref} more than once`);
+  for (const e of s.assumeParams ?? []) if (!e.name || !e.paramRefId || !e.value) out.push(`assumeParams: an entry needs a name, a paramRefId and a value (${e.name || e.paramRefId || "unnamed"})`);
+  for (const ref of assumed) {
+    if (expected.includes(ref)) out.push(`${ref} is both assumed and expected; an assumed value is the one the run takes over`);
+    if (ref === s.param?.paramRefId || ref === s.structural?.paramRefId) out.push(`${ref} is assumed and a step's parameter; a step writes a parameter with a memory location`);
+  }
   if (!s.param && !s.link && !s.structural && !s.fullDownload) out.push("no step: the run would write nothing and prove nothing");
   if (spec.precondition) out.push("a precondition (a human step before the run) has no place on a device in service");
   if (spec.configure.length) out.push("configure steps would write the device beyond the spec's steps");
@@ -200,7 +210,7 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
     const read = (text: string) => out.push({ phase, kind: "read", text });
     const write = (op: PlanStep["op"], text: string) => out.push({ phase, kind: "write", op, text });
     if (phase === "fingerprint") read(`fingerprint: ${s.fingerprint.map((f) => `object ${f.object} PID ${f.pid} (${f.name}) = ${f.expect}`).join(", ")}`);
-    if (phase === "adopt") read(`read-back; the project takes the device's values; a second read-back under them must resolve every association; the parameter and GA flash dry runs must report unchanged (the server keeps their backups); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}`);
+    if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the parameter and GA flash dry runs must report unchanged (the server keeps their backups); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}`);
     if (phase === "capabilities") read(`every claimed write capability has its step in the spec or is declared unsafe; readParams and readLinks are claimed; every step's target is visible on the device${s.link ? `; ${short(s.link.comObjRefId)} is ${s.link.addToLinked ? "linked" : "unlinked"} on the device${spec.behaviours.some((b) => b.kind === "output") ? " and has its read flag" : ""}; the test address: no object of the unit uses it${s.link.addToLinked ? ", it lies above every address of the object (which keeps sending on its own first address)" : ""}, nothing on the bus answers a read of it or sends on it within 5 s` : ""}`);
     if (phase === "params" || phase === "links" || phase === "structural" || phase === "fullDownload") read("before each write: the project holds the configuration found plus this step only, and the other kind of write reports unchanged");
     if (phase === "params") {
@@ -245,6 +255,13 @@ const errText = (e: unknown): string => {
   return typeof code === "string" && !msg.includes(code) ? `${code}: ${msg}` : msg;
 };
 const sameLinks = (a: number[], b: number[]) => a.length === b.length && a.every((g, i) => g === b[i]);
+// Set an object's links over the API. The project takes a link only to a group address it holds, and
+// a project that took a unit over by read-back holds none of the unit's own addresses: each is
+// created first.
+async function setLinks(io: InServiceIo, refId: string, gaRaws: number[]): Promise<void> {
+  for (const g of gaRaws) await io.api.ensureGa(numToGa(g));
+  await io.api.setLinks(refId, gaRaws);
+}
 const drift = (view: ConfigView): string[] => [
   ...allParams(view).filter((p) => p.changed).map((p) => p.refId.split("_").pop() ?? p.refId),
   ...allComObjects(view).filter((c) => c.changed).map((c) => `object ${c.number}`),
@@ -255,7 +272,7 @@ const drift = (view: ConfigView): string[] => [
 async function noDrift(io: InServiceIo, coverage: DeviceReadbackInfo | null, what: string): Promise<string | null> {
   if (!coverage) return `${what}: the read-back did not report what it covered`;
   if (!coverage.paramsRead || !coverage.linksRead) return `${what}: the read-back did not cover both parameters and links`;
-  if (coverage.linkGaps > 0) return `${what}: ${coverage.linkGaps} association(s) did not resolve`;
+  if (coverage.linkGaps > 0) return `${what}: ${coverage.linkGaps} association(s) did not resolve${coverage.unresolvedObjects?.length ? ` (object(s) ${coverage.unresolvedObjects.join(", ")})` : ""}`;
   const d = drift(await io.api.getConfig());
   return d.length ? `${what}: the device differs from the project in ${d.slice(0, 5).join(", ")}${d.length > 5 ? ` and ${d.length - 5} more` : ""}` : null;
 }
@@ -338,9 +355,10 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
 
   // The project, before a write, must hold the configuration found plus the step and nothing else, and
   // the other kind of write must have nothing to do; after a step it must hold exactly what was found.
-  const onlyTheStep = async (phase: string, step: Parameters<typeof apartFromStep>[2], other: () => Promise<FlashResult>): Promise<void> => {
+  const onlyTheStep = async (phase: string, step: Parameters<typeof apartFromStep>[2], other?: () => Promise<FlashResult>): Promise<void> => {
     const extra = apartFromStep(await io.api.getConfig(), found!, step);
     if (extra.length) throw new Stop(phase, `the project holds more than this step before its write: ${extra.slice(0, 5).join(", ")}`);
+    if (!other) return;
     const o = await other();
     if (o.kind !== "unchanged") throw new Stop(phase, `the other kind of write reports ${o.kind} before this step's write; the write would carry more than the step`);
   };
@@ -361,15 +379,24 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     io.log(`${phase}: ${step.paramRefId} ${original} → ${step.value}`);
     at = `${phase} preflight`;
     out.params.set(step.paramRefId, { value: original, structural });
+    // While a change that alters the com-object table is pending, the GA flash route runs the
+    // structural flash, so for a structural step the group tables are checked to have nothing to do
+    // before its parameter is set; the structural flash then writes them from links that must still
+    // equal the configuration found.
+    const gaDry = () => io.api.flashGaDry();
+    if (structural) await onlyTheStep(`${phase} preflight`, {}, gaDry);
     await io.chan.setParam(step.paramRefId, step.value);
-    await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, () => io.api.flashGaDry());
+    await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] });
     await dryBeforeWrite(() => io.api.flashDry(), `${phase} preflight`, structural);
+    if (!structural) await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, gaDry);
     at = phase;
     const there = checkWritten(await io.chan.flashParams(), phase, structural);
     await io.settle(2000);
+    if (structural) await onlyTheStep(phase, { param: [step.paramRefId, step.value] }, gaDry);
     await io.chan.setParam(step.paramRefId, original);
-    await onlyTheStep(phase, {}, () => io.api.flashGaDry());
+    await onlyTheStep(phase, {});
     await dryBeforeWrite(() => io.api.flashDry(), phase, structural);
+    if (!structural) await onlyTheStep(phase, {}, gaDry);
     const back = checkWritten(await io.chan.flashParams(), phase, structural);
     out.params.delete(step.paramRefId);
     await io.settle(2000);
@@ -400,13 +427,18 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         // A freshly placed device shows the catalogue defaults, under which objects the unit uses may
         // be hidden, so their links count as unresolved on the first read. The project first takes
         // the device's parameters, and a second read must then resolve every link.
-        const first = await io.api.readBack();
+        const assume = (si.assumeParams ?? []).map(({ paramRefId, value }) => ({ paramRefId, value }));
+        let first: DeviceReadbackInfo | null;
+        try { first = await io.api.readBack(assume.length ? assume : undefined); }
+        catch (e) { throw new Stop(phase, `the read-back ${assume.length ? "under the assumed values " : ""}was refused: ${errText(e)}`); }
         if (!first?.paramsRead || !first.linksRead) throw new Stop(phase, "the read-back did not cover both parameters and links, so the project cannot take the device's configuration");
+        const unproven = first.unprovenAssumptions ?? [];
+        if (unproven.length) io.log(`assumed, not shown by the device (another value writes the same): ${unproven.map(short).join(", ")}`);
         await io.settle(3000);
         await io.api.revert();
         const second = await io.api.readBack();
         if (!second?.paramsRead || !second.linksRead) throw new Stop(phase, "the second read-back did not cover both parameters and links");
-        if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration; a GA flash would drop them`);
+        if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration${second.unresolvedObjects?.length ? ` (object(s) ${second.unresolvedObjects.join(", ")})` : ""}; a GA flash would drop them${assume.length ? "" : ". A parameter without a memory location may hide their objects: give its value in assumeParams"}`);
         await io.settle(3000);
         await io.api.revert();
         const paramsDry = await io.api.flashDry();
@@ -419,6 +451,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           params: Object.fromEntries(allParams(view).map((p) => [p.refId, p.value])),
           links: Object.fromEntries(allComObjects(view).filter((c) => c.gaRaws!.length).map((c) => [c.refId, c.gaRaws!])),
           backups,
+          ...(unproven.length ? { unprovenAssumptions: unproven } : {}),
         };
         if (backups.length < 2) throw new Stop(phase, "the dry runs reported no backup of the device's memory; no write without one");
         // What the fingerprint cannot tell: the product (or a setting) shows in the configuration.
@@ -429,6 +462,12 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           if (v.value !== e.value) throw new Stop(phase, `${e.name}: the device holds ${v.value}, the spec expects ${e.value}: not the unit or configuration this spec was written for`);
         }
         if (si.expectParams?.length) io.log(`expected values: ${si.expectParams.map((e) => `${e.name} ${e.value}`).join(", ")}`);
+        // The server took the assumed values only as a whole; the configuration must show them.
+        for (const e of si.assumeParams ?? []) {
+          const v = findParam(view, e.paramRefId);
+          if (!v || v.refId !== e.paramRefId || v.value !== e.value) throw new Stop(phase, `${e.name}: the configuration taken over shows ${v ? `${v.refId} = ${v.value}` : "no parameter"} for the assumed ${e.paramRefId} = ${e.value}`);
+        }
+        if (si.assumeParams?.length) io.log(`assumed values taken over: ${si.assumeParams.map((e) => `${e.name} ${e.value}`).join(", ")}`);
       }
 
       if (phase === "capabilities") {
@@ -488,8 +527,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         if (si.link!.addToLinked) {
           // The device page edits one address per object (choosing one replaces the others), so the
           // addition is an API edit in both channels; the GA flash itself goes through the channel.
-          await io.api.ensureGa(testGa);
-          await io.api.setLinks(obj.refId, placedLinks);
+          await setLinks(io, obj.refId, placedLinks);
         } else await io.chan.link({ refId: obj.refId, number: obj.number }, testGa);
         await onlyTheStep("flashLinks preflight", { link: [obj.refId, placedLinks] }, () => io.api.flashDry());
         await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false);
@@ -519,7 +557,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         }
         persistence = await persist();
         if (persistence) persistenceOf = "flashLinks";
-        await io.api.setLinks(obj.refId, own);
+        await setLinks(io, obj.refId, own);
         await onlyTheStep("flashLinks", {}, () => io.api.flashDry());
         await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks", false);
         const unlinked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
@@ -591,7 +629,7 @@ async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration
   try {
     const view = await io.api.getConfig();
     for (const p of allParams(view)) if (found.params[p.refId] !== undefined && p.value !== found.params[p.refId]) await io.api.setParam(p.refId, found.params[p.refId]);
-    for (const c of allComObjects(view)) if (!sameLinks(c.gaRaws ?? [], found.links[c.refId] ?? [])) await io.api.setLinks(c.refId, found.links[c.refId] ?? []);
+    for (const c of allComObjects(view)) if (!sameLinks(c.gaRaws ?? [], found.links[c.refId] ?? [])) await setLinks(io, c.refId, found.links[c.refId] ?? []);
     const left = apartFromStep(await io.api.getConfig(), found);
     if (left.length) return fail(`the project could not be set back to the configuration found (${left.slice(0, 5).join(", ")}); nothing written`);
     const structural = [...out.params.values()].some((p) => p.structural);

@@ -207,7 +207,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
     const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";
     const artifact = await packBusforge(data, text(body.password) || undefined);
-    return new Response(artifact, {
+    return new Response(new Uint8Array(artifact), {
       headers: { "content-type": "application/octet-stream", "content-disposition": `attachment; filename="${safe}.busforge"` },
     });
   }

@@ -83,6 +83,12 @@ export interface InServiceSpec {
   // (a module type), or a setting the run relies on staying as it is (an output's download
   // behaviour). Values as GET .../config shows them.
   expectParams?: { name: string; paramRefId: string; value: string }[];
+  // Values of parameters without a memory location (a rocker's function), which no read-back can see:
+  // the first read-back assumes them, and the server takes them into the project only if the device's
+  // configuration then shows an object for every link it holds and its parameter image equals the
+  // device's (docs/testing.md "Devices in service"). The server refuses a parameter with a memory or
+  // property location. Values as GET .../config shows them.
+  assumeParams?: { name: string; paramRefId: string; value: string }[];
   // flashParams: one parameter that leaves the com-object table alone, set to `value`, flashed, set
   // back to the device's own value, flashed again.
   param?: { paramRefId: string; value: string };

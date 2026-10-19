@@ -317,6 +317,41 @@ value the other way.
   decode, so default-valued parameters never produce phantom changes.
 - The read is read-only on the bus and writes no backup. A device that was never programmed is
   refused (`DEVICE_NOT_PROGRAMMED`) instead of having garbage decoded out of it.
+- **Parameters the device does not hold are invisible to it.** A parameter with neither a memory nor
+  a property location, kept only in the project (a rocker's function, a status LED's mode), has no
+  byte on the device, so the read leaves its baseline as it was. When such a parameter hides objects the device links, those
+  links stay unresolved: the read reports them (`linkGaps`, with their object numbers in
+  `unresolvedObjects`) and the group-address flash is refused until they resolve. The read can be
+  asked to **assume** values for such parameters (`assume: [{ paramRefId, value }]`): it reads
+  under them, and takes them into the project and the baseline only if the device's configuration
+  (its read values and the assumed ones) then shows each assumed parameter and an object for every
+  link the device holds, and a parameter and a group-address flash dry run (the device's own links)
+  under the baseline the read sets, in the same session, find nothing to write. Otherwise nothing is
+  stored and the read is refused
+  (`READBACK_ASSUMPTION_UNRESOLVED`, the objects in `details.objects`; `READBACK_ASSUMPTION_NOT_SHOWN`;
+  `READBACK_ASSUMPTION_IMAGE_DIFFERS`). Several values of a parameter can show the same objects (a
+  rocker's "Dimmen" and "Jalousie" both use its objects), so the links alone prove little; the image
+  decides. A value that another value of the parameter writes the same (a DALI ECG's group, where only
+  "assigned or not" shows in the com-object table) is taken, since no byte Busforge writes depends on
+  the difference, and named in `unprovenAssumptions`; so is a numeric one, whose values are not tried. A parameter with a memory or property location cannot be assumed
+  (`READBACK_ASSUMPTION_HAS_MEMORY`); an unknown one, a value its type does not take or one named
+  twice is refused before the bus is reached. A
+  link on an object only the project's own values hide resolves once the project takes the device's
+  values (**Revert**) and the device is read again.
+- **It can end "never programmed".** A read of a never-programmed device also reads, in the same
+  session, the application id (PID 13 of the application object its mask names) and the load states,
+  and runs a parameter and a group-address flash dry run under the baseline it sets (the latter also
+  compares the com-object table where the family's GA flash writes it). When the read covered parameters and
+  links, left no link unresolved, the id is this application's, the address table, association table
+  and application (System B: and com-object table) are LOADED, and both dry runs find nothing to write,
+  the flag is cleared ([storage-and-snapshots.md](storage-and-snapshots.md)). Not read, so not shown:
+  the com-object table's flags where the family's GA flash keeps the table (System 7: only the linked
+  bit follows the links), text fields whose layout no capture shows, and a Data Secure device's security object (its security baseline stays unknown). A
+  device that clears a download marker itself after each download (Theben TheLuxa P300, Meteodata
+  140 S, MIX 2) never passes the dry run, so it stays never programmed. A check that cannot run (the
+  device refuses a property, the product has no such flash) leaves the flag as it is and the read
+  stands. The read says why the flag stays (`neverProgrammedKept`). The check reads the parameter
+  segments a second time.
 
 Interpreting a byte that differs is [verification.md](verification.md).
 

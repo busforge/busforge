@@ -15,6 +15,9 @@ const PARAM = spec.inService!.param!.paramRefId;
 const OBJ = spec.inService!.link!.comObjRefId;
 const OTHER_OBJ = "M-00FA_A-A012-55-0000_O-23_R-300000602";
 const STRUCT = "M-00FA_A-A012-55-0000_UP-3001008_R-300100801";
+// A parameter without a memory location: no read-back sees it, and its catalogue default ("1") hides
+// an object the unit links.
+const MEMLESS = "M-00FA_A-A012-55-0000_UP-3001009_R-300100901";
 const GA = "15/7/250";
 const TEST_GA = gaToNum(GA);
 
@@ -37,22 +40,27 @@ interface Script {
   placedWithDefaults?: boolean;              // the fresh project shows the catalogue defaults, which hide a linked object
   hiddenEvenUnderOwnConfig?: boolean;        // a link no configuration of the unit places
   noReadFlag?: boolean;                      // the link step's object has no read flag
+  memoryless?: string;                       // the value of MEMLESS the unit runs (its links resolve only under it)
 }
 
 function scripted(sc: Script = {}) {
   const calls: string[] = [];
   const device: { params: Record<string, string>; links: Record<string, number[]> } = { params: { [PARAM]: "1", [STRUCT]: "1", ...sc.params }, links: { [OBJ]: [], [OTHER_OBJ]: [gaToNum("2/0/10")], ...sc.links } };
-  const project: { params: Record<string, string>; links: Record<string, number[]> } = { params: { ...device.params, ...(sc.placedWithDefaults ? { [STRUCT]: "0" } : {}) }, links: structuredClone(device.links) };
+  const project: { params: Record<string, string>; links: Record<string, number[]> } = { params: { ...device.params, ...(sc.placedWithDefaults ? { [STRUCT]: "0" } : {}), ...(sc.memoryless ? { [MEMLESS]: "1" } : {}) }, links: structuredClone(device.links) };
   // The server counts a device link on an object the project's parameters hide as unresolved.
-  const gaps = () => (sc.hiddenEvenUnderOwnConfig ? 1 : 0) + (project.params[STRUCT] !== device.params[STRUCT] ? 1 : 0);
-  let base = { params: { ...device.params }, links: structuredClone(device.links) as Record<string, number[]> };
+  const memlessWrong = (v = project.params[MEMLESS]) => sc.memoryless !== undefined && v !== sc.memoryless;
+  const gaps = () => (sc.hiddenEvenUnderOwnConfig ? 1 : 0) + (project.params[STRUCT] !== device.params[STRUCT] ? 1 : 0) + (memlessWrong() ? 1 : 0);
+  // A read-back leaves the baseline of MEMLESS as it was; only an accepted assumption sets it.
+  let memlessBase = sc.memoryless ? "1" : undefined;
+  const withMemless = (p: Record<string, string>) => (memlessBase === undefined ? p : { ...p, [MEMLESS]: memlessBase });
+  let base = { params: withMemless({ ...device.params }), links: structuredClone(device.links) as Record<string, number[]> };
   let paramFlashes = 0;
   // The step's object on the device after each GA flash.
   const objOnDevice: number[][] = [];
   const caps: DeviceCapabilities = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false, ...sc.caps };
   const props: Record<string, string> = { "4/13": "00faa01255", "0/25": "0945", ...sc.props };
   const same = (a: number[] = [], b: number[] = []) => a.length === b.length && a.every((g, i) => g === b[i]);
-  const paramsDiffer = () => Object.keys(project.params).some((k) => project.params[k] !== device.params[k]);
+  const paramsDiffer = () => Object.keys(project.params).some((k) => (k === MEMLESS ? memlessWrong() : project.params[k] !== device.params[k]));
   const linksDiffer = () => Object.keys(project.links).some((k) => !same(project.links[k], device.links[k]));
   const structural = () => Object.keys(project.params).some((k) => project.params[k] !== device.params[k] && (sc.structuralParams ?? []).includes(k));
   const result = (kind: FlashResult["kind"], extra: Partial<FlashResult> = {}): FlashResult => ({ kind, mask: "MV-07B0", imageBytes: 100, diffBytes: 1, backup: "/data/projects/p/backups/b.json", ...extra });
@@ -65,16 +73,28 @@ function scripted(sc: Script = {}) {
   };
   const io: InServiceIo = {
     api: {
-      readBack: async () => { calls.push("read"); base = { params: { ...device.params }, links: structuredClone(device.links) }; return { paramsRead: true, linksRead: true, linkGaps: gaps() }; },
+      readBack: async (assume) => {
+        calls.push("read");
+        for (const a of assume ?? []) {
+          if (a.paramRefId !== MEMLESS) throw Object.assign(new Error(`${a.paramRefId} has a memory location`), { code: "READBACK_ASSUMPTION_HAS_MEMORY" });
+          if (memlessWrong(a.value)) throw Object.assign(new Error("under the assumed values the device's configuration still shows no object for its links on object(s) 1"), { code: "READBACK_ASSUMPTION_UNRESOLVED" });
+        }
+        for (const a of assume ?? []) { project.params[MEMLESS] = a.value; memlessBase = a.value; }
+        base = { params: withMemless({ ...device.params }), links: structuredClone(device.links) };
+        const n = gaps();
+        return { paramsRead: true, linksRead: true, linkGaps: n, ...(n ? { unresolvedObjects: [1] } : {}) };
+      },
       revert: async () => { project.params = { ...base.params }; project.links = structuredClone(base.links); },
       getConfig: async () => view(),
       setParam: async (ref, value) => { project.params[ref] = value; },
       ensureGa: async () => undefined,
       setLinks: async (ref, gas) => { project.links[ref] = [...gas]; },
       flashDry: async () => (sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
-      flashGaDry: async () => (linksDiffer() ? result("dryRun") : result("unchanged")),
+      // As the server's flash-ga route: a pending parameter change that alters the com-object table
+      // makes it the structural flash.
+      flashGaDry: async () => (structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged")),
       downloadDry: async () => result("dryRun"),
-      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = { ...project.params }; if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
+      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
       flashGaReal: async () => { calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
@@ -272,6 +292,12 @@ describe("the general device-in-service spec", () => {
     expect(r.stopped?.detail).toContain("--test-ga");
     expect(s.calls).toEqual([]);
     expect(() => planInService(spec, { fullDownload: false, testGa: "1/2" })).toThrow("is not a group address");
+  });
+
+  test("no spec is registered twice, and no two specs share an id", () => {
+    expect(SPECS.filter((s, i) => SPECS.indexOf(s) !== i).map((s) => s.id)).toEqual([]);
+    const ids = SPECS.map((s) => s.id);
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
   });
 
   test("every registered device-in-service spec is fit, and no bench spec claims to be one", () => {
@@ -546,5 +572,54 @@ describe("a device in service: the fingerprint each family gives", () => {
       "no fingerprint rule for mask MV-0012 (family system-1); add one to FINGERPRINT_RULES from a read-only collection of a unit",
     ]);
     expect(inServiceProblems(system7([APP7], "MV-0700"))).toEqual(["mask MV-0700 declares no interface object carrying the application id, so the fingerprint cannot name the application"]);
+  });
+});
+
+describe("a device in service: parameters without a memory location", () => {
+  const withAssume = (value: string, paramRefId = MEMLESS): DeviceSpec => ({ ...spec, id: "assume", inService: { ...spec.inService!, assumeParams: [{ name: "rocker function", paramRefId, value }] } });
+
+  test("read back alone, the unit's link stays unresolved and the run says which object and what to give", async () => {
+    const { io, calls } = scripted({ memoryless: "2" });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toBe("1 association(s) of the device did not resolve under its own configuration (object(s) 1); a GA flash would drop them. A parameter without a memory location may hide their objects: give its value in assumeParams");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("with the unit's value assumed, the run takes it over and runs as planned", async () => {
+    const s = withAssume("2");
+    const { io, calls, device, start } = scripted({ memoryless: "2" });
+    const r = await runInService(s, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(planned(s, NO_FULL));
+    expect(device).toEqual(start);
+    expect(r.found?.params[MEMLESS]).toBe("2");
+    expect(planInService(s, NO_FULL).find((p) => p.phase === "adopt")?.text).toContain("assuming UP-3001009_R-300100901 (rocker function) = 2");
+  });
+
+  test("another value is refused by the read-back, before any write", async () => {
+    const { io, calls } = scripted({ memoryless: "2" });
+    const r = await runInService(withAssume("3"), io, NO_FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toContain("READBACK_ASSUMPTION_UNRESOLVED");
+    expect(r.stopped?.detail).toContain("object(s) 1");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a parameter with a memory location is refused by the read-back, before any write", async () => {
+    const { io, calls } = scripted({ memoryless: "2" });
+    const r = await runInService(withAssume("1", STRUCT), io, NO_FULL);
+    expect(r.stopped?.detail).toContain("READBACK_ASSUMPTION_HAS_MEMORY");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("an assumed parameter named twice, without a value, also expected, or a step's own, is refused before any run", () => {
+    const base = spec.inService!;
+    const a = { name: "f", paramRefId: MEMLESS, value: "2" };
+    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [a, a] } })).toEqual([`assumeParams names ${MEMLESS} more than once`]);
+    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, value: "" }] } })).toEqual(["assumeParams: an entry needs a name, a paramRefId and a value (f)"]);
+    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [a], expectParams: [a] } })).toEqual([`${MEMLESS} is both assumed and expected; an assumed value is the one the run takes over`]);
+    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, paramRefId: PARAM }] } })).toEqual([`${PARAM} is assumed and a step's parameter; a step writes a parameter with a memory location`]);
   });
 });

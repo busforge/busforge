@@ -105,6 +105,24 @@ depends on is hardware-proven.
   the byte read-back as fallback. The read-back stays the evidence behind `verified`.
 - **Traffic capture in the gateway process.** The tap points and decoders exist; the `--capture`
   flag that writes a decoded transaction log does not.
+- **A download marker the device clears is no change.** A parameter flash dry run counts the bits of an
+  `Access="None"` marker the unit clears after every download (Theben TheLuxa P300 and Meteodata 140 S
+  `P-2228`, Theben MIX 2 `P-199`) as bytes to write, so on such a unit it never reports `unchanged`: a
+  read-back cannot take the unit over (its assumed values are refused, it stays never programmed), and
+  the device-in-service specs of these products stop before their first write
+  (`tools/smoke/inservice-specs.test.ts`). Counting only the bits a read-back verifies, and writing the
+  marker with every other change as ETS does, would end it; the DALI-Gateway's `P-1` note in
+  [findings.md](findings.md) describes the current behaviour.
+- **A System 7 read-back keeps a hidden parameter's default where the device's byte equals the
+  template.** For a parameter the project's configuration does not activate, the read compares the
+  device's byte with the segment's `<Data>` byte rather than with the parameter's value, so where they
+  are equal it keeps the default although the device's value differs (Theben Meteodata 140 S: a
+  sun-protection channel's activation). The objects it shows stay hidden and their links unresolved;
+  read and revert reach the device's configuration only over several rounds. System 1 folds the same
+  way.
+- **Read a System B device's com-object table.** The read-back skips it, so flags the device's project
+  sets on its objects (a read flag) are not taken over; a group-address flash, which writes the table
+  whole, would clear them. On the Theben HMG 6 T the dry run shows it before any write.
 - **The unread-attribute audit.** [ets-coverage.md](ets-coverage.md) names a script that lists every
   product-XML attribute the parser never reads; it does not exist, the table is maintained by hand.
 

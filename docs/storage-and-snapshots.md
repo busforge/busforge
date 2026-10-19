@@ -104,10 +104,17 @@ the catalog, or whose product was replaced, carries `devices.never_programmed`. 
 seeds it from ETS: a `DeviceInstance` without `ApplicationProgramLoaded="true"` was never downloaded
 by ETS and imports as never programmed, including a device another tool programmed (ETS cannot know
 of that). A device without an application program (a power supply) is not seeded. It shows as **Never
-programmed** and counts as "to program" until a verified full download clears it: only that shows the
-device holds this project's application, parameters and tables. A surgical flash is refused on such a
-device (`NEVER_PROGRAMMED_USE_DOWNLOAD`, the flash dialog offers the download), and a read-back leaves
-the flag as it is (it does not check which application the device runs). Where the application's
+programmed** and counts as "to program" until a verified full download clears it, or a read-back that
+shows the device holds this project's application, parameters and links: one that read parameters and
+links, left no device link unresolved, found the device reporting this application's id (PID 13 of the
+application object its mask names) with its load-state machines LOADED, and whose parameter and
+group-address flash dry runs under the baseline it sets find nothing to write ([architecture.md](architecture.md#read-back-adopting-the-device-state-as-the-baseline)).
+That shows the device holds every byte this project's configuration writes into it; a parameter the
+device does not hold whose values all write the same bytes stays unshown. A read that misses a part,
+leaves a link unresolved, finds another application id or none (a family whose mask names no such
+object), a machine not LOADED, or bytes a flash would change leaves the flag as it is. A
+surgical flash is refused on such a device (`NEVER_PROGRAMMED_USE_DOWNLOAD`, the flash dialog offers the
+download). Where the application's
 declared load procedure has a step the full download cannot execute, the surgical flash is refused all
 the same, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): nothing would check which application the device
 runs before the flash writes into it. A family that cannot be downloaded in full for another reason

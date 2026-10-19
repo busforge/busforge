@@ -36,6 +36,8 @@ export interface CfgType {
 // byte-identical to the legacy image parser).
 export interface CfgParam {
   id: string; typeId: string; text: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
+  // Located in an interface object property (<Property>) instead of memory: also held by the device.
+  onProperty?: true;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
   // ETS LegacyPatchAlways: ETS always writes this parameter's value into the image, over the
   // <Data> byte, even at its default. The image build treats it like any other parameter, which
@@ -437,6 +439,7 @@ function parseParams(staticKids: ONode[], unionScope: string): { params: Map<str
     const mem = firstByTag(kidsOf(pa), "Memory");
     const ma = mem ? attrsOf(mem) : undefined;
     params.set(a.Id, {
+      ...(firstByTag(kidsOf(pa), "Property") ? { onProperty: true as const } : {}),
       id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", suffix: a.SuffixText, value: a.Value, access: a.Access,
       hasMemory: unionMem ? unionMem.CodeSegment !== undefined : !!mem,
       offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,

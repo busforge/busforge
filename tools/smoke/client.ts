@@ -95,9 +95,9 @@ export class Client {
   // /config; it is returned when that response arrives, and null when the socket died, so a caller
   // that needs the coverage fails instead of assuming it. A coded refusal (e.g. DEVICE_NOT_ANSWERING)
   // still propagates as an ApiError, the same honesty contract as the flash.
-  async readBack(pid: string, did: string, onPhase?: (p: string) => void): Promise<DeviceReadbackInfo | null> {
+  async readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo | null> {
     const firedAt = Date.now();
-    const fetchP = this.call<{ readback?: DeviceReadbackInfo }>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de" }, 600_000).catch((e) => {
+    const fetchP = this.call<{ readback?: DeviceReadbackInfo }>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de", ...(assume ? { assume } : {}) }, 600_000).catch((e) => {
       if (e instanceof ApiError) throw e; // a coded refusal is a real outcome
       process.stderr.write(`    …read: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
       return new Promise<{ readback?: DeviceReadbackInfo }>(() => {}); // never settles; the poll is the source of truth

@@ -39,7 +39,7 @@ All hardware verification is on **twisted pair**.
 | Capability | Implemented | Proven | Note |
 |---|---|---|---|
 | Import a `.knxproj` (ETS 5/6, AES) and a manufacturer `.knxprod` catalog | yes | real input files | Own ZIP + WinZip-AES + XML implementation. Nothing that cannot be rendered is dropped silently; it is surfaced as a visible "not supported" marker. |
-| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's capture of such a link (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. |
+| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Flash parameters (surgical) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. Writes the bytes ETS's parameter download writes: on a property-mapped System 7 mask every byte a parameter covers, on a memory-mapped one the bytes that differ from the unit ([load-procedures.md](load-procedures.md#the-rules-by-level)); on System B every owned byte. |
@@ -425,6 +425,13 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
+- **A device in service, taken over by read-back, has been run on emulated units only.** Every
+  device-in-service spec runs against the real server and the real read and write paths on its unit
+  emulated from a read-only collection (`tools/smoke/inservice-specs.test.ts`); none has run on
+  hardware this way. There the Gira M-0008, the Auro M-0081_A-FE01, the MDT BE-06001.02 and the Theben
+  DALI-Gateway are taken over and run their steps; the Theben TheLuxa P300, Meteodata 140 S and the MIX 2
+  units stop before their first write ([roadmap.md](roadmap.md#verification)), and the OpenKNX
+  RaumController's collection holds none of its memory.
 - **Memory writes longer than 32 bytes extended or 12 classic have run on no device.** Busforge asks an
   IP interface for its maximum APDU before writing, as ETS does, and writes up to the shorter of the
   device's and the interface's (205 data bytes behind an interface announcing 210). The question and
@@ -453,13 +460,13 @@ report a device family as working on the strength of a passing test suite.
   application (ETS's partial form). Structural flash: the Jung, the MDT BE-02001.02 and the reverts of
   the Auro, Gira, TheLuxa, Meteodata, MIX 2, Theben DALI gateway and MDT BE-06001.02. Everywhere else the read-back proves
   `device == our image` and can never prove `our image == ETS`.
-- **A sending address above another of the object's addresses has run on no device from
-  Busforge.** On the MDT BE-02001.02 one ETS 6 capture shows the order: ETS writes the sending
-  address's association first, and the unit then sent on that address and answered a read of either
-  address on it ([findings.md](findings.md) §36). Busforge's tables for the same links equal every
-  byte ETS wrote, and decoded as a read-back decodes them they name that address first
-  (`tools/etsdiff.test.ts`); no test compares the MDT BE-02001.02's group-address flash sequence with
-  a capture. On other products the order rests on the rule
+- **An object whose sending address is not its lowest has been written to no device by Busforge.** On the MDT BE-02001.02 two
+  ETS 6 captures show the order, with the sending address once above and once below the object's
+  other address: ETS writes the sending address's association first, and the unit sent on that address
+  and answered a read of either address on it ([findings.md](findings.md) §36). Busforge's tables for
+  the same links equal every byte ETS wrote, and decoded as a read-back decodes them they name that
+  address first (`tools/etsdiff.test.ts`); no test compares the MDT BE-02001.02's group-address flash
+  sequence with a capture. On other products the order rests on the rule
   ([load-procedures.md](load-procedures.md#the-rules-by-level), R8).
 - **System 7 group-address flash of the com-object table.** It reads the table the device holds
   and changes only each object's linked bit, as ETS does on both LSM styles. On a device whose table

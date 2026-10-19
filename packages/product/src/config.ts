@@ -88,7 +88,11 @@ export interface CfgBlock {
 // buildDeviceConfig). Defined once here so the server's ReadbackSummary and the web client
 // bind to the SAME shape: a field renamed here breaks both sides at compile time instead of
 // silently leaving the client reading undefined.
-export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number }
+// `unresolvedObjects`: the object numbers of the device links counted in `linkGaps`, when there are any.
+// `unprovenAssumptions`: assumed parameters (read-back `assume`) whose value another value of theirs
+// writes the same (objects, image), so the device could not tell them apart; taken all the same.
+// `neverProgrammedKept`: why a device never programmed from this project stays so after this read.
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string }
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links. Defined here

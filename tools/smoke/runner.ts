@@ -253,7 +253,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
   const withWitness = async <T>(f: () => Promise<T>): Promise<T> => { await witness.connect(); try { return await f(); } finally { await witness.close(); } };
   return {
     api: {
-      readBack: () => client.readBack(pid, did, (p) => log(`read ${p}`)),
+      readBack: (assume) => client.readBack(pid, did, (p) => log(`read ${p}`), assume),
       revert: () => client.revert(pid, did),
       getConfig: () => client.getConfig(pid, did),
       setParam: (ref, value) => client.setParam(pid, did, ref, value),

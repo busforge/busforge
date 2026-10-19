@@ -719,8 +719,13 @@ const objectOf = (key: string) => key.replace(/_R-[^_]+$/, "");
 // `gaps` counts device links left invisible: a number no configuration places (a module
 // template object only exists shifted per instance, so its bare number places nothing), and a
 // link on an object the project's configuration does not show, which enters the baseline but
-// cannot appear on the device page.
-export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[], deviceConfig?: Map<string, string>): { base: Map<string, number[]>; gaps: number } {
+// cannot appear on the device page. `unresolved` lists the object numbers of those links;
+// `unplacedOnDevice` those of the device links no object of the device's own configuration takes,
+// which only another configuration (another value of a parameter no read sees) could resolve.
+//
+// `projectParams` stands in for the project's stored values (a read-back under assumed values of
+// parameters without a memory location, which the project takes only if every link resolves).
+export function readbackLinkBase(state: AppState, projectId: string, deviceId: string, deviceLinks: ComObjectLink[], deviceConfig?: Map<string, string>, projectParams?: Map<string, string>): { base: Map<string, number[]>; gaps: number; unresolved: number[]; unplacedOnDevice: number[] } {
   const { db } = state;
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project");
@@ -732,7 +737,7 @@ export function readbackLinkBase(state: AppState, projectId: string, deviceId: s
     }
     return byNum;
   };
-  const projNum = placed(getDeviceParams(db, projectId, deviceId));
+  const projNum = placed(projectParams ?? getDeviceParams(db, projectId, deviceId));
   const devNum = deviceConfig ? placed(deviceConfig) : projNum;
   // Objects with an absolute number keep it under every configuration, so a hidden one still
   // names its object. A module (BaseNumber) object is numbered only inside an instance.
@@ -750,15 +755,22 @@ export function readbackLinkBase(state: AppState, projectId: string, deviceId: s
   const shown = new Set(projNum.values());
 
   const device = new Map<string, number[]>();
-  let unplaced = 0, hidden = 0;
+  const numOf = new Map<string, number>();
+  const unplaced: number[] = [], hidden: number[] = [];
   for (const l of deviceLinks) {
     const key = keyAt(l.comObjNum);
-    if (!key) { unplaced++; continue; }
+    if (!key) { unplaced.push(l.comObjNum); continue; }
     device.set(key, l.gaRaws);
-    if (!shown.has(key)) hidden++;
+    numOf.set(key, l.comObjNum);
+    if (!shown.has(key)) hidden.push(l.comObjNum);
   }
   const numberingKnown = !app.hasModules || deviceConfig !== undefined;
   const observable = numberingKnown ? new Set([...devNum.keys()].map((n) => keyAt(n)!)) : undefined;
-  const merged = mergeLinkBaseline(getDeviceLinks(db, projectId, deviceId), device, observable);
-  return { base: merged.base, gaps: merged.gaps + unplaced + (numberingKnown ? hidden : 0) };
+  const live = getDeviceLinks(db, projectId, deviceId);
+  const merged = mergeLinkBaseline(live, device, observable);
+  // mergeLinkBaseline's gaps: without known numbering, a device link on no live com-object.
+  const unknown = observable ? [] : [...device.keys()].filter((k) => !live.has(k)).map((k) => numOf.get(k)!);
+  const unresolved = [...new Set([...unplaced, ...(numberingKnown ? hidden : []), ...unknown])].sort((a, b) => a - b);
+  const unplacedOnDevice = [...new Set(deviceLinks.map((l) => l.comObjNum).filter((n) => !devNum.has(n)))].sort((a, b) => a - b);
+  return { base: merged.base, gaps: merged.gaps + unplaced.length + (numberingKnown ? hidden.length : 0), unresolved, unplacedOnDevice };
 }

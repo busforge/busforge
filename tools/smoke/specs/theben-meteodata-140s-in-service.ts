@@ -31,6 +31,13 @@ export const thebenMeteodata140sInService: DeviceSpec = {
       { name: "application id", object: 3, pid: 13, expect: "0048140c14" },
       { name: "firmware revision", object: 0, pid: 9, expect: "06" },
     ],
+    // Two channel functions without a memory location that the unit runs off their defaults (its ETS
+    // project's values), which no read-back sees; they change which parameter bytes are active, so the
+    // read-back's image check, which must find nothing to write, shows them.
+    assumeParams: [
+      { name: "channel function (P-7060)", paramRefId: "M-0048_A-140C-14-EB70_P-7060_R-7060", value: "3" },
+      { name: "channel function (P-7152)", paramRefId: "M-0048_A-140C-14-EB70_P-7152_R-7152", value: "4" },
+    ],
     // "Temperature calibration in 0.1°C stages": an offset of the measured temperature in the
     // parameter image that shows or hides nothing and leaves the com-object table alone. While it is
     // set the measured temperature reads 0.1 K higher, which may send it or cross a channel's

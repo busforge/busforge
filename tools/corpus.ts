@@ -13,6 +13,15 @@ import { gunzipSync } from "node:zlib";
 
 export const CORPUS_ENV = "BUSFORGE_CORPUS";
 
+// One read-only collection per device-in-service spec whose unit the tests emulate, of the unit as its
+// ETS project left it, named by the spec id (collections/in-service/README.md in the corpus).
+export const IN_SERVICE_COLLECTIONS = [
+  "auro-m0081-in-service", "gira-m0008-in-service", "mdt-be06001-in-service", "theben-dali-gateway-in-service",
+  "theben-hmg6t-in-service", "theben-jmg4t-in-service", "theben-meteodata-140s-in-service", "theben-rmg8t-in-service",
+  "theben-theluxa-p300-in-service",
+] as const;
+export const inServiceCollection = (specId: string) => `collections/in-service/${specId}.json`;
+
 // Every file the tests and tools read, relative to the corpus root. A corpus may hold more; it
 // may not hold less.
 export const CORPUS_FILES: readonly string[] = [
@@ -160,6 +169,7 @@ export const CORPUS_FILES: readonly string[] = [
   ].map((f) => `captures/${f}`),
   "dca-theben-dali-e64/backup-store.dat",
   "dca-theben-dali-e64/backup-store.expected.json",
+  ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the

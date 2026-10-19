@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
+import { KnxDevice, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
-  classify, parseAppConfig, sameMask,
+  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn,
 } from "@busforge/product";
@@ -172,9 +172,66 @@ export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups">
 
 // Read a device\'s current state back off the bus into a programmed baseline (drift
 // detection). Read-only: nothing is written to the device.
-export function readDeviceState(opts: ReadStateCtx & { ia: string; appXml: string; connection: Connection; secure?: SecureCreds }): Promise<DeviceReadback> {
+export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: Connection; secure?: SecureCreds }): Promise<DeviceStateRead> {
   const profile = classify(parseAppConfig(opts.appXml));
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.readState(dev, mask, opts), opts.secure);
+  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => readStateOn(dev, mask, opts), opts.secure);
+}
+
+// A read-back, and with `holds` set, whether the device holds this configuration in a way a read of
+// its values cannot show alone, all in the same session:
+// - `programIdMatches`: the application id the device reports (PID 13 of the object its mask's master
+//   data names for it) equals the application's own stamp; null where the mask names no such object
+//   or the device reports none.
+// - `loaded`: the load-state machines of its address table, association table, application (and, on
+//   System B, its com-object table) are LOADED; an interrupted download leaves one LOADING or ERROR.
+// - `imageMatches`: a parameter flash dry run and a group-address flash dry run (the device's own
+//   links) under the baseline this read sets (the device's values, the assumed ones and the baseline's
+//   own for parameters the device does not hold), which the project takes on revert, both find nothing
+//   to write; the second compares the tables a GA flash writes, the com-object table among them where
+//   the family writes it. This is what shows a parameter the device does not hold has the value the
+//   project gives it, where it decides bytes Busforge writes. Null where the product has no such flash
+//   or the check could not run; the reason is in `imageRefused`.
+export type ReadStateOpts = ReadStateCtx & { appXml: string; deviceId: string; ia: string; holds?: boolean; comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride> };
+export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string };
+export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateOpts): Promise<DeviceStateRead> {
+  const cfg = parseAppConfig(opts.appXml);
+  const profile = classify(cfg);
+  const read = await profile.readState(dev, mask, opts);
+  if (!opts.holds) return read;
+  // What a read cannot show leaves its answer open (null / false) rather than ending a read that has
+  // already succeeded; a cancel still ends it.
+  const why = (e: unknown) => `${(e as { code?: string }).code ?? "ERROR"}: ${(e as Error).message}`;
+  let programIdMatches: boolean | null = null;
+  let loaded = false;
+  let imageMatches: boolean | null = null;
+  let imageRefused: string | undefined;
+  try {
+    const object = planForMask(mask).applicationObject;
+    const id = object === null ? null : await dev.propReadIfPresent(object, PID.PROGRAM_ID);
+    programIdMatches = id && id.length ? id.equals(programIdStamp(cfg)) : null;
+    const lsms = maskInfo(mask).family === "system-b" ? [1, 2, 3, 4] : [1, 2, 3];
+    let all = true;
+    for (const obj of lsms) if ((await lsmState(dev, obj, isMemoryMappedLsm(mask))) !== STATE.LOADED) all = false;
+    loaded = all;
+    const caps = profile.capabilities();
+    if (!read.paramsRead || !read.linksRead) imageRefused = "the read did not cover both parameters and links";
+    else if (!caps.flashParams || !caps.flashLinks) imageRefused = "the product has no parameter or group-address flash to compare with";
+    else {
+      const values = read.paramBase;
+      const moduleInstances = opts.moduleInstances?.length ? opts.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, values) : []);
+      const progress = (_p: string, d?: number, t?: number) => opts.onProgress?.("check", d, t);
+      const common = { deviceId: opts.deviceId, appXml: opts.appXml, params: values, baseParams: values, moduleInstances, dryRun: true, persistBackups: () => "", signal: opts.signal, onProgress: progress };
+      const par = await profile.flashParameters(dev, mask, common);
+      const links: ComObjectLink[] = read.links;
+      const ga = par.kind === "unchanged" ? await profile.flashGroupTables(dev, mask, { ...common, ia: opts.ia, links, comObjectOverrides: opts.comObjectOverrides }) : null;
+      imageMatches = par.kind === "unchanged" && ga?.kind === "unchanged";
+    }
+  } catch (e) {
+    if (opts.signal?.aborted) throw e;
+    imageMatches = null;
+    imageRefused = why(e);
+  }
+  return { ...read, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}) };
 }
 
 // Identify a device and read its security mode: its device descriptor, serial and the security

@@ -275,10 +275,13 @@ evidence path as every other run, in both channels.
 
 ```
 fingerprint     read the spec's interface object properties; any mismatch stops the run
-adopt           read-back; the project takes the device's values; a second read-back under them must
-                resolve every association; parameter and GA flash dry runs must report unchanged (the
-                server keeps a backup of the device's memory with each); the configuration found is
-                recorded; the parameters in expectParams must hold their expected values
+adopt           read-back (assuming the values in assumeParams); the project takes the device's values;
+                a second read-back under them must resolve every association, which also ends the
+                device's "never programmed" (this application's id, loaded, the image a flash would
+                leave as it is); parameter and
+                GA flash dry runs must report unchanged (the server keeps a backup of the device's
+                memory with each); the configuration found is recorded; the parameters in
+                expectParams must hold their expected values, those in assumeParams the assumed ones
 capabilities    every write capability the product claims has a step in the spec or an `unsafe`
                 reason; readParams and readLinks are claimed; every step's target is checked
 params          parameter flash there, parameter flash back, read-back without drift
@@ -295,7 +298,10 @@ change of the expected kind (surgical, or structural for the structural step); a
 as `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, stops the run and is never routed to a download. Before
 each write the project must hold the configuration found plus the step and nothing else, and the
 other kind of write (parameters or group tables) must report `unchanged`, so an edit the step did not
-ask for never goes out with it. After each step the read-back must equal the configuration found.
+ask for never goes out with it. For the structural step the group tables are checked before its
+parameter is set (while a change that alters the com-object table is pending, the server's GA flash is
+the structural flash itself), and the structural flash then writes them from links that still equal the
+configuration found. After each step the read-back must equal the configuration found.
 
 When the run stops with a change still out, it sets the whole project back to the configuration
 found and writes the difference with the same kind of flash over the API, then reads back; it never
@@ -331,6 +337,7 @@ export const exampleInService: DeviceSpec = {
       { name: "version", object: 0, pid: 25, expect: "0945" },
     ],
     expectParams: [{ name: "module type", paramRefId: "…_R-…", value: "6" }], // optional
+    assumeParams: [{ name: "rocker function", paramRefId: "…_R-…", value: "2" }], // optional, no memory location
     param: { paramRefId: "…_R-…", value: "2" },                          // flashParams
     link: { comObjRefId: "…_O-1_R-…" },                                  // flashLinks (addToLinked: true for a linked object)
     structural: { paramRefId: "…_R-…", value: "1" },                     // structuralFlash, optional
@@ -346,6 +353,7 @@ export const exampleInService: DeviceSpec = {
 |---|---|
 | `inService.fingerprint` | The application id and the version property of the mask's family (table below), each `expect` as lower-case hex; further properties may follow. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. A record with outcome `refused` is a property the unit does not have |
 | `inService.expectParams` | Optional. Parameters whose values the device's own configuration must hold once the project has taken it over, each with a `name` for the report and the value as `GET .../config` shows it. A mismatch, or a parameter the configuration does not show, stops the run after the adoption and before the test address is probed or anything is written. For what the fingerprint cannot tell: products that share application, firmware and hardware type (a module-type parameter), or a setting the run relies on staying as it is (an output's download or bus-return behaviour) |
+| `inService.assumeParams` | Optional. Parameters **without a memory location** (a rocker's function, a status LED's mode) that the unit runs off their catalogue default, each with a `name` and the value as `GET .../config` shows it. No read-back sees them, so a unit taken over by read-back alone keeps their defaults, and the objects they show stay hidden: the adoption stops with the unresolved object numbers. The first read-back assumes these values; the server takes them only if the unit's configuration then shows an object for every link it holds, and refuses a parameter with a memory location ([architecture.md](architecture.md#read-back-adopting-the-device-state-as-the-baseline)). The values come from the unit's ETS project. The server checks them against the unit's links and its parameter image (a dry run under them must find nothing to write); several values of a parameter may show the same objects, so mostly the image decides. A value another value of its parameter writes the same is taken unproven; the run logs it and records it in the configuration found (`unprovenAssumptions`). A device that clears a download marker itself never passes the image check, so its assumptions are refused. Not the parameter of a step, not also in `expectParams` |
 | Refs | Every `paramRefId` and `comObjRefId` is the full ref as `GET .../config` lists it; a ref that matches only by its end is refused |
 | `inService.param` | A parameter the unit shows, writable, in the parameter image, whose change leaves the com-object table alone (a delay, a threshold, a number; not a channel function or anything that shows or hides objects). `value` must differ from what the unit holds. The run reads the unit's own value and writes it back |
 | `inService.link` | An object the unit holds **unlinked**, or with `addToLinked: true` one it holds **linked**: its own addresses stay and the test address is added behind them, then removed again. The object's read flag (the application's, with the project's own laid over it) must be on when a behaviour is an `output`; the run refuses the object otherwise. With `addToLinked` the test address must lie above every address the object holds: an object sends on the address its association table lists first, and the run adds the test address behind the object's own, but only one ETS capture shows an object whose first address is not its lowest ([findings.md](findings.md) §36), so on other products a lower test address could take the sending place. A device may answer the witness's read on the object's sending address rather than on the address read: the answer, the object's current value, then goes out on the object's own address as for any read of it, and the witness, which accepts only an answer on the test address, fails. The addition is an API edit in both channels; the GA flash itself goes through the channel under test. The test group address is not in the spec (it belongs to the installation): the operator gives it with `--test-ga=<main/middle/sub>`. It must be unused **in the whole installation**: the linked object may send on it (on every restart, for one), and any device listening there would act on it. The run refuses an address an object of the unit uses, or one on which anything answers a read or sends within 5 s, but it cannot see a device that only listens; checking that is the operator's job. The run refuses an object whose links do not match the step (linked without `addToLinked`, unlinked with it) and never replaces a link |
@@ -372,6 +380,16 @@ its rule is added (`FINGERPRINT_RULES` in `inservice.ts`) from a collection of o
 
 `bun test tools/smoke/inservice.test.ts` checks every registered device-in-service spec against
 these rules, so a spec that breaks one fails `bun run check`.
+
+`tools/smoke/inservice-specs.test.ts` (private corpus) runs every registered device-in-service spec
+against the real server routes and the real read and write paths of its family, on its unit emulated
+from a read-only collection taken before any write (`packages/product/test/collected-unit.ts`: it
+answers only what the collection holds and refuses any other read). The run must pass, make the
+writes its plan lists, and leave the unit's memory as it found it. This shows the run gets through the
+server's guards, the adoption and the dry runs on the unit's real bytes; it does not show that the
+device acts on them (the emulated witness answers when the unit's tables hold the association) or keeps
+them (the emulated restart keeps everything). A spec whose unit cannot be emulated is named there with
+the reason.
 
 Not supported in this mode: a KNX Data Secure device (the runner's own connections for the
 fingerprint, the witness and the restart are plain, so such a unit gets no answer and the run stops at

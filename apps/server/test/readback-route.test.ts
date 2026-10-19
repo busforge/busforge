@@ -104,7 +104,7 @@ corpusDescribe("POST /read-back", () => {
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1 });
+    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999] });
 
     // The bogus association never entered device_link_base.
     const rows = state.db.query("SELECT ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { ga_raw: number }[];
