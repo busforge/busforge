@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, resetComObjOverrideBase } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -12,7 +12,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -49,8 +49,10 @@ function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
 // Whether every other value of a parameter would change the bytes Busforge writes under `values`:
 // the parameter segments and what the com-object table encodes of each object. A value another one writes the same is one the
 // device cannot tell apart from it; so is a number, whose values are not enumerated, and a value
-// beside which an alternative cannot be built. Yields between builds: it runs inside a bus job.
-async function distinguishable(app: AppConfig, values: Map<string, string>, refId: string, modules: ModuleInstance[]): Promise<boolean> {
+// beside which an alternative cannot be built. With `flagsFromDevice` (a read that took the device's
+// com-object flags into the baseline, so its image check compared the table under them) flags and
+// priority tell no value apart, only the objects and their sizes. Yields between builds: it runs inside a bus job.
+export async function distinguishable(app: AppConfig, values: Map<string, string>, refId: string, modules: ModuleInstance[], flagsFromDevice: boolean): Promise<boolean> {
   const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
   const param = ref ? app.params.get(ref.paramId) : undefined;
   const type = param ? app.types.get(param.typeId) : undefined;
@@ -62,7 +64,7 @@ async function distinguishable(app: AppConfig, values: Map<string, string>, refI
         ? buildAbsoluteSegmentTargets(app, v, { moduleInstances: modules, textRefusals: "skip" }).map((t) => t.bytes.toString("hex")).join()
         : buildRelativeSegmentTarget(app, v, 4, { ownIdleUnionDefaults: true, moduleInstances: modules })?.bytes.toString("hex") ?? "";
       // What the com-object table encodes per object: its size, flags and priority.
-      const objects = [...view.imageComObjects].map(([n, c]) => [n, c.objectSize, c.flags, c.priority]);
+      const objects = [...view.imageComObjects].map(([n, c]) => (flagsFromDevice ? [n, c.objectSize] : [n, c.objectSize, c.flags, c.priority]));
       return `${segs}|${JSON.stringify(objects)}`;
     } catch { return null; }
   };
@@ -225,6 +227,7 @@ function structuralFlash(
   const modules = getDeviceModules(db, projectId, deviceId);
   const comObjectOverrides = resolveComObjOverrides(state, projectId, deviceId);
   const overrideRows = getDeviceComObjOverrides(db, projectId, deviceId); // the rows comObjectOverrides was placed from
+  const comObjectOverrideBase = resolveComObjOverrideBase(state, projectId, deviceId); // read with baseParams
   const dry = url.searchParams.get("dry") === "1";
   let fingerprint: string | null = null;
   return programOrPreview(state,
@@ -236,7 +239,7 @@ function structuralFlash(
       return flashDeviceStructure({
         projectId, deviceId, ia: dev.ia, appXml,
         connection: conn, dataDir: state.dataDir, ...tables.ctx,
-        params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides,
+        params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides, comObjectOverrideBase,
         dryRun: dry, onProgress: progress, ...gate,
       });
     }, commit, (result) => {
@@ -344,6 +347,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         };
         const read = await readDeviceState({
           ia: dev.ia, appXml, deviceId, holds: assumed.length > 0 || dev.neverProgrammed, comObjectOverrides: resolveComObjOverrides(state, id, deviceId),
+          comObjectOverrideBaseRows: getDeviceComObjOverrideBase(db, id, deviceId),
           connection: conn, secure: secureCredsFor(state, id, deviceId),
           liveParams: withAssumed(live), baseParams: withAssumed(base),
           moduleInstances: modules, configFor, onProgress: progress, signal,
@@ -375,7 +379,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           const app = parseAppConfig(appXml);
           const values = withAssumed(read.paramBase);
           const instances = modules.length ? modules : (app.hasModules ? resolveModuleInstances(app, values) : []);
-          for (const a of assumed) if (!(await distinguishable(app, values, a.refId, instances))) unproven.push(a.refId);
+          for (const a of assumed) if (!(await distinguishable(app, values, a.refId, instances, read.comObjOverrideBase !== undefined))) unproven.push(a.refId);
         }
         // The check above yields; a cancel accepted meanwhile leaves the baselines as they were.
         if (signal.aborted) throw new CancelledError();
@@ -387,6 +391,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           for (const a of assumed) { if (a.isDefault) deleteDeviceParam(db, id, deviceId, a.refId); else setDeviceParam(db, id, deviceId, a.refId, a.value); }
           if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase));
           if (lb) { replaceLinkBase(db, id, deviceId, lb.base); setLinkBaseGaps(db, id, deviceId, lb.gaps); }
+          if (read.comObjOverrideBase) resetComObjOverrideBase(db, id, deviceId, read.comObjOverrideBase);
           if (programmed) clearNeverProgrammed(db, id, deviceId);
         })();
         // Why a never-programmed device stays so, for the client and the log.
@@ -395,7 +400,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
             read.programIdMatches !== true ? `application id ${read.programIdMatches === false ? "of another application" : "not reported"}` : "",
             read.loaded !== true ? "a load state not LOADED" : "", read.imageMatches === false ? "a flash would write bytes the device does not hold" : read.imageMatches !== true ? `image not compared (${read.imageRefused ?? "unknown"})` : ""].filter(Boolean).join("; ")
           : "";
-        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}) };
+        return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}), ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}) };
       },
     );
     // `readback` tells the client what this read actually covered: `linkGaps` counts
@@ -633,6 +638,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // group-address download writes a flag change; the rows they come from are what a verified flash adopts.
     const gaFlagChanges = changedComObjNumbers(state, id, deviceId);
     const gaOverrideRows = getDeviceComObjOverrides(db, id, deviceId);
+    const gaOverrideBase = resolveComObjOverrideBase(state, id, deviceId); // read with gaBase
     // If wiring these links would leave the device's kept-from-device com-object table stale, the
     // structural flash writes it (or the full download, or a refusal). Pre-enqueue.
     const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined);
@@ -649,6 +655,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         return flashDeviceGroupAddresses({
           projectId: id, deviceId, ia: dev.ia, appXml: gaAppXml, links: resolved.links,
           params: gaParams, baseParams: gaBase, moduleInstances: gaModules, comObjectOverrides: gaOverrides, comObjectFlagChanges: gaFlagChanges,
+          comObjectOverrideBase: gaOverrideBase,
           connection: conn, dataDir: state.dataDir, ...tables.ctx,
           // Read when the job runs, so a download queued before it has left its record.
           stampRecord: getImageStamps(db, id, deviceId),

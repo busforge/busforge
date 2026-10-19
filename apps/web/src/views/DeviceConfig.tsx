@@ -183,7 +183,7 @@ export function DeviceConfig() {
     }
     if (rb.params !== false && hasTextColorParams) readbackNotes.push(t("device.readbackUnverifiableTextColor"));
     // Com-object flags / active object set (L3) are not programmed or compared; only links are.
-    if (rb.links && hasComObjects) readbackNotes.push(t("device.readbackComObjectFlags"));
+    if (rb.links && hasComObjects) readbackNotes.push(t(rb.flags ? "device.readbackComObjectFlags" : "device.readbackComObjectFlagsNotRead"));
   }
 
   const onError = (e: unknown) => toast.error(t("device.saveError"), { description: errMsg(t, e) });
@@ -227,6 +227,10 @@ export function DeviceConfig() {
         // Constant parameters the device holds otherwise count as no change; named so none is overlooked.
         const constants = v.readback?.constantsDiffer ?? [];
         if (constants.length) toast.warning(t("device.readConstantsDiffer", { params: constants.map((c) => c.label).join(", ") }));
+        // Flags the read could not take: a write that rewrites the com-object table refuses to change them.
+        const took = v.readback;
+        if (took?.flagsUnreadable) toast.warning(t("device.readFlagsUnreadable", { reason: took.flagsUnreadable }));
+        else if (took?.flagsUndecoded?.length) toast.warning(t("device.readFlagsUndecoded", { objects: took.flagsUndecoded.join(", ") }));
       },
       onError: (e) => {
         dispatchAssume({ type: "readFailed", deviceId: forDevice, assumed, error: e });

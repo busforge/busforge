@@ -223,11 +223,22 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const before = config(kept, 0);
     expect(await classify(cfg).flashGroupTables(asDev(kept), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped })).toMatchObject({ kind: "flashed", verified: true });
     expect(config(kept, 0)).toBe(before | 0x04);
-    // a change: read and priority as the project gives them
+    // a change: read and priority as the project gives them, on a unit holding the flags the baseline
+    // records (the application's) for the object
     const changed = new GiraDevice(cfg);
+    const PRIO = { Low: 0b11, High: 0b01, Alert: 0b10 };
+    const held = (before & ~0xdb) | PRIO[app0.priority] | (app0.flags.read ? 0x08 : 0) | (app0.flags.write ? 0x10 : 0) | (app0.flags.transmit ? 0x40 : 0) | (app0.flags.update ? 0x80 : 0);
+    changed.mem.set(l3.address + 3 + 2, held);
     expect(await classify(cfg).flashGroupTables(asDev(changed), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped, comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
-    const prio = { Low: 0b11, High: 0b01, Alert: 0b10 }[flipped.get(0)!.priority];
-    expect(config(changed, 0)).toBe((before & ~0x8b) | (app0.flags.update ? 0x80 : 0) | (app0.flags.read ? 0 : 0x08) | prio | 0x04);
+    expect(config(changed, 0)).toBe((held & ~0x0b) | (app0.flags.read ? 0 : 0x08) | PRIO[flipped.get(0)!.priority] | 0x04);
+    // the same change on a unit holding a third priority, which the baseline does not record: refused
+    // before any write, as the write would change it silently
+    const other = new GiraDevice(cfg);
+    const third = (["Low", "High", "Alert"] as const).find((p) => p !== app0.priority && p !== flipped.get(0)!.priority)!;
+    other.mem.set(l3.address + 3 + 2, (held & ~0x03) | PRIO[third]);
+    expect(await classify(cfg).flashGroupTables(asDev(other), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: flipped, comObjectFlagChanges: new Set([0]) }).catch((e: unknown) => e))
+      .toMatchObject({ code: "COM_OBJECT_FLAGS_UNKNOWN" });
+    expect(other.ops.filter((o) => o === "write")).toEqual([]);
     // an update flag the project changes: config 0x80 as the project gives it
     // (captures/mdt-be02001-ets-partial-flag-update-{on,off}.log)
     const upd = new GiraDevice(cfg);

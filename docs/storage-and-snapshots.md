@@ -101,8 +101,9 @@ otherwise unwritten fields retain their previous baseline, even when absent from
 Full-download adoption of parameters and links is atomic. Dry-run requests never adopt a baseline.
 The com-object flags follow the same model: `device_comobj_override_base` is seeded from the import
 and adopted by a verified write that carries a flag edit (group-address flash, structural flash, full
-download); a parameter flash leaves it, and a read-back does not read the com-object table and leaves
-it as it is.
+download); a parameter flash leaves it, and a read-back sets it to the flags the device's com-object
+table shows, on the objects the device's configuration activates (where the family's read covers the
+table), keeping the stored attributes of every bit and object the table does not show.
 
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import

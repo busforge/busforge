@@ -204,13 +204,21 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
       return dev;
     };
+    // The writes that rewrite the com-object table find the one the baseline implies on the unit (with no
+    // link yet, as its empty group tables say).
+    const withTable = () => {
+      const dev = changedUnit();
+      const l3 = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.7", params, links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 3)!.image;
+      l3.forEach((b, i) => dev.mem.set(0x300 + i, b));
+      return dev;
+    };
     // The full download writes the application's non-zero runs into a segment its allocation fills with 0,
     // which this mock does not do: it starts from the image.
     const ops: [string, (dev: MockDevice) => Promise<unknown>, () => MockDevice][] = [
       ["full download", (dev) => classify(cfg).downloadFull(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), seeded],
       ["parameter flash", (dev) => classify(cfg).flashParameters(asDev(dev), "07B0", ctx), changedUnit],
-      ["group-address flash", (dev) => classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), changedUnit],
-      ["structural flash", (dev) => classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), changedUnit],
+      ["group-address flash", (dev) => classify(cfg).flashGroupTables(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), withTable],
+      ["structural flash", (dev) => classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links }), withTable],
     ];
     for (const [name, op, unitFor] of ops) {
       test(`${name}: verified, with restartUnproven, and the acceptance closed after it`, async () => {

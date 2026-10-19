@@ -252,10 +252,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   }
 });
 
-const IMAGE = "READBACK_ASSUMPTION_IMAGE_DIFFERS";
-const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>([
-  ["theben-hmg6t-in-service", { stop: IMAGE, reason: "the read-back does not read the com-object table, so read flags the unit's project sets are not taken over and a GA dry run finds them to write" }],
-]);
+const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>();
 
 // Specs whose unit cannot be emulated, with the reason.
 const NOT_EMULATED = new Map<string, string>([

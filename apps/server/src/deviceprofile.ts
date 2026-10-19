@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { KnxDevice, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
+  buildDeviceConfig, deviceComObjOverrideRows, placeComObjOverrides,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn, type ConstantDifference,
 } from "@busforge/product";
@@ -120,6 +121,9 @@ export function secureTablesUnsupported(): ApiError {
 // (deviceservice.ts resolveComObjOverrides). Required here, where the product layer lets it be absent,
 // so no route can write a table without them.
 type ProjectComObjOverrides = { comObjectOverrides: NonNullable<FullDownloadCtx["comObjectOverrides"]> };
+// The writes that rewrite the table in a device that holds one also take what the baseline records for
+// it (deviceservice.ts resolveComObjOverrideBase), required for the same reason.
+type BaselineComObjOverrides = ProjectComObjOverrides & { comObjectOverrideBase: NonNullable<GaFlashCtx["comObjectOverrideBase"]> };
 
 // Program a device\'s parameter segment from its stored configuration.
 export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
@@ -141,7 +145,7 @@ function refuseSessionWithoutSecurityObject(opts: { secure?: SecureCreds; securi
 // the app\'s declared table capacity (<AddressTable>/<AssociationTable> MaxEntries); the
 // GA-flash growth guard depends on it. Without the cfg it would fall back to "no growth
 // beyond the current table" and refuse every legitimate add.
-export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides & { appXml: string }): Promise<FlashResult> {
+export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & BaselineComObjOverrides & { appXml: string }): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
@@ -151,7 +155,7 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
 
 // Write a parameter change that alters the com-object table: parameters, the com-object table they
 // imply and the group tables, in one bracket (profile.flashStructure).
-export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides): Promise<FlashResult> {
+export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope & BaselineComObjOverrides): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
   const profile = classify(parseAppConfig(opts.appXml));
@@ -192,13 +196,33 @@ export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: 
 //   project gives it, where it decides bytes Busforge writes. Null where the product has no such flash
 //   or the check could not run; the reason is in `imageRefused`. `constantsDiffer`: where the image
 //   matches, the constant parameters the device differs in, no change (FlashResult.constantsDiffer).
-export type ReadStateOpts = ReadStateCtx & { appXml: string; deviceId: string; ia: string; holds?: boolean; comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride> };
-export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string; constantsDiffer?: ConstantDifference[] };
+// Where the read covers the com-object table, `comObjOverrideBase` is the flag baseline it sets: the
+// stored one (`comObjectOverrideBaseRows`) with each object the configuration of its parameter baseline
+// activates set to the flags the device holds (deviceComObjOverrideRows), `comObjFlagsUndecoded` the
+// objects whose flags it could not take. The group-address dry run above runs under that baseline, so
+// its flags come from the device and show nothing about the parameters (see deviceops.ts distinguishable).
+type OverrideRows = { comObjRefId: string; attrs: Record<string, string> }[];
+export type ReadStateOpts = ReadStateCtx & { appXml: string; deviceId: string; ia: string; holds?: boolean; comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>; comObjectOverrideBaseRows?: OverrideRows };
+export type DeviceStateRead = DeviceReadback & { programIdMatches?: boolean | null; loaded?: boolean; imageMatches?: boolean | null; imageRefused?: string; constantsDiffer?: ConstantDifference[]; comObjOverrideBase?: OverrideRows; comObjFlagsUndecoded?: number[] };
 export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateOpts): Promise<DeviceStateRead> {
   const cfg = parseAppConfig(opts.appXml);
   const profile = classify(cfg);
   const read = await profile.readState(dev, mask, opts);
-  if (!opts.holds) return read;
+  const instancesFor = (values: Map<string, string>) => opts.moduleInstances?.length ? opts.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, values) : []);
+  let flagBase: { rows: OverrideRows; undecoded: number[] } | undefined;
+  let flagsUnreadable: string | undefined;
+  if (read.comObjFlags) {
+    // On the configuration of the parameter baseline this read sets, where the rows are stored and placed.
+    // A baseline the flags cannot be taken over (two rows of one object that disagree) leaves them open.
+    try {
+      flagBase = deviceComObjOverrideRows(cfg, buildDeviceConfig(cfg, read.paramBase, undefined, instancesFor(read.paramBase)).imageComObjects, read.comObjFlags, opts.comObjectOverrideBaseRows ?? []);
+    } catch (e) {
+      if (opts.signal?.aborted) throw e;
+      flagsUnreadable = `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  const flags = flagBase ? { comObjOverrideBase: flagBase.rows, comObjFlagsUndecoded: flagBase.undecoded } : flagsUnreadable ? { comObjFlags: undefined, comObjFlagsUnreadable: flagsUnreadable } : {};
+  if (!opts.holds) return { ...read, ...flags };
   // What a read cannot show leaves its answer open (null / false) rather than ending a read that has
   // already succeeded; a cancel still ends it.
   const why = (e: unknown) => `${(e as { code?: string }).code ?? "ERROR"}: ${(e as Error).message}`;
@@ -220,13 +244,15 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
     else if (!caps.flashParams || !caps.flashLinks) imageRefused = "the product has no parameter or group-address flash to compare with";
     else {
       const values = read.paramBase;
-      const moduleInstances = opts.moduleInstances?.length ? opts.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, values) : []);
+      const moduleInstances = instancesFor(values);
       const progress = (_p: string, d?: number, t?: number) => opts.onProgress?.("check", d, t);
       const common = { deviceId: opts.deviceId, appXml: opts.appXml, params: values, baseParams: values, moduleInstances, dryRun: true, persistBackups: () => "", signal: opts.signal, onProgress: progress };
       const par = await profile.flashParameters(dev, mask, common);
       if (par.kind === "unchanged") constantsDiffer = par.constantsDiffer ?? [];
       const links: ComObjectLink[] = read.links;
-      const ga = par.kind === "unchanged" ? await profile.flashGroupTables(dev, mask, { ...common, ia: opts.ia, links, comObjectOverrides: opts.comObjectOverrides }) : null;
+      // Under the flag baseline this read sets, as the parameter dry run runs under its parameter baseline.
+      const flagsRead = flagBase ? placeComObjOverrides(cfg, buildDeviceConfig(cfg, values, undefined, moduleInstances), flagBase.rows) : undefined;
+      const ga = par.kind === "unchanged" ? await profile.flashGroupTables(dev, mask, { ...common, ia: opts.ia, links, comObjectOverrides: flagsRead ?? opts.comObjectOverrides, comObjectOverrideBase: flagsRead }) : null;
       imageMatches = par.kind === "unchanged" && ga?.kind === "unchanged";
     }
   } catch (e) {
@@ -234,7 +260,7 @@ export async function readStateOn(dev: KnxDevice, mask: string, opts: ReadStateO
     imageMatches = null;
     imageRefused = why(e);
   }
-  return { ...read, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}), ...(imageMatches === true && constantsDiffer.length ? { constantsDiffer } : {}) };
+  return { ...read, ...flags, programIdMatches, loaded, imageMatches, ...(imageRefused ? { imageRefused } : {}), ...(imageMatches === true && constantsDiffer.length ? { constantsDiffer } : {}) };
 }
 
 // Identify a device and read its security mode: its device descriptor, serial and the security

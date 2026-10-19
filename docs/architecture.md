@@ -322,6 +322,17 @@ value the other way.
   decode, so default-valued parameters never produce phantom changes.
 - The read is read-only on the bus and writes no backup. A device that was never programmed is
   refused (`DEVICE_NOT_PROGRAMMED`) instead of having garbage decoded out of it.
+- **The com-object flags come with the links.** On System B, and on System 7 where the application
+  names its com-object table's segment, the read also decodes the device's com-object table
+  (`decodeComObjectTable`, `decodeComObjectTableMv0705`) and takes each flag and priority it shows into
+  the flag baseline as the attributes ETS stores (`deviceComObjOverrideRows`), so a flag another tool
+  set shows as a change. A table it cannot read leaves the flags open (`flagsUnreadable`) without
+  ending the read, and the device page says so. A write that rewrites the table refuses to change flags
+  the device holds otherwise than that baseline (`COM_OBJECT_FLAGS_UNKNOWN`, or
+  `COM_OBJECT_FLAGS_UNREADABLE` where no read-back can take them,
+  [load-procedures.md](load-procedures.md#project-level-com-object-flags)). Since the read's image check
+  compares the table under the flags it read, an assumed value only flags would tell apart is named
+  in `unprovenAssumptions`.
 - **Parameters the device does not hold are invisible to it.** A parameter with neither a memory nor
   a property location, kept only in the project (a rocker's function, a status LED's mode), has no
   byte on the device, so the read leaves its baseline as it was. When such a parameter hides objects the device links, those
@@ -412,8 +423,8 @@ Conventions that hold across views:
   object's flags with the project's own overrides laid over the application's, resolved where the
   writes resolve them (`effectiveComObjFlags`, [load-procedures.md](load-procedures.md#project-level-com-object-flags));
   where they cannot be placed the page says so and shows none. What a table write derives from the
-  links on top (communication off on an unlinked System B object, the System 7 linked bit) is not
-  shown, and a family that cannot write an override refuses the write instead.
+  links on top (communication off on an object without a link, on System B and in System 7's linked
+  bit alike) is not shown, and a family that cannot write an override refuses the write instead.
 - **Flags are edited per object, as ETS stores them.** The object row's flag button (ETS's letters)
   opens the flags and the priority (`FlagEditor`): only the bits the family's full download writes
   are enabled (`comObjFlagsEditable`), a bit set otherwise than the application has its reset, and an

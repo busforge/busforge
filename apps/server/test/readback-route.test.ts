@@ -104,7 +104,7 @@ corpusDescribe("POST /read-back", () => {
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999] });
+    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], flagsRead: false });
 
     // The bogus association never entered device_link_base.
     const rows = state.db.query("SELECT ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { ga_raw: number }[];
@@ -125,7 +125,7 @@ corpusDescribe("POST /read-back", () => {
     const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0 });
+    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, flagsRead: false });
 
     // Positive proof the mapped link WAS folded into the baseline (and thus shows as
     // drift against the project, which has no such link).

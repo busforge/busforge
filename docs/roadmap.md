@@ -15,9 +15,6 @@ depends on is hardware-proven.
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
-- **Read-back of com-object flags.** No family's read-back reads the com-object table, so a flag set on
-  the device by another tool never shows as drift. Reading it (System B and System 7 read it already
-  for the group-address flash) and comparing flags and priority against the project's would close that.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
   object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).
@@ -108,9 +105,9 @@ depends on is hardware-proven.
   the byte read-back as fallback. The read-back stays the evidence behind `verified`.
 - **Traffic capture in the gateway process.** The tap points and decoders exist; the `--capture`
   flag that writes a decoded transaction log does not.
-- **Read a System B device's com-object table.** The read-back skips it, so flags the device's project
-  sets on its objects (a read flag) are not taken over; a group-address flash, which writes the table
-  whole, would clear them. On the Theben HMG 6 T the dry run shows it before any write.
+- **A com-object flag read back off a device on the bus.** The read-back takes flags from the table and
+  the writes that rewrite it refuse flags they do not know, offline against ETS captures and emulated
+  units; the first read on hardware (the Theben HMG 6 T, whose project sets read flags) closes it.
 - **The unread-attribute audit.** [ets-coverage.md](ets-coverage.md) names a script that lists every
   product-XML attribute the parser never reads; it does not exist, the table is maintained by hand.
 

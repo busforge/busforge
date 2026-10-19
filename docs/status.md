@@ -42,6 +42,7 @@ All hardware verification is on **twisted pair**.
 | Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. Editing an object's flags and priority: browser and route tests; the group-address flash writes an edit with the bytes ETS's group-address download wrote for one on the MDT BE-02001.02 and the Jung 400021SE (capture comparison), not run by Busforge on a device (see [Known unproven](#known-unproven)). |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
+| Read com-object flags and priority back from a device | yes (System B; System 7 where the application names its com-object table's segment) | offline byte-match | The tables ETS wrote in its flag-change captures (MDT BE-02001.02, Jung 400021SE) read back as exactly the project's flags; emulated units otherwise, no read on the bus yet (see [Known unproven](#known-unproven)). The flags become the baseline and a difference shows as a change. The GA and structural flash refuse to change flags the device holds otherwise than the baseline records ([load-procedures.md](load-procedures.md#project-level-com-object-flags)). |
 | Flash parameters (surgical) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. Writes the bytes ETS's parameter download writes: on a property-mapped System 7 mask every byte a parameter covers, on a memory-mapped one the bytes that differ from the unit ([load-procedures.md](load-procedures.md#the-rules-by-level)); on System B every owned byte. |
 | Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer shown to need it also holds the application object in its own load bracket. System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see [Known unproven](#known-unproven)). On System 7 both tables are unloaded and declared where ETS puts them, by rule ([load-procedures.md](load-procedures.md#the-rules-by-level)); shown on hardware on the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S, the ABB US/U 4.2 and the MDT BE-02001.02 (device notes and smoke specs below). |
 | Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. The form follows the catalogue: the declared procedure in its order (`LdCtrlTaskCtrl1` encoded from its attributes), or ETS's partial form on a unit holding an application that declares `PreferPartialDownloadIfApplicationLoaded` ([load-procedures.md](load-procedures.md#the-rules-by-level)). On the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S it ran only onto a unit already holding the application, so not as first-time commissioning, and the hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
@@ -430,17 +431,25 @@ report a device family as working on the strength of a passing test suite.
   Jung 400021SE, Busforge's group-address flash builds the com-object table ETS wrote for a read flag
   off and back on, and on the MDT BE-02001.02 for a linked object's communication flag off and back on
   and its update flag on and back off (`tools/etsdiff-flags.test.ts`). Other flags, the priority, and the other products
-  rest on the same table code, offline tests only. A read-back does not take flags into the baseline.
+  rest on the same table code, offline tests only.
+- **A read-back takes a device's com-object flags into the baseline, offline only.** The read of the
+  com-object table and its decoding are pinned against the tables ETS wrote in the flag-change captures
+  of the MDT BE-02001.02 (System 7) and the Jung 400021SE (System B), which read back as exactly the
+  project's flags (`tools/etsdiff-flags-readback.test.ts`), and run on emulated units: the Jung's
+  application with a read flag set by another tool (the GA and structural flash refuse to change it,
+  `COM_OBJECT_FLAGS_UNKNOWN`; after the read-back takes it they run and keep it), and the HMG 6 T's
+  in-service spec. No read-back has taken flags off a device on the bus yet. Products other than these
+  rest on the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
 - **A device in service, taken over by read-back, has been run on emulated units only.** Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
   emulated from a read-only collection (`tools/smoke/inservice-specs.test.ts`); none has run on
   hardware this way. There the Gira M-0008, the Auro M-0081_A-FE01, the MDT BE-06001.02, the Theben
-  DALI-Gateway, the Theben TheLuxa P300 and Meteodata 140 S and the MIX 2's JMG 4 T and RMG 8 T are taken
-  over and run their steps; the MIX 2's HMG 6 T stops before its first write, since the read-back does
-  not read its com-object table ([roadmap.md](roadmap.md#verification)), and the OpenKNX
-  RaumController's collection holds none of its memory.
+  DALI-Gateway, the Theben TheLuxa P300 and Meteodata 140 S and the MIX 2's HMG 6 T, JMG 4 T and RMG 8 T
+  are taken over and run their steps (the HMG 6 T with the read flags its project sets, which the
+  read-back takes from its com-object table and its GA flash keeps); the OpenKNX RaumController's
+  collection holds none of its memory.
 - **Memory writes longer than 32 bytes extended or 12 classic have run on no device.** Busforge asks an
   IP interface for its maximum APDU before writing, as ETS does, and writes up to the shorter of the
   device's and the interface's (205 data bytes behind an interface announcing 210). The question and

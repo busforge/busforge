@@ -403,6 +403,145 @@ export function withInstanceOverrides(active: ReadonlyMap<number, CfgComObjImage
   return out;
 }
 
+// ── The flags a device holds in its com-object table ─────────────────────────
+//
+// What a read of a device's com-object table shows of each object: the flags the table has a bit for
+// and that the bit shows, and the priority where its two bits name one of ETS's three classes (00, the
+// System class, is the stack's own and no application names it: absent then).
+export interface ObservedComObjFlags { flags: Partial<ComObjFlags>; priority?: ComObjPriority }
+
+const PRIORITY_BY_BITS = new Map<number, ComObjPriority>(Object.entries(PRIORITY_BITS).map(([p, b]) => [b, p as ComObjPriority]));
+
+// A System B table (layout in comObjectEntry), by object number. The communication flag is shown only
+// on the objects in `linked` (the device's own associations): every write clears it on an object without
+// a link, whatever is set (buildComObjectTable).
+export function decodeComObjectTable(table: Buffer, linked: ReadonlySet<number>): Map<number, ObservedComObjFlags> {
+  const count = table.length >= 2 ? table.readUInt16BE(0) : -1;
+  if (count < 0 || table.length < 2 + count * 2) {
+    throw new ProductError("COM_OBJECT_TABLE_UNREADABLE", `the device's com-object table is ${table.length} B${count >= 0 ? ` for the ${count} entries it declares` : ""}; refusing to read its flags from it`);
+  }
+  const out = new Map<number, ObservedComObjFlags>();
+  for (let n = 1; n <= count; n++) {
+    const b = table[2 + (n - 1) * 2];
+    const flags: Partial<ComObjFlags> = { update: !!(b & 0x80), transmit: !!(b & 0x40), readOnInit: !!(b & 0x20), write: !!(b & 0x10), read: !!(b & 0x08) };
+    if (linked.has(n)) flags.comm = !!(b & 0x04);
+    out.set(n, { flags, priority: PRIORITY_BY_BITS.get(b & 0x03) });
+  }
+  return out;
+}
+
+// A System 7 table (layout in buildComObjectTableMv0705), by object number. Its config byte has no bit
+// for read-on-init. Its 0x04 bit is set on a linked object whose communication flag is on, so it shows
+// the communication flag only on the objects in `linked` (the device's own associations); on the
+// others it is clear whatever is set.
+export function decodeComObjectTableMv0705(table: Buffer, linked: ReadonlySet<number>): Map<number, ObservedComObjFlags> {
+  const count = table.length >= 3 ? table[0] : -1;
+  if (count < 0 || table.length < 3 + count * 4) {
+    throw new ProductError("COM_OBJECT_TABLE_UNREADABLE", `the device's com-object table is ${table.length} B${count >= 0 ? ` for the ${count} entries it declares` : ""}; refusing to read its flags from it`);
+  }
+  const out = new Map<number, ObservedComObjFlags>();
+  for (let n = 0; n < count; n++) {
+    const b = table[3 + n * 4 + 2];
+    const flags: Partial<ComObjFlags> = { read: !!(b & 0x08), write: !!(b & 0x10), transmit: !!(b & 0x40), update: !!(b & 0x80) };
+    if (linked.has(n)) flags.comm = !!(b & 0x04);
+    out.set(n, { flags, priority: PRIORITY_BY_BITS.get(b & 0x03) });
+  }
+  return out;
+}
+
+type OverrideRow = { comObjRefId: string; attrs: Record<string, string> };
+const mergedAttrs = (rows: readonly OverrideRow[]): Record<string, string> => Object.assign({}, ...rows.map((r) => r.attrs));
+const sameAttrs = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>) =>
+  Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([k, v]) => b[k] === v);
+
+// The flag baseline a read of the device's table sets: `held` (the stored rows, ref ids without the
+// application prefix) with each object the configuration activates (`active`, by number) set to what the
+// device shows, as the attributes ETS stores (editComObjOverride against the held form, so an object the
+// device holds as recorded keeps its rows and a bit equal to the application's drops its attribute). A
+// bit the device does not show keeps its stored attribute; an object the table does not hold, or holds
+// with no priority an application names, keeps its rows and is named in `undecoded`.
+export function deviceComObjOverrideRows(
+  app: Pick<AppConfig, "id">, active: ReadonlyMap<number, CfgComObjImage>, observed: ReadonlyMap<number, ObservedComObjFlags>, held: readonly OverrideRow[],
+): { rows: OverrideRow[]; undecoded: number[] } {
+  const heldByRef = new Map<string, OverrideRow[]>();
+  for (const r of held) heldByRef.set(r.comObjRefId, [...(heldByRef.get(r.comObjRefId) ?? []), r]);
+  for (const [ref, rows] of heldByRef) {
+    const clash = rows.some((a) => rows.some((b) => Object.entries(a.attrs).some(([k, v]) => b.attrs[k] !== undefined && b.attrs[k] !== v)));
+    if (clash) throw new ProductError("COM_OBJECT_OVERRIDE_CONFLICT", `the baseline sets a flag of communication object ${ref} twice, differently; refusing to take the device's flags over it`);
+  }
+  const changed = new Map<string, Record<string, string>>();
+  const undecoded: number[] = [];
+  for (const [n, o] of [...active].sort(([a], [b]) => a - b)) {
+    const seen = observed.get(n);
+    if (!seen || seen.priority === undefined) { undecoded.push(n); continue; }
+    const ref = o.refId.startsWith(`${app.id}_`) ? o.refId.slice(app.id.length + 1) : o.refId;
+    const was = mergedAttrs(heldByRef.get(ref) ?? []);
+    const now = editComObjOverride(was, was, { flags: o.flags, priority: o.priority }, { flags: seen.flags, priority: seen.priority });
+    if (!sameAttrs(now, was)) changed.set(ref, now);
+  }
+  const rows: OverrideRow[] = [];
+  const placed = new Set<string>();
+  for (const r of held) {
+    const now = changed.get(r.comObjRefId);
+    if (!now) { rows.push(r); continue; }
+    if (placed.has(r.comObjRefId)) continue;
+    placed.add(r.comObjRefId);
+    if (Object.keys(now).length) rows.push({ comObjRefId: r.comObjRefId, attrs: now });
+  }
+  for (const [ref, now] of changed) if (!placed.has(ref) && Object.keys(now).length) rows.push({ comObjRefId: ref, attrs: now });
+  return { rows, undecoded };
+}
+
+// The objects of `active` (the configuration the device was last written with, by number) whose flags or
+// priority the device's table shows otherwise than the baseline records (`base`, the stored overrides
+// placed on that configuration, over the application's), or does not hold with a priority an application
+// names. With `changing` (per object, the bits a write changes in its entry) only those objects, and only
+// those bits: a write that changes a bit the device holds otherwise than recorded would change it silently;
+// one that keeps the bit leaves the device's value.
+export function comObjFlagsDiffering(
+  observed: ReadonlyMap<number, ObservedComObjFlags>, active: ReadonlyMap<number, CfgComObjImage>,
+  base: ReadonlyMap<number, ComObjInstanceOverride> | undefined, changing?: ReadonlyMap<number, readonly OverridableBit[]>,
+): number[] {
+  const expected = withInstanceOverrides(active, base);
+  const out: number[] = [];
+  for (const [n, o] of [...expected].sort(([a], [b]) => a - b)) {
+    const bits = changing?.get(n);
+    if (changing && !bits) continue;
+    const seen = observed.get(n);
+    const asked = (b: OverridableBit) => !bits || bits.includes(b);
+    const differs = !seen || (asked("priority") && seen.priority !== o.priority) || (!bits && seen.priority === undefined)
+      || (Object.keys(seen.flags) as (keyof ComObjFlags)[]).some((k) => asked(k) && seen.flags[k] !== o.flags[k]);
+    if (differs) out.push(n);
+  }
+  return out;
+}
+
+// The flags and priority whose bits differ between two entries' flag bytes (`xor`), by the layout of the
+// family's table: System B's flags byte (comObjectEntry) or System 7's config byte (buildComObjectTableMv0705).
+const ENTRY_BITS: Record<"systemB" | "system7", [number, keyof ComObjFlags][]> = {
+  systemB: [[0x80, "update"], [0x40, "transmit"], [0x20, "readOnInit"], [0x10, "write"], [0x08, "read"], [0x04, "comm"]],
+  system7: [[0x80, "update"], [0x40, "transmit"], [0x10, "write"], [0x08, "read"], [0x04, "comm"]],
+};
+export function changedEntryBits(xor: number, layout: "systemB" | "system7"): OverridableBit[] {
+  const out: OverridableBit[] = ENTRY_BITS[layout].filter(([m]) => xor & m).map(([, k]) => k);
+  if (xor & 0x03) out.push("priority");
+  return out;
+}
+
+// Refuse a write that would rewrite the flags of objects `differing` names (comObjFlagsDiffering): where
+// the device's table (`observed`) holds them with flags the project does not record, a read-back takes
+// them into the baseline (COM_OBJECT_FLAGS_UNKNOWN); where it does not hold them, or holds them with no
+// priority an application names, no read-back can (COM_OBJECT_FLAGS_UNREADABLE).
+export function refuseUnknownDeviceFlags(differing: readonly number[], observed: ReadonlyMap<number, ObservedComObjFlags>): void {
+  if (!differing.length) return;
+  const named = (ns: readonly number[]) => ns.slice(0, 8).map((n) => `#${n}`).join(", ") + (ns.length > 8 ? ` and ${ns.length - 8} more` : "");
+  const unreadable = differing.filter((n) => observed.get(n)?.priority === undefined);
+  if (unreadable.length) {
+    throw new ProductError("COM_OBJECT_FLAGS_UNREADABLE", `the device's com-object table does not hold communication object(s) ${named(unreadable)} with flags and a priority an application names, while the configuration it was last written with activates them; this write rewrites the table and a read-back cannot take what it holds there. A full download writes the table whole`);
+  }
+  throw new ProductError("COM_OBJECT_FLAGS_UNKNOWN", `the device holds flags or a priority on communication object(s) ${named(differing)} other than the project records for it; this write rewrites the com-object table and would change them silently. Read the device back first, so they show as a change`);
+}
+
 // Refuse a write whose com-object table cannot carry an override the project sets: one that changes
 // a flag or the priority the table has no bit for (the System 7 config byte has none for read-on-init),
 // or any override where the write does not author the table at all. Writing on would leave the object behaving as the application

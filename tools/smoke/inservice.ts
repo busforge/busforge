@@ -442,6 +442,8 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         const second = await io.api.readBack();
         if (!second?.paramsRead || !second.linksRead) throw new Stop(phase, "the second read-back did not cover both parameters and links");
         if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration${second.unresolvedObjects?.length ? ` (object(s) ${second.unresolvedObjects.join(", ")})` : ""}; a GA flash would drop them${assume.length ? "" : ". A parameter without a memory location may hide their objects: give its value in assumeParams"}`);
+        // The project knows the flags a GA or structural flash rewrites only where the read took them.
+        if (second.flagsUnreadable || second.flagsUndecoded?.length) throw new Stop(phase, `the read-back could not take the flags of the device's com-object table (${second.flagsUnreadable ?? `object(s) ${second.flagsUndecoded!.join(", ")}`}); a write that rewrites it would not know them`);
         await io.settle(3000);
         await io.api.revert();
         const paramsDry = await io.api.flashDry();

@@ -3,7 +3,7 @@ import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, withInstanceOverrides, refuseUnwritableOverrides, type ComObjInstanceOverride, type OverridableBit } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
@@ -391,10 +391,14 @@ function absoluteParRefusal(proc: LoadProcedures): OperationRefusal | null {
 // addressed to those objects must each have a disposition, as for the parameter flash. A declared
 // CompareProp is a read of the device, not a step on these tables: the group-address flash runs none,
 // and whether it should run the application's checks first is an open question (docs/roadmap.md).
-function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; size: number } | null } | { refusal: OperationRefusal } {
+// The com-object table segment of a System 7 application where it names one with a template (<Data>).
+function system7ComObjSegment(cfg: AppConfig): { address: number; size: number } | null {
   const segId = cfg.groupTables.comObjectSegment;
   const seg = segId === undefined ? undefined : cfg.absoluteSegments.find((s) => s.id === segId);
-  const l3 = seg && seg.data.length > 0 ? { address: seg.address, size: seg.data.length } : null;
+  return seg && seg.data.length > 0 ? { address: seg.address, size: seg.data.length } : null;
+}
+function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; size: number } | null } | { refusal: OperationRefusal } {
+  const l3 = system7ComObjSegment(cfg);
   if (!l3 && isMemoryMappedLsm(mask)) {
     return { refusal: { code: "FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", message: "this application names no com-object table segment with a template; refusing a group-address flash that would leave newly linked objects without their link flag" } };
   }
@@ -647,7 +651,29 @@ const structural = async (r: Promise<FlashResult>): Promise<FlashResult> => ({ .
 // device's own value for every parameter active in its image. It is what the device numbers its
 // com-objects by; parameters without a memory offset carry the project's value, since the device
 // cannot show them. Absent when the parameters were not read or no configuration was supplied.
-export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; deviceConfig?: Map<string, string>; }
+// `comObjFlags`: what the device's com-object table shows of each object's flags and priority, by
+// object number (decodeComObjectTable, decodeComObjectTableMv0705); absent where the read does not
+// cover the table, or could not read it (`comObjFlagsUnreadable` says why: a read of parameters and
+// links that has succeeded is not ended by it).
+export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; deviceConfig?: Map<string, string>; comObjFlags?: Map<number, ObservedComObjFlags>; comObjFlagsUnreadable?: string; }
+
+// The flags a read takes from a com-object table, or why the table gave none: any failure of reading or
+// decoding the table alone (a table not loaded, one that contradicts itself or the application, a read
+// the device refuses) leaves the flags open; a cancel still ends the read.
+async function readComObjFlags(read: () => Promise<Map<number, ObservedComObjFlags>>, signal?: AbortSignal): Promise<Pick<DeviceReadback, "comObjFlags" | "comObjFlagsUnreadable">> {
+  try { return { comObjFlags: await read() }; } catch (e) {
+    if (signal?.aborted) throw e;
+    return { comObjFlagsUnreadable: `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+// A System B device's com-object table: [count u16] then two bytes per object. A count beyond the highest
+// object number the application declares (`declared`) is not this application's table.
+async function readSystemBComObjTable(dev: KnxDevice, declared: number, signal?: AbortSignal): Promise<Buffer> {
+  const at = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
+  const count = (await dev.memRead(at, 2, undefined, undefined, signal)).readUInt16BE(0);
+  if (count > declared) throw new ProductError("COM_OBJECT_TABLE_UNREADABLE", `the device's com-object table declares ${count} entries, more than the ${declared} objects this application declares`);
+  return dev.memRead(at, 2 + count * 2, undefined, undefined, signal);
+}
 
 // DeviceCapabilities lives in config.ts (the lower module) so the wire view can carry it without a
 // cycle; re-exported here (imported above) because it is the return type of capabilities().
@@ -767,6 +793,10 @@ export interface GaFlashCtx extends WriteGate {
   // The object numbers whose flags or priority the project changed since the device was last written.
   // System B writes every object's flags from the project anyway; System 7 writes them for these.
   comObjectFlagChanges?: ReadonlySet<number>;
+  // The flags and priority the baseline records for the device (what it was last written with or read
+  // back holding), placed on the configuration of `baseParams`. The objects whose flags the flash rewrites
+  // must hold these on the device, or it refuses (comObjFlagsDiffering). Absent: the application's.
+  comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride>;
 }
 
 // A change that alters the com-object table, written without a full download: the parameters, the
@@ -786,6 +816,8 @@ export interface StructureFlashCtx extends WriteGate {
   // (comobjbuild.ts withInstanceOverrides), laid over the application's wherever the com-object table
   // is authored. Absent: the project sets none.
   comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
+  // As GaFlashCtx.comObjectOverrideBase.
+  comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride>;
   dryRun: boolean;
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
@@ -849,6 +881,46 @@ function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided:
   const instances = cfg.hasModules ? (provided.length ? provided : resolveModuleInstances(cfg, params)) : [];
   return { model: toAppModel(cfg, { includeUnions: true, instances }), instances };
 }
+// A write that rewrites the com-object table refuses where it would change a flag or the priority of an
+// object that the device holds otherwise than the baseline records (refuseUnknownDeviceFlags): the objects
+// of the configuration the device was last written with (`baseParams`), the baseline's overrides placed on
+// it (`comObjectOverrideBase`), only the bits the entry the write puts there changes in the device's.
+type FlagBaseline = { baseParams: Map<string, string>; moduleInstances?: ModuleInstance[]; comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride> };
+function baselineComObjects(cfg: AppConfig, ctx: FlagBaseline) {
+  const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
+  return buildDeviceConfig(cfg, ctx.baseParams, undefined, instances).imageComObjects;
+}
+// System B: the flags byte of each entry (comObjectEntry); the communication flag compared on the objects
+// the device's own association table links (on the others the device shows none).
+function refuseSystemBUnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: { addr: Buffer; assoc: Buffer; long: boolean; comObj: Buffer }, written: Buffer): void {
+  const heldCount = held.comObj.length >= 2 ? held.comObj.readUInt16BE(0) : 0;
+  const changed = new Map<number, OverridableBit[]>();
+  for (let n = 1; n <= written.readUInt16BE(0); n++) {
+    const at = 2 + (n - 1) * 2;
+    if (n > heldCount) changed.set(n, changedEntryBits(0xff, "systemB"));
+    else if (written[at] !== held.comObj[at]) changed.set(n, changedEntryBits(written[at] ^ held.comObj[at], "systemB"));
+  }
+  if (!changed.size) return;
+  const linked = new Set(decodeGroupTables(held.addr, held.assoc, held.long).map((l) => l.comObjNum));
+  const observed = decodeComObjectTable(held.comObj, linked);
+  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baselineComObjects(cfg, ctx), ctx.comObjectOverrideBase, changed), observed);
+}
+// System 7: the config byte of each entry (buildComObjectTableMv0705); its communication bit compared on
+// the objects the device's own association table (`heldTables`) links, so a linked bit a new link sets is
+// no flag the device holds.
+function refuseSystem7UnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: Buffer, written: Buffer, heldTables: { addr: Buffer; assoc: Buffer }): void {
+  const heldCount = held.length >= 3 ? held[0] : 0;
+  const changed = new Map<number, OverridableBit[]>();
+  for (let n = 0; n < written[0]; n++) {
+    const at = 3 + n * 4 + 2;
+    if (n >= heldCount || at >= held.length) changed.set(n, changedEntryBits(0xff, "system7"));
+    else if (written[at] !== held[at]) changed.set(n, changedEntryBits(written[at] ^ held[at], "system7"));
+  }
+  if (!changed.size) return;
+  const observed = decodeComObjectTableMv0705(held, new Set(decodeGroupTablesMv0705(heldTables.addr, heldTables.assoc).map((l) => l.comObjNum)));
+  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baselineComObjects(cfg, ctx), ctx.comObjectOverrideBase, changed), observed);
+}
+
 // A parameter or structural flash writing a colour parameter (refuseColorWrites), each configuration's
 // module instances resolved as moduleAwareModel does.
 function refuseColorChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }): void {
@@ -885,6 +957,9 @@ export abstract class DeviceProfile {
   // (a factory device, another application, or one a broken-off write left unloaded), so it is the
   // way back for such a device. Where it is false, ETS is.
   fullDownloadLoadsApplication(): boolean { return this.capabilities().fullDownload; }
+  // Whether readState reads the device's com-object table, so a read-back takes each object's flags and
+  // priority into the baseline (DeviceReadback.comObjFlags).
+  readsComObjFlags(): boolean { return false; }
   abstract readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback>;
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
@@ -933,6 +1008,8 @@ export class SystemBProfile extends DeviceProfile {
       structuralFlash: hasParamSegment && !!this.cfg && !structuralFirmwareOff(this.cfg) && !declaresTunnelingEntries(this.cfg) && !refused.flashParams && !refused.flashLinks,
     };
   }
+
+  override readsComObjFlags(): boolean { return true; }
 
   // The System B entry's flags byte has a bit for every flag, and the priority bits
   // (comobjbuild.ts comObjectEntry).
@@ -1290,6 +1367,7 @@ export class SystemBProfile extends DeviceProfile {
     let links: ComObjectLink[] = [];
     let paramsRead = false, linksRead = false;
     let deviceConfig: Map<string, string> | undefined;
+    let flags: Pick<DeviceReadback, "comObjFlags" | "comObjFlagsUnreadable"> = {};
 
     // Parameters (LSM 4): read the whole segment, decode it, compare against the image the
     // FLASH would write, both normalized via the same codec. The project side is the surgical
@@ -1310,15 +1388,21 @@ export class SystemBProfile extends DeviceProfile {
       deviceConfig = device?.deviceConfig;
       paramsRead = true;
     }
-    // Group-address links: read address + association tables (skip the com-object table) and reverse.
+    // Group-address links: read address + association tables and reverse; then the com-object table, for
+    // each object's flags and priority (the communication flag only where the device links it).
     if (support.readLinks) {
       if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
       ctx.onProgress?.("links", 0, 2);
       const gt = await readGroupTables(dev, (d, total) => ctx.onProgress?.("links", d, total), true);
       links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
       linksRead = true;
+      const linked = new Set(links.map((l) => l.comObjNum));
+      // Bounded by the configuration the device was last written with, whose module instances it holds.
+      const written = ctx.baseParams ?? ctx.liveParams;
+      const declared = buildDeviceConfig(cfg, written, undefined, moduleAwareModel(cfg, written, ctx.moduleInstances ?? []).instances).maxComObjectNumber;
+      flags = await readComObjFlags(async () => decodeComObjectTable(await readSystemBComObjTable(dev, declared, ctx.signal), linked), ctx.signal);
     }
-    return { mask, paramsRead, linksRead, paramBase, links, deviceConfig };
+    return { mask, paramsRead, linksRead, paramBase, links, deviceConfig, ...flags };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -1461,6 +1545,8 @@ export class SystemBProfile extends DeviceProfile {
     const comObjKept = tablesLoaded
       ? { owned: relativeComObjWriteSet(comObj, cur.comObj, ctx.stampRecord, check), keptAt: await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table") }
       : undefined;
+    // A table not LOADED (an interrupted write) holds no flags the device runs.
+    if (tablesLoaded) refuseSystemBUnknownFlags(cfg, ctx, cur, comObj);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: addr.length + assoc.length + comObj.length,
@@ -1558,6 +1644,7 @@ export class SystemBProfile extends DeviceProfile {
     const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
     const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
     const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
+    if (loaded) refuseSystemBUnknownFlags(cfg, ctx, cur, comObj);
     const plan = planRelativeStructuralFlash(LSM, {
       params: { image, owned: target.owned, keptAt: paramsAt },
       comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
@@ -1623,6 +1710,8 @@ export class System7Profile extends DeviceProfile {
 
   // Only where the writes author the table: the application names its segment and ships its template
   // (<Data>). A memory-mapped one writes the application's own table and refuses every override.
+  override readsComObjFlags(): boolean { return !!this.cfg && system7ComObjSegment(this.cfg) !== null; }
+
   override comObjOverridableBits(): readonly OverridableBit[] {
     const seg = this.cfg?.absoluteSegments.find((s) => s.id === this.cfg?.groupTables.comObjectSegment);
     return this.capabilities().fullDownload && seg !== undefined && seg.data.length > 0 ? MV0705_OVERRIDABLE : [];
@@ -1716,7 +1805,14 @@ export class System7Profile extends DeviceProfile {
     ctx.onProgress?.("links", 0, 2);
     const gt = await readGroupTablesMv0705(dev, (d, total) => ctx.onProgress?.("links", d, total));
     const links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
-    return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig };
+    // The com-object table where the application names its segment with a template, as the writes find it.
+    const l3 = system7ComObjSegment(cfg);
+    const linked = new Set(links.map((l) => l.comObjNum));
+    const flags = l3 ? await readComObjFlags(async () => {
+      if (!(await allLoaded(dev, [OBJ.COMOBJ_TABLE], isMemoryMappedLsm(mask)))) throw new ProductError("COM_OBJECT_TABLE_NOT_LOADED", "the device's com-object table is not loaded, so it holds no flags the device runs");
+      return decodeComObjectTableMv0705(await dev.memRead(l3.address, l3.size, undefined, undefined, ctx.signal), linked);
+    }, ctx.signal) : {};
+    return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig, ...flags };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -1867,6 +1963,7 @@ export class System7Profile extends DeviceProfile {
     for (const r of ga.comObjWrites) diffBytes += byteDiff(r.image, await dev.memRead(r.address, r.image.length));
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
+    if (gaTablesLoaded && l3 && curL3) refuseSystem7UnknownFlags(cfg, ctx, curL3, l3.bytes, cur);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: [...ga.writes, ...ga.comObjWrites].reduce((n, w) => n + w.image.length, 0),
@@ -1940,6 +2037,9 @@ export class System7Profile extends DeviceProfile {
     // The closing restart is held to what the parameter flash proves on these devices.
     const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances);
     const loaded = await allLoaded(dev, concerned, memMapped);
+    const l3Seg = system7ComObjSegment(cfg);
+    const l3Image = l3Seg ? images.find((r) => r.address === l3Seg.address) : undefined;
+    if (loaded && l3Image) refuseSystem7UnknownFlags(cfg, ctx, current.get(l3Image.address)!, l3Image.image, await readGroupTablesMv0705(dev));
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,

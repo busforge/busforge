@@ -91,7 +91,7 @@ describe("a read-back and never programmed", () => {
   test("an unresolved link is named by its object number", async () => {
     const { state, path } = await placed();
     readImpl = read({ links: [{ comObjNum: 9999, gaRaws: [123] }] });
-    try { expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], neverProgrammedKept: "links unresolved" }); } finally { readImpl = realRead; }
+    try { expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: false, linkGaps: 1, unresolvedObjects: [9999], neverProgrammedKept: "links unresolved" }); } finally { readImpl = realRead; }
   });
 });
 
@@ -111,7 +111,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
   test("without them, the unit's dimming objects stay hidden: two links unresolved, named, and the device stays never programmed", async () => {
     const { state, pid, did, path } = await placed(xml);
     const r = await onUnit(() => readBack(state, path));
-    expect(r.body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 3, unresolvedObjects: [18, 20, 64], neverProgrammedKept: "links unresolved; a flash would write bytes the device does not hold" });
+    expect(r.body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 3, unresolvedObjects: [18, 20, 64], neverProgrammedKept: "links unresolved; a flash would write bytes the device does not hold" });
     expect(neverProgrammed(state, pid, did)).toBe(true);
   });
 
@@ -120,7 +120,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     const r = await onUnit(() => readBack(state, path, [...ROCKERS, ...LEDS]));
     expect(r.status).toBe(200);
     // Object 64 is shown by a parameter with a memory location, which the project takes on revert.
-    expect(r.body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [64], neverProgrammedKept: "links unresolved" });
+    expect(r.body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 1, unresolvedObjects: [64], neverProgrammedKept: "links unresolved" });
     const s = stored(state, pid, did);
     for (const a of [...ROCKERS, ...LEDS]) {
       expect(s.live).toContainEqual({ r: a.paramRefId, v: a.value });
@@ -129,7 +129,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     expect(neverProgrammed(state, pid, did)).toBe(true);
     expect((await handleApi(req(`${path}/revert`, { method: "POST" }), state))!.status).toBe(200);
     const again = await onUnit(() => readBack(state, path));
-    expect(again.body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0 });
+    expect(again.body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 0 });
     expect(again.body.linkBaseGaps).toBe(0);
     for (const a of [...ROCKERS, ...LEDS]) expect(stored(state, pid, did).base).toContainEqual({ r: a.paramRefId, v: a.value });
     expect(neverProgrammed(state, pid, did)).toBe(false);
@@ -148,7 +148,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     dev.mem.set(marker.at, dev.mem.get(marker.at)! ^ 0xff);
     readImpl = (o) => realReadOn(asDevice(dev), "MV-0705", o);
     try {
-      expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, constantsDiffer: [{ paramRefId: marker.paramRefId, label: "Downloaderkennung" }] });
+      expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 0, constantsDiffer: [{ paramRefId: marker.paramRefId, label: "Downloaderkennung" }] });
     } finally { readImpl = realRead; }
     expect(neverProgrammed(state, pid, did)).toBe(false);
   });
@@ -160,7 +160,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     const dev = new CollectedUnit(collection);
     dev.props.set("3/13/1", Buffer.from("000810d712", "hex"));
     readImpl = (o) => realReadOn(asDevice(dev), "MV-0705", o);
-    try { expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, neverProgrammedKept: "application id of another application" }); } finally { readImpl = realRead; }
+    try { expect((await readBack(state, path)).body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 0, neverProgrammedKept: "application id of another application" }); } finally { readImpl = realRead; }
     expect(neverProgrammed(state, pid, did)).toBe(true);
   });
 
@@ -182,7 +182,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     await handleApi(req(`${path}/revert`, { method: "POST" }), state);
     for (const a of ROCKERS) await handleApi(req(`${path}/params`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(a) }), state);
     const again = await onUnit(() => readBack(state, path));
-    expect(again.body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, neverProgrammedKept: "a flash would write bytes the device does not hold" });
+    expect(again.body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 0, neverProgrammedKept: "a flash would write bytes the device does not hold" });
     expect(neverProgrammed(state, pid, did)).toBe(true);
   });
 

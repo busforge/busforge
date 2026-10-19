@@ -943,6 +943,11 @@ write them into the com-object table.
                      withInstanceOverrides(application flags, overrides) → com-object table
         System 7 group-address flash: the objects whose flags changed since the last write
                      (changedComObjNumbers) → their read/write/transmit bits and priority
+
+device com-object table ──read-back──▶ device_comobj_override_base (what the device holds)
+        decodeComObjectTable / decodeComObjectTableMv0705 → flags the table shows, per object
+        deviceComObjOverrideRows: against the application → attributes as ETS stores them
+        drift = device_comobj_overrides vs device_comobj_override_base; revert takes the device's
 ```
 
 Busforge imports them (also in the `.busforge` export, which refuses an artifact without them) and
@@ -984,10 +989,40 @@ nothing, as its linked bit is clear already; on an object whose application sets
 the same rule clears the bit, which no capture shows. The structural flash and the full download write them too. A verified write of any of
 the three adopts the flags it was submitted with as what the device holds, and so does a group-address
 flash that finds the device already holding them (`unchanged`). The parameter flash does
-not write flags; an edit stays pending through it, and the flash dialog says which flash writes it. A
-read-back takes no flag into the baseline; where it checks the image by a group-address flash dry run
-(System B, which builds the table with the project's flags), a pending flag edit counts as bytes the
-device does not hold.
+not write flags; an edit stays pending through it, and the flash dialog says which flash writes it.
+
+A read-back reads the com-object table and takes each flag and the priority it shows into the
+baseline, on the objects the device's configuration activates (`deviceComObjOverrideRows`): a bit
+the device holds otherwise than the application becomes the attribute ETS stores, one it holds as the
+baseline records keeps the stored form, and the project keeps its own, so a difference shows as a
+change and a revert takes the device's (the in-service adoption reverts after each read). What the
+table shows: on System B every flag and the priority, the communication flag only on the objects the
+device's own association table links (every write clears it on an object without a link, so on the
+others it is not the project's); on System 7, where the application names the table's segment with a
+template, read, write, transmit, update and the priority, and the communication flag (bit `0x04`) on
+the objects the device links, as on System B (no read-on-init bit). A bit the table does not show
+keeps its stored attribute. Priority bits `00` (the System class, which no application names) are not
+taken: the read names the object (`flagsUndecoded`) and keeps its baseline. A table that fails to
+read or decode alone (not loaded, shorter than the entries it declares, more entries than the
+application declares, a read the device refuses) leaves the flags open and the read goes on
+(`flagsUnreadable`); the device page says so after the read. Where the read also checks the image by a
+group-address flash dry run, that dry run runs under the flags it read, so flags prove no assumed
+value there: one only the flags would tell apart is named in `unprovenAssumptions`. The table ETS wrote
+in each of the flag-change captures (read flag on System B and System 7, communication flag on
+System 7) reads back as exactly the project's flags (`tools/etsdiff-flags-readback.test.ts`).
+
+The writes that rewrite the table in a device that holds one check it first: the group-address and
+the structural flash on System B and on System 7. Each reads the device's table (as it does for its backup) and
+refuses, before any write and in its dry run, where it would change a flag or the priority of an
+object that the device holds otherwise than the baseline records, placed on the configuration the
+device was last written with (`COM_OBJECT_FLAGS_UNKNOWN`, naming the objects): only the bits the
+write changes in the device's entry count, so a flag another tool set is never cleared silently, a
+write that keeps it goes ahead, and a read-back first shows it as a change. Where the device's
+table does not hold such an object, or holds it with priority bits `00`, no read-back can take it, and
+the refusal says so (`COM_OBJECT_FLAGS_UNREADABLE`): a full download writes the table whole. The
+communication flag is compared on the objects the device's own association table links. A table the
+device has not loaded is not checked (it holds no flags the device runs). The full download writes the
+project's flags whatever the device holds, as ETS's does.
 
 The surgical parameter flashes keep the table the device holds. The System 7 group-address flash
 keeps it too, apart from the bits above. The full download sets the linked bit the same way: on a

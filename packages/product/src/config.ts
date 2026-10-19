@@ -102,7 +102,10 @@ export interface CfgBlock {
 // `neverProgrammedKept`: why a device never programmed from this project stays so after this read.
 // `constantsDiffer`: the constant parameters (deviceimage.ts constantParams) the device holds other bits
 // in, which the image check counts as no change (FlashResult.constantsDiffer).
-export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string; constantsDiffer?: ConstantDifference[] }
+// `flagsRead`: the read took each object's flags and priority from the device's com-object table into
+// the flag baseline; `flagsUndecoded`: the objects whose flags it could not take (their baseline kept);
+// `flagsUnreadable`: why the table gave no flags, where it gave none.
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: string; constantsDiffer?: ConstantDifference[]; flagsRead?: boolean; flagsUndecoded?: number[]; flagsUnreadable?: string }
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links. Defined here
@@ -132,7 +135,7 @@ export interface DeviceConfigView {
   // Which aspects of this device can be verified against the hardware via read-back.
   // Attached by the server (not buildDeviceConfig). When params/links is false, the
   // shown change state was never confirmed against the device. See readbackSupport.
-  readbackSupport?: { params: boolean; links: boolean };
+  readbackSupport?: { params: boolean; links: boolean; flags: boolean };
   // The com-object flags (and "priority") the device page lets the user set per object; attached by the
   // server (buildDeviceView).
   comObjFlagsEditable?: (keyof ComObjFlags | "priority")[];

@@ -4,7 +4,7 @@ import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -332,7 +332,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // edits-vs-import only and were NEVER confirmed against the hardware, so the UI
   // must say so rather than imply a verified "no changes".
   const caps = classify(app).capabilities();
-  view.readbackSupport = { params: caps.readParams, links: caps.readLinks };
+  view.readbackSupport = { params: caps.readParams, links: caps.readLinks, flags: classify(app).readsComObjFlags() };
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
@@ -588,6 +588,18 @@ export function resolveComObjOverrides(state: AppState, projectId: string, devic
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
   return placeComObjOverrides(app, buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId)), rows);
+}
+
+// The flags and priority the baseline records for the device, by the object number of the configuration
+// it was last written with (its parameter baseline): what a write that rewrites the com-object table
+// expects the device to hold (GaFlashCtx.comObjectOverrideBase). Refuses as resolveComObjOverrides does.
+export function resolveComObjOverrideBase(state: AppState, projectId: string, deviceId: string): Map<number, ComObjInstanceOverride> {
+  const { db } = state;
+  const rows = getDeviceComObjOverrideBase(db, projectId, deviceId);
+  if (!rows.length) return new Map();
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  return placeComObjOverrides(app, buildDeviceConfig(app, getDeviceParamBase(db, projectId, deviceId), undefined, getDeviceModules(db, projectId, deviceId)), rows);
 }
 
 // The object numbers, in the device's configuration, whose flags or priority the project changed since

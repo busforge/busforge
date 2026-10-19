@@ -41,6 +41,7 @@ interface Script {
   hiddenEvenUnderOwnConfig?: boolean;        // a link no configuration of the unit places
   noReadFlag?: boolean;                      // the link step's object has no read flag
   memoryless?: string;                       // the value of MEMLESS the unit runs (its links resolve only under it)
+  flagsNotTaken?: { flagsUnreadable?: string; flagsUndecoded?: number[] }; // the read-back could not take the com-object table's flags
 }
 
 function scripted(sc: Script = {}) {
@@ -82,7 +83,7 @@ function scripted(sc: Script = {}) {
         for (const a of assume ?? []) { project.params[MEMLESS] = a.value; memlessBase = a.value; }
         base = { params: withMemless({ ...device.params }), links: structuredClone(device.links) };
         const n = gaps();
-        return { paramsRead: true, linksRead: true, linkGaps: n, ...(n ? { unresolvedObjects: [1] } : {}) };
+        return { paramsRead: true, linksRead: true, linkGaps: n, ...(n ? { unresolvedObjects: [1] } : {}), flagsRead: !sc.flagsNotTaken?.flagsUnreadable, ...sc.flagsNotTaken };
       },
       revert: async () => { project.params = { ...base.params }; project.links = structuredClone(base.links); },
       getConfig: async () => view(),
@@ -326,6 +327,16 @@ describe("a device in service, when something goes wrong", () => {
     expect(r.stopped?.phase).toBe("adopt");
     expect(r.stopped?.detail).toContain("under its own configuration");
     expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a read-back that could not take the com-object table's flags stops the run before any write", async () => {
+    for (const flagsNotTaken of [{ flagsUnreadable: "DEVICE_NOT_PROGRAMMED: no com-object table" }, { flagsUndecoded: [23] }]) {
+      const { io, calls } = scripted({ flagsNotTaken });
+      const r = await runInService(spec, io, NO_FULL);
+      expect(r.stopped?.phase).toBe("adopt");
+      expect(r.stopped?.detail).toContain(flagsNotTaken.flagsUnreadable ? "DEVICE_NOT_PROGRAMMED" : "object(s) 23");
+      expect(writesOf(calls)).toEqual([]);
+    }
   });
 
   test("a spec ref that matches only by its end is refused before any write", async () => {
