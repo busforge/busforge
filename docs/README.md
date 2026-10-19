@@ -38,6 +38,7 @@ document says so.
 |---|---|
 | [ets-coverage.md](ets-coverage.md) | ETS parity: which dynamic elements and parameter types the engine renders and programs. |
 | [connections.md](connections.md) | Transports (KNXnet/IP tunnel, KNX USB) and the connection manager. |
+| [reporting.md](reporting.md) | Reporting problems and device feedback on GitHub: what the prefilled link carries, and what stays out. |
 | [storage-and-snapshots.md](storage-and-snapshots.md) | The database model, the catalog, and configuration snapshots. |
 | [export-format.md](export-format.md) | The `.busforge` export container. |
 | [plugins.md](plugins.md) | Native replacements for vendor DCA plugins. |

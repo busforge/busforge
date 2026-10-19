@@ -71,7 +71,8 @@ also lists the platforms Busforge has actually run on, and the update, backup an
 
 Busforge is an alpha. What it does not do yet, and the known issues, are in
 [`docs/limitations.md`](docs/limitations.md). Report a problem, or a device that works, as a
-[GitHub issue](https://github.com/busforge/busforge/issues).
+[GitHub issue](https://github.com/busforge/busforge/issues); [`docs/reporting.md`](docs/reporting.md)
+says how, and what stays out of a public issue.
 
 ## Run it from source
 
@@ -113,6 +114,7 @@ entry points:
 
 - [`docs/install.md`](docs/install.md): installation, first steps, tested platforms
 - [`docs/limitations.md`](docs/limitations.md): what Busforge does not do, and the known issues
+- [`docs/reporting.md`](docs/reporting.md): reporting problems and device feedback on GitHub
 - [`docs/status.md`](docs/status.md): what works, on which hardware, and how far it is proven
 - [`docs/device-support.md`](docs/device-support.md): how a device is classified, and the full mask matrix
 - [`docs/findings.md`](docs/findings.md): the protocol knowledge (wire formats, load procedure, gotchas)

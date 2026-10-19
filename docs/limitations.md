@@ -64,12 +64,11 @@ was already under way, Busforge reports it as interrupted and offers the full do
 the connection's transport to TCP (or `auto`, which tries TCP first); over TCP the bridge needs no
 acknowledgements and the pause costs nothing.
 
-**A secured full download of a Jung 400021SE can stop with "the device closed the connection".** In rare
-cases the device ends the management connection in the middle of a Data Secure full download, and Busforge
-stops with `DEVICE_CLOSED_CONNECTION`. It has been seen once on a test bench whose network link to the KNX
-interface was stalling at the time, and not again in repeated downloads since; the cause is not known.
-Workaround: start the full download again. A full download writes the device's whole configuration, so a
-repeated run leaves it as a single successful one does.
+**A secured full download of a Jung 400021SE can stop with "the device closed the connection".** Rarely,
+the device ends the management connection in the middle of a Data Secure full download, and Busforge
+stops with `DEVICE_CLOSED_CONNECTION`. The cause is not known, and repeated runs do not reproduce
+it. Workaround: start the full download again. A full download writes the device's whole
+configuration, so a repeated run leaves it as a single successful one does.
 
 **An interrupted write does not repair the device by itself.** A write cut off inside its load
 bracket (power loss, a lost connection, a container killed mid-write) ends as
@@ -93,5 +92,5 @@ The full list of what is implemented but not shown on hardware is
 ## Reporting a problem
 
 Open an issue on [GitHub](https://github.com/busforge/busforge/issues): a problem, a device that does
-not work, or one that does. Do not attach your project file, keys or a diagnostic package to a public
-issue.
+not work, or one that does. [reporting.md](reporting.md) describes the prefilled report from the app,
+what stays out of a public issue, and how to share a diagnostic package.

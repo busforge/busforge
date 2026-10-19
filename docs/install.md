@@ -180,8 +180,10 @@ twisted pair, through KNXnet/IP interfaces and the bridge ([status.md](status.md
 ## Getting help and reporting a problem
 
 Report a problem, a device that does not work, or a device that does, as an issue on
-[GitHub](https://github.com/busforge/busforge/issues). Do not attach your project file, keys,
-or a diagnostic package to a public issue.
+[GitHub](https://github.com/busforge/busforge/issues). The app opens a prefilled issue from a
+device's menu (*Report on GitHub*) or from the start page (*Report a problem*).
+[reporting.md](reporting.md) shows what the link carries, what stays out of a public issue (keys,
+project files, addresses), and how to share a diagnostic package.
 
 ## License
 
