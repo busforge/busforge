@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
-import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad } from "../lib/flashRecovery.ts";
+import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad, flashFooter } from "../lib/flashRecovery.ts";
 import { previewRuns, previewEffect, previewEach, type IsLive } from "../lib/previewRun.ts";
 
 export type FlashTarget = "params" | "ga";
@@ -80,6 +80,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const anyChecking = list.some((x) => x.p.checking);
   const anyFlashing = list.some((x) => x.p.flashing);
   const dlBusy = !!dl && (dl.checking || dl.flashing);
+  const errorCodes = list.map((x) => (x.p.error instanceof ApiError ? x.p.error.code : undefined));
+  // Where the full download loads the application (else ETS restores an unloaded device).
+  const fullDownloadLoads = canFullDownload && !!view?.fullDownloadLoadsApplication;
 
   // A write to this device that this dialog did not start (a reload lost track of it, or another
   // client runs it). The server refuses a second write meanwhile; the preview waits until it has
@@ -91,8 +94,9 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   const tasksLoaded = tasks !== undefined;
   const blocked = !!foreignWrite;
   // A result already on screen stays there: a later foreign write must not replace it with a preview.
+  // So does a write that left the device unloaded, whose only way on is the full download.
   const hasResult = useRef(false);
-  hasResult.current = list.some((x) => x.p.done) || !!dl?.done;
+  hasResult.current = list.some((x) => x.p.done) || !!dl?.done || (fullDownloadLoads && errorCodes.some(leftDeviceUnloaded));
   useEffect(() => previewEffect(previews, open && tasksLoaded && !blocked && !hasResult.current, previewKey, preview),
     [previews, open, previewKey, preview, tasksLoaded, blocked]);
   // A retry the effect did not start has no cleanup of its own: closing the dialog stops it here.
@@ -115,7 +119,6 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   // family cannot commission). So is a device left unloaded (a write broke off inside its load
   // bracket, a preview found a load-state machine not LOADED, or a GA flash stopped the application),
   // where the full download loads the application; otherwise ETS is named.
-  const fullDownloadLoads = canFullDownload && !!view?.fullDownloadLoadsApplication;
   const needsDownload = list.some((x) => x.p.error instanceof ApiError && offersFullDownload(x.p.error.code, fullDownloadLoads));
   const needsEts = list.some((x) => x.p.error instanceof ApiError && etsCompletesLoad(x.p.error.code, fullDownloadLoads));
   // The operations the writes on offer run: each previewed target (or the structural flash covering
@@ -125,6 +128,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     : toFlash.map((x) => (x.p.dry?.structural ? "structuralFlash" : x.tg === "ga" ? "flashLinks" : "flashParams"));
   const awaitingAck = untestedOps(view, writeOps).length > 0;
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
+  const footer = flashFooter({ canFlash, downloadTaken: !!dl, anyFlashing, anyChecking, awaitingAck, blocked, errorCodes, anyError: !!firstError, fullDownloadLoads });
 
   async function flash() {
     if (busyRef.current) return;
@@ -243,7 +247,8 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
               {partLine(tg, p)}
             </div>
           ))}
-          {isConnError && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
+          {/* The hint ends in "retry", which a device left unloaded is not offered. */}
+          {isConnError && !footer.unloaded && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
           {needsEts && <p className="text-xs text-muted-foreground" data-testid="flash-needs-ets">{t("flash.etsCompletesLoad")}</p>}
           {dl && (
             <div className="flex flex-col gap-0.5 border-t border-border pt-2">
@@ -252,15 +257,15 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
             </div>
           )}
         </div>
-        {(canFlash || (dl?.dry?.kind === "dryRun" && !dl.done)) && !anyFlashing && !dlBusy && (
+        {((canFlash && !footer.unloaded) || (dl?.dry?.kind === "dryRun" && !dl.done)) && !anyFlashing && !dlBusy && (
           <UntestedNotice projectId={projectId} deviceId={device.id} view={view} ops={writeOps} />
         )}
 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={anyFlashing || dlBusy}>{anyDone || dl?.done ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
-          {/* Generic target retry, only before the full-download offer is taken, and not while a foreign
-              write runs (the preview follows once it has finished). */}
-          {!!firstError && !anyFlashing && !anyChecking && !dl && !blocked && (
+          {/* Generic target retry, only before the full-download offer is taken, not while a foreign write
+              runs (the preview follows once it has finished), and not after a write left the device unloaded. */}
+          {footer.retry && (
             <Button variant="outline" onClick={check} data-testid="flash-retry">
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>
@@ -293,8 +298,8 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           )}
           {/* onClick returns void, so flash()'s promise is discarded explicitly. Nothing is lost by
               that: flash() catches each target's failure and shows it ON that target, and never rejects. */}
-          {canFlash && !dl && (
-            <Button onClick={() => { void flash(); }} disabled={anyFlashing || awaitingAck} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
+          {footer.flash !== "none" && (
+            <Button onClick={() => { void flash(); }} disabled={footer.flash === "disabled"} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
               {anyFlashing ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />} {t("flash.flash")}
             </Button>
           )}

@@ -221,14 +221,41 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // restartProofMs: after a negatively confirmed A_Restart, how long from the device's last frame to us a
 // T_Disconnect still counts as its reboot (restart(), proveUnconfirmedRestart). It stays well below the
 // 6 s after which a device closes an idle transport connection by itself.
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000 };
+// droppedRepeatMs: how long a dropped frame's exact repetition is recognised. The transport layer
+// repeats an unacknowledged frame at most three times, 3 s apart; after that a frame with the same
+// number and octets is a new one (the 4-bit numbering comes round every 16 frames).
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000 };
 
 // A failure of the link between this tool and the interface (KNXnet/IP tunnel, USB), or one without a
 // code: it says nothing about the device.
 function isLinkFailure(e: unknown): boolean {
   const code = (e as { code?: unknown }).code;
   return typeof code !== "string" || code.startsWith("TUNNEL_") || code.startsWith("USB_");
+}
+
+// The service a request is answered with, or null for a request the device answers with nothing.
+// A numbered data frame of another service is not the answer: it is the device repeating an answer an
+// earlier connection never acknowledged (its tunnel closed under a write), and taking it would read
+// that answer's octets as this one's (an A_Memory_Response read as a device descriptor).
+const ANSWER_OF: Readonly<Record<number, number>> = {
+  [APCI.PROPERTY_READ]: APCI.PROPERTY_RESPONSE, [APCI.PROPERTY_WRITE]: APCI.PROPERTY_RESPONSE,
+  [APCI.PROPERTY_DESCRIPTION_READ]: APCI.PROPERTY_DESCRIPTION_RESPONSE,
+  [APCI.AUTHORIZE_REQUEST]: APCI.AUTHORIZE_RESPONSE,
+  [APCI.PROPERTY_EXT_READ]: APCI.PROPERTY_EXT_RESPONSE, [APCI.PROPERTY_EXT_WRITE_CON]: APCI.PROPERTY_EXT_WRITE_CON_RESP,
+  [APCI.FUNCTION_PROPERTY_EXT_COMMAND]: APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE,
+  [APCI.FUNCTION_PROPERTY_EXT_STATE_READ]: APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE,
+  [APCI.MEMORY_EXT_READ]: APCI.MEMORY_EXT_READ_RESP, [APCI.MEMORY_EXT_WRITE]: APCI.MEMORY_EXT_WRITE_RESP,
+};
+// No answer awaited: between requests, and during a request the device answers with nothing.
+const NO_ANSWER = (): boolean => false;
+function answerOf(request: number): ((answer: number) => boolean) | undefined {
+  // The low six bits carry the descriptor type, or the octet count of a classic memory service.
+  const service = request & 0x3c0;
+  if (service === APCI.DEVICE_DESCRIPTOR_READ) return (a) => (a & 0x3c0) === APCI.DEVICE_DESCRIPTOR_RESPONSE;
+  if (service === APCI.MEMORY_READ || service === APCI.MEMORY_WRITE) return (a) => a === APCI.MEMORY_RESPONSE;
+  const one = ANSWER_OF[request];
+  return one === undefined ? undefined : (a) => a === one;
 }
 
 export class KnxDevice {
@@ -241,6 +268,16 @@ export class KnxDevice {
   // answers L_Data.con negative): it is acknowledged again and dropped, never taken as the answer to
   // the request now in flight.
   private lastRxSeq: number | null = null;
+  // Whether a numbered data frame is the answer awaited now (answerOf; NO_ANSWER while none is), and
+  // the other services the device sent during the current try.
+  private answers: (apci: number) => boolean = NO_ANSWER;
+  private otherServices = new Set<number>();
+  // The last numbered data frame to us dropped as not awaited, whole: the device sends that very frame
+  // again when our T_ACK for it was lost, and its repetition must not pass as a later request's answer.
+  // Only the identical frame within the repetition window counts, since the answer of this connection
+  // may carry the same number. An answer identical to it in that window (a redone write echoed alike)
+  // is taken for the repetition: the request then fails as unanswered, it never takes another's octets.
+  private lastDropped: { frame: Buffer; at: number } | null = null;
   private peerClosed: (() => void) | null = null;
   // During the Sync handshake, raw frames are diverted here (the Sync response is not
   // a normal secure data frame, so it bypasses the request machinery).
@@ -283,7 +320,16 @@ export class KnxDevice {
       if (inner.status === "invalid") { this.unauthentic++; return; }
       if (inner.status === "replay") { this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {}); return; }
       p = parseApdu(inner.apdu);
-    } else if (outer.seq === this.lastRxSeq) {
+    } else if (outer.seq === this.lastRxSeq || this.isDroppedRepeat(tpdu)) {
+      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      return;
+    }
+    // A frame that is not the answer awaited: acknowledged so the device stops repeating it, its number
+    // not kept (it may belong to the connection the frame was sent in, and the answer of this one may
+    // carry the same number), the frame itself kept to recognise its repetition.
+    if (!this.answers(p.apci)) {
+      this.otherServices.add(p.apci);
+      if (!this.secure && dst === this.me) this.lastDropped = { frame: Buffer.from(tpdu), at: Date.now() };
       this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
       return;
     }
@@ -291,6 +337,11 @@ export class KnxDevice {
     // device's repetition of it is then the only copy, which has to get through.
     const plain = !this.secure;
     this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
+  }
+
+  private isDroppedRepeat(tpdu: Buffer): boolean {
+    const d = this.lastDropped;
+    return d !== null && Date.now() - d.at < this.timeouts.droppedRepeatMs && d.frame.equals(tpdu);
   }
 
   // Open the KNXnet/IP link again after it went down, e.g. an interface that stopped serving and
@@ -307,6 +358,7 @@ export class KnxDevice {
   async connect() {
     this.seq = 0;
     this.lastRxSeq = null;
+    this.lastDropped = null;
     this.maxApdu = undefined;
     await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
@@ -361,15 +413,19 @@ export class KnxDevice {
   // `deviceAckSuffices`: the device's T_ACK proves the frame arrived, so the interface's L_Data.con
   // is not waited for once it is there, and its absence is no error (the confirmed restart, below).
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
+    // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
+    const awaitedBefore = this.answers;
     try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
-    finally { this.peerClosed = null; }
+    finally { this.peerClosed = null; this.answers = awaitedBefore; this.otherServices.clear(); }
   }
   private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
     // Whether the last try was acknowledged and then got only unauthentic answers: the device
     // answered and was not believed, which is a different failure from silence.
     let rejectedAfterAck = false;
+    const answeredOtherwise = new Set<number>();
     for (let i = 0; i < tries; i++) {
       this.unauthentic = 0;
+      this.otherServices.clear();
       rejectedAfterAck = false;
       if (i > 0) await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
       // The waiters are registered before the send, the device's timeouts start after it: over UDP
@@ -382,7 +438,13 @@ export class KnxDevice {
         : Promise.resolve<ParsedApdu | null>(null);
       let closedByDevice = false;
       this.peerClosed = () => { closedByDevice = true; ackTimeout(); respTimeout(); };
-      const tpdu = this.onWire(build(this.seq));
+      const plainApdu = build(this.seq);
+      if (expectResponse) {
+        const answers = answerOf(parseApdu(plainApdu).apci);
+        if (!answers) throw new KnxError("ANSWER_SERVICE_UNKNOWN", `no answer service is known for the request service 0x${parseApdu(plainApdu).apci.toString(16)}`);
+        this.answers = answers;
+      }
+      const tpdu = this.onWire(plainApdu);
       afterWrap?.();
       try {
         const sent = this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
@@ -411,9 +473,18 @@ export class KnxDevice {
       // A device that closes its transport connection takes no further numbered frame, so asking
       // again is pointless. It is present, so this is not DEVICE_NOT_ANSWERING (silence).
       if (r === null && closedByDevice) throw new KnxError("DEVICE_CLOSED_CONNECTION", "the device closed the connection without answering");
+      // A device that acknowledged the request and sent only other services is not silent; the next
+      // try gives its late answer another window.
+      if (r === null && this.otherServices.size > 0) for (const a of this.otherServices) answeredOtherwise.add(a);
       if (r === null) { rejectedAfterAck = this.unauthentic > 0; continue; }
       this.seq = (this.seq + 1) & 0x0f;
       return r;
+    }
+    if (answeredOtherwise.size > 0) {
+      const seen = [...answeredOtherwise].map((a) => `0x${a.toString(16)}`).join(", ");
+      // The device acknowledged the request and holds its number: the next request takes the next one.
+      this.seq = (this.seq + 1) & 0x0f;
+      throw new KnxError("ANSWER_SERVICE_MISMATCH", `the device answered only with service ${seen}, not with the answer to this request`);
     }
     if (rejectedAfterAck) {
       throw new KnxError("SECURE_ANSWER_REJECTED", `the device acknowledged the request and answered, but ${this.unauthentic} answer(s) could not be authenticated (a failed MAC, or an answer not secured at all); nothing from them was used`);
@@ -955,10 +1026,11 @@ export class KnxDevice {
       // answers it, and ETS goes on without one (private corpus captures/mdt-router-ets6log-
       // {fulldownload,partial-name,partial-name-revert}.txt: "Ack arrived for ConfirmedRestart_req"
       // and its response, no "Conf after" for that Sec_req, where every other Sec_req has one).
+      this.answers = (a) => a === (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER);
       await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); }, true);
     } catch (e) {
       const code = (e as { code?: string }).code;
-      if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "BUS_SEND_FAILED") { this.respResolve = null; throw e; }
+      if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "BUS_SEND_FAILED") { this.respResolve = null; this.answers = NO_ANSWER; throw e; }
       unconfirmed = code === "BUS_SEND_FAILED";
       // Unacknowledged, the frame still counts as sent, as the basic restart's does: the probe in
       // restart() must not go out with the restart's sequence number, which a device that took the
@@ -968,6 +1040,7 @@ export class KnxDevice {
     const timer = setTimeout(() => take(null), this.timeouts.restartAnswerMs);
     const r = await answer;
     clearTimeout(timer);
+    this.answers = NO_ANSWER;
     if (r === null) { this.respResolve = null; return { answered: false, unconfirmed }; }
     if (r.apci !== (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER) || r.data.length < 3) {
       this.respResolve = null;
@@ -1133,7 +1206,7 @@ export class KnxDevice {
 // device has a security object). A failure of the link itself is thrown, never reported as either.
 // After a device timeout the transport sequence is not advanced: keep this a session's last request.
 export type SecurityModeReading = { state: "on" | "off" } | { state: "denied" | "unreadable"; detail: string };
-const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "SECURE_ANSWER_REJECTED"]);
+const DEVICE_SIDE_SECURITY_MODE_FAILURES = new Set(["SECURITY_MODE_UNREADABLE", "PROPERTY_RESPONSE_MISMATCH", "ANSWER_SERVICE_MISMATCH", "DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "SECURE_ANSWER_REJECTED"]);
 export async function readSecurityMode(dev: Pick<KnxDevice, "securityMode">): Promise<SecurityModeReading> {
   try {
     return { state: (await dev.securityMode()) ? "on" : "off" };

@@ -192,6 +192,14 @@ Connection-oriented KNX management on top of the tunnel. What matters on a busy 
   flight, it hands that request another request's bytes: a Theben DALI-Gateway repeated its answer
   for one memory block, and a read that took it would have stored that block one block further on.
   A memory read also refuses an answer for another address than the one asked.
+- A device data frame of **another service** than the one the request is answered with (an
+  `A_Memory_Response` while a device descriptor read waits) is not the answer either: acknowledge it,
+  drop it, and keep its sequence number out of the repetition check, since it may come from an
+  earlier connection whose numbering the new one repeats; keep the frame itself, so that its exact
+  repetition within the device's repetition window (three repetitions, 3 s apart) is dropped too. The same holds between requests, where no answer is awaited, and at a
+  confirmed restart, which awaits only the `A_Restart_Response`. A device that takes the request and
+  answers it with nothing but other services, try after try, is refused as such
+  (`ANSWER_SERVICE_MISMATCH`), not taken for silence (§31).
 
 Short per-operation timeouts (about 1.5 s) so a lost ACK fails fast and the **whole
 procedure** is retried on a fresh connection (idempotent when writing identical content),
@@ -899,9 +907,20 @@ as soon as the task reports its write phase (shown on the MDT BE-02001.02), fail
 device unloaded; TUNNEL_CLOSED") within seconds. The dialog shows that message and offers the full
 download, which verifies; a later parameter flash of the same device verifies too. Shown at that one
 cut point only; other cut points (after LoadCompleted, inside the table writes) are not tried.
-About 1.5 s after the failure a group-address preview nobody started runs and stops with
-`MASK_MISMATCH` (the device answering mask `MV-44A508`); where it comes from and what the
-half-loaded device answers is not known.
+After such a failure the dialog offers the full download alone where that download loads the
+application: Flash stays disabled, and no target is previewed again, by itself or through Retry.
+Flash also waits until every target has previewed, so no write queues behind a preview.
+
+A session opened straight after the cut can meet the device still repeating an answer the closed
+tunnel never acknowledged. The MDT BE-02001.02 in verify mode answers each memory write with an
+`A_Memory_Response` (the ETS downloads of the device in the private corpus show it), so after a cut parameter write that
+repetition is a memory response, for example one byte at `0x44A5` in its parameter memory. Taken as the
+answer to a device descriptor read, its three octets read as the mask `MV-44A508` and the session
+stops with `MASK_MISMATCH`, as a group-address preview right after the failure did. The descriptor
+read takes only a descriptor response, and a frame of another service is acknowledged and dropped
+(§4). That the octets were such a repetition is inferred from them, the frame was not logged; that a
+session after such a cut then reads the device's own mask is shown against a scripted device, not on
+hardware.
 
 ## 32. ETS does not run the Gira M-0008's declared procedure
 

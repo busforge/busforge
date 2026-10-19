@@ -87,9 +87,15 @@ depends on is hardware-proven.
   verified. Rebinding the session (same tool key, sequence kept, Sync again) would verify it. No ETS
   capture shows the case: ETS reads nothing back after the restart.
 - **Echo checks on every management answer.** A memory read refuses an answer for another address,
-  and a repeated data frame is dropped at the transport layer. `propRead` and `deviceDescriptor` still
-  take any answer of the right sequence: a late answer to an abandoned earlier request would be taken
-  as theirs. Check the echoed object, PID and start, and the service, as `propReadIfPresent` does.
+  a repeated data frame is dropped at the transport layer, and every request takes only its own
+  answer service. `propRead` still takes a property answer for another object, PID or start: a late
+  answer to an abandoned earlier property read would be taken as its own. Check the echo, as
+  `propReadIfPresent` does. A data frame the device addresses to another tool's address is also still
+  taken (and acknowledged) by the session.
+- **The stale answer after a cut-off flash, on hardware.** That a session straight after a write cut
+  inside its load bracket drops the device's repeated answer and reads the real mask is shown against
+  a scripted device only ([findings.md](findings.md) §31). A cut on the bench with the transport
+  traffic logged would show it on a device.
 - **Turn the ETS-capture diff into a live read-back gate.** `our image == ETS` can only be checked
   where a captured ETS download exists. Diffing the built image against the device itself, with the
   segment base the device assigned, would catch that class of bug without a capture.

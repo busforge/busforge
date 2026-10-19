@@ -1094,9 +1094,11 @@ restart
   Unload or Load and seeing every machine it opened LOADED again (after LoadCompleted, or its
   batched assert); the task then fails with `FLASH_INTERRUPTED_UNLOADED` ("may have left the device
   unloaded": a failed event may or may not have reached the device). The flash dialog writes no
-  further target and, where the family can be downloaded in full, offers the full download (also
-  when a later preview finds the device so, `DEVICE_LOAD_INCOMPLETE`). On System B the same flash
-  run again also completes the load. Busforge never resumes the bracket by itself. A failure after
+  further target; where the full download loads the application, it offers that download alone,
+  with Flash disabled and no re-preview (it is also offered when a later preview finds the device so,
+  `DEVICE_LOAD_INCOMPLETE`). On System B the same flash run again also completes the load, which the
+  dialog leaves open only where ETS would otherwise be the only way. Busforge never resumes the
+  bracket by itself. A failure after
   the bracket closed (the restart, the read-back) is not marked.
 - **What is adopted.** A verified structural flash adopts the parameter and the link baseline, like
   the full download. It writes the group tables whole, so it takes the group-address flash's

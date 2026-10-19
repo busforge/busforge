@@ -20,7 +20,9 @@ class ScriptedDevice implements KnxTransport {
     const svc = Buffer.from(tpdu); svc[0] &= 0x03;
     this.sent.push(svc.toString("hex"));
     this.onCemi?.(0x11cc, this.assignedIa, tpAck(p.seq), false);
-    const a = Buffer.from(this.answers.shift()!, "hex");
+    const next = this.answers.shift();
+    if (next === undefined) return; // a repeated request: the device does not answer it again
+    const a = Buffer.from(next, "hex");
     a[0] = 0x40 | (p.seq << 2) | (a[0] & 0x03);
     this.onCemi?.(0x11cc, this.assignedIa, a, false);
   }
@@ -54,7 +56,7 @@ describe("extended property services, byte-for-byte as ETS sends them", () => {
   });
 
   test("an answer with another service, and an address out of range, are refused", async () => {
-    expect(String(await new KnxDevice(new ScriptedDevice(["01cd001100103301000101"]), "1.1.204").securityMode().catch((e: unknown) => e))).toMatch(/service 0x1cd/);
+    expect(String(await new KnxDevice(new ScriptedDevice(["01cd001100103301000101"]), "1.1.204", undefined, { responseMs: 50, retryGapMs: 1 }).securityMode().catch((e: unknown) => e))).toMatch(/service 0x1cd/);
     expect(String(await new KnxDevice(new ScriptedDevice([]), "1.1.204").propExtWriteCon(17, 1, 0x1038, Buffer.alloc(16)).catch((e: unknown) => e))).toMatch(/does not fit/);
     expect(String(await new KnxDevice(new ScriptedDevice([]), "1.1.204").propExtRead(17, 1, 51, 1, 256).catch((e: unknown) => e))).toMatch(/does not fit/);
   });

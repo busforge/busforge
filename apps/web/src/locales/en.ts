@@ -283,6 +283,7 @@ const en = {
     BRIDGE_NO_ADDRESS: "The KNX interface did not reveal its own individual address, so the bridge has none to hand out to a tunnelling client. A tunnel on 0.0.0 is an address no device can answer to.",
     BRIDGE_NO_LOCAL_ADDRESS: "This host has no external IPv4 address, so the bridge has none to advertise. Clients would discover it and then be unable to reach it.",
     DEVICE_NOT_ANSWERING: "The device is not answering on the bus. Check that it is powered, on the line, and at the expected address.",
+    ANSWER_SERVICE_MISMATCH: "The device took the request but answered it only with another service, so nothing it sent was used as the answer. A device still repeating an answer of an earlier, interrupted connection looks like this; run the operation again.",
     DEVICE_CLOSED_CONNECTION: "The device closed the connection instead of answering. It is on the bus, but it did not take this request (it may be in a connection with another tool).",
     TUNNEL_CON_TIMEOUT: "The KNX interface did not confirm the telegram. The network link to the interface stalled or the interface is stuck; whether the device answered is unknown. Retry once the link is back.",
     TUNNEL_CLOSED: "The connection to the KNX interface closed before the telegram was confirmed.",

@@ -104,6 +104,8 @@ async function rebootOnBench(host: string, ia: string, mask: string, creds: Cred
       catch (e) {
         if (e instanceof KnxError && (e.code === "DEVICE_NOT_ANSWERING" || (creds && e.code === "SECURE_SYNC_NO_RESPONSE"))) return "silent";
         if (e instanceof KnxError && e.code === "BUS_SEND_FAILED") return "unacknowledged";
+        // It acknowledged and sent another service: it is up.
+        if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return "answered";
         throw e;
       }
       finally { await dev.disconnect(); }

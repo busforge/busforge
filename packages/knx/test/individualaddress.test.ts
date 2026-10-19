@@ -69,12 +69,12 @@ class SimBus implements KnxTransport {
     const seq = (t >> 2) & 0x0f;
     this.deliver(dst, this.assignedIa, Buffer.from([0xc2 | (seq << 2)]), false);                // T_ACK the request
     if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) {
-      this.deliver(dst, this.assignedIa, Buffer.from([0x40 | (seq << 2), 0x40, 0x07, 0xb0]), false); // MV-07B0
+      this.deliver(dst, this.assignedIa, Buffer.from([0x43 | (seq << 2), 0x40, 0x07, 0xb0]), false); // A_DeviceDescriptor_Response, MV-07B0
     }
     if (p.apci === APCI.PROPERTY_WRITE) {
       const [obj, pid] = [p.data[0], p.data[1]];
       if (obj === 0 && pid === 54) { this.progModeWrites++; dev.progMode = p.data[4] !== 0; }
-      this.deliver(dst, this.assignedIa, Buffer.from([0x40 | (seq << 2), 0xd6, obj, pid, p.data[2], p.data[3], 0]), false);
+      this.deliver(dst, this.assignedIa, Buffer.from([0x43 | (seq << 2), 0xd6, obj, pid, p.data[2], p.data[3], 0]), false); // A_PropertyValue_Response
     }
   }
 

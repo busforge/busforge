@@ -283,6 +283,7 @@ const de: Messages = {
     BRIDGE_NO_ADDRESS: "Die KNX-Schnittstelle hat ihre eigene physikalische Adresse nicht preisgegeben, also hat die Bridge keine, die sie an einen Tunnel-Client vergeben könnte. Ein Tunnel auf 0.0.0 ist eine Adresse, auf die kein Gerät antworten kann.",
     BRIDGE_NO_LOCAL_ADDRESS: "Dieser Host hat keine externe IPv4-Adresse, also hat die Bridge keine, die sie ankündigen könnte. Clients würden sie finden und dann nicht erreichen.",
     DEVICE_NOT_ANSWERING: "Das Gerät antwortet nicht auf dem Bus. Prüfe, ob es mit Strom versorgt, an der Linie und unter der erwarteten Adresse erreichbar ist.",
+    ANSWER_SERVICE_MISMATCH: "Das Gerät hat die Anfrage angenommen, aber nur mit einem anderen Dienst geantwortet, deshalb wurde nichts davon als Antwort verwendet. So sieht ein Gerät aus, das noch eine Antwort aus einer früheren, abgebrochenen Verbindung wiederholt; führe den Vorgang erneut aus.",
     DEVICE_CLOSED_CONNECTION: "Das Gerät hat die Verbindung geschlossen, statt zu antworten. Es ist am Bus, hat diese Anfrage aber nicht angenommen (vielleicht ist es gerade mit einem anderen Werkzeug verbunden).",
     TUNNEL_CON_TIMEOUT: "Die KNX-Schnittstelle hat das Telegramm nicht bestätigt. Die Netzwerkverbindung zur Schnittstelle stockte, oder die Schnittstelle hängt; ob das Gerät geantwortet hat, ist unbekannt. Erneut versuchen, sobald die Verbindung wieder steht.",
     TUNNEL_CLOSED: "Die Verbindung zur KNX-Schnittstelle wurde geschlossen, bevor das Telegramm bestätigt war.",

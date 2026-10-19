@@ -100,3 +100,19 @@ test("pause() on unmount stops a retry the effect did not start", async () => {
   expect(b.sent).toHaveLength(1);
   expect(b.settled).toEqual([]);
 });
+
+test("under StrictMode each target is previewed once, also when the dialog renders again after a write", async () => {
+  // A second copy of a target's preview would queue on the serial bus behind a write taken meanwhile,
+  // and reach a device the write left unloaded.
+  const b = bus(); const runs = previewRuns();
+  const body = b.body(["params", "ga"]);
+  previewEffect(runs, true, "k", body)?.();
+  const cleanup = previewEffect(runs, true, "k", body);
+  b.sent[0]!.answer("p1"); await tick();
+  b.sent[1]!.answer("g1"); await tick();
+  cleanup?.();
+  previewEffect(runs, true, "k", body);
+  await tick();
+  expect(b.sent.map((s) => s.target)).toEqual(["params", "ga"]);
+  expect(b.settled).toEqual(["params:p1", "ga:g1"]);
+});

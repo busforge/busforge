@@ -258,6 +258,8 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (lastErr) {
           // A stalled or closed link to the interface says nothing about the device.
           if (lastErr instanceof KnxError && (lastErr.code === "TUNNEL_CON_TIMEOUT" || lastErr.code === "TUNNEL_CLOSED")) throw lastErr;
+          // A device that answers with another service is back, but not as asked: say that.
+          if (lastErr instanceof KnxError && lastErr.code === "ANSWER_SERVICE_MISMATCH") throw lastErr;
           throw new KnxError("DEVICE_NOT_ANSWERING",
             `the device stopped answering after a segment write and did not come back within ${Math.round((tries * (delayMs + 4500)) / 1000)} s; it may be committing its flash, or it may have reset`);
         }
