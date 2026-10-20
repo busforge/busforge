@@ -390,7 +390,7 @@ spec states why no behaviour is observable.
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure, plain | MV-07B0 | hardware | hardware | hardware, both channels | **met** in plain mode; not rerun since the device went secure (the plain spec needs a master reset first) |
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
-| `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter and GA flash, behaviour and click-through pass in both channels; the full download the product claims is declared unsafe on a unit in service, untested; its records do not ship yet (see the note) |
+| `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter and GA flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run; its records do not ship yet (see the note) |
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
@@ -411,9 +411,10 @@ spec states why no behaviour is observable.
   hardware-proven, driven through the production endpoints. It runs in a live installation, so the
   spec stays unrun: driving it would program a device somebody depends on. Its two surgical
   capabilities are excluded from automated runs, so even a green run could not clear the bar for
-  them. The device-in-service spec drives exactly those two on a commissioned unit, each reverted, with the
-  full download declared unsafe there; it passes on hardware in both channels, with the witness's read
-  answered and the link surviving the restart. Its records are not in the shipped evidence yet, so
+  them. The device-in-service spec drives exactly those two on a commissioned unit, each reverted, and
+  offers a full download of the configuration found on request; the two writes pass on hardware in both
+  channels, with the witness's read answered and the link surviving the restart, and the full download
+  has not run there. Its records are not in the shipped evidence yet, so
   [compatibility.md](compatibility.md) has no row for the product.
 
 ## What green tests prove, and what they do not

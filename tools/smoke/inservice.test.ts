@@ -165,7 +165,7 @@ describe("a device in service", () => {
     // The identity is read before the device is touched in any other way.
     expect(calls.slice(0, 2)).toEqual(["prop 4/13", "prop 0/25"]);
     expect(r.capabilities.map((c) => [c.capability, c.state])).toEqual([
-      ["fullDownload", "unsafe"], ["flashParams", "pass"], ["flashLinks", "pass"], ["readParams", "pass"], ["readLinks", "pass"],
+      ["fullDownload", "unproven"], ["flashParams", "pass"], ["flashLinks", "pass"], ["readParams", "pass"], ["readLinks", "pass"],
     ]);
     expect(r.behaviours).toEqual([{ kind: "output", label: "In Betrieb answers on the test link", state: "pass", detail: "the test address answered 0x01", gas: { object: "15/7/250" } }]);
     expect(r.persistence?.state).toBe("pass");
