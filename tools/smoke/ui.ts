@@ -19,6 +19,11 @@ export type FlashTarget = "params" | "ga";
 // scope their "is the bus op still running?" polling to it, never to the whole page.
 const DIALOG = '[data-slot="alert-dialog-content"]';
 
+// Whether a text names the group address as a whole: "1/3/2" is not named by "1/3/21" or "11/3/2".
+export function namesAddress(text: string, gaAddress: string): boolean {
+  return new RegExp("(?<![0-9/])" + gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])").test(text);
+}
+
 export class UiDriver {
   private browser: Browser | null = null;
   private page: Page | null = null;
@@ -98,10 +103,13 @@ export class UiDriver {
   // code.
   async removeGa(comObjNumber: number, gaAddress: string, index: number): Promise<void> {
     const page = this.req();
-    const row = page.locator(`[data-testid="link-${comObjNumber}-ga-${index}"]`);
-    await row.waitFor({ state: "visible", timeout: 15_000 });
-    if (!new RegExp("(?<![0-9/])" + gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])").test((await row.textContent()) ?? "")) throw new Error(`removing ${gaAddress} from object ${comObjNumber}: the editor lists ${((await row.textContent()) ?? "").trim()} at position ${index}`);
-    await this.stored("/links", () => page.click(`[data-testid="link-${comObjNumber}-remove-${index}"]`), `removing ${gaAddress} from object ${comObjNumber}`);
+    // The row's text runs the address's name and the address together; the remove button names the
+    // address alone in its label.
+    const button = page.locator(`[data-testid="link-${comObjNumber}-remove-${index}"]`);
+    await button.waitFor({ state: "visible", timeout: 15_000 });
+    const label = (await button.getAttribute("aria-label")) ?? "";
+    if (!namesAddress(label, gaAddress)) throw new Error(`removing ${gaAddress} from object ${comObjNumber}: the remove button at position ${index} is labelled "${label}"`);
+    await this.stored("/links", () => button.click(), `removing ${gaAddress} from object ${comObjNumber}`);
   }
 
   // Set one flag of a com-object in the device page's flag editor (a popover on the object's row). Done
