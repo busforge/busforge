@@ -19,6 +19,7 @@ import type { CapabilityResult } from "./capabilities.ts";
 import type { BehaviourResult } from "./behaviours.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { serverDataPath } from "./evidence.ts";
+import { guardAddresses, judgeWeather, parseWeatherGuard, WIND_MARGIN, type WeatherGuard } from "./guard.ts";
 
 // The server's API, for the project bound to the device under test: the oracle and the plumbing
 // (adoption, dry runs, the unlink, the restore after a failure).
@@ -93,9 +94,10 @@ export interface InServiceIo {
 }
 
 // What the operator gives this run on top of the spec: whether the offered full download runs, the
-// test group address of the link step, and for a Data Secure unit the installation's project file that
-// holds its keys (both belong to the installation, so never in the spec).
-export interface InServiceOptions { fullDownload: boolean; testGa?: string; knxproj?: string }
+// test group address of the link step, for a Data Secure unit the installation's project file that
+// holds its keys, and for a weather station the weather guard's addresses and wind threshold
+// (guard.ts; all of them belong to the installation, so never in the spec).
+export interface InServiceOptions { fullDownload: boolean; testGa?: string; knxproj?: string; weatherGuard?: string }
 
 // The configuration the device was found with, before the first write: every parameter value and
 // every object's links, as the read-back decoded them. Together with the server's own backups (the
@@ -232,11 +234,15 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
 const short = (ref: string) => ref.split("_").slice(-2).join("_");
 
 // What the operator's options must hold for this spec: a Data Secure unit needs the installation's
-// project file, and only such a unit takes one; a link step needs a valid test address.
+// project file, and only such a unit takes one; a weather station needs the weather guard, and only
+// such a unit takes one; a link step needs a valid test address.
 export function optionProblems(spec: DeviceSpec, opts: InServiceOptions): string[] {
   const out: string[] = [];
   if (spec.inService?.dataSecure && !opts.knxproj) out.push("the unit runs Data Secure: its keys come from the installation's project file (--knxproj=<file>, password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD)");
   if (!spec.inService?.dataSecure && opts.knxproj) out.push("--knxproj is read for a Data Secure unit's keys only; this unit is taken over without the installation's project");
+  if (spec.inService?.weatherGuard && !opts.weatherGuard) out.push("the unit is a weather station: the run needs the installation's weather addresses and wind threshold (--weather-guard=wind:<ga>:<m/s>,<name>:<ga>,...)");
+  if (!spec.inService?.weatherGuard && opts.weatherGuard) out.push("--weather-guard is read for a weather station only; this spec declares none");
+  if (spec.inService?.weatherGuard && opts.weatherGuard) { const g = parseWeatherGuard(opts.weatherGuard); if ("refused" in g) out.push(g.refused); }
   if (!spec.inService?.link) return out;
   if (!opts.testGa) return [...out, "the link step needs the test group address (--test-ga=<main/middle/sub>)"];
   // Three levels: the link step creates it as a project group address, which takes main/middle/sub.
@@ -261,6 +267,8 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
     const read = (text: string) => out.push({ phase, kind: "read", text });
     const write = (op: PlanStep["op"], text: string) => out.push({ phase, kind: "write", op, text });
     if (phase === "fingerprint") {
+      const g = opts.weatherGuard ? parseWeatherGuard(opts.weatherGuard) : null;
+      if (g && !("refused" in g)) read(`weather guard, before the channel and before every write and restart (the undo's included): wind ${g.wind.ga} must answer below ${WIND_MARGIN * 100} % of ${g.wind.thresholdMs} m/s${g.bits.length ? `, ${g.bits.map((b) => `${b.name} ${b.ga}`).join(", ")} must answer 0` : ""}; an address the unit itself does not answer stops the run`);
       if (s.dataSecure) read(`the project file given with --knxproj is imported; the unit at ${spec.device.ia} must be this spec's product, and the file must hold its tool key: the server takes the unit's keys and those of its group addresses with it, and the runner's own connections (fingerprint, restart) open the unit's secure session`);
       const iface = s.ipInterface;
       read(`route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address${!iface ? "" : iface.restart === "drops" ? `; refused when the interface is ${iface.ia}, whose tunnels a restart of this unit drops` : `; through ${iface.ia} too, whose tunnels a restart of this unit keeps (${iface.shown})`}`);
@@ -313,6 +321,36 @@ const errText = (e: unknown): string => {
   return typeof code === "string" && !msg.includes(code) ? `${code}: ${msg}` : msg;
 };
 const sameLinks = (a: number[], b: number[]) => a.length === b.length && a.every((g, i) => g === b[i]);
+
+// The weather guard's reads (guard.ts) through the runner's witness; a refusal stops the run before
+// whatever was about to happen.
+async function weatherCheck(io: InServiceIo, g: WeatherGuard, before: string): Promise<void> {
+  const answers = new Map<string, string | null>();
+  // Only the unit's own answer counts; another client reading the same address meanwhile does not
+  // change what the unit answered, so attribution is not asked.
+  for (const ga of guardAddresses(g)) answers.set(ga, (await io.bus.groupReadAnsweredOn(ga, [ga]).catch((e) => { throw new Stop("weather guard", `${before}: the read of ${ga} broke off: ${errText(e)}`); })).value);
+  const v = judgeWeather(g, answers);
+  io.log(`weather guard ${before}: ${v.detail}`);
+  if (!v.pass) throw new Stop("weather guard", `${before}: ${v.detail}`);
+}
+
+// Every write of the run and of its undo ends with the unit's restart, so the guard reads before each
+// of them and before the persistence restart. The full download's check runs in its phase, before the
+// run counts the download as sent (runInService).
+function weatherGuarded(io: InServiceIo, g: WeatherGuard): InServiceIo {
+  const before = async <R>(what: string, f: () => Promise<R>): Promise<R> => { await weatherCheck(io, g, what); return f(); };
+  return {
+    ...io,
+    api: { ...io.api, flashReal: () => before("before the parameter flash", () => io.api.flashReal()), flashGaReal: () => before("before the GA flash", () => io.api.flashGaReal()) },
+    chan: {
+      ...io.chan,
+      flashParams: () => before("before the parameter flash", () => io.chan.flashParams()),
+      flashLinks: () => before("before the GA flash", () => io.chan.flashLinks()),
+    },
+    bus: { ...io.bus, reboot: () => before("before the restart", () => io.bus.reboot()) },
+  };
+}
+
 // Set an object's links over the API. The project takes a link only to a group address it holds, and
 // a project that took a unit over by read-back holds none of the unit's own addresses: each is
 // created first.
@@ -442,6 +480,8 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
   let channelReadOk = false;
   // A full download was sent and has not come back verified.
   let downloadOut = false;
+  // The weather guard's check before the full download, where the run has one.
+  let guardDownload: (() => Promise<void>) | undefined;
   // The phase a failure that is not a Stop (a channel, the server, the bus) is reported in.
   let at = "spec";
   const cap = (capability: string, state: CapabilityResult["state"], detail: string, evidence?: Record<string, unknown>) =>
@@ -463,7 +503,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
       const judged = judgeRestoredConfig(await io.api.getConfig(), coverage);
       await io.settle(3000);
       return { state: states.state === "pass" && judged.state === "pass" ? "pass" : "fail", detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
-    })().catch((e) => { harness("persistence", `the persistence check broke off: ${errText(e)}`); return undefined; });
+    })().catch((e) => { if (e instanceof Stop) throw e; harness("persistence", `the persistence check broke off: ${errText(e)}`); return undefined; });
     if (r) io.log(`persistence: ${r.detail}`);
     return r;
   };
@@ -525,6 +565,12 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
   try {
     const problems = [...inServiceProblems(spec), ...optionProblems(spec, opts)];
     if (problems.length) throw new Stop("spec", problems.join("; "));
+    if (opts.weatherGuard) {
+      const g = parseWeatherGuard(opts.weatherGuard) as WeatherGuard;
+      io = weatherGuarded(io, g);
+      await weatherCheck(io, g, "before the channel");
+      guardDownload = () => weatherCheck(io, g, "before the full download");
+    }
     const testGa = opts.testGa ?? "";
     const si = s!;
     for (const phase of inServicePhases(spec, opts)) {
@@ -754,6 +800,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         await onlyTheStep("fullDownload preflight", {}, claims!.flashParams ? () => io.api.flashDry() : undefined);
         try { dry = await io.api.downloadDry(); } catch (e) { throw new Stop("fullDownload preflight", `dry run refused: ${errText(e)}`); }
         if (dry.kind !== "dryRun") throw new Stop("fullDownload preflight", `dry run reported ${dry.kind}`);
+        await guardDownload?.();
         downloadOut = true;
         at = "fullDownload";
         const done = checkWritten(await io.chan.fullDownload(), "fullDownload", false);

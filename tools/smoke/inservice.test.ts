@@ -941,3 +941,92 @@ describe("a device in service: System 1", () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe("a weather station in service: the weather guard", () => {
+  const station: DeviceSpec = { ...spec, id: "station", inService: { ...spec.inService!, weatherGuard: true } };
+  const GUARDED: InServiceOptions = { ...NO_FULL, weatherGuard: "wind:31/7/240:9,rain:31/7/241" };
+  // The guard's addresses answer from `weather`, called with the number of the guard check (from 1);
+  // each check is logged as "guard" before the reads it makes.
+  const withWeather = (sc: Script, weather: (check: number) => { wind: string | null; rain: string | null }) => {
+    const s = scripted(sc);
+    const bus = { ...s.io.bus };
+    let checks = 0;
+    // The guard takes only the unit's own answer, as groupReadAnsweredOn gives it.
+    s.io.bus.groupReadAnsweredOn = async (readGa, ownGas) => {
+      if (readGa === "31/7/240") { checks++; s.calls.push("guard"); return { value: weather(checks).wind, unattributable: false }; }
+      if (readGa === "31/7/241") return { value: weather(checks).rain, unattributable: false };
+      return bus.groupReadAnsweredOn(readGa, ownGas);
+    };
+    return s;
+  };
+  const CALM = { wind: "00c8", rain: "00" };
+  const guardAndWrites = (calls: string[]) => calls.filter((c) => c === "guard" || WRITES.has(c));
+
+  test("the guard reads before the channel and before every write and restart, and the run passes in calm weather", async () => {
+    const { io, calls, device, start } = withWeather({}, () => CALM);
+    const r = await runInService(station, io, GUARDED);
+    expect(r.ok).toBe(true);
+    expect(guardAndWrites(calls)).toEqual(["guard", "guard", "flashParams", "guard", "flashParams", "guard", "flashLinks", "guard", "restart", "guard", "flashLinks"]);
+    // Before the channel means before anything reaches the unit.
+    expect(calls.indexOf("guard")).toBeLessThan(calls.indexOf("route"));
+    expect(device).toEqual(start);
+    expect(planInService(station, GUARDED).find((p) => p.text.startsWith("weather guard"))?.text).toBe("weather guard, before the channel and before every write and restart (the undo's included): wind 31/7/240 must answer below 70 % of 9 m/s, rain 31/7/241 must answer 0; an address the unit itself does not answer stops the run");
+  });
+
+  test("wind near the threshold before the restart stops the run there, and the undo writes nothing while it holds", async () => {
+    const { io, calls, device, start } = withWeather({}, (n) => (n >= 5 ? { wind: "0276", rain: "00" } : CALM));
+    const r = await runInService(station, io, GUARDED);
+    expect(r.ok).toBe(false);
+    expect(r.stopped?.phase).toBe("weather guard");
+    expect(r.stopped?.detail).toContain("before the restart: wind 6.3 m/s is at or above 70 % of the alarm threshold 9 m/s");
+    expect(guardAndWrites(calls)).toEqual(["guard", "guard", "flashParams", "guard", "flashParams", "guard", "flashLinks", "guard", "guard"]);
+    expect(r.persistence).toBeUndefined();
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("undo aborted: before the GA flash: wind 6.3 m/s");
+    expect(device).not.toEqual(start);
+  });
+
+  test("once the weather has calmed, the undo takes the link back", async () => {
+    const { io, calls, device, start } = withWeather({}, (n) => (n === 5 ? { wind: "00c8", rain: "01" } : CALM));
+    const r = await runInService(station, io, GUARDED);
+    expect(r.ok).toBe(false);
+    expect(r.stopped?.detail).toContain("before the restart: rain (31/7/241) is set");
+    expect(guardAndWrites(calls)).toEqual(["guard", "guard", "flashParams", "guard", "flashParams", "guard", "flashLinks", "guard", "guard", "flashLinks"]);
+    expect(r.restore?.state).toBe("pass");
+    expect(device).toEqual(start);
+  });
+
+  test("a stop before the full download writes nothing and is no broken-off download", async () => {
+    const offer: DeviceSpec = { ...station, inService: { ...station.inService!, fullDownload: true }, unsafe: [] };
+    const full: InServiceOptions = { ...GUARDED, fullDownload: true };
+    // Checks: channel, the two parameter flashes, GA flash, restart, unlink; the seventh is the download's.
+    const { io, calls, device, start } = withWeather({}, (n) => (n === 7 ? { wind: "0276", rain: "00" } : CALM));
+    const r = await runInService(offer, io, full);
+    expect(r.stopped?.phase).toBe("weather guard");
+    expect(r.stopped?.detail).toContain("before the full download: wind 6.3 m/s");
+    expect(guardAndWrites(calls)).toEqual(["guard", "guard", "flashParams", "guard", "flashParams", "guard", "flashLinks", "guard", "restart", "guard", "flashLinks", "guard"]);
+    expect(r.restore?.detail ?? "").not.toContain("broke off");
+    expect(device).toEqual(start);
+  });
+
+  test("in calm weather the full download goes out after its own check", async () => {
+    const offer: DeviceSpec = { ...station, inService: { ...station.inService!, fullDownload: true }, unsafe: [] };
+    const { io, calls } = withWeather({}, () => CALM);
+    const r = await runInService(offer, io, { ...GUARDED, fullDownload: true });
+    expect(r.ok).toBe(true);
+    expect(guardAndWrites(calls).slice(-2)).toEqual(["guard", "fullDownload"]);
+  });
+
+  test("an address that does not answer stops the run before anything reaches the unit", async () => {
+    const { io, calls } = withWeather({}, () => ({ wind: "00c8", rain: null }));
+    const r = await runInService(station, io, GUARDED);
+    expect(r.stopped).toEqual({ phase: "weather guard", detail: "before the channel: rain (31/7/241) did not answer from the station (read: wind 2 m/s (limit 6.3))" });
+    expect(calls).toEqual(["guard"]);
+  });
+
+  test("a weather station needs the guard, and only a weather station takes one", () => {
+    expect(() => planInService(station, NO_FULL)).toThrow("the unit is a weather station");
+    expect(() => planInService(spec, GUARDED)).toThrow("--weather-guard is read for a weather station only");
+    expect(() => planInService(station, { ...NO_FULL, weatherGuard: "rain:31/7/241" })).toThrow("no wind address");
+  });
+});

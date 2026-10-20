@@ -90,6 +90,10 @@ export interface InServiceSpec {
   // interface and refuses this one; "keeps": shown on a unit, `shown` says where and with which tunnel
   // (the run's own or a bystander's), so the run may go through it.
   ipInterface?: { ia: string; restart: "drops" | "keeps"; shown: string };
+  // The unit is a weather station whose alarms protect the installation (an awning's wind lock) and
+  // which sends none while it restarts: the run needs the operator's weather guard (--weather-guard,
+  // guard.ts) and reads it before the channel and before every write and restart.
+  weatherGuard?: true;
   // Parameter values the device's own configuration must hold once the project has taken it over,
   // checked before the first write: what tells products apart that share application and firmware
   // (a module type), or a setting the run relies on staying as it is (an output's download

@@ -47,6 +47,8 @@ export const thebenMeteodata140sInService: DeviceSpec = {
     // observes it.
     link: { comObjRefId: "M-0048_A-140C-14-EB70_O-23_R-229" },
     fullDownload: true,
+    // Its wind and rain alarms drive the installation's awnings, and it sends none while it restarts.
+    weatherGuard: true,
   },
   configure: [],
   behaviours: [

@@ -699,7 +699,9 @@ async function main() {
   const testGa = args.find((a) => a.startsWith("--test-ga="))?.split("=")[1];
   // A Data Secure unit's keys come from the installation's project file, which belongs to the installation.
   const knxproj = args.find((a) => a.startsWith("--knxproj="))?.slice("--knxproj=".length);
-  const opts: InServiceOptions = { fullDownload: args.includes("--full-download"), ...(testGa ? { testGa } : {}), ...(knxproj ? { knxproj } : {}) };
+  // A weather station's guard reads the installation's weather addresses, given per run (guard.ts).
+  const weatherGuard = args.find((a) => a.startsWith("--weather-guard="))?.slice("--weather-guard=".length);
+  const opts: InServiceOptions = { fullDownload: args.includes("--full-download"), ...(testGa ? { testGa } : {}), ...(knxproj ? { knxproj } : {}), ...(weatherGuard ? { weatherGuard } : {}) };
   // --plan: the writes each named device-in-service spec would make, without a server or a bus.
   if (args.includes("--plan")) {
     for (const spec of chosen) {

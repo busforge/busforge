@@ -101,6 +101,11 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 
   // The run's view of the server, as runner.ts builds it for the api channel, over handleApi; a write
   // answers 202 with its task, whose end is polled.
+  // A weather station's guard, read from addresses no emulated unit uses, answered calm (wind 2 m/s,
+  // every bit 0) by the emulated witness: the guard's reads go through the run, the weather is not emulated.
+  const CALM_GUARD = "wind:31/7/240:9,rain:31/7/241,wind alarm:31/7/242";
+  const CALM = new Map([["31/7/240", "00c8"], ["31/7/241", "00"], ["31/7/242", "00"]]);
+
   function io(state: AppState, pid: string, did: string, dev: CollectedUnit, cfg: AppConfig, log: string[], answer: string): InServiceIo {
     const d = `/api/projects/${pid}/devices/${encodeURIComponent(did)}`;
     const wait = async (path: string): Promise<FlashResult> => {
@@ -154,6 +159,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         groupRead: async (ga) => ((await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links.some((l) => l.gaRaws.includes(gaRaw(ga))) ? answer : null),
         // An object answers a read of any of its addresses on its first association (findings.md §36).
         groupReadAnsweredOn: async (readGa, ownGas) => {
+          const calm = CALM.get(readGa);
+          if (calm !== undefined) return { value: calm, unattributable: false };
           const links = (await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links;
           const holder = links.find((l) => l.gaRaws.includes(gaRaw(readGa)));
           return { value: holder && holder.gaRaws[0] === gaRaw(ownGas[0]) ? answer : null, unattributable: false };
@@ -173,7 +180,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   }
 
   const OPTS: InServiceOptions = { fullDownload: false, testGa: "15/7/250" };
-  const run = async (spec: DeviceSpec, opts = OPTS) => {
+  const run = async (spec: DeviceSpec, given = OPTS) => {
+    const opts = spec.inService?.weatherGuard ? { ...given, weatherGuard: CALM_GUARD } : given;
     const xml = catalogueXml(`${appOf(spec)}.xml.gz`);
     const { state, pid, did } = await placed(spec, xml);
     const dev = new CollectedUnit(JSON.parse(readFileSync(corpusPath(inServiceCollection(spec.id)), "utf8")) as Collection);
@@ -183,7 +191,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     try { return { r: await runInService(spec, io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00"), opts), log, dev, memory, state, pid, did }; }
     finally { unit = null; }
   };
-  const writes = (spec: DeviceSpec, opts: InServiceOptions) => planInService(spec, opts).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : ({ flashParams: "flash", structuralFlash: "flash", flashLinks: "flash-ga", fullDownload: "download" } as const)[p.op!]));
+  const writes = (spec: DeviceSpec, opts: InServiceOptions) => planInService(spec, spec.inService?.weatherGuard ? { ...opts, weatherGuard: CALM_GUARD } : opts).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : ({ flashParams: "flash", structuralFlash: "flash", flashLinks: "flash-ga", fullDownload: "download" } as const)[p.op!]));
 
   // The bytes behind a System 7 unit's address and association tables that a link added and removed
   // again may leave, as ETS's group-address downloads leave them (docs/load-procedures.md, the table
