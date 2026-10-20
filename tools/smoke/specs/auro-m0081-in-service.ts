@@ -42,8 +42,8 @@ export const auroM0081InService: DeviceSpec = {
   configure: [],
   behaviours: [
     // The unit answers a GroupValueRead of the light level with the lux it measures, which the run
-    // does not set.
-    { kind: "output", label: "light level answers on the added test address", comObjRefId: "M-0081_A-FE01-11-75D9_O-10_R-11" },
+    // does not set, on the object's own first address (findings.md §36), where the witness takes it.
+    { kind: "output", label: "light level answers a read of the added test address", comObjRefId: "M-0081_A-FE01-11-75D9_O-10_R-11" },
   ],
   unsafe: [
     { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },

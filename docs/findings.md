@@ -1032,3 +1032,8 @@ state there, and a GroupValueRead of either address was answered there. In both 
 0 sent on, and answered reads on, was its first association; not its lowest or highest group index,
 and not the order its links were made in. A read-back that sorts an object's addresses loses it;
 Busforge keeps the first association first.
+
+An Auro presence detector (application FE01) answered the same way: with an address added behind the
+light level object's one own address, a GroupValueRead of the added address was answered within 50 ms
+with the object's value on its own address, and nothing answered on the added one. With one own
+address, below the added one, this does not tell its first association from its lowest.

@@ -147,6 +147,12 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         // the address with an object, with the value the spec expects (else 00): what an emulator can
         // show, nothing about the device's behaviour.
         groupRead: async (ga) => ((await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links.some((l) => l.gaRaws.includes(gaRaw(ga))) ? answer : null),
+        // An object answers a read of any of its addresses on its first association (findings.md §36).
+        groupReadAnsweredOn: async (readGa, ownGas) => {
+          const links = (await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links;
+          const holder = links.find((l) => l.gaRaws.includes(gaRaw(readGa)));
+          return { value: holder && holder.gaRaws[0] === gaRaw(ownGas[0]) ? answer : null, unattributable: false };
+        },
         listen: async () => null,
         reboot: async () => {
           const states = () => new Map([1, 2, 3, 4].map((o) => [o, dev.loadState(o) as number | null]));

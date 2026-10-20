@@ -303,6 +303,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
         finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
       },
       groupRead: (ga) => withWitness(() => witness.groupRead(ga)),
+      groupReadAnsweredOn: (readGa, ownGas) => withWitness(() => witness.groupReadAnsweredOn(readGa, ownGas, iaToNum(spec.device.ia))),
       listen: (ga, windowMs) => withWitness(() => witness.listen(ga, windowMs)),
       reboot: async () => { await settle(2000); return rebootOnBench(host, spec.device.ia, spec.device.mask, undefined); },
     },

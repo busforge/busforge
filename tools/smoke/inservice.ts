@@ -61,11 +61,17 @@ export interface InServiceBus {
   readProperty(object: number, pid: number): Promise<Buffer | null>;
   // GroupValueRead from the witness: the response value as hex, null when nothing answered.
   groupRead(ga: string): Promise<string | null>;
+  // GroupValueRead of `readGa`, an address added behind the object's own `ownGas` (first association
+  // first), answered by the device on `ownGas[0]` (witness.ts); `unattributable` when another client
+  // read one of the object's own addresses meanwhile.
+  groupReadAnsweredOn(readGa: string, ownGas: string[]): Promise<{ value: string | null; unattributable: boolean }>;
   // A telegram the device sends on `ga` within the window, as hex; null when none came.
   listen(ga: string, windowMs: number): Promise<string | null>;
   // A_Restart with the reboot observed, and the load states before and after it (runner.ts).
   reboot(): Promise<{ reboot: RebootObservation; before: Map<number, number | null>; after: Map<number, number | null> }>;
 }
+
+const UNATTRIBUTABLE = "a read of one of the object's own addresses or of the test address by another client, or an answer on the object's first address before the witness's read, came while the witness waited, so no answer can be attributed to its read";
 
 export interface InServiceIo {
   api: InServiceApi;
@@ -227,12 +233,12 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       write("flashLinks", l.addToLinked
         ? `GA flash: ${short(l.comObjRefId)} (linked on the device) gets ${ga} added behind its own addresses, which stay (dry run first: surgical)`
         : `GA flash: ${short(l.comObjRefId)} (unlinked on the device) linked to ${ga} (dry run first: surgical)`);
-      read(`read-back: ${short(l.comObjRefId)} carries ${l.addToLinked ? `its own addresses and ${ga} (the read-back shows the set; the order, own sending address first, is the one the verified write put into the association table)` : `${ga} alone`}${spec.behaviours.length ? `; witness: ${spec.behaviours.map((b) => b.label).join(", ")}` : "; no behaviour declared, the link is shown to the byte only"}`);
+      read(`read-back: ${short(l.comObjRefId)} carries ${l.addToLinked ? `its own addresses and ${ga} (the read-back shows the set; the order, own sending address first, is the one the verified write put into the association table)` : `${ga} alone`}${spec.behaviours.length ? `; witness: ${spec.behaviours.map((b) => b.label).join(", ")}${l.addToLinked ? " (a read of the test address, answered on the object's own first address)" : ""}` : "; no behaviour declared, the link is shown to the byte only"}`);
       out.push({ phase, kind: "restart", text: "A_Restart, reboot observed, load objects LOADED after it, read-back equal to the project (the link persists)" });
       write("flashLinks", l.addToLinked
         ? `GA flash: ${ga} removed from ${short(l.comObjRefId)} again, its own addresses left as found (dry run first: surgical)`
         : `GA flash: ${short(l.comObjRefId)} unlinked again (dry run first: surgical)`);
-      read("read-back: nothing differs from the configuration found");
+      read(`read-back: nothing differs from the configuration found${l.addToLinked && spec.behaviours.some((b) => b.kind === "output") ? "; witness control: the same read of the test address goes unanswered on the object's first address" : ""}`);
     }
     if (phase === "structural") {
       const t = s.structural!;
@@ -558,18 +564,32 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         if (!after || !sameLinks(after.gaRaws ?? [], placedLinks) || after.changed) throw new Stop("flashLinks", `the device does not carry ${own.length ? "its own addresses and the test address" : "the test address alone"} on object ${obj.number} (differs from the project: ${String(after?.changed ?? "?")})`);
         // Details name "the test address", never the address itself: it belongs to the installation
         // and records ship publicly. The report keeps it in `gas`.
+        // An object answers a read of any of its addresses on its first association (findings.md §36),
+        // so a read of the test address added behind its own is answered on its own first address.
+        const added = si.link!.addToLinked === true;
+        const answered = added ? "the object's first address answered the read of the test address with" : "the test address answered";
+        // With the test address added, a pass waits for its contrast read after the removal; a run that
+        // stops before it records no such behaviour.
+        const pending: BehaviourResult[] = [];
         for (const b of spec.behaviours) {
           if (b.kind !== "output" && b.kind !== "heartbeat") continue; // refused by inServiceProblems
           let v: string | null;
-          try { v = await (b.kind === "heartbeat" ? io.bus.listen(testGa, b.windowMs) : io.bus.groupRead(testGa)); }
+          try {
+            if (b.kind === "heartbeat") v = await io.bus.listen(testGa, b.windowMs);
+            else if (added) {
+              const a = await io.bus.groupReadAnsweredOn(testGa, own.map(numToGa));
+              if (a.unattributable) { harness(`witness ${b.label}`, UNATTRIBUTABLE); continue; }
+              v = a.value;
+            } else v = await io.bus.groupRead(testGa);
+          }
           catch (e) { harness(`witness ${b.label}`, `the witness broke off: ${errText(e)}`); continue; }
           const head = { kind: b.kind, label: b.label, gas: { object: testGa } };
           const res: BehaviourResult = v === null
-            ? { ...head, state: "fail", detail: b.kind === "heartbeat" ? `no telegram on the test address within ${b.windowMs}ms` : "no GroupValueResponse on the test address" }
+            ? { ...head, state: "fail", detail: b.kind === "heartbeat" ? `no telegram on the test address within ${b.windowMs}ms` : `no GroupValueResponse on ${added ? "the object's first address to the read of the test address" : "the test address"}` }
             : b.expectValue && v !== b.expectValue
-              ? { ...head, state: "fail", detail: `the test address answered 0x${v}, expected 0x${b.expectValue}` }
-              : { ...head, state: "pass", detail: `the test address answered 0x${v}` };
-          behaviours.push(res);
+              ? { ...head, state: "fail", detail: `${answered} 0x${v}, expected 0x${b.expectValue}` }
+              : { ...head, state: "pass", detail: `${answered} 0x${v}` };
+          (added && res.state === "pass" ? pending : behaviours).push(res);
           io.log(`behaviour ${b.label}: ${res.detail}`);
         }
         persistence = await persist();
@@ -581,6 +601,20 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         out.links.delete(obj.refId);
         await io.settle(2000);
         await settled("flashLinks", "after the flashLinks revert");
+        // The contrast: with the test address removed, the same read must go unanswered on the object's
+        // first address. It rules out an answer the unit gives whatever is read and a client reading the
+        // object more often than the witness's window, not an unseen read in the first read's window. A control read that
+        // cannot decide leaves the behaviour unrecorded, as a first read would.
+        for (const res of pending) {
+          let after: { value: string | null; unattributable: boolean };
+          try { after = await io.bus.groupReadAnsweredOn(testGa, own.map(numToGa)); }
+          catch (e) { harness(`witness ${res.label}`, `the control read after the removal broke off: ${errText(e)}`); continue; }
+          if (after.unattributable) { harness(`witness ${res.label}`, `control read after the removal: ${UNATTRIBUTABLE}`); continue; }
+          behaviours.push(after.value !== null
+            ? { ...res, state: "fail", detail: `${res.detail}, but answered the same read with 0x${after.value} after the test address was removed, so the answer is not the test address's` }
+            : { ...res, detail: `${res.detail}, and left the same read unanswered once the test address was removed` });
+          io.log(`behaviour ${res.label}: ${behaviours.at(-1)!.detail}`);
+        }
         cap("flashLinks", "pass", own.length
           ? `added the test address to object ${obj.number} beside its ${own.length} own address(es), own sending address first (${linked}), read back; removed it (${unlinked}), zero drift on read-back`
           : `linked object ${obj.number} to the test address (${linked}), read back; unlinked (${unlinked}), zero drift on read-back`, { object: obj.number });

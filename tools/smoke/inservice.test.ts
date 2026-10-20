@@ -30,6 +30,11 @@ interface Script {
   adoptDryNotUnchanged?: boolean;            // the project, taken over, still differs from the device
   gaFlashUnverified?: boolean;               // the link lands, its verify fails
   answer?: string;                           // what the linked object answers
+  answersOnReadAddress?: boolean;            // the object answers a read of an added address there, not on its first
+  foreignReadOfOwn?: boolean;                // another client reads one of the object's own addresses while the witness waits
+  answersWithoutTestAddress?: boolean;       // the object's first address answers the witness's read even once the test address is gone
+  controlRead?: "throws" | "unattributable"; // the witness's control read after the removal cannot decide
+  unlinkThrows?: boolean;                    // the GA flash that takes the test address back breaks off
   sideEffect?: boolean;                      // setting the step's parameter also changes another one
   chanThrowsOnSecondParamFlash?: boolean;    // the channel fails while writing the revert
   rebootThrows?: boolean;
@@ -46,6 +51,7 @@ interface Script {
 }
 
 function scripted(sc: Script = {}) {
+  let controlReads = 0;
   const calls: string[] = [];
   const device: { params: Record<string, string>; links: Record<string, number[]> } = { params: { [PARAM]: "1", [STRUCT]: "1", ...sc.params }, links: { [OBJ]: [], [OTHER_OBJ]: [gaToNum("2/0/10")], ...sc.links } };
   const project: { params: Record<string, string>; links: Record<string, number[]> } = { params: { ...device.params, ...(sc.placedWithDefaults ? { [STRUCT]: "0" } : {}), ...(sc.memoryless ? { [MEMLESS]: "1" } : {}) }, links: structuredClone(device.links) };
@@ -111,7 +117,7 @@ function scripted(sc: Script = {}) {
       flashGaDry: async () => (structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged")),
       downloadDry: async () => result("dryRun"),
       flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
-      flashGaReal: async () => { calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
+      flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
       name: "api",
@@ -126,6 +132,14 @@ function scripted(sc: Script = {}) {
     bus: {
       readProperty: async (o, p) => { calls.push(`prop ${o}/${p}`); const v = props[`${o}/${p}`]; return v === undefined ? null : Buffer.from(v, "hex"); },
       groupRead: async (ga) => (sc.witnessThrows && Object.values(device.links).some((l) => l.includes(gaToNum(ga))) ? Promise.reject(new Error("tunnel refused")) : sc.busUsesTestGa ? "00" : Object.values(device.links).some((l) => l.includes(gaToNum(ga))) ? (sc.answer ?? "01") : null),
+      // As findings.md §36: the object holding the read address answers on its first association.
+      groupReadAnsweredOn: async (readGa, ownGas) => {
+        if (sc.witnessThrows) throw new Error("tunnel refused");
+        if (sc.controlRead && ++controlReads === 2) { if (sc.controlRead === "throws") throw new Error("tunnel refused"); return { value: null, unattributable: true }; }
+        const holder = Object.values(device.links).find((l) => l.includes(gaToNum(readGa)));
+        const answers = (sc.answersWithoutTestAddress || (holder !== undefined && !sc.answersOnReadAddress)) && (holder ?? device.links[OBJ])[0] === gaToNum(ownGas[0]);
+        return { value: answers ? (sc.answer ?? "01") : null, unattributable: sc.foreignReadOfOwn === true };
+      },
       listen: async () => null,
       reboot: async () => { calls.push("restart"); if (sc.rebootThrows) throw new Error("tunnel closed"); return { reboot: { rebooted: true, detail: "silent 50 ms after A_Restart, answering again after 900 ms" }, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]) }; },
     },
@@ -497,6 +511,65 @@ describe("a device in service: the test address added to a linked object", () =>
     expect(r.ok).toBe(true);
     expect(writesOf(calls)).toEqual(planned(add, NO_FULL));
     expect(objOnDevice).toEqual([[...own, TEST_GA], own]);
+    expect(device).toEqual(start);
+  });
+
+  test("the witness reads the test address and takes the answer on the object's own first address", async () => {
+    const own = [gaToNum("2/0/1"), gaToNum("3/0/1")];
+    const { io } = scripted({ links: { [OBJ]: own } });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.ok).toBe(true);
+    expect(r.behaviours.map((b) => [b.state, b.detail])).toEqual([["pass", "the object's first address answered the read of the test address with 0x01, and left the same read unanswered once the test address was removed"]]);
+    expect(planInService(add, NO_FULL).map((p) => p.text).join("\n")).toContain("answered on the object's own first address");
+  });
+
+  test("an answer on the first address that stays once the test address is removed is not the test address's: the behaviour fails", async () => {
+    const { io, device, start } = scripted({ links: { [OBJ]: [OWN] }, answersWithoutTestAddress: true });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.ok).toBe(false);
+    expect(r.behaviours.map((b) => b.state)).toEqual(["fail"]);
+    expect(r.behaviours[0].detail).toContain("after the test address was removed, so the answer is not the test address's");
+    expect(device).toEqual(start);
+  });
+
+  test("a control read that cannot decide records no behaviour, a harness failure, and the link is taken back", async () => {
+    for (const controlRead of ["throws", "unattributable"] as const) {
+      const { io, device, start } = scripted({ links: { [OBJ]: [OWN] }, controlRead });
+      const r = await runInService(add, io, NO_FULL);
+      expect(r.ok).toBe(false);
+      expect(r.behaviours).toEqual([]);
+      expect(r.capabilities.find((c) => c.capability.startsWith("harness: witness"))?.detail).toContain("control read after the removal");
+      expect(device).toEqual(start);
+    }
+  });
+
+  test("a pass is not recorded when the run stops before the control read", async () => {
+    const { io } = scripted({ links: { [OBJ]: [OWN] }, unlinkThrows: true });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("flashLinks");
+    expect(r.behaviours).toEqual([]);
+  });
+
+  test("a wrong value fails at once, without the control read", async () => {
+    const { io } = scripted({ links: { [OBJ]: [OWN] }, answer: "00" });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.behaviours.map((b) => [b.state, b.detail])).toEqual([["fail", "the object's first address answered the read of the test address with 0x00, expected 0x01"]]);
+  });
+
+  test("an answer only on the test address itself is not the object's answer: the behaviour fails, the link is taken back", async () => {
+    const { io, device, start } = scripted({ links: { [OBJ]: [OWN] }, answersOnReadAddress: true });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.ok).toBe(false);
+    expect(r.behaviours.map((b) => [b.state, b.detail])).toEqual([["fail", "no GroupValueResponse on the object's first address to the read of the test address"]]);
+    expect(device).toEqual(start);
+  });
+
+  test("another client reading the object's own address meanwhile leaves the answer unattributed: no behaviour, a harness failure", async () => {
+    const { io, device, start } = scripted({ links: { [OBJ]: [OWN] }, foreignReadOfOwn: true });
+    const r = await runInService(add, io, NO_FULL);
+    expect(r.ok).toBe(false);
+    expect(r.behaviours).toEqual([]);
+    expect(r.capabilities.find((c) => c.capability.startsWith("harness: witness"))?.detail).toContain("so no answer can be attributed to its read");
     expect(device).toEqual(start);
   });
 

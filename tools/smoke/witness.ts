@@ -42,6 +42,43 @@ export class Witness {
     return value;
   }
 
+  // GroupValueRead `readGa`, an address added behind an object's own addresses `ownGas` (first
+  // association first), and wait for the object's answer on `ownGas[0]`: an object answers a read of
+  // any of its addresses on its first association ([findings.md](../../docs/findings.md) §36). Only a
+  // GroupValueResponse from `from` counts. Another client reading the test address or any of the
+  // object's own addresses would put an answer there that is not this read's: the witness listens
+  // `quietMs` before sending, and such a read it sees, or a response on the first address before its
+  // read went out, makes the answer `unattributable`. A read it does not see (another tunnel of the
+  // interface) it cannot rule out; the runner's control read after the removal rules out only one
+  // that recurs within its window.
+  async groupReadAnsweredOn(readGa: string, ownGas: string[], from: number, waitMs = 1500, quietMs = 500): Promise<{ value: string | null; unattributable: boolean }> {
+    if (!ownGas.length) throw new Error("groupReadAnsweredOn: the object has no address of its own to answer on");
+    const tun = this.req();
+    const read = gaToNum(readGa);
+    const own = new Set(ownGas.map(gaToNum));
+    const answer = gaToNum(ownGas[0]);
+    let value: string | null = null;
+    let sent = false;
+    let unattributable = false;
+    const prev = tun.onCemi;
+    tun.onCemi = (src, dst, tpdu, isGroup) => {
+      if (!isGroup || (!own.has(dst) && dst !== read)) return;
+      const g = decodeGroupApdu(tpdu);
+      if (g.apci === "GroupValueRead" && !(dst === read && src === tun.assignedIa)) unattributable = true;
+      else if (g.apci === "GroupValueResponse" && dst === answer) {
+        if (!sent) unattributable = true;
+        else if (src === from && value === null) value = g.value.toString("hex");
+      }
+    };
+    try {
+      await new Promise((r) => setTimeout(r, quietMs));
+      sent = true;
+      await tun.sendCemi(cemiLDataGroup(tun.assignedIa, read, groupValueRead()));
+      await new Promise((r) => setTimeout(r, waitMs));
+    } finally { tun.onCemi = prev; }
+    return { value, unattributable };
+  }
+
   // A GroupValueRead on a SECURED address, encrypted with its key from the witness's tunnel address,
   // and the device's secured GroupValueResponse opened with the same key. Returns the value as hex, or
   // null if no authentic, fresh response came. Only answers from `from` count: the key proves the
