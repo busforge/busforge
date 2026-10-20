@@ -4,7 +4,7 @@ export { parseCemiLData } from "./transport.ts";
 export { KnxIpTunnel, type TunnelSocket, type TcpSocket } from "./connection.ts";
 export { KnxIpServer, type KnxIpServerOptions, type ServerSocket, type ServerTcpSocket, type ServerTcpListener } from "./ipserver.ts";
 export { KnxUsbTransport, listUsbInterfaces, USB_HID_MAX_APDU, type UsbInterfaceInfo } from "./usb.ts";
-export { searchInterfaces, extendedDeviceMaxApdu } from "./discover.ts";
+export { searchInterfaces, extendedDeviceMaxApdu, descriptionDeviceInfo } from "./discover.ts";
 export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER, OBJECT_TYPE_SECURITY, OBJECT_TYPE_KNXNETIP, RETURN_CODE_ADDRESS_VOID, SECURITY_PID, elementRuns, transferChunks, readSecurityMode, type SecurityModeReading, type MemPiece, type PartialMemRead } from "./device.ts";
 export * from "./rawcodec.ts";
 export * from "./individualaddress.ts";

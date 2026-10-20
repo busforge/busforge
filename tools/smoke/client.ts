@@ -22,10 +22,11 @@ export interface FlashResult {
   structural?: boolean; // a structural flash: parameters, com-object table and group tables in one write
   confirmedOnly?: { address: number; length: number }[]; // bytes verified on the device's write confirmation alone
   restartUnproven?: boolean; // verified after a restart the device did not confirm
+  alwaysWrite?: boolean; // a dry run of a write that goes out even with diffBytes 0 (it also writes state it does not read)
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }
-interface ProjectView { groupRanges: GaRange[] }
+interface ProjectView { groupRanges: GaRange[]; gaCount?: number }
 export interface Task { id: string; deviceId: string; kind: string; state: string; phase: string; error: string | null; errorCode: string | null; outcome: FlashResult | null; result: unknown; startedAt?: number; queuedAt?: number }
 
 export class Client {
@@ -75,7 +76,7 @@ export class Client {
     if (!res.ok || !json.id) throw new ApiError(res.status, json.error?.code ?? "HTTP_" + res.status, json.error?.message ?? "import failed");
     return json as { id: string };
   }
-  projectDevices(pid: string) { return this.call<{ devices: { id: string; ia: string; name: string }[] }>("GET", `/api/projects/${pid}`).then((p) => p.devices); }
+  projectDevices(pid: string) { return this.call<{ devices: { id: string; ia: string; name: string; appRef: string; productRef: string }[] }>("GET", `/api/projects/${pid}`).then((p) => p.devices); }
   createConnection(c: { name: string; type: "ip"; host: string; port: number; ipTransport: "tcp" | "udp" | "auto" }) { return this.call<{ id: string }>("POST", "/api/connections", c); }
   deleteConnection(id: string) { return this.call<unknown>("DELETE", `/api/connections/${id}`); }
   // Set an object's links outright (an empty list unlinks it); the restore after a run uses it.
@@ -140,6 +141,19 @@ export class Client {
   // "on" or "off".
   setGaSecurity(pid: string, ga: string, security: "auto" | "on" | "off") {
     return this.call<ProjectView>("PATCH", `/api/projects/${pid}/group-addresses/${gaToNum(ga)}`, { security });
+  }
+
+  // Whether the project holds the group address, in any range. An address the range tree does not show
+  // (one outside every range) cannot be told apart, so a count that differs throws.
+  async hasGa(pid: string, ga: string): Promise<boolean> {
+    const raw = gaToNum(ga);
+    const proj = await this.projectFull(pid);
+    const all: number[] = [];
+    const walk = (r: GaRange) => { for (const a of r.addresses ?? []) all.push(a.raw); for (const c of r.children ?? []) walk(c); };
+    proj.groupRanges.forEach(walk);
+    if (all.includes(raw)) return true;
+    if (proj.gaCount !== undefined && proj.gaCount !== all.length) throw new ApiError(0, "GA_UNRANGED", `the project holds ${proj.gaCount} group addresses, ${all.length} of them in ranges; whether it holds ${ga} cannot be told`);
+    return false;
   }
 
   // Ensure a 3-level group address exists as a PROJECT group address, creating the main range,

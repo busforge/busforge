@@ -48,6 +48,11 @@ interface Script {
   noReadFlag?: boolean;                      // the link step's object has no read flag
   memoryless?: string;                       // the value of MEMLESS the unit runs (its links resolve only under it)
   flagsNotTaken?: { flagsUnreadable?: string; flagsUndecoded?: number[] }; // the read-back could not take the com-object table's flags
+  route?: { interfaceIa: string | null; interfaceSerial: string | null; tunnelIa: string }; // what the interface reports for itself
+  mem?: Record<number, string>;              // device memory by address, hex
+  system1?: boolean;                         // a System 1 unit: no GA flash, a download that always writes, a run error byte
+  runErrorAfter?: number;                    // the run error byte after the reboot
+  gaInProject?: boolean;                     // the project already holds the test address
 }
 
 function scripted(sc: Script = {}) {
@@ -81,6 +86,9 @@ function scripted(sc: Script = {}) {
   const linksDiffer = () => Object.keys(project.links).some((k) => !same(project.links[k], device.links[k]));
   const structural = () => Object.keys(project.params).some((k) => project.params[k] !== device.params[k] && (sc.structuralParams ?? []).includes(k));
   const result = (kind: FlashResult["kind"], extra: Partial<FlashResult> = {}): FlashResult => ({ kind, mask: "MV-07B0", imageBytes: 100, diffBytes: 1, backup: "/data/projects/p/backups/b.json", ...extra });
+  // System 1's download is written whatever it finds: its dry run says how many bytes differ.
+  const sys1Dry = (): FlashResult => result("dryRun", { alwaysWrite: true, diffBytes: sc.adoptDryNotUnchanged || paramsDiffer() ? 3 : 0 });
+  const plain: string[] = [];
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
       ...Object.keys(project.params).map((refId): CfgItem => ({ kind: "param", param: { refId, name: refId, control: "number", value: project.params[refId], min: 0, max: 16000, changed: project.params[refId] !== base.params[refId] } })),
@@ -110,12 +118,14 @@ function scripted(sc: Script = {}) {
       getConfig: async () => view(),
       setParam: async (ref, value) => { project.params[ref] = value; },
       ensureGa: async () => undefined,
+      hasGa: async (ga) => sc.gaInProject === true && ga === GA,
+      setGaPlain: async (ga) => { plain.push(ga); },
       setLinks: async (ref, gas) => { project.links[ref] = [...gas]; },
-      flashDry: async () => (sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
+      flashDry: async () => (sc.system1 ? sys1Dry() : sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
       // As the server's flash-ga route: a pending parameter change that alters the com-object table
       // makes it the structural flash.
-      flashGaDry: async () => (structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged")),
-      downloadDry: async () => result("dryRun"),
+      flashGaDry: async () => { if (sc.system1) throw Object.assign(new Error("no capture shows a System 1 group-address download"), { code: "SYSTEM1_GROUP_TABLES_UNCAPTURED" }); return structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged"); },
+      downloadDry: async () => (sc.system1 ? sys1Dry() : result("dryRun")),
       flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
       flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
@@ -131,6 +141,8 @@ function scripted(sc: Script = {}) {
     },
     bus: {
       readProperty: async (o, p) => { calls.push(`prop ${o}/${p}`); const v = props[`${o}/${p}`]; return v === undefined ? null : Buffer.from(v, "hex"); },
+      readMemory: async (address, length) => { calls.push(`mem ${address.toString(16)}`); const v = sc.mem?.[address]; if (v === undefined) throw new Error("no such memory"); return Buffer.from(v, "hex").subarray(0, length); },
+      route: async () => { calls.push("route"); return sc.route ?? { interfaceIa: "1.1.250", interfaceSerial: "00fa00000001", tunnelIa: "1.1.251" }; },
       groupRead: async (ga) => (sc.witnessThrows && Object.values(device.links).some((l) => l.includes(gaToNum(ga))) ? Promise.reject(new Error("tunnel refused")) : sc.busUsesTestGa ? "00" : Object.values(device.links).some((l) => l.includes(gaToNum(ga))) ? (sc.answer ?? "01") : null),
       // As findings.md §36: the object holding the read address answers on its first association.
       groupReadAnsweredOn: async (readGa, ownGas) => {
@@ -141,12 +153,18 @@ function scripted(sc: Script = {}) {
         return { value: answers ? (sc.answer ?? "01") : null, unattributable: sc.foreignReadOfOwn === true };
       },
       listen: async () => null,
-      reboot: async () => { calls.push("restart"); if (sc.rebootThrows) throw new Error("tunnel closed"); return { reboot: { rebooted: true, detail: "silent 50 ms after A_Restart, answering again after 900 ms" }, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]) }; },
+      reboot: async () => {
+        calls.push("restart");
+        if (sc.rebootThrows) throw new Error("tunnel closed");
+        const reboot = { rebooted: true, detail: "silent 50 ms after A_Restart, answering again after 900 ms" };
+        if (sc.system1) return { reboot, runError: { before: 0xff, after: sc.runErrorAfter ?? 0xff } };
+        return { reboot, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]) };
+      },
     },
     log: () => undefined,
     settle: async () => undefined,
   };
-  return { io, calls, device, start: structuredClone(device), objOnDevice };
+  return { io, calls, device, start: structuredClone(device), objOnDevice, plain };
 }
 const NO_FULL: InServiceOptions = { fullDownload: false, testGa: GA };
 const WRITES = new Set(["flashParams", "flashLinks", "structuralFlash", "fullDownload", "restart"]);
@@ -163,7 +181,7 @@ describe("a device in service", () => {
     expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "flashLinks", "restart", "flashLinks"]);
     expect(device).toEqual(start);
     // The identity is read before the device is touched in any other way.
-    expect(calls.slice(0, 2)).toEqual(["prop 4/13", "prop 0/25"]);
+    expect(calls.slice(0, 3)).toEqual(["route", "prop 4/13", "prop 0/25"]);
     expect(r.capabilities.map((c) => [c.capability, c.state])).toEqual([
       ["fullDownload", "unproven"], ["flashParams", "pass"], ["flashLinks", "pass"], ["readParams", "pass"], ["readLinks", "pass"],
     ]);
@@ -182,7 +200,7 @@ describe("a device in service", () => {
     expect(r.ok).toBe(false);
     expect(r.stopped?.phase).toBe("fingerprint");
     expect(r.stopped?.detail).toContain("reads 0946, the spec expects 0945");
-    expect(calls).toEqual(["prop 4/13", "prop 0/25"]);
+    expect(calls).toEqual(["route", "prop 4/13", "prop 0/25"]);
   });
 
   test("a unit that reports no fingerprint property stops the run too", async () => {
@@ -346,7 +364,7 @@ describe("a device in service, when something goes wrong", () => {
     const r = await runInService(spec, io, NO_FULL);
     expect(r.stopped).toBeUndefined();
     expect(r.ok).toBe(true);
-    expect(calls.slice(2, 4)).toEqual(["read", "read"]);
+    expect(calls.slice(3, 5)).toEqual(["read", "read"]);
     expect(device).toEqual(start);
   });
 
@@ -677,8 +695,8 @@ describe("a device in service: the fingerprint each family gives", () => {
   });
 
   test("a family without a rule is refused rather than guessed", () => {
-    expect(inServiceProblems(system7([APP7, { name: "firmware", object: 0, pid: 9, expect: "06" }], "MV-0012"))).toEqual([
-      "no fingerprint rule for mask MV-0012 (family system-1); add one to FINGERPRINT_RULES from a read-only collection of a unit",
+    expect(inServiceProblems(system7([APP7, { name: "firmware", object: 0, pid: 9, expect: "06" }], "MV-0025"))).toEqual([
+      "no fingerprint rule for mask MV-0025 (family system-2); add one to FINGERPRINT_RULES from a read-only collection of a unit",
     ]);
     expect(inServiceProblems(system7([APP7], "MV-0700"))).toEqual(["mask MV-0700 declares no interface object carrying the application id, so the fingerprint cannot name the application"]);
   });
@@ -744,5 +762,130 @@ describe("what can resolve the links a read-back left unresolved", () => {
   });
   test("proposes nothing where the read-back does not split them", () => {
     expect(whatResolves({}, false)).toBe("The read-back did not say what can resolve them");
+  });
+});
+
+describe("a device in service: the interface the run goes through", () => {
+  const behind = (restart: "drops" | "keeps"): DeviceSpec => ({ ...spec, inService: { ...spec.inService!, ipInterface: { ia: "1.1.250", restart, shown: "a run through it" } } });
+
+  test("the route is asked first and recorded", async () => {
+    const { io, calls } = scripted();
+    const r = await runInService(spec, io, NO_FULL);
+    expect(calls[0]).toBe("route");
+    expect(r.route).toBe("interface 1.1.250 (serial 00fa00000001), tunnel address 1.1.251");
+  });
+
+  test("a unit whose restart drops an interface's tunnels is refused through that interface, before it is read", async () => {
+    const { io, calls } = scripted();
+    const r = await runInService(behind("drops"), io, NO_FULL);
+    expect(r.stopped).toEqual({ phase: "fingerprint", detail: "the run goes through 1.1.250, whose tunnels a restart of this unit drops, the run's own included; reach the unit through another interface" });
+    expect(calls).toEqual(["route"]);
+  });
+
+  test("the unit itself, reported as the interface, is refused as the interface would be", async () => {
+    const { io, calls } = scripted({ route: { interfaceIa: spec.device.ia, interfaceSerial: null, tunnelIa: "1.1.251" } });
+    const r = await runInService(behind("drops"), io, NO_FULL);
+    expect(r.stopped?.detail).toBe(`the run goes through ${spec.device.ia}, this unit, whose restart drops the tunnels of the interface it shares its housing with, the run's own included; reach the unit through another interface`);
+    expect(calls).toEqual(["route"]);
+  });
+
+  test("an interface that does not say which it is cannot show the run avoids that one", async () => {
+    const { io, calls } = scripted({ route: { interfaceIa: null, interfaceSerial: null, tunnelIa: "1.1.100" } });
+    const r = await runInService(behind("drops"), io, NO_FULL);
+    expect(r.stopped?.detail).toContain("reports no individual address of its own");
+    expect(calls).toEqual(["route"]);
+  });
+
+  test("through another interface the run goes on; through one whose tunnels the restart keeps, too", async () => {
+    const other = scripted({ route: { interfaceIa: "1.1.249", interfaceSerial: null, tunnelIa: "1.1.100" } });
+    expect((await runInService(behind("drops"), other.io, NO_FULL)).ok).toBe(true);
+    const same = scripted();
+    expect((await runInService(behind("keeps"), same.io, NO_FULL)).ok).toBe(true);
+  });
+
+  test("the plan names the route and the refusal", () => {
+    expect(planInService(behind("drops"), NO_FULL).find((p) => p.text.startsWith("route:"))?.text).toBe("route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address; refused when the interface is 1.1.250, whose tunnels a restart of this unit drops");
+  });
+
+  test("an interface named by something other than an individual address, or without where it was shown, is refused", () => {
+    expect(inServiceProblems({ ...spec, inService: { ...spec.inService!, ipInterface: { ia: "gateway", restart: "keeps", shown: "" } } })).toEqual([
+      'ipInterface: "gateway" is not an individual address',
+      "ipInterface: say where what a restart does to the interface's tunnels was shown",
+    ]);
+  });
+});
+
+describe("a device in service with KNX Data Secure", () => {
+  const secure: DeviceSpec = { ...spec, inService: { ...spec.inService!, dataSecure: true } };
+  const WITH_FILE: InServiceOptions = { ...NO_FULL, knxproj: "installation.knxproj" };
+
+  test("the installation's project file is required, and taken only for such a unit", async () => {
+    expect(() => planInService(secure, NO_FULL)).toThrow("its keys come from the installation's project file (--knxproj=<file>");
+    expect(() => planInService(spec, WITH_FILE)).toThrow("--knxproj is read for a Data Secure unit's keys only");
+    const { io, calls } = scripted();
+    expect((await runInService(secure, io, NO_FULL)).stopped?.phase).toBe("spec");
+    expect(calls).toEqual([]);
+  });
+
+  test("the test address goes out plain, and the run passes", async () => {
+    const { io, plain } = scripted();
+    const r = await runInService(secure, io, WITH_FILE);
+    expect(r.ok).toBe(true);
+    expect(plain).toEqual([GA]);
+    expect(planInService(secure, WITH_FILE).some((p) => p.text === `${GA} set to plain in the project (Data Secure off), so the unit takes it without a key and the witness reads it plainly`)).toBe(true);
+  });
+
+  test("a test address the installation's project holds is refused before any write", async () => {
+    const { io, calls, plain } = scripted({ gaInProject: true });
+    const r = await runInService(secure, io, WITH_FILE);
+    expect(r.stopped).toEqual({ phase: "capabilities", detail: "the test address is a group address of the installation's project; give one the installation does not use" });
+    expect(writesOf(calls)).toEqual([]);
+    expect(plain).toEqual([]);
+  });
+});
+
+describe("a device in service: System 1", () => {
+  const APP1 = { name: "application id", memory: 0x0104, length: 4, expect: "83013821" };
+  const sys1: DeviceSpec = {
+    ...spec, device: { ...spec.device, mask: "MV-0012" }, behaviours: [], unsafe: [],
+    inService: { fingerprint: [APP1], param: spec.inService!.param!, fullDownload: true },
+  };
+  const SYS1 = { system1: true, caps: { flashLinks: false, structuralFlash: false }, mem: { 0x0104: "83013821" }, links: { [OTHER_OBJ]: [] } };
+  const FULL: InServiceOptions = { fullDownload: true };
+
+  test("the fingerprint is the application id in memory; a property fingerprint, or a range of another length, is refused", () => {
+    expect(inServiceProblems(sys1)).toEqual([]);
+    expect(inServiceProblems({ ...sys1, inService: { ...sys1.inService!, fingerprint: [{ name: "version", object: 0, pid: 25, expect: "0945" }] } })).toEqual(["the fingerprint lacks the application id: on system-1 it is memory 0x0104, 4 byte(s)"]);
+    expect(inServiceProblems({ ...sys1, inService: { ...sys1.inService!, fingerprint: [{ ...APP1, expect: "8301" }] } })).toEqual(["fingerprint application id: expect holds 2 byte(s), the range 4"]);
+  });
+
+  test("no GA flash dry run, a download that always writes taken as nothing to write when no byte differs, persistence by the run error", async () => {
+    const { io, calls, device, start } = scripted(SYS1);
+    const r = await runInService(sys1, io, FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(calls.slice(0, 2)).toEqual(["route", "mem 104"]);
+    expect(writesOf(calls)).toEqual(planned(sys1, FULL));
+    expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "fullDownload", "restart"]);
+    expect(r.persistence).toEqual({ state: "pass", detail: "silent 50 ms after A_Restart, answering again after 900 ms; the run error read FF before the restart and after the reboot; parameters and links read back equal to the project after the reboot" });
+    expect(r.persistenceOf).toBe("fullDownload");
+    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run finds no byte that differs" });
+    expect(r.capabilities.find((c) => c.capability === "flashLinks")).toBeUndefined();
+    expect(device).toEqual(start);
+  });
+
+  test("a download that always writes and finds bytes that differ stops the adoption", async () => {
+    const { io, calls } = scripted({ ...SYS1, adoptDryNotUnchanged: true });
+    const r = await runInService(sys1, io, FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toContain("the parameter flash dry run reports dryRun with 3 differing byte(s)");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a run error that is not FF after the reboot fails persistence", async () => {
+    const { io } = scripted({ ...SYS1, runErrorAfter: 0x00 });
+    const r = await runInService(sys1, io, FULL);
+    expect(r.persistence).toMatchObject({ state: "fail", detail: expect.stringContaining("after the reboot the run error reads 00, not FF") });
+    expect(r.ok).toBe(false);
   });
 });

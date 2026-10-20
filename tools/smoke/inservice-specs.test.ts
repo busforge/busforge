@@ -124,6 +124,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         getConfig: () => call<ConfigView>(state, "GET", `${d}/config?lang=de`),
         setParam: (paramRefId, value) => call(state, "PUT", `${d}/params`, { paramRefId, value, lang: "de" }),
         ensureGa,
+        hasGa: (ga) => withServer(state, () => new Client("http://x").hasGa(pid, ga)),
+        setGaPlain: async (ga) => { await call(state, "PATCH", `/api/projects/${pid}/group-addresses/${gaRaw(ga)}`, { security: "off" }); },
         setLinks: (comObjRefId, gaRaws) => call(state, "PUT", `${d}/links`, { comObjRefId, gaRaws, lang: "de" }),
         flashDry: () => call<FlashResult>(state, "POST", `${d}/flash?dry=1`),
         flashGaDry: () => call<FlashResult>(state, "POST", `${d}/flash-ga?dry=1`),
@@ -143,6 +145,9 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       },
       bus: {
         readProperty: (object, pidNo) => dev.propReadIfPresent(object, pidNo),
+        readMemory: (address, length) => dev.memRead(address, length),
+        // No interface stands between the emulated unit and the run.
+        route: async () => ({ interfaceIa: "none, emulated", interfaceSerial: null, tunnelIa: "none" }),
         // The emulated witness answers when the unit's own tables, decoded by the real read, associate
         // the address with an object, with the value the spec expects (else 00): what an emulator can
         // show, nothing about the device's behaviour.
@@ -275,4 +280,6 @@ const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>()
 // Specs whose unit cannot be emulated, with the reason.
 const NOT_EMULATED = new Map<string, string>([
   ["openknx-raumcontroller-in-service", "its collection read none of the unit's memory (no table or application segment), and its application is not in the corpus catalogue"],
+  ["mdt-ip-router-in-service", "its secured collection read the association table only as far as its count, where the read-back reads the table further, and no collection reads the security object (object type 17), which its GA flash and that flash's dry run compare"],
+  ["mdt-ip-secure-in-service", "its download reads and writes the KNXnet/IP parameter object (the MAC address, the friendly name, the tunnelling addresses), which no collection of the unit read, and takes its KNXnet/IP settings from the installation's project file"],
 ]);

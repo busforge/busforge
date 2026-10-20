@@ -76,8 +76,19 @@ export interface InServiceSpec {
   // Interface object properties read before anything else, each required to hold exactly `expect`
   // (lower-case hex): the application id and a firmware version, so a unit holding another
   // application or firmware stops the run. A unit of the same application and firmware passes it.
-  // Which properties these are follows the mask's family (inservice.ts FINGERPRINT_RULES).
-  fingerprint: { name: string; object: number; pid: number; expect: string }[];
+  // Which properties these are follows the mask's family (inservice.ts FINGERPRINT_RULES); a family whose
+  // units keep the application id in memory (System 1) names a memory range instead of a property.
+  fingerprint: ({ name: string; object: number; pid: number; expect: string } | { name: string; memory: number; length: number; expect: string })[];
+  // The unit runs KNX Data Secure: the run imports the installation's project file the operator gives
+  // (--knxproj, its password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD), so the server holds the unit's tool key
+  // and the group keys of its addresses, and the runner opens its own connections under the unit's
+  // secure session. The configuration found is still the one the read-back takes off the unit.
+  dataSecure?: true;
+  // The unit is a KNXnet/IP interface, or shares its housing with one: `ia` is that interface's
+  // individual address, `restart` what a restart of the unit does to the interface's tunnels, the run's
+  // own included. "drops": the run must reach the unit through another interface and refuses this one;
+  // "keeps": shown on a unit, `shown` says where, so the run may go through it.
+  ipInterface?: { ia: string; restart: "drops" | "keeps"; shown: string };
   // Parameter values the device's own configuration must hold once the project has taken it over,
   // checked before the first write: what tells products apart that share application and firmware
   // (a module type), or a setting the run relies on staying as it is (an output's download

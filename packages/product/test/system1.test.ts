@@ -145,13 +145,13 @@ corpusDescribe("System 1 (MV-0012): the MDT IP Interface Secure", () => {
   // Nothing compared differs, and the download still runs: it writes state it does not read.
   test("a dry run on a unit holding the project counts no change, keeps the German name, and is not reported unchanged", async () => {
     files.length = 0;
-    expect(await dry(unit())).toMatchObject({ kind: "dryRun", diffBytes: 0 });
+    expect(await dry(unit())).toMatchObject({ kind: "dryRun", diffBytes: 0, alwaysWrite: true });
     expect(files.map((b) => b.replace(/-\d+\./, "."))).toEqual(["d-AS-0100.bin", "d-knxip.json"]);
   });
 
   test("a dry run counts the verified bytes and property bytes that differ", async () => {
     // P-10 (verified) differs; a name that is no product text is replaced by the default language's (two characters differ).
-    expect(await dry(unit({ name: "SCN-IP000.03 IP Interface wXth", eeprom: (b) => { b[0x7b] ^= 0xff; } }))).toMatchObject({ kind: "dryRun", diffBytes: 2 });
+    expect(await dry(unit({ name: "SCN-IP000.03 IP Interface wXth", eeprom: (b) => { b[0x7b] ^= 0xff; } }))).toMatchObject({ kind: "dryRun", diffBytes: 2, alwaysWrite: true });
   });
 
   test("refused before anything is written: an unsecured session, a link other than KNXnet/IP, links, an IP or tunnelling address change", async () => {

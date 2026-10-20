@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { extendedDeviceMaxApdu } from "../src/discover.ts";
+import { extendedDeviceMaxApdu, descriptionDeviceInfo } from "../src/discover.ts";
 import { KnxIpTunnel, type TunnelSocket } from "../src/connection.ts";
 import { cemiLData } from "../src/frame.ts";
 import { writeChunks, EXT_WRITE_CHUNK } from "../src/device.ts";
@@ -37,6 +37,8 @@ class FakeSocket implements TunnelSocket {
     const svc = b.readUInt16BE(2);
     if (svc === 0x0205) setTimeout(() => this.msg!(Buffer.from("061002060018150008010000000000000404 11fa".replace(/ /g, ""), "hex")), 1);
     if (svc === 0x020b && this.answer) setTimeout(() => this.msg!(Buffer.from(MDT, "hex")), 1);
+    // Its DESCRIPTION_RESPONSE: the same DIBs, without the HPAI.
+    if (svc === 0x0203 && this.answer) { const dibs = Buffer.from(MDT, "hex").subarray(14); setTimeout(() => this.msg!(Buffer.concat([Buffer.from([0x06, 0x10, 0x02, 0x04, 0, 6 + dibs.length]), dibs])), 1); }
   }
   close(): void {}
 }
@@ -51,6 +53,22 @@ test("the tunnel asks its interface with ETS's extended search and takes the ans
   (silent as unknown as { searchTimeoutMs: number }).searchTimeoutMs = 20;
   await silent.connect();
   expect(await silent.queryMaxApdu()).toBeNull();
+  await tun.disconnect().catch(() => {}); await silent.disconnect().catch(() => {});
+});
+
+test("the interface's own individual address and serial number from the Device Information DIB of its description", async () => {
+  expect(descriptionDeviceInfo(Buffer.from(MDT, "hex").subarray(14))).toEqual({ ia: 0x1207, serial: "008300000000" });
+  // A body that carries no device information DIB (here only the supported service families).
+  expect(descriptionDeviceInfo(Buffer.from("0802020203020401", "hex"))).toBeNull();
+  const sock = new FakeSocket(true);
+  const tun = new KnxIpTunnel("192.0.2.1", 3671, () => sock);
+  await tun.connect();
+  expect(await tun.queryDeviceInfo()).toEqual({ ia: 0x1207, serial: "008300000000" });
+  expect(sock.sent.map((b) => b.toString("hex")).at(-1)).toBe("06100203000e0801000000000000");
+  const silent = new KnxIpTunnel("192.0.2.1", 3671, () => new FakeSocket(false));
+  (silent as unknown as { searchTimeoutMs: number }).searchTimeoutMs = 20;
+  await silent.connect();
+  expect(await silent.queryDeviceInfo()).toBeNull();
   await tun.disconnect().catch(() => {}); await silent.disconnect().catch(() => {});
 });
 

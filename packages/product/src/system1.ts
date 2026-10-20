@@ -47,6 +47,8 @@ const hex = (n: number) => `0x${n.toString(16).toUpperCase().padStart(4, "0")}`;
 // error at 0x010D, which the load procedure sets to 00 while it loads and to FF when the application may run.
 const BCU1_APPLICATION_ID = 0x04, BCU1_PEI_TYPE = 0x09, BCU1_HARDWARE_CONFIG = 0x0c;
 export const BCU1_RUN_ERROR = 0x0d;
+// The application id as a memory range of the device (what identifies a System 1 unit's application).
+export const BCU1_APPLICATION_ID_RANGE = { address: BCU1_EEPROM.address + BCU1_APPLICATION_ID, length: 4 } as const;
 
 const applicationId = (cfg: AppConfig): Buffer => {
   const manufacturer = Number.parseInt(String(cfg.id).split("_")[0].replace("M-", ""), 16);

@@ -124,9 +124,16 @@ depends on is hardware-proven.
   run, and neither has the Theben DALI-Gateway's. Still open: the
   comparison with the full download and an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
-- **Devices in service with KNX Data Secure.** The smoke runner's device-in-service mode opens its own
-  connections (fingerprint, witness, restart) in plain, so a secured unit stops at the fingerprint.
-  Taking the tool key from an imported project, as `import-knxproj` does, would let such a unit run.
+- **Devices in service with KNX Data Secure.** The device-in-service mode takes a secured unit from
+  the installation's project file and runs under its secure session, and it refuses an interface the
+  unit's restart cuts ([testing.md](testing.md#devices-in-service)). Its two specs, the MDT IP
+  Interface/Router and the MDT IP Interface Secure, have not run. The router's adoption cannot pass as
+  it stands: its web interface password reads back as `FF` after any write, so its parameter flash dry
+  run always finds those 20 bytes to write, and the mode requires a dry run that finds nothing; how a
+  field the device never reads back counts there is open. Neither unit can be emulated from its
+  collections (the router's reads its association table only as far as its count and no collection
+  reads a security object; the IP Interface Secure's none of its KNXnet/IP parameter object), and no
+  ETS capture shows a group-address download of the router.
 - **Input-to-output behaviours on a device in service.** The mode places one test link, so only a
   behaviour of that one object (`output`, `heartbeat`) can be observed; an input driving an output
   needs two.

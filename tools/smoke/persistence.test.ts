@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { observeReboot, judgeRestoredConfig, judgeLoadStates, type ProbeOutcome } from "./persistence.ts";
+import { observeReboot, judgeRestoredConfig, judgeLoadStates, judgeRunError, type ProbeOutcome } from "./persistence.ts";
 import type { ConfigView } from "./client.ts";
 
 // A probe that answers from a scripted sequence, one entry per call; the last entry repeats. The
@@ -119,5 +119,15 @@ describe("judgeLoadStates", () => {
 
   test("nothing readable before the restart proves nothing", () => {
     expect(judgeLoadStates(new Map([[1, null], [2, null]]), new Map()).state).toBe("fail");
+  });
+});
+
+describe("judgeRunError (System 1)", () => {
+  test("FF before the restart and after the reboot passes; anything else, or nothing read, fails", () => {
+    expect(judgeRunError(0xff, 0xff).state).toBe("pass");
+    // The load procedure leaves 00 until it completes: an application that does not run again.
+    expect(judgeRunError(0xff, 0x00)).toMatchObject({ state: "fail", detail: expect.stringContaining("00") });
+    expect(judgeRunError(0xff, null)).toMatchObject({ state: "fail", detail: expect.stringContaining("unreadable") });
+    expect(judgeRunError(0x00, 0xff).state).toBe("fail");
   });
 });

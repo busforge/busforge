@@ -88,3 +88,13 @@ export function judgeLoadStates(before: Map<number, number | null>, after: Map<n
   if (lost.length) return { state: "fail", detail: `after the reboot: ${lost.join(", ")}` };
   return { state: "pass", detail: `load objects ${watched.join(", ")} LOADED after the reboot` };
 }
+
+// A System 1 (BCU1) unit has no load-state machines: its run error byte (EEPROM 0x010D, system1.ts
+// BCU1_RUN_ERROR) reads FF while the application may run, and the load procedure leaves it 00 until it
+// completes. So it must read FF before the restart and after the reboot.
+export function judgeRunError(before: number | null, after: number | null): { state: "pass" | "fail"; detail: string } {
+  const hex = (b: number | null) => (b === null ? "unreadable" : b.toString(16).padStart(2, "0").toUpperCase());
+  if (before !== 0xff) return { state: "fail", detail: `the run error read ${hex(before)} before the restart, not FF` };
+  if (after !== 0xff) return { state: "fail", detail: `after the reboot the run error reads ${hex(after)}, not FF` };
+  return { state: "pass", detail: "the run error read FF before the restart and after the reboot" };
+}

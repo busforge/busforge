@@ -438,12 +438,14 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // `restartUnproven`: the interface confirmed the closing A_Restart negatively and the device neither
 // closed the connection nor answered on it (KnxDevice.acceptUnprovenRestart), so `verified` shows the
 // device holds the bytes after the restart, not that it restarted and stored them.
+// `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
+// state it does not read (the System 1 download), so this dry run never reports unchanged.
 // `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
 // device holds other bits in, no change of the configuration, named so a difference that is no
 // download marker is seen; absent where there is none.
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string; constantsDiffer?: ConstantDifference[] }
-  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string }
+  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string; alwaysWrite?: true }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; restartUnproven?: true; stamps?: ImageStamp[] }
 ) & { structural?: true };
 
@@ -597,7 +599,7 @@ async function runFlashOp(
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
   if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup, ...(op.constantsDiffer?.length ? { constantsDiffer: op.constantsDiffer } : {}) };
-  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}) };
+  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}), ...(op.alwaysWrite ? { alwaysWrite: true as const } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();

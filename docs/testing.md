@@ -282,12 +282,13 @@ evidence path as every other run, in both channels.
 #### The sequence
 
 ```
-fingerprint     read the spec's interface object properties; any mismatch stops the run
+fingerprint     ask the interface which it is (refused where the unit's restart drops its tunnels),
+                then read the spec's interface object properties or memory; any mismatch stops the run
 adopt           read-back (assuming the values in assumeParams); the project takes the device's values;
                 a second read-back under them must resolve every association, which also ends the
                 device's "never programmed" (this application's id, loaded, the image a flash would
-                leave as it is); parameter and
-                GA flash dry runs must report unchanged (the server keeps a backup of the device's
+                leave as it is); the dry runs of the parameter and GA flash, where the product
+                offers them, must find nothing to write (the server keeps a backup of the device's
                 memory with each); the configuration found is recorded; the parameters in
                 expectParams must hold their expected values, those in assumeParams the assumed ones
 capabilities    every write capability the product claims has a step in the spec or an `unsafe`
@@ -298,15 +299,18 @@ links           GA flash of the object to the --test-ga address (an unlinked obj
                 A_Restart + read-back (persistence), GA flash back, read-back without drift
 structural      structural flash there, structural flash back, read-back without drift
 fullDownload    only with --full-download: the configuration found, downloaded, read-back without drift
-final           parameter and GA flash dry runs report unchanged
+final           the same dry runs find nothing to write
 ```
 
 A phase runs only when the spec has its step. Every write is preceded by a dry run that must offer a
 change of the expected kind (surgical, or structural for the structural step); a coded refusal, such
 as `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`, stops the run and is never routed to a download. Before
 each write the project must hold the configuration found plus the step and nothing else, and the
-other kind of write (parameters or group tables) must report `unchanged`, so an edit the step did not
-ask for never goes out with it. For the structural step the group tables are checked before its
+other kind of write (parameters or group tables), where the product offers it, must report
+`unchanged`, so an edit the step did not ask for never goes out with it. A write that goes out
+whatever it finds (the System 1 download, which also writes state it does not read) never reports
+`unchanged`: its dry run finds nothing to write when no byte it compares differs, and a step's dry run
+must find bytes that differ. For the structural step the group tables are checked before its
 parameter is set (while a change that alters the com-object table is pending, the server's GA flash is
 the structural flash itself), and the structural flash then writes them from links that still equal the
 configuration found. After each step the read-back must equal the configuration found.
@@ -359,7 +363,9 @@ export const exampleInService: DeviceSpec = {
 
 | Field | Rule |
 |---|---|
-| `inService.fingerprint` | The application id and the version property of the mask's family (table below), each `expect` as lower-case hex; further properties may follow. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. A record with outcome `refused` is a property the unit does not have |
+| `inService.fingerprint` | The application id and the version property of the mask's family (table below), each `expect` as lower-case hex; further properties may follow. Take the values from a collection of the unit (`bun run tools/collect.ts <host[:port]> <ia> <out.json>`, read-only): the `identity` records' `target` (object, PID) and `bytes`. A record with outcome `refused` is a property the unit does not have. A family that keeps the application id in memory names the range instead: `{ name, memory, length, expect }`, the bytes from the collection's memory record |
+| `inService.dataSecure` | `true` for a unit that runs KNX Data Secure. Such a unit answers plain reads with nothing usable, and only a project file brings its keys, so the run imports the installation's project file the operator gives (`--knxproj=<file>`, its password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; both belong to the installation, never to the spec) instead of placing the unit from the catalogue. The file's device at the spec's address must be the spec's product and carry a tool key. The server takes the unit's tool key, the keys of its group addresses and, for a KNXnet/IP interface, its IP settings with the import; the runner reads the same file for its own connections (fingerprint, restart), which open the unit's secure session. The configuration found is still the one the read-back takes off the unit, not the file's. The test address must be no group address of the file, and is set to plain (Data Secure "off") before the link, so the unit takes it without a key and the witness reads it plainly. The kept project holds the installation's keys, sealed as any import's |
+| `inService.ipInterface` | For a unit that is a KNXnet/IP interface or shares its housing with one: `ia`, that interface's individual address, `restart`, what a restart of the unit does to its tunnels (the run's own included), and `shown`, where that was shown. Before anything reaches the unit the run asks the interface it goes through for its KNXnet/IP device information (a DESCRIPTION_REQUEST on its own connection, as ETS sends it over TCP) and records the individual address and serial number the interface reports, with the run's tunnel address, in the report. With `restart: "drops"` the run refuses that interface, the unit itself should the box report the unit's address, and an interface that reports no individual address, since it could not show it avoids it; with `"keeps"` it may go through it. The server's connection, the witness and the restart go to the same host and port. The bench specs' Data Secure robustness checks (a wrong tool key, altered answers) never run on a device in service |
 | `inService.expectParams` | Optional. Parameters whose values the device's own configuration must hold once the project has taken it over, each with a `name` for the report and the value as `GET .../config` shows it. A mismatch, or a parameter the configuration does not show, stops the run after the adoption and before the test address is probed or anything is written. For what the fingerprint cannot tell: products that share application, firmware and hardware type (a module-type parameter), or a setting the run relies on staying as it is (an output's download or bus-return behaviour) |
 | `inService.assumeParams` | Optional. Parameters **without a memory location** (a rocker's function, a status LED's mode) that the unit runs off their catalogue default, each with a `name` and the value as `GET .../config` shows it. No read-back sees them, so a unit taken over by read-back alone keeps their defaults, and the objects they show stay hidden: the adoption stops with the unresolved object numbers, split as the read-back splits them, and proposes an assumed value only for objects the unit's own configuration does not place. The first read-back assumes these values; the server takes them only if the unit's configuration then shows an object for every link it holds, and refuses a parameter with a memory location ([architecture.md](architecture.md#read-back-adopting-the-device-state-as-the-baseline)). The values come from the unit's ETS project. The server checks them against the unit's links and its parameter image (a dry run under them must find nothing to write); several values of a parameter may show the same objects, so mostly the image decides. A value another value of its parameter writes the same is taken unproven; the run logs it and records it in the configuration found (`unprovenAssumptions`). A download marker the device clears itself is no difference there ([load-procedures.md](load-procedures.md#the-rules-by-level), R17). Not the parameter of a step, not also in `expectParams` |
 | Refs | Every `paramRefId` and `comObjRefId` is the full ref as `GET .../config` lists it; a ref that matches only by its end is refused |
@@ -373,13 +379,17 @@ export const exampleInService: DeviceSpec = {
 | `configure`, `fuzz`, `structuralTrigger`, `precondition` | Must be empty or absent; the spec is refused otherwise |
 
 The fingerprint follows the mask's family. The application id is PID 13 of the object the mask's
-master data names for it; the version is the object-0 property the family's units report, while
-they refuse the other:
+master data names for it, or on System 1 a memory range; the version is the object-0 property the
+family's units report, while they refuse the other:
 
 | Family | Application id | Version | Refused, so not in the spec |
 |---|---|---|---|
 | System 7 | object 3 PID 13 | object 0 PID 9 (firmware revision) | object 0 PID 25 |
 | System B | object 4 PID 13 | object 0 PID 25 (version) | object 0 PID 9 |
+| System 1 | memory `0x0104`, 4 bytes (manufacturer, application number, version; `BCU1_APPLICATION_ID_RANGE`) | none: the collections of an MV-0012 unit show no object-0 version property; the mask version is the device descriptor, which the read-back checks | |
+
+A System 1 unit has no load-state machines, so its persistence check reads the run error byte
+(`0x010D`) instead: `FF` before the restart and after the reboot.
 
 The version columns come from read-only collections of MV-0705 and MV-07B0 units; the rule applies
 to the whole family, and a unit of another mask that refuses its version property stops the run at
@@ -404,15 +414,15 @@ device acts on them (the emulated witness answers when the unit's tables hold th
 them (the emulated restart keeps everything). A spec whose unit cannot be emulated is named there with
 the reason.
 
-Not supported in this mode: a KNX Data Secure device (the runner's own connections for the
-fingerprint, the witness and the restart are plain, so such a unit gets no answer and the run stops at
-the fingerprint), and `inputToOutput` behaviours (they need two links).
+Not supported in this mode: `inputToOutput` behaviours (they need two links), and a secured test
+address (the witness reads plainly).
 
 #### Running it
 
 ```bash
 bun run tools/smoke/runner.ts <spec-id> --plan --test-ga=<a/b/c>      # the sequence, no server, no bus
 BUSFORGE_BENCH=1 BUSFORGE_BENCH_HOST=<interface> bun run smoke <spec-id> --channel=api|ui --test-ga=<a/b/c> [--full-download]
+BUSFORGE_SMOKE_KNXPROJ_PASSWORD=… BUSFORGE_BENCH=1 BUSFORGE_BENCH_HOST=<interface> bun run smoke <spec-id> … --knxproj=<installation.knxproj>   # a Data Secure unit
 ```
 
 `--plan` prints the reads and writes in the order the run performs them (and refuses a spec or

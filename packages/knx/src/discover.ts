@@ -56,6 +56,18 @@ export function searchInterfaces(timeoutMs = 3000): Promise<GatewayInfo[]> {
   });
 }
 
+// The interface's own individual address and serial number from the Device Information DIB (type 0x01:
+// medium, status, individual address, project-installation id, serial number, ...) of a
+// DESCRIPTION_RESPONSE body (DIBs only); null without one.
+export function descriptionDeviceInfo(body: Buffer): { ia: number; serial: string } | null {
+  for (let at = 0; at + 2 <= body.length && body[at] >= 2;) {
+    const len = body[at];
+    if (body[at + 1] === 0x01 && len >= 14 && at + 14 <= body.length) return { ia: body.readUInt16BE(at + 4), serial: body.subarray(at + 8, at + 14).toString("hex") };
+    at += len;
+  }
+  return null;
+}
+
 // The maximum local APDU length of a SEARCH_RESPONSE(_EXTENDED) body (HPAI, then DIBs), from its Extended
 // Device Information DIB (type 0x08: medium status, reserved, maximum local APDU length, device
 // descriptor); null without one, or with a length of 0.

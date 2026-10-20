@@ -2,7 +2,7 @@ import dgram from "node:dgram";
 import net from "node:net";
 import { SVC, knxFrame, hpai, hpaiTcp, KNXPORT, CEMI, KnxIpStreamParser } from "./frame.ts";
 import { parseCemiLData, type KnxTransport } from "./transport.ts";
-import { extendedDeviceMaxApdu } from "./discover.ts";
+import { extendedDeviceMaxApdu, descriptionDeviceInfo } from "./discover.ts";
 import { KnxError } from "./errors.ts";
 
 // 3/8/2 §5.4: a tunnelling client sends a CONNECTIONSTATE_REQUEST every 60 s and expects a
@@ -87,7 +87,7 @@ export class KnxIpTunnel implements KnxTransport {
   private createTcpSocket: () => TcpSocket = realTcpSocket;
   channel = 0;
   assignedIa = 0;
-  // How long queryMaxApdu waits for its answer; an instance field so a test can shorten it.
+  // How long queryMaxApdu and queryDeviceInfo wait for their answer; an instance field so a test can shorten it.
   private searchTimeoutMs = 1000;
   private txSeq = 0;
   // Counts connects: a heartbeat loop of an earlier channel stops once a later connect began.
@@ -362,12 +362,28 @@ export class KnxIpTunnel implements KnxTransport {
   // and from the answer the Extended Device Information DIB (an MDT IP Interface/Router announces 210). Null
   // where no answer comes within `searchTimeoutMs` or it carries no such DIB.
   async queryMaxApdu(): Promise<number | null> {
+    const body = await this.ask(SVC.SEARCH_RES_EXT, (endpoint) => knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([endpoint, Buffer.from([0x06, 0x04, 0x01, 0x02, 0x08, 0x06])])));
+    return body ? extendedDeviceMaxApdu(body) : null;
+  }
+
+  // The interface's own individual address and serial number, from the Device Information DIB of its
+  // DESCRIPTION_RESPONSE on this connection's own endpoint (as ETS asks it over TCP): which interface
+  // this connection runs through. Null where no answer comes within `searchTimeoutMs` or it carries no
+  // such DIB.
+  async queryDeviceInfo(): Promise<{ ia: number; serial: string } | null> {
+    const body = await this.ask(SVC.DESCRIPTION_RES, (endpoint) => knxFrame(SVC.DESCRIPTION_REQ, endpoint));
+    return body ? descriptionDeviceInfo(body) : null;
+  }
+
+  // Send a request carrying this connection's own endpoint (the TCP stream, or the tunnel's UDP socket
+  // with a NAT-mode HPAI) and return the body of the answer of service `res`, or null within `searchTimeoutMs`.
+  private async ask(res: number, request: (endpoint: Buffer) => Buffer): Promise<Buffer | null> {
     if (this.closed) return null;
-    const answer = this.once((m) => m.length >= 6 && m.readUInt16BE(2) === SVC.SEARCH_RES_EXT, this.searchTimeoutMs, "search");
+    const answer = this.once((m) => m.length >= 6 && m.readUInt16BE(2) === res, this.searchTimeoutMs, "search");
     const endpoint = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
-    try { await this.send(knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([endpoint, Buffer.from([0x06, 0x04, 0x01, 0x02, 0x08, 0x06])]))); }
+    try { await this.send(request(endpoint)); }
     catch (e) { answer.catch(() => {}); this.connectResWaiter = null; throw e; }
-    try { return extendedDeviceMaxApdu((await answer).subarray(6)); } catch { return null; }
+    try { return (await answer).subarray(6); } catch { return null; }
   }
 
   private once(match: (m: Buffer) => boolean, ms: number, what: string) {
