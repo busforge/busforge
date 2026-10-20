@@ -1,9 +1,9 @@
-import { test, expect, mock, afterAll } from "bun:test";
+import { test, expect, mock, afterAll, describe, jest } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KnxDevice, type KnxTransport } from "@busforge/knx";
-import { buildComObjectTable, declaredPropChecks, programIdStamp } from "@busforge/product";
+import { KnxDevice, PID, STATE, VERIFY_MODE, APCI, parseApdu, tpAck, crc16Ccitt, type KnxTransport } from "@busforge/knx";
+import { buildComObjectTable, declaredPropChecks, programIdStamp, type FlashResult } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { SimSystemB, systemBObjects } from "../../../packages/product/test/collect-sim.ts";
@@ -39,15 +39,23 @@ await mock.module("../../../packages/product/src/image.ts", () => ({
 
 // A System B unit holding loaded, empty group tables, the com-object table of `comObjTable` and a zeroed
 // parameter segment, closing its connection after IDLE_CLOSE_MS without a frame. `closed` records each
-// closure with the silence that caused it.
-const COM_OBJ_AT = 0x6000;
+// closure with the silence that caused it. It takes writes as a device does: memory (answered in verify
+// mode), the load-state events (an allocation places the segment, a LoadCompleted of the parameter
+// segment sets its CRC), every other property; A_Restart reboots it, silent for REBOOT_MS with its
+// connection gone.
+const COM_OBJ_AT = 0x6000, REBOOT_MS = 3_000;
+const SEGMENT_AT: Record<number, number> = { 1: 0x5000, 2: 0x5010, 3: COM_OBJ_AT, 4: 0x5100 };
 let comObjTable: Buffer = Buffer.from([0, 0]);
 const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
 class IdleClosingUnit extends SimSystemB {
   closed: number[] = [];
   sessions = 0;
+  restarts = 0;
   private connected = false;
   private last = 0;
+  private rebootUntil = 0;
+  private written = new Map<number, number>();
+  private allocated = new Map<number, number>();
   constructor() {
     super();
     const loaded = { pdt: 0x0a, readLevel: 3, elements: [Buffer.from([1])] };
@@ -57,13 +65,15 @@ class IdleClosingUnit extends SimSystemB {
     objects[2].props.set(5, loaded); objects[2].props.set(7, table(0x5010));
     objects[3].props.set(5, loaded); objects[3].props.set(7, table(COM_OBJ_AT));
     objects[4].props.set(5, loaded); objects[4].props.set(7, table(0x5100));
+    objects[0].props.set(PID.DEVICE_CONTROL, { pdt: 0x02, readLevel: 3, elements: [Buffer.from([0])] });
     this.objects = objects;
     this.refused = new Set();
   }
-  override memory(a: number): number { return comObjTable[a - COM_OBJ_AT] ?? 0; }
+  override memory(a: number): number { return this.written.get(a) ?? comObjTable[a - COM_OBJ_AT] ?? 0; }
   override async sendCemi(cemi: Buffer): Promise<void> {
     const tpdu = cemi.subarray(9);
     const t = now();
+    if (t < this.rebootUntil) return;
     if (tpdu[0] === 0x80) { this.connected = true; this.sessions++; this.last = t; return; }
     // The disconnect after an operation's last request counts too: a build between that request and the
     // next one (the first write of a flash that is not a dry run) would have lost the connection.
@@ -77,7 +87,54 @@ class IdleClosingUnit extends SimSystemB {
       return;
     }
     this.last = t;
+    if (this.takeWrite(cemi, tpdu, t)) return;
     return super.sendCemi(cemi);
+  }
+  private takeWrite(cemi: Buffer, tpdu: Buffer, t: number): boolean {
+    const p = parseApdu(tpdu);
+    if (p.control) return false;
+    const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
+    const from = cemi.readUInt16BE(6);
+    const reply = (out: number, data: Buffer, low = 0) => {
+      const a = Buffer.concat([Buffer.from([0x40 | (p.seq << 2) | ((out >> 8) & 0x03), (out & 0xff) | low]), data]);
+      queueMicrotask(() => { this.onCemi?.(from, this.assignedIa, tpAck(p.seq), false); this.onCemi?.(from, this.assignedIa, a, false); });
+    };
+    const d = p.data;
+    if ((apci & 0x3c0) === APCI.RESTART) {
+      this.restarts++; this.connected = false; this.rebootUntil = t + REBOOT_MS;
+      return true;
+    }
+    if ((apci & 0x3c0) === APCI.MEMORY_WRITE) {
+      const n = apci & 0x3f, at = d.readUInt16BE(0);
+      for (let i = 0; i < n; i++) this.written.set(at + i, d[2 + i]);
+      if ((this.objects[0].props.get(PID.DEVICE_CONTROL)?.elements[0]?.[0] ?? 0) & VERIFY_MODE) reply(APCI.MEMORY_RESPONSE, Buffer.from(d.subarray(0, 2 + n)), n);
+      else queueMicrotask(() => this.onCemi?.(from, this.assignedIa, tpAck(p.seq), false));
+      return true;
+    }
+    if (apci !== APCI.PROPERTY_WRITE) return false;
+    const [o, pid] = d;
+    const value = Buffer.from(d.subarray(4));
+    const props = this.objects[o].props;
+    const set = (k: number, v: Buffer, pdt = 0x11) => props.set(k, { pdt: props.get(k)?.pdt ?? pdt, readLevel: 3, elements: [v] });
+    if (pid === PID.LOAD_STATE_CONTROL) {
+      const state = (v: number) => set(5, Buffer.from([v]), 0x0a);
+      if (value[0] === 1) state(STATE.LOADING);
+      else if (value[0] === 4) state(STATE.UNLOADED);
+      else if (value[0] === 3 && value[1] === 0x0b) { this.allocated.set(o, value.readUInt32BE(2)); set(7, u32(SEGMENT_AT[o]), 0x13); }
+      else if (value[0] === 2) {
+        state(STATE.LOADED);
+        const size = this.allocated.get(o) ?? props.get(27)?.elements[0]?.readUInt32BE(0);
+        if (o === 4 && size !== undefined) {
+          const segment = Buffer.from(Array.from({ length: size }, (_, i) => this.memory(SEGMENT_AT[4] + i)));
+          set(27, Buffer.concat([u32(size), Buffer.from([0, 0]), Buffer.from([crc16Ccitt(segment) >> 8, crc16Ccitt(segment) & 0xff])]), 0x1b);
+        }
+      }
+      reply(APCI.PROPERTY_RESPONSE, Buffer.concat([d.subarray(0, 4), props.get(5)!.elements[0]]));
+      return true;
+    }
+    set(pid, value);
+    reply(APCI.PROPERTY_RESPONSE, Buffer.concat([d.subarray(0, 4), value]));
+    return true;
   }
 }
 
@@ -155,6 +212,55 @@ test("a full download builds its image before the session opens", async () => {
   const { result, unit: u } = await onUnit(() => ops.downloadDeviceFull({ ...scope, appXml, params, links: [], dryRun: true, backupBeforeUnload: true, comObjectOverrides: new Map() }));
   expect(u.closed).toEqual([]);
   expect(result.kind).toBe("dryRun");
+});
+
+// The writes themselves, through the closing restart, the reconnect and the read-back that verifies
+// them. Timers are faked (the waits for the device's reboot and the full download's settle cost no real
+// time), and the unit's clock runs on them.
+async function onFakeClock<T>(p: Promise<T>): Promise<T> {
+  let done = false;
+  p.then(() => { done = true; }, () => { done = true; });
+  for (let i = 0; !done && i < 200_000; i++) {
+    await new Promise((r) => setImmediate(r));
+    if (!done && jest.getTimerCount() > 0) jest.advanceTimersToNextTimer();
+  }
+  return p;
+}
+async function writeOnUnit<T>(run: () => Promise<T>): Promise<{ result: T; unit: IdleClosingUnit }> {
+  jest.useFakeTimers();
+  try { return await onUnit(() => onFakeClock(run())); } finally { jest.useRealTimers(); }
+}
+const link = [{ comObjNum: 1, gaRaws: [0x0901] }];
+const written = (result: FlashResult, u: IdleClosingUnit) => {
+  expect(u.closed).toEqual([]);
+  expect(result).toMatchObject({ kind: "flashed", verified: true });
+  expect((result as { diffBytes: number }).diffBytes).toBeGreaterThan(0);
+  expect(u.restarts).toBe(1);
+};
+
+describe("a write keeps no connection idle, through its restart and its verification", () => {
+  test("a parameter flash", async () => {
+    const { result, unit: u } = await writeOnUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, dryRun: false }));
+    written(result, u);
+  });
+  test("a group-address flash", async () => {
+    const { result, unit: u } = await writeOnUnit(() => ops.flashDeviceGroupAddresses({ ...scope, appXml, params, baseParams: params, dryRun: false, links: link, comObjectOverrides: new Map(), comObjectOverrideBase: new Map() }));
+    written(result, u);
+  });
+  test("a structural flash", async () => {
+    const { result, unit: u } = await writeOnUnit(() => ops.flashDeviceStructure({ ...scope, appXml, params, baseParams: params, dryRun: false, links: link, comObjectOverrides: new Map(), comObjectOverrideBase: new Map() }));
+    written(result, u);
+  });
+  test("a full download closed with the restart at once", async () => {
+    const { result, unit: u } = await writeOnUnit(() => ops.downloadDeviceFull({ ...scope, appXml, params, dryRun: false, links: link, comObjectOverrides: new Map() }));
+    written(result, u);
+  });
+  // thelsing/OpenKNX (manufacturer 0x00FA): the download is left alone for its save timer before the restart.
+  test("a full download that waits for the device's save before its restart", async () => {
+    const openKnx = appXml.replaceAll("M-TEST", "M-00FA");
+    const { result, unit: u } = await writeOnUnit(() => ops.downloadDeviceFull({ ...scope, appXml: openKnx, params, dryRun: false, links: link, comObjectOverrides: new Map() }));
+    written(result, u);
+  });
 });
 
 test("an operation refused before it needs the device opens no session", async () => {

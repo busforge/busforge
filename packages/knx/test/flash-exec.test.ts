@@ -632,7 +632,7 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
 
   test("the close: a pause and a fresh link before the restart by default, the restart at once with closeAtOnce", () => {
     const tail = (plan: ReturnType<typeof planSystemBFullDownload>) => plan.slice(plan.findLastIndex((s) => s.op === "loadCompleted") + 1).map((s) => s.op);
-    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "settle", "disconnect", "connect", "restart"]);
+    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "disconnect", "settle", "connect", "restart"]);
     expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "restart"]);
   });
 });
@@ -662,15 +662,16 @@ describe("the download must not restart the device before it has saved", () => {
     expect(settle).toBeLessThan(restart);
     expect((plan[settle] as { ms: number }).ms).toBeGreaterThanOrEqual(6000); // the device's threshold is 5 s
 
-    // Between the settle and the restart, only the LINK may be touched. Re-opening the connection
-    // is not optional: a connection-oriented KNX link dies after 6s of silence and the settle is 8,
-    // so without it the A_Restart is sent into a torn-down connection and never arrives — and the
-    // restart is the only thing that makes the device write its flash metadata. But nothing in here
-    // may touch the device's MEMORY, because a memory write refreshes the deferred-save timer
-    // (`if (_saveTimeout != 0) _saveTimeout = millis()`) and pushes the save back out past the
-    // restart, which is the very thing the settle exists to prevent.
+    // Around the settle, only the LINK may be touched. The pause is spent without a connection: a
+    // device closes a connection that carries no frame for 6 s and the settle is 8, so a connection
+    // held open is closed by the device in the pause, and an A_Restart sent into it never arrives
+    // (the restart is the only thing that makes the device write its flash metadata). The restart
+    // goes on a connection opened after the pause. Nothing here may touch the device's MEMORY: a
+    // memory write refreshes the deferred-save timer (`if (_saveTimeout != 0) _saveTimeout = millis()`)
+    // and pushes the save back out past the restart, which the settle exists to prevent.
+    expect(plan[settle - 1].op).toBe("disconnect");
     const between = plan.slice(settle + 1, restart).map((s) => s.op);
-    expect(between).toEqual(["disconnect", "connect"]);
+    expect(between).toEqual(["connect"]);
   });
 
   test("the restart is the last step: nothing follows a device that is rebooting", () => {

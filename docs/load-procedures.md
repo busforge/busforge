@@ -85,9 +85,11 @@ dropped; the server then refuses the flash (`FLASH_SEGMENT_UNPLACEABLE`).
 > diff silently swallows a revert whenever the database holds the default while the device holds
 > the changed byte.
 
-The connection lifecycle stays with the caller. A second `T_Connect` inside a plan would
-reset the local sequence counter while the device keeps counting, after which the device
-stops answering.
+The connection lifecycle stays with the caller. A plan step that opens a connection of its own
+closes the one before it first (`disconnect`, then `connect`): the OpenKNX RaumController
+(thelsing/knx) takes a `T_Connect` from the partner it is connected to as nothing, keeps that connection's sequence numbers while ours start
+again at 0, and refuses every request of the new connection with `T_NAK`
+([findings.md](findings.md) §37).
 
 ## Par-download step policy (the coverage guard)
 
@@ -379,8 +381,8 @@ same every-covered-byte image otherwise; Busforge keeps no record and writes tha
 describe a firmware stack, each hardware-shown: `PERSIST_ON_LOAD_COMPLETED` (GVS: the configuration
 persists at `LoadCompleted`, so a restart need not prove a reboot), `HOLD_APPLICATION_ON_GA_FLASH`
 (Jung: a group-address flash holds the application object in its own load bracket) and
-`SETTLE_BEFORE_RESTART` (thelsing/OpenKNX: the full download settles on a fresh connection before
-the restart, instead of R11's restart at once). They are described [below](#the-flash-bracket-and-why-it-is-tight).
+`SETTLE_BEFORE_RESTART` (thelsing/OpenKNX: the full download waits for the device's save without a
+connection and restarts it on a new one, instead of R11's restart at once). They are described [below](#the-flash-bracket-and-why-it-is-tight).
 
 **Which write service ETS takes, and how it checks a write.** ETS writes memory with the confirmed
 `A_MemoryExtended_Write` exactly on the applications declaring `<Options
@@ -1082,8 +1084,8 @@ back on a new connection. ETS reads PID 7 before each segment. Reads aside, the 
 ETS's, with two exceptions kept on purpose. A System B full download writes the three tables before the
 parameter segment, where ETS writes the parameter segment first: a thelsing/OpenKNX device lost its
 configuration when its tables followed a long parameter write. And only on thelsing/OpenKNX firmware
-does the full download settle for 8 s on a fresh connection before the restart instead of closing at
-once (`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)). No capture shows
+does the full download wait 8 s without a connection and restart the device on a new one instead of
+closing at once (`SETTLE_BEFORE_RESTART`, [below](#the-flash-bracket-and-why-it-is-tight)). No capture shows
 either loss with ETS's order and timing, since ETS writes the parameter segment sparsely; matching ETS
 here needs a run on a thelsing/OpenKNX unit with a large parameter write, a power cycle and a read.
 
@@ -1281,11 +1283,12 @@ middle of a download, the save fires with every load state still LOADING and the
 again: the download is thrown away while every single check still passes.
 
 Therefore the bracket stays tight, with exactly one deliberate pause, at the end, before the
-restart. And the link is re-opened between that settle and the restart (a connection-oriented
-KNX link dies after 6 seconds of silence, so an `A_Restart` sent after an 8-second settle
-lands on a connection the device has already torn down). Nothing may touch the device's
-memory in that gap: a memory write refreshes the deferred-save timer and would push the save
-back out past the restart.
+restart. The pause is spent without a connection: the plan closes it before the settle and opens a
+new one for the restart. A device closes a connection that carries no frame for 6 seconds, so one
+held open through an 8-second settle is closed by the device in it, and an `A_Restart` sent into it
+never arrives ([findings.md](findings.md) §37). `T_Disconnect` and `T_Connect` touch no memory.
+Nothing may touch the device's memory in that gap: a memory write refreshes the deferred-save timer
+and would push the save back out past the restart.
 
 ### Unloading a table can invalidate the running application
 

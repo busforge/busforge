@@ -251,7 +251,9 @@ bus.
    bytes (the System 1 download builds its small plan after reading the unit's name). A device closes a
    connection that carries no request for 6 s, and a UDP tunnel closes on a client that does not
    acknowledge for two ([findings.md](findings.md) §35, §37). A read-back reads everything first and
-   decodes it after its session has closed.
+   decodes it after its session has closed. A System B write is tested to keep to this up to its
+   restart and through its verification, and a wait the device itself needs (the thelsing/OpenKNX full download's save
+   before the restart) is spent with the connection closed.
 
 **Inside the operation** (`runFlashOp` in `packages/product/src/profiles.ts`, one sequence for
 every device model):

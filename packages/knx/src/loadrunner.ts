@@ -244,14 +244,17 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       //
       // So wait for it, with a real budget, and re-establish the connection each time (a device
       // that was away has dropped ours). Failing here is honest: the device never came back.
+      // Each try closes the connection before it opens one, the first try the one the download ran
+      // on: thelsing/knx (the OpenKNX RaumController) takes a T_Connect from the partner it is connected
+      // to as nothing, keeps that connection's sequence numbers and refuses every request of a new one
+      // with T_NAK.
       case "awaitReady": {
         const tries = step.tries ?? 12, delayMs = step.delayMs ?? 2000;
         let lastErr: unknown;
         for (let i = 0; i < tries; i++) {
-          try { await dev.connect(); await dev.deviceDescriptor(); lastErr = undefined; break; }
+          try { await dev.disconnect(); await dev.connect(); await dev.deviceDescriptor(); lastErr = undefined; break; }
           catch (e) {
             lastErr = e;
-            try { await dev.disconnect(); } catch { /* it was never up */ }
             if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs));
           }
         }

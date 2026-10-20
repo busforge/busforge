@@ -1056,4 +1056,18 @@ reads everything it takes off the device (parameter segments, group tables, com-
 checks whether the device holds the configuration, its application id and load states) and decodes it after
 its session has closed; that check's two dry runs then run in sessions of their own. Between two requests a
 System B or System 7 operation compares bytes. The System 1 download builds its plan after it has read the
-unit's friendly name, which the plan keeps; its application is the size of a BCU 1 EEPROM.
+unit's friendly name, which the plan keeps; its application is the size of a BCU 1 EEPROM. The System B
+writes (parameter, group-address and structural flash, both forms of the full download) are tested to keep
+to the same rule up to their restart and through the read-back that verifies them, against an emulated
+unit; the System 7, System 1 and secured writes are not.
+
+A wait the device itself needs is spent without a connection. The thelsing/OpenKNX full download leaves the
+device alone for 8 s before its restart, for the save the firmware makes 5 s after its memory was last
+written ([load-procedures.md](load-procedures.md), the deferred save): the connection is closed before that
+pause and a new one carries the restart. The wait for a device that commits its flash after the last
+`LoadCompleted` closes the connection before each try to reach it.
+
+A new connection to a device needs the old one closed first. The OpenKNX RaumController takes a `T_Connect`
+from the partner it is connected to as nothing: it keeps that connection's sequence numbers, and a request
+of the new one, numbered from 0, gets `T_NAK` each time it is sent. After `T_Disconnect` and `T_Connect`
+the same request is answered.

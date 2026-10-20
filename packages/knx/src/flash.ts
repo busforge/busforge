@@ -387,20 +387,19 @@ export function planSystemBFullDownload(tables: {
     //     the download, the save fires with every load state still LOADING and then never fires
     //     again. Which is why there is no waiting around between the unloads and here: a pause
     //     longer than five seconds anywhere in the bracket silently costs the whole download.
+    //
+    // The pause is spent without a connection, and the restart goes on a fresh one. A device closes a
+    // connection that carries no frame for SIX seconds, and the settle is EIGHT: held open, the
+    // connection is closed by the device in the pause, and an A_Restart sent into it never arrives.
+    // The device then never reboots, and `Memory::writeMemory()`, the ONLY thing on the bus path that
+    // writes the flash metadata (the four load states, the table addresses, the individual address),
+    // never runs. Nothing would catch it: the device keeps running with a perfect configuration in
+    // RAM, answers every check afterwards from RAM (load states LOADED, tables byte-identical, its
+    // CRC over the parameter segment matching ours) and comes back factory-fresh at the next power-down.
+    // A T_Disconnect and a T_Connect are transport frames and touch no memory, so the save timer runs on.
+    { op: "disconnect" },
     { op: "settle", ms: 8000 },
-    // And now re-open the link before the restart, because the pause above just killed it.
-    //
-    // A connection-oriented KNX link dies after SIX seconds of silence. The settle is EIGHT. So the
-    // A_Restart that follows was being sent into a connection the device had already torn down: it
-    // never arrived, the device never rebooted, and `Memory::writeMemory()` — the ONLY thing on the
-    // bus path that writes the flash metadata (the four load states, the table addresses, the
-    // individual address) — never ran.
-    //
-    // Nothing caught it. The device kept running with a perfect configuration in RAM and answered
-    // every check afterwards: all four load states LOADED, all three tables byte-identical, its own
-    // CRC over the parameter segment matching ours. Every one of those reads was RAM. The device
-    // lost the lot the next time it was powered down, and came back factory-fresh.
-    { op: "disconnect" }, { op: "connect" },
+    { op: "connect" },
     { op: "restart", requireReboot },
     ] as LoadStep[]),
   ];

@@ -76,6 +76,10 @@ depends on is hardware-proven.
 
 ## Verification
 
+- **No idle connection in the System 7, System 1 and secured writes, tested.** The session-idle test
+  (`apps/server/test/session-idle.test.ts`) runs the System B writes through their restart and
+  verification against an emulated unit that closes an idle connection; the other families' writes run
+  in the same session envelope but no emulated unit takes their writes yet.
 - **Reusing one KNXnet/IP tunnel object across reconnects.** The device sessions reopen their link
   through a fresh tunnel each time; a `KnxIpTunnel` used directly (tools) and reopened without a
   disconnect leaks its earlier UDP socket and, after a failed connect, sends its disconnect for the

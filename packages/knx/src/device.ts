@@ -1083,8 +1083,8 @@ export class KnxDevice {
   // Note what is NOT done: probing the link before the restart. A configured OpenKNX device does not
   // reliably answer DeviceDescriptor_Read while its application is running (observed on hardware,
   // cause not yet established), so a pre-probe turns every successful download into a failure. The
-  // link is fresh by construction instead — `disconnect` + `connect` immediately precede this in the
-  // plan, and a test pins them there.
+  // link is fresh by construction instead: the plan closes it before its pause and opens it again
+  // right before this, and a test pins that.
   // `requireReboot` (default true) demands the device prove it rebooted, by going silent. That is
   // right for firmware that persists its configuration ON the restart (thelsing/knx, OpenKNX): if it
   // does not reboot, nothing was written to flash and the device comes back factory-fresh. Some
