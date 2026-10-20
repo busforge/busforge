@@ -472,7 +472,9 @@ preflight (product in catalog, interface reachable)
 
 The click-through requires each parameter's row and each com-object's link row to be rendered and
 visible. A display parameter (a heading or note without a value) has an empty value cell, so its row
-instead must be visible and show the parameter's name. In a grid cell the page carries a parameter's
+instead must be visible and show the parameter's name, as the server names it in the language the
+page renders in (its `<html lang>`; a catalogue names a parameter differently per language, and a page
+that names no language it knows stops the check). In a grid cell the page carries a parameter's
 name only as the cell's tooltip, so there the check proves the row, not the name on screen; the pass
 detail counts those rows, and the display parameters without a name to show.
 

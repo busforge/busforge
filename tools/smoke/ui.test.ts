@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { namesAddress, displayNameShown } from "./ui.ts";
+import { namesAddress, displayNameShown, pageLanguage } from "./ui.ts";
 
 test("names a group address in a remove button's label, in either language", () => {
   expect(namesAddress("1/3/2 entfernen", "1/3/2")).toBe(true);
@@ -30,4 +30,10 @@ test("a display parameter's row that shows something else, or nothing, does not 
   expect(displayNameShown("Light dependent feedback objects", null, "Light independent feedback objects")).toBeNull();
   expect(displayNameShown("", null, "Auro KNX app v1.1")).toBeNull();
   expect(displayNameShown("", "", "Auro KNX app v1.1")).toBeNull();
+});
+
+test("the click-through takes the page's own language, and refuses a page that names none it knows", () => {
+  expect(pageLanguage("en")).toBe("en");
+  expect(pageLanguage("de")).toBe("de");
+  for (const l of ["", "fr", "en-US"]) expect(() => pageLanguage(l)).toThrow("names no language");
 });

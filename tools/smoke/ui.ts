@@ -37,6 +37,14 @@ export function displayNameShown(rowText: string, rowTitle: string | null, name:
   return norm(rowTitle ?? "") === want ? "tooltip" : null;
 }
 
+// The language the page renders in, as the web app sets it on <html lang>: the click-through's expected
+// names (a display parameter's heading) come from the server in this language, since a catalogue names
+// a parameter differently per language.
+export function pageLanguage(htmlLang: string): "en" | "de" {
+  if (htmlLang === "en" || htmlLang === "de") return htmlLang;
+  throw new Error(`click-through: the page names no language it renders in (html lang "${htmlLang}")`);
+}
+
 export class UiDriver {
   private browser: Browser | null = null;
   private page: Page | null = null;
@@ -58,6 +66,8 @@ export class UiDriver {
     // The config view is up once its search box (always present) is in the DOM.
     await page.waitForSelector('[data-testid="config-search"]', { timeout: 15_000 });
   }
+
+  async pageLang(): Promise<"en" | "de"> { return pageLanguage(await this.req().evaluate(() => document.documentElement.lang)); }
 
   // Set a parameter through its editor. An enum is a native <select> (selectOption); a number or
   // text parameter is an <input> that commits on blur. The param may be revealed only after an
