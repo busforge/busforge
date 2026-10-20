@@ -138,17 +138,18 @@ describe("the shipped evidence bundle", () => {
   test("each Product with records is tested for every operation its smoke runs drove", async () => {
     const records = await load();
     const owners = [...new Map(records.map((r) => [`${r.subject.productRef}|${r.subject.appProgramId}`, r])).values()];
-    // The four bench Products drove every operation, the structural flash only where it is offered (the
-    // GVS's firmware rule refuses it). The DALI-Gateway's runs are on a unit in service, whose spec
-    // declares the full download unsafe and has a structural step.
-    const BENCH = { fullDownload: "tested" } as const;
-    const IN_SERVICE = { fullDownload: "eligible" } as const;
-    const expected: Record<string, { fullDownload: "tested" | "eligible"; structuralFlash: "tested" | "eligible" }> = {
-      "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111": { ...BENCH, structuralFlash: "tested" },
-      "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE": { ...BENCH, structuralFlash: "tested" },
-      "M-0083_H-182-0_P-BE.2D02001.2E02": { ...BENCH, structuralFlash: "tested" },
-      "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES": { ...BENCH, structuralFlash: "eligible" },
-      "M-0048_H-9070929-1-O00EF_P-9070929": { ...IN_SERVICE, structuralFlash: "tested" },
+    // Per Product, the full download and the structural flash as its smoke runs drove them: the bench
+    // Products every operation, the structural flash only where it is offered (the GVS's firmware rule
+    // refuses it); units in service the full download where their runs requested it, the structural
+    // flash where their spec has the step (the Auro's declares it unsafe).
+    type Driven = { fullDownload: "tested" | "eligible"; structuralFlash: "tested" | "eligible" };
+    const expected: Record<string, Driven> = {
+      "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111": { fullDownload: "tested", structuralFlash: "tested" },
+      "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE": { fullDownload: "tested", structuralFlash: "tested" },
+      "M-0083_H-182-0_P-BE.2D02001.2E02": { fullDownload: "tested", structuralFlash: "tested" },
+      "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES": { fullDownload: "tested", structuralFlash: "eligible" },
+      "M-0048_H-9070929-1-O00EF_P-9070929": { fullDownload: "eligible", structuralFlash: "tested" },
+      "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02": { fullDownload: "tested", structuralFlash: "eligible" },
     };
     expect(owners).toHaveLength(Object.keys(expected).length);
     expect(new Set(owners.map((r) => r.subject.productRef))).toEqual(new Set(Object.keys(expected)));

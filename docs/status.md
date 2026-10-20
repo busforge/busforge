@@ -394,7 +394,7 @@ spec states why no behaviour is observable.
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
-| `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | not proven | not proven | not proven | **not met** |
+| `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download, behaviour and click-through pass in both channels; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-hmg6t-in-service` | Theben HMG 6 T heating actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-jmg4t-in-service` | Theben JMG 4 T blind actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
@@ -452,9 +452,10 @@ report a device family as working on the strength of a passing test suite.
   device hold a flag its project does not. Products other than these rest on the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
-- **A device in service, taken over by read-back, has run on hardware for two products only:** the
-  OpenKNX RaumController and the Theben DALI-Gateway, both channels (the DALI-Gateway's ECG group
-  assignments taken as assumed, unproven by the device, as its spec names them). Every
+- **A device in service, taken over by read-back, has run on hardware for three products only:** the
+  OpenKNX RaumController, the Theben DALI-Gateway and the Auro M-0081_A-FE01, both channels (the
+  DALI-Gateway's ECG group assignments taken as assumed, unproven by the device, as its spec names
+  them). Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
   emulated from a read-only collection (`tools/smoke/inservice-specs.test.ts`); the others have run only
   there. There the Gira M-0008, the Auro M-0081_A-FE01, the MDT BE-06001.02, the Theben

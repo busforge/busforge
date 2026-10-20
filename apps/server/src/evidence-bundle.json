@@ -38,6 +38,18 @@
    }
   },
   {
+   "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+   "appProgramId": "M-0081_A-FE01-11-75D9",
+   "capabilities": {
+    "readParams": true,
+    "readLinks": true,
+    "flashParams": true,
+    "flashLinks": true,
+    "fullDownload": true,
+    "structuralFlash": true
+   }
+  },
+  {
    "productRef": "M-0083_H-182-0_P-BE.2D02001.2E02",
    "appProgramId": "M-0083_A-00B6-32-9642",
    "capabilities": {
@@ -63,6 +75,802 @@
   }
  ],
  "records": [
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashLinks api behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: light level answers a read of the added test address",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the object's first address answered the read of the test address with 0x0258, and left the same read unanswered once the test address was removed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashLinks api transfer+persistence",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "added the test address to object 10 beside its 1 own address(es), own sending address first (2 B, verified), read back; removed it (2 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 4564 ms after A_Restart, answering again after 13679 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashLinks ui behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: light level answers a read of the added test address",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the object's first address answered the read of the test address with 0x0258, and left the same read unanswered once the test address was removed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashLinks ui transfer+persistence",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "added the test address to object 10 beside its 1 own address(es), own sending address first (verified), read back; removed it (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 4382 ms after A_Restart, answering again after 13520 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashParams api transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-10_R-10 1→0 (1 B, verified) →1 (1 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 flashParams ui transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-10_R-10 1→0 (verified) →1 (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 fullDownload api transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (151 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 fullDownload ui transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 readLinks api transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 readLinks ui transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 readParams api transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 readParams ui transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
   {
    "schema": "busforge.evidence/1",
    "recordedAt": null,

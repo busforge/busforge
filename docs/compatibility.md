@@ -19,6 +19,7 @@ columns are listed per operation below.
 | M-0002 GH Q631 0070 R0111 | `M-0002_A-A001-13-63C2` | tested | tested | tested | tested | tested | tested |
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | eligible, untested | tested |
+| M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
 
@@ -60,6 +61,19 @@ Product `M-0048_H-9070929-1-O00EF_P-9070929`, application program `M-0048_A-9071
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
 | Full download | eligible, untested | none / none | none / none | none / none | none | none |
 | Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+
+## M-0081 180-02
+
+Product `M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02`, application program `M-0081_A-FE01-11-75D9`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 6 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
+| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
 
 ## M-0083 BE-02001.02
 
