@@ -64,7 +64,8 @@ export function parseWeatherGuard(arg: string): WeatherGuard | { refused: string
   return { wind, bits };
 }
 
-// What the guard's reads show: pass, or the reason to stop. `answers` maps each address to the value
+// What the guard's reads show: pass, or the reason to stop, naming each address by the operator's name
+// only, since the reason goes into the run's record and the addresses belong to the installation. `answers` maps each address to the value
 // the station's GroupValueResponse carried (hex), null where the station did not answer.
 export function judgeWeather(g: WeatherGuard, answers: Map<string, string | null>): { pass: boolean; detail: string } {
   const seen: string[] = [];
@@ -72,8 +73,8 @@ export function judgeWeather(g: WeatherGuard, answers: Map<string, string | null
   const w = answers.get(g.wind.ga) ?? null;
   const limit = Math.round(g.wind.thresholdMs * WIND_MARGIN * 100) / 100;
   // 0x7FFF is DPT 9's "invalid data".
-  if (w === null) stops.push(`wind (${g.wind.ga}) did not answer from the station`);
-  else if (w.length !== 4 || w.toLowerCase() === "7fff") stops.push(`wind (${g.wind.ga}) answered ${w}, not a 2-byte float`);
+  if (w === null) stops.push(`wind did not answer from the station`);
+  else if (w.length !== 4 || w.toLowerCase() === "7fff") stops.push(`wind answered ${w}, not a 2-byte float`);
   else {
     const ms = decodeDpt9(parseInt(w, 16));
     seen.push(`wind ${ms} m/s (limit ${limit})`);
@@ -81,12 +82,12 @@ export function judgeWeather(g: WeatherGuard, answers: Map<string, string | null
   }
   for (const b of g.bits) {
     const v = answers.get(b.ga) ?? null;
-    if (v === null) stops.push(`${b.name} (${b.ga}) did not answer from the station`);
+    if (v === null) stops.push(`${b.name} did not answer from the station`);
     else if (v === "00") seen.push(`${b.name} 0`);
-    else if (v === "01") { seen.push(`${b.name} 1`); stops.push(`${b.name} (${b.ga}) is set`); }
-    else stops.push(`${b.name} (${b.ga}) answered ${v}, not a 1-bit value`);
+    else if (v === "01") { seen.push(`${b.name} 1`); stops.push(`${b.name} is set`); }
+    else stops.push(`${b.name} answered ${v}, not a 1-bit value`);
   }
   return stops.length ? { pass: false, detail: `${stops.join("; ")}${seen.length ? ` (read: ${seen.join(", ")})` : ""}` } : { pass: true, detail: seen.join(", ") };
 }
 
-export const guardAddresses = (g: WeatherGuard): string[] => [g.wind.ga, ...g.bits.map((b) => b.ga)];
+export const guardAddresses = (g: WeatherGuard): { name: string; ga: string }[] => [{ name: "wind", ga: g.wind.ga }, ...g.bits];

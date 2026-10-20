@@ -328,7 +328,7 @@ async function weatherCheck(io: InServiceIo, g: WeatherGuard, before: string): P
   const answers = new Map<string, string | null>();
   // Only the unit's own answer counts; another client reading the same address meanwhile does not
   // change what the unit answered, so attribution is not asked.
-  for (const ga of guardAddresses(g)) answers.set(ga, (await io.bus.groupReadAnsweredOn(ga, [ga]).catch((e) => { throw new Stop("weather guard", `${before}: the read of ${ga} broke off: ${errText(e)}`); })).value);
+  for (const { name, ga } of guardAddresses(g)) answers.set(ga, (await io.bus.groupReadAnsweredOn(ga, [ga]).catch((e) => { throw new Stop("weather guard", `${before}: the read of ${name} broke off: ${errText(e)}`); })).value);
   const v = judgeWeather(g, answers);
   io.log(`weather guard ${before}: ${v.detail}`);
   if (!v.pass) throw new Stop("weather guard", `${before}: ${v.detail}`);

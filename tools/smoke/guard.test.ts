@@ -46,16 +46,32 @@ describe("what the weather guard's reads allow", () => {
     for (const ga of ["31/7/231", "31/7/232", "31/7/233"]) {
       const v = judgeWeather(guard, calm({ [ga]: "01" }));
       expect(v.pass).toBe(false);
-      expect(v.detail).toContain(`(${ga}) is set`);
+      expect(v.detail).toContain(" is set");
+      expect(v.detail).not.toContain(ga);
     }
   });
 
   test("an address the station does not answer, or answers with what its type cannot carry, stops the run", () => {
-    expect(judgeWeather(guard, calm({ "31/7/230": null })).detail).toContain("wind (31/7/230) did not answer from the station");
-    expect(judgeWeather(guard, calm({ "31/7/233": null })).detail).toContain("awning lock (31/7/233) did not answer from the station");
+    expect(judgeWeather(guard, calm({ "31/7/230": null })).detail).toContain("wind did not answer from the station");
+    expect(judgeWeather(guard, calm({ "31/7/233": null })).detail).toContain("awning lock did not answer from the station");
     expect(judgeWeather(guard, calm({ "31/7/230": "7fff" })).detail).toContain("not a 2-byte float");
     expect(judgeWeather(guard, calm({ "31/7/230": "01" })).detail).toContain("not a 2-byte float");
     expect(judgeWeather(guard, calm({ "31/7/231": "02" })).detail).toContain("not a 1-bit value");
     expect(judgeWeather(guard, new Map()).pass).toBe(false);
+  });
+});
+
+describe("what a stop of the weather guard puts into the record", () => {
+  test("no reason names one of the guard's addresses, only the operator's names for them", () => {
+    const addresses = ["31/7/230", "31/7/231", "31/7/232", "31/7/233"];
+    const cases: Record<string, string | null>[] = [
+      { "31/7/230": null }, { "31/7/230": "7fff" }, { "31/7/230": "01" }, { "31/7/230": "0348" },
+      ...["31/7/231", "31/7/232", "31/7/233"].flatMap((ga) => [{ [ga]: null }, { [ga]: "01" }, { [ga]: "02" }]),
+    ];
+    for (const c of cases) {
+      const v = judgeWeather(guard, calm(c));
+      expect(v.pass).toBe(false);
+      for (const ga of addresses) expect(v.detail).not.toContain(ga);
+    }
   });
 });

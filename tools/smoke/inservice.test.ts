@@ -1013,7 +1013,7 @@ describe("a weather station in service: the weather guard", () => {
     const { io, calls, device, start } = withWeather({}, (n) => (n === 5 ? { wind: "00c8", rain: "01" } : CALM));
     const r = await runInService(station, io, GUARDED);
     expect(r.ok).toBe(false);
-    expect(r.stopped?.detail).toContain("before the restart: rain (31/7/241) is set");
+    expect(r.stopped?.detail).toContain("before the restart: rain is set");
     expect(guardAndWrites(calls)).toEqual(["guard", "guard", "flashParams", "guard", "flashParams", "guard", "flashLinks", "guard", "guard", "flashLinks"]);
     expect(r.restore?.state).toBe("pass");
     expect(device).toEqual(start);
@@ -1043,7 +1043,16 @@ describe("a weather station in service: the weather guard", () => {
   test("an address that does not answer stops the run before anything reaches the unit", async () => {
     const { io, calls } = withWeather({}, () => ({ wind: "00c8", rain: null }));
     const r = await runInService(station, io, GUARDED);
-    expect(r.stopped).toEqual({ phase: "weather guard", detail: "before the channel: rain (31/7/241) did not answer from the station (read: wind 2 m/s (limit 6.3))" });
+    expect(r.stopped).toEqual({ phase: "weather guard", detail: "before the channel: rain did not answer from the station (read: wind 2 m/s (limit 6.3))" });
+    expect(calls).toEqual(["guard"]);
+  });
+
+  test("a guard read that breaks off stops the run, naming the address by its name only", async () => {
+    const { io, calls } = withWeather({}, () => CALM);
+    const bus = { ...io.bus };
+    io.bus.groupReadAnsweredOn = async (readGa, ownGas) => { if (readGa === "31/7/241") throw new Error("tunnel refused"); return bus.groupReadAnsweredOn(readGa, ownGas); };
+    const r = await runInService(station, io, GUARDED);
+    expect(r.stopped).toEqual({ phase: "weather guard", detail: "before the channel: the read of rain broke off: tunnel refused" });
     expect(calls).toEqual(["guard"]);
   });
 
