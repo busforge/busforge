@@ -1,6 +1,8 @@
-// Typed model of the Theben DALI-Gateway "Backup-Store", the device's complete
-// logical DALI configuration. The gateway's ETS DCA persists this as UTF-16 XML
-// in the project's BinaryData; we parse it directly instead of running the DCA.
+// Typed model of the Theben DALI-Gateway "Backup-Store", the logical DALI
+// configuration as the ETS project holds it (not read from the device). The
+// gateway's ETS DCA persists this as UTF-16 XML in the project's BinaryData; we
+// parse it directly instead of running the DCA. Effects and templates in the
+// store are not modelled.
 // Field meanings recovered from the decompiled DCA (Dalie64.DcaApp.*); see
 // docs/plugins.md.
 

@@ -19,9 +19,12 @@ KNX has three related things:
 A DCA is a signed **.NET assembly with a WPF user interface**, built against the ETS SDK. ETS hands
 it device access at runtime: read and write device memory and interface-object properties, read and
 write its own project *baggage*, and online bus access for interactive commissioning. Its
-configuration is stored twice: as an opaque blob inside the project archive, and on the device in
-interface objects written as **property load images**, not as named parameters. The product XML
-describes *that* those images are downloaded, never *what is inside them*.
+configuration is stored twice: as an opaque blob inside the project archive, and on the device,
+not as named parameters. The product XML describes neither copy. On the Theben DALI gateway, the one
+DCA device examined, the DCA writes its configuration into a vendor interface object of the gateway
+(and into the DALI ballasts) by its own property writes and command exchange, outside the
+application's load procedure; the property image steps of that load procedure are reads of the
+memory-control blocks (PID 27), not DALI data.
 
 **The blocker is the host, not the runtime.** An `.etsapp` is not a standalone program: it is a
 plugin with no entry point that runs only because ETS hands it the device model, the project, bus
@@ -52,11 +55,14 @@ This holds for every DCA device, module or not.
 
 **Is programming a DCA device dangerous?** The argument that it is not is structural, not
 empirical. The two kinds of configuration are independent: a parameter flash writes the parameter
-segment, a group-address flash writes the addressing tables, and Busforge **does not implement
-property load images at all**. A load procedure that declares one for anything other than a
-known-harmless stamp is refused outright (`LOAD_STEP_UNSUPPORTED`), so the device-specific
-interface objects are never written. It remains an argument, not evidence: how far a DCA device
-(the Theben DALI gateway) has actually been driven is recorded in [status.md](status.md).
+segment, a group-address flash writes the addressing tables, and Busforge writes only what the
+application's load procedure and the family's ETS-matched rules call for, never the DCA's own
+property writes or command exchange. Of property load images it runs only the read of a
+memory-control block (PID 27) after the last completed load; a load procedure that declares any
+other is refused (`LOAD_STEP_UNSUPPORTED` for a flash, `FULL_DOWNLOAD_STEP_UNSUPPORTED` for the
+full download). A device whose load procedure itself declared a write into its vendor object would
+get that write, as from ETS. How far a DCA device (the Theben DALI gateway) has actually been
+driven, and that no download changed its DALI configuration, is recorded in [status.md](status.md).
 
 ## The native module architecture
 
@@ -141,10 +147,14 @@ no device, no bus and no server.
 ## The shipped module
 
 `plugins/dca-theben-dali-e64` replaces the Theben DALI gateway's DCA with a **read-only** view. It
-decodes the device's backup store (UTF-16 XML, detected by byte-order mark or a leading-`<`
-heuristic rather than by trusting a declared encoding, so it behaves identically in the browser and
-under Bun) into a typed model, and renders three sections: fixtures with their names, groups, short
-and long addresses, lamp type and commissioning state; groups with their fixture counts; and scenes.
+decodes the DCA's backup store that the ETS project carries as baggage (UTF-16 XML, detected by
+byte-order mark or a leading-`<` heuristic rather than by trusting a declared encoding, so it
+behaves identically in the browser and under Bun) into a typed model, and renders three sections:
+fixtures with their names, groups, short and long addresses, lamp type and commissioning state;
+groups with their fixture counts; and scenes. The store also holds effects and templates, which the
+module does not show. It shows the project's state, not the device's: nothing is read from the
+gateway, so a gateway whose DALI configuration differs from the project's (changed from another
+project or tool, or a ballast replaced) is not seen here.
 
 Field meanings were recovered from the decompiled DCA and implemented from that documentation. The
 parser is covered by tests against a recorded backup store, which lives in the
@@ -159,7 +169,8 @@ A DCA's blob mirrors most of its configuration, but at runtime the DCA treats th
 set** as authoritative for some fields (lamp type, colour-control type, dim curves, descriptions).
 Busforge parses those parameters for every device already. So:
 
-- **Read-only display** needs the blob alone.
+- **Read-only display** needs the blob alone, and shows the blob's values (the lamp type too, where
+  the ETS parameters may hold another).
 - **Full fidelity, and any write-back**, needs the blob *and* the ETS parameters, kept consistent.
 
 That is why the read-only view is not merely a smaller version of the write path; the write path has
