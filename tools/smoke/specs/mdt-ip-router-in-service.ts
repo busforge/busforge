@@ -1,9 +1,11 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // The MDT IP Interface/Router SCN-IP000.03 (System B, MV-07B0, KNX Data Secure) as a unit in service:
-// the run takes its configuration by read-back and writes one parameter flash and one GA flash, each
-// reverted (inservice.ts). The product offers no full download (its application declares tunnelling
-// entries, FULL_DOWNLOAD_TUNNELING_ENTRIES) and no structural flash. Refs pinned verbatim from the
+// the run takes its configuration by read-back and writes one parameter flash and its revert
+// (inservice.ts). The product offers no full download (its application declares tunnelling entries,
+// FULL_DOWNLOAD_TUNNELING_ENTRIES) and no structural flash. Its GA flash is declared unsafe: no ETS
+// capture shows a group-address download of this product, so its bytes rest on the System B Data Secure
+// rule taken from other products' captures. Refs pinned verbatim from the
 // application's device configuration, taken offline from its catalogue; the run refuses a ref the
 // unit's configuration does not list.
 //
@@ -41,15 +43,10 @@ export const mdtIpRouterInService: DeviceSpec = {
     // and change back were verified on a unit outside the smoke runs (docs/status.md). The run reads
     // the unit's name and refuses if it already holds this one.
     param: { paramRefId: "M-0083_A-0137-20-7EB2_P-162_R-162", value: "Busforge in service" },
-    // "Operation" (DPST-1-11, read + transmit), unlinked in the application's default configuration,
-    // linked to the run's test address while the run reads it.
-    link: { comObjRefId: "M-0083_A-0137-20-7EB2_O-1_R-142" },
   },
   configure: [],
-  behaviours: [
-    // A unit that runs its application answers a GroupValueRead of "Operation"; which value it sends
-    // is not shown, so any answer counts.
-    { kind: "output", label: "Operation answers on the test link", comObjRefId: "M-0083_A-0137-20-7EB2_O-1_R-142" },
+  behaviours: [],
+  unsafe: [
+    { capability: "flashLinks", reason: "no ETS capture shows a group-address download of this product; its bytes rest on the System B Data Secure rule taken from other products' captures" },
   ],
-  unsafe: [],
 };
