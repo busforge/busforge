@@ -25,7 +25,7 @@ export interface ObservedRun {
   behaviours: BehaviourResult[];
   // The persistence check (persistence.ts), when the run reached it: A_Restart, an observed reboot,
   // then a read-back compared with the project.
-  persistence?: { state: "pass" | "fail"; detail: string };
+  persistence?: { state: "pass" | "fail" | "not-assessed"; detail: string };
   // A device in service (inservice.ts): the one write the persistence check covered.
   persistenceOf?: string;
 }
@@ -99,6 +99,7 @@ export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditi
     const p = run.persistence;
     if (!p || c.state !== "pass" || !PERSISTS.has(c.capability)) return NOT_ASSESSED;
     if (run.persistenceOf !== undefined && run.persistenceOf !== c.capability) return NOT_ASSESSED;
+    if (p.state === "not-assessed") return { state: "not-assessed", ...detail(p.detail) };
     return p.state === "pass" ? { state: "pass", method: PERSISTENCE_METHOD, ...detail(p.detail) } : { state: "fail", ...detail(p.detail) };
   };
   for (const c of run.capabilities) {

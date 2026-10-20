@@ -45,7 +45,7 @@ interface RunResult {
   // The saved connection's KNXnet/IP transport ("udp", "tcp", "auto"), once the run found it.
   ipTransport: string | null;
   firmware: Firmware;
-  persistence?: { state: "pass" | "fail"; detail: string };
+  persistence?: { state: "pass" | "fail" | "not-assessed"; detail: string };
   // Data Secure devices only: the refusals that must hold (wrong or missing key, altered answers),
   // and the proof that the imported configuration is back on the device when the run ends.
   negatives?: { name: string; state: "pass" | "fail"; detail: string }[];
@@ -138,7 +138,7 @@ async function rebootObserved<S>(host: string, ia: string, creds: Creds, states:
       finally { await dev.disconnect(); }
     };
     const reboot = await observeReboot(restart, probe);
-    const after = reboot.rebooted ? await states(tun) : unread;
+    const after = reboot.rebooted || reboot.unproven ? await states(tun) : unread;
     return { reboot, before, after };
   } finally { await tun.disconnect(); }
 }
@@ -557,13 +557,14 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       const checked = await (async (): Promise<NonNullable<RunResult["persistence"]>> => {
         const { reboot, before, after } = await rebootOnBench(host, spec.device.ia, spec.device.mask, creds);
         log(reboot.detail);
-        if (!reboot.rebooted) return { state: "fail", detail: reboot.detail };
+        if (!reboot.rebooted && !reboot.unproven) return { state: "fail", detail: reboot.detail };
         const states = judgeLoadStates(before, after);
         log(states.detail);
         await settle(3000);
         const coverage = await client.readBack(pid!, did!, (p) => log(`read ${p}`));
         const judged = judgeRestoredConfig(await client.getConfig(pid!, did!), coverage);
-        const state = states.state === "pass" && judged.state === "pass" ? "pass" : "fail";
+        // A reboot the probes could not see: what was read holds, but nothing shows the restart.
+        const state = states.state === "pass" && judged.state === "pass" ? (reboot.unproven ? "not-assessed" : "pass") : "fail";
         return { state, detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
       })().catch((e): NonNullable<RunResult["persistence"]> => ({ state: "fail", detail: `persistence check aborted: ${e instanceof Error ? e.message : String(e)}` }));
       persistence = checked;

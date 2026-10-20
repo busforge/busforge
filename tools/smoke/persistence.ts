@@ -10,7 +10,13 @@
 import type { DeviceReadbackInfo } from "../../packages/product/src/index.ts";
 import { flagsNotRead, type ConfigView } from "./client.ts";
 
-export interface RebootObservation { rebooted: boolean; detail: string }
+// `unproven`: after a negatively confirmed restart the device left a probe unanswered or unacknowledged and answered a
+// later one, but the probes never showed the two silences in a row that would prove a reboot (a device
+// silent for less time than two probes take, as the MEAN WELL power supply). The caller still reads the
+// load states and the configuration back; if they hold, nothing speaks against the reboot and nothing
+// shows it, so the step is not assessed, as the product's flash reports such a restart
+// (restartUnproven). A device that answers every probe after the restart did not reboot: no unproven.
+export interface RebootObservation { rebooted: boolean; unproven?: true; detail: string }
 
 // "answered": the device replied. "silent": the device did not reply (DEVICE_NOT_ANSWERING).
 // "unacknowledged": the interface reported that no device acknowledged the probe (BUS_SEND_FAILED). Any
@@ -41,14 +47,21 @@ export async function observeReboot(
   const note = confirmed ? "" : " (A_Restart confirmed negatively)";
   let silentAt: number | null = null;
   let silentRun = 0;
+  let gap = false;
+  let answeredAfterGap = false;
   while (now() - start < windowMs) {
     const outcome = await probe();
+    if (outcome !== "answered") gap = true;
+    else if (gap) answeredAfterGap = true;
     if (outcome === "silent" || (confirmed && outcome === "unacknowledged")) {
       silentRun++;
       if (silentRun >= silentNeeded && silentAt === null) silentAt = now() - start;
     } else silentRun = 0;
     if (outcome === "answered" && silentAt !== null) return { rebooted: true, detail: `silent ${silentAt} ms after A_Restart, answering again after ${now() - start} ms${note}` };
     await sleep(intervalMs);
+  }
+  if (silentAt === null && !confirmed && answeredAfterGap) {
+    return { rebooted: false, unproven: true, detail: `the device left a probe unanswered and answered again, but never went silent on two probes in a row within ${windowMs} ms of A_Restart${note}: the reboot cannot be seen` };
   }
   return silentAt === null
     ? { rebooted: false, detail: `the device never went silent${confirmed ? "" : " on two probes in a row"} within ${windowMs} ms of A_Restart${note}` }

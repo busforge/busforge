@@ -290,6 +290,14 @@ device answering before the restart, then not answering, then answering again. O
 own silence counts; an interface or tunnel error ends the check as a failure. Firmware differs in
 timing (the GVS actuator answers once more and drops out about 6 s later; the same device polled
 without a restart shows no gap), which is why the probes run for up to a minute rather than once.
+After an `A_Restart` the interface confirmed negatively, a device that stops acknowledging for a while
+without rebooting would show the same on the restart and on the probes, so the check counts only probes
+the device left unanswered, two in a row. A device silent for less time than two probes take (the MEAN
+WELL power supply: about 1.5 s, a silent probe about 5 s) leaves a probe unanswered or unacknowledged
+and answers again without showing them. The load states and the read-back still run, and either failing fails the step;
+when both hold, nothing speaks against the reboot and nothing shows it, so the record leaves
+persistence not assessed and names that reason, as the product's flash reports such a restart
+(`restartUnproven`). A device that answers every probe after the restart did not reboot: that fails.
 It reads the load states of load objects 1-4 before the restart and after the reboot, and every
 object that was LOADED must be LOADED again: a device can keep every byte and still refuse its
 application at boot (the Jung 400021SE comes back with its application object in ERROR). The

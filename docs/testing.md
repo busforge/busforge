@@ -342,7 +342,10 @@ and never the test address.
 
 Persistence is checked once, while the test link is placed, and the record attributes it to the GA
 flash only. A spec without a link step but with a requested full download checks it after the
-download instead.
+download instead. A reboot the probes cannot see after a negatively confirmed restart (a probe left
+unanswered or unacknowledged, a later one answered, never two unanswered in a row) leaves the step not assessed with
+that reason, and the run green, if the load states and the read-back after it hold; if not, it fails
+([evidence-contract.md](evidence-contract.md)).
 
 #### Writing a spec
 

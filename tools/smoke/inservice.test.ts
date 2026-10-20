@@ -38,6 +38,8 @@ interface Script {
   sideEffect?: boolean;                      // setting the step's parameter also changes another one
   chanThrowsOnSecondParamFlash?: boolean;    // the channel fails while writing the revert
   rebootThrows?: boolean;
+  rebootUnproven?: boolean;
+  unloadedAfterReboot?: boolean;
   witnessThrows?: boolean;
   downloadBreaks?: boolean;                  // the full download writes and then breaks off
   wrongRevert?: boolean;                     // the device keeps another value after the revert
@@ -163,9 +165,11 @@ function scripted(sc: Script = {}) {
       reboot: async () => {
         calls.push("restart");
         if (sc.rebootThrows) throw new Error("tunnel closed");
-        const reboot = { rebooted: true, detail: "silent 50 ms after A_Restart, answering again after 900 ms" };
+        const reboot = sc.rebootUnproven
+          ? { rebooted: false, unproven: true as const, detail: "the reboot cannot be seen" }
+          : { rebooted: true, detail: "silent 50 ms after A_Restart, answering again after 900 ms" };
         if (sc.system1) return { reboot, runError: { before: 0xff, after: sc.runErrorAfter ?? 0xff } };
-        return { reboot, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]) };
+        return { reboot, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, sc.unloadedAfterReboot ? 0 : 1]]) };
       },
     },
     log: () => undefined,
@@ -483,6 +487,25 @@ describe("a device in service, when something goes wrong", () => {
     // and the run says so instead of passing.
     expect(r.ok).toBe(false);
     expect(device).not.toEqual(start);
+  });
+
+  // A reboot the check cannot see after a negatively confirmed restart (the MEAN WELL power supply,
+  // persistence.test.ts): the load states and the configuration are still read. If they hold, the step
+  // is not assessed and the run stays green; if not, it fails as any persistence step does.
+  test("a reboot the check cannot see leaves persistence not assessed when what is read back holds, and the run passes", async () => {
+    const { io, calls, device, start } = scripted({ rebootUnproven: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.persistence).toMatchObject({ state: "not-assessed", detail: expect.stringMatching(/^the reboot cannot be seen; .*LOADED.*; .*equal to the project/) });
+    expect(r.persistenceOf).toBe("flashLinks");
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(planned(spec, NO_FULL));
+    expect(device).toEqual(start);
+  });
+  test("a reboot the check cannot see, with a load object no longer LOADED after it, is a persistence failure", async () => {
+    const { io } = scripted({ rebootUnproven: true, unloadedAfterReboot: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.persistence?.state).toBe("fail");
+    expect(r.ok).toBe(false);
   });
 
   test("a restart that breaks off is a harness failure, not a device result, and the link is still taken back", async () => {

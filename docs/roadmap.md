@@ -99,10 +99,9 @@ depends on is hardware-proven.
 - **The persistence check on a unit that confirms no restart and closes no connection.** After a
   negatively confirmed A_Restart the check needs two silent probes in a row, and each silent probe
   takes about 4.9 s; the MEAN WELL power supply is silent for 1.5 s between the interface's negative
-  confirmations and its start-up, so the check sees one and reports the step failed although the unit
-  restarted (`tools/smoke/persistence.test.ts`). The step should report such a restart unproven instead
-  of failed, or prove it from what the unit shows on its own (its start-up telegrams), which the
-  evidence contract would have to admit first.
+  confirmations and its start-up, so the check sees one and leaves the step not assessed
+  (`tools/smoke/persistence.test.ts`). Proving such a reboot from what the unit shows on its own (its
+  start-up telegrams) would need the evidence contract to admit it first.
 - **Turn the ETS-capture diff into a live read-back gate.** `our image == ETS` can only be checked
   where a captured ETS download exists. Diffing the built image against the device itself, with the
   segment base the device assigned, would catch that class of bug without a capture.

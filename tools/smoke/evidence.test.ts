@@ -62,6 +62,11 @@ describe("smoke evidence records", () => {
     expect(runEvidence(failed, gvsAmma, cond).find((r) => r.scope.operation === "fullDownload")!.results.persistence).toEqual({ state: "fail", detail: "the device never went silent" });
   });
 
+  test("a reboot the check could not see is recorded as persistence not assessed, with its reason", () => {
+    const unseen = { ...run, behaviours: [], persistence: { state: "not-assessed" as const, detail: "the reboot cannot be seen" } };
+    expect(runEvidence(unseen, gvsAmma, cond).find((r) => r.scope.operation === "fullDownload")!.results.persistence).toEqual({ state: "not-assessed", detail: "the reboot cannot be seen" });
+  });
+
   test("a read says it was decoded, not compared", () => {
     const read = runEvidence(run, gvsAmma, cond).find((r) => r.scope.operation === "readParams")!;
     expect(read.results.transfer).toMatchObject({ state: "pass", method: expect.stringContaining("not compared") });

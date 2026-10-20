@@ -33,7 +33,21 @@ describe("observeReboot", () => {
 
   test("a negatively confirmed restart: one silent probe is not enough, it could be a lost probe", async () => {
     const r = await observeReboot(unconfirmed, scripted(["answered", "silent", "answered"]), clock());
-    expect(r).toMatchObject({ rebooted: false, detail: expect.stringContaining("confirmed negatively") });
+    expect(r).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("confirmed negatively") });
+  });
+
+  // Only a device that answers again leaves the reboot merely unseen; one that stays away did not come back.
+  test("a negatively confirmed restart: a device that never answers again is no unproven reboot", async () => {
+    for (const tail of ["silent", "unacknowledged"] as const) {
+      const r = await observeReboot(unconfirmed, scripted(["answered", tail]), clock());
+      expect([tail, r.rebooted, r.unproven]).toEqual([tail, false, undefined]);
+    }
+  });
+  test("a restart, confirmed or not, that the device answers throughout is no unproven reboot: it did not reboot", async () => {
+    for (const restart of [noop, unconfirmed]) {
+      const r = await observeReboot(restart, scripted(["answered"]), clock());
+      expect([r.rebooted, r.unproven, r.detail]).toEqual([false, undefined, expect.stringContaining("never went silent")]);
+    }
   });
 
   test("a negatively confirmed restart: silent on two probes in a row, then an answer, is a reboot", async () => {
@@ -52,7 +66,8 @@ describe("observeReboot", () => {
 
   test("a negatively confirmed restart: unacknowledged probes are no silence, whatever their number", async () => {
     const r = await observeReboot(unconfirmed, scripted(["answered", "unacknowledged", "unacknowledged", "unacknowledged", "answered"]), clock());
-    expect(r).toMatchObject({ rebooted: false });
+    // No reboot shown, but a gap and an answer after it: unproven, left to the load states and the read-back.
+    expect(r).toMatchObject({ rebooted: false, unproven: true });
   });
 
   test("a restart the interface refused is not swallowed", async () => {
@@ -100,10 +115,9 @@ describe("observeReboot on the MEAN WELL power supply's recorded restart", () =>
 
   // One probe spans the whole window between the negative confirmations and the reboot, so the check
   // never sees the two silent probes in a row a negatively confirmed restart needs: it cannot tell
-  // this unit's reboot, and an in-service run reports its persistence step failed although the unit
-  // restarted (tools/smoke/specs/meanwell-knx40e-in-service.ts).
-  test("a negatively confirmed restart: the check does not see the reboot", async () => {
-    expect(await replay(false)).toMatchObject({ rebooted: false, detail: expect.stringContaining("never went silent on two probes in a row") });
+  // this unit's reboot, and the device answers again, so the step is not assessed rather than failed.
+  test("a negatively confirmed restart: the reboot is not seen, and is unproven", async () => {
+    expect(await replay(false)).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("never went silent on two probes in a row") });
   });
   // Through an interface that confirmed the restart (whether the house's KNXnet/IP interface does is not
   // recorded), one silent probe suffices and the reboot is seen.

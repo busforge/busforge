@@ -18,9 +18,9 @@ import type { DeviceSpec } from "../spec.ts";
 // frame negatively, and the unit gives no T_Disconnect: each flash ends verified with restartUnproven
 // (docs/load-procedures.md). The persistence check (persistence.ts) needs two silent probes in a row
 // after such a restart, and on the restart this unit showed over a KNX-USB interface it sees only one:
-// the run then reports the persistence step failed although the unit restarted
+// the run then leaves the persistence step not assessed, the unit answering again
 // (persistence.test.ts, "observeReboot on the MEAN WELL power supply's recorded restart"). Through an
-// interface that confirms the restart it sees the reboot (docs/roadmap.md, the persistence check).
+// interface that confirms the restart it sees the reboot.
 //
 // Fingerprint: the application id (object 4, PID 13) and the version (object 0, PID 25); the unit
 // refuses PID 9.

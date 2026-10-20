@@ -118,7 +118,7 @@ export interface InServiceResult {
   ok: boolean;
   capabilities: CapabilityResult[];
   behaviours: BehaviourResult[];
-  persistence?: { state: "pass" | "fail"; detail: string };
+  persistence?: { state: "pass" | "fail" | "not-assessed"; detail: string };
   // The write whose result the persistence check covers (the link while it is placed, else the full download).
   persistenceOf?: "flashLinks" | "fullDownload";
   // The device's configuration back as it was found: after a clean run, the dry runs; after a
@@ -496,13 +496,15 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     const r = await (async (): Promise<NonNullable<InServiceResult["persistence"]>> => {
       const observed = await io.bus.reboot();
       const { reboot } = observed;
-      if (!reboot.rebooted) return { state: "fail", detail: reboot.detail };
+      if (!reboot.rebooted && !reboot.unproven) return { state: "fail", detail: reboot.detail };
       const states = "runError" in observed ? judgeRunError(observed.runError.before, observed.runError.after) : judgeLoadStates(observed.before, observed.after);
       await io.settle(3000);
       const coverage = await io.api.readBack();
       const judged = judgeRestoredConfig(await io.api.getConfig(), coverage);
       await io.settle(3000);
-      return { state: states.state === "pass" && judged.state === "pass" ? "pass" : "fail", detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
+      // A reboot the probes could not see: what was read holds, but nothing shows the restart.
+      const held = states.state === "pass" && judged.state === "pass";
+      return { state: held ? (reboot.unproven ? "not-assessed" : "pass") : "fail", detail: `${reboot.detail}; ${states.detail}; ${judged.detail}` };
     })().catch((e) => { if (e instanceof Stop) throw e; harness("persistence", `the persistence check broke off: ${errText(e)}`); return undefined; });
     if (r) io.log(`persistence: ${r.detail}`);
     return r;
@@ -835,7 +837,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
   const ok = !stopped
     && capabilities.every((c) => c.state !== "fail")
     && behaviours.every((b) => b.state === "pass")
-    && (persistence === undefined || persistence.state === "pass")
+    && (persistence === undefined || persistence.state !== "fail")
     && restore?.state === "pass";
   return { ok, capabilities, behaviours, persistence, persistenceOf, restore, found, stopped, ...(route ? { route } : {}) };
 }
