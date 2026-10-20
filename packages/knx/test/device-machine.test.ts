@@ -523,24 +523,74 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
       expect([negative, (failure as { code?: string } | null)?.code]).toEqual([negative, "RESTART_IGNORED"]);
     }
   });
-  test("a link failure on the probes after a negatively confirmed restart is that error, never a proof, also where an unproven restart is accepted", async () => {
-    for (const accept of [false, true]) for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
+  // A link failure is never a proof of the reboot. Where an unproven restart is accepted (a flash, which
+  // reconnects and reads the device back after it) it is recorded as one; elsewhere it is the error.
+  test("a link failure on the probes after a negatively confirmed restart is no proof: the error, or unproven where accepted", async () => {
+    for (const accept of [false, true]) for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "TUNNEL_CLOSED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
       const { tun, dev } = restarted();
       dev.acceptUnprovenRestart(accept);
       // Only the first probe meets the failed link; the rest are left unanswered.
       let failed = false;
       tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && !failed ? (failed = true, code) : null);
       const failure = await dev.restart().then(() => null, (e: unknown) => e);
-      expect([accept, code, (failure as { code?: string } | null)?.code, dev.restartUnproven]).toEqual([accept, code, code, false]);
+      expect([accept, code, (failure as { code?: string } | null)?.code, dev.restartUnproven]).toEqual([accept, code, accept ? undefined : code, accept]);
     }
   });
-  test("a link failure on the probe after a positively confirmed restart is that error, never a proof", async () => {
-    for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
+  test("a link failure on the probe after a positively confirmed restart is no proof: the error, or unproven where accepted", async () => {
+    for (const accept of [false, true]) for (const requireReboot of [true, false]) for (const code of ["TUNNEL_ACK_TIMEOUT", "TUNNEL_SEND_FAILED", "TUNNEL_CLOSED", "USB_SEND_NOT_CONFIRMED", "USB_INTERFACE_LOST"]) {
       const { tun, dev } = restarted();
+      dev.acceptUnprovenRestart(accept);
       tun.failSend = (tpdu) => (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ ? code : null);
-      const failure = await dev.restart().then(() => null, (e: unknown) => e);
-      expect([code, (failure as { code?: string } | null)?.code]).toEqual([code, code]);
+      const failure = await dev.restart(requireReboot).then(() => null, (e: unknown) => e);
+      expect([accept, requireReboot, code, (failure as { code?: string } | null)?.code, dev.restartUnproven]).toEqual([accept, requireReboot, code, accept ? undefined : code, accept]);
     }
+  });
+  test("the tunnel dropped after a confirmed restart that got no answer: unproven where accepted, the error otherwise", async () => {
+    for (const negative of [false, true]) for (const accept of [false, true]) {
+      const { tun, dev } = restarted();
+      dev.acceptUnprovenRestart(accept);
+      let down = false;
+      tun.failSend = (tpdu) => {
+        if (down) return "TUNNEL_CLOSED";
+        if (!ignorable(tpdu) && parseApdu(tpdu).apci === (APCI.RESTART | 0x01)) { down = true; return negative ? "BUS_SEND_FAILED" : null; }
+        return null;
+      };
+      const failure = await dev.restart(true, true).then(() => null, (e: unknown) => e);
+      expect([negative, accept, (failure as { code?: string } | null)?.code, dev.restartUnproven]).toEqual([negative, accept, accept ? undefined : "TUNNEL_CLOSED", accept]);
+    }
+  });
+  test("an error without a code on the probe stays that error, also where an unproven restart is accepted", async () => {
+    for (const negative of [false, true]) {
+      const { tun, dev } = restarted();
+      dev.acceptUnprovenRestart(true);
+      if (negative) negativeOnRestart(tun);
+      const plain = tun.sendCemi.bind(tun);
+      tun.sendCemi = async (cemi: Buffer) => {
+        const tpdu = Buffer.from(cemi.subarray(9));
+        if (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ) throw new Error("no code");
+        return plain(cemi);
+      };
+      const failure = await dev.restart().then(() => null, (e: unknown) => e);
+      expect([negative, String(failure), dev.restartUnproven]).toEqual([negative, "Error: no code", false]);
+    }
+  });
+  test("the link failure that ended the proof is kept for the caller, and cleared by arming again", async () => {
+    const { tun, dev } = restarted();
+    dev.acceptUnprovenRestart(true);
+    tun.failSend = (tpdu) => (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ ? "TUNNEL_CLOSED" : null);
+    await dev.restart();
+    expect((dev.restartLinkFailure as { code?: string } | null)?.code).toBe("TUNNEL_CLOSED");
+    dev.acceptUnprovenRestart(false);
+    expect(dev.restartLinkFailure).toBeNull();
+  });
+  test("a link failure on a probe and then the device's T_Disconnect inside the window: proven", async () => {
+    const { tun, dev } = restarted();
+    dev.acceptUnprovenRestart(true);
+    let probes = 0;
+    tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes++ === 0 ? "TUNNEL_ACK_TIMEOUT" : null);
+    tun.handler = (tpdu) => { if (!ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes >= 1) tun.reply([0x81]); };
+    await dev.restart();
+    expect(dev.restartUnproven).toBe(false);
   });
   test("a T_NAK on the probe after a positively confirmed restart: the device is still there, RESTART_IGNORED", async () => {
     const tun = new FakeTransport();
@@ -705,13 +755,22 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
       dev.acceptUnprovenRestart(true);
       expect([await outcome(dev), dev.restartUnproven]).toEqual(["resolved", true]);
     });
-    test("a link failure on a later probe is that error too", async () => {
+    test("a link failure on a later probe is recorded as unproven too, and the probes go on to the window's end", async () => {
       for (const at of [1, 2]) {
         const { tun, dev } = restarted();
         let probes = 0;
         tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes++ === at ? "USB_INTERFACE_LOST" : null);
         dev.acceptUnprovenRestart(true);
-        expect([at, await outcome(dev), dev.restartUnproven, probes > at]).toEqual([at, "USB_INTERFACE_LOST", false, true]);
+        expect([at, await outcome(dev), dev.restartUnproven, probes > at]).toEqual([at, "resolved", true, true]);
+      }
+    });
+    test("the tunnel down from a probe on to the window's end: recorded as unproven, not the link's error", async () => {
+      for (const at of [0, 1, 2]) {
+        const { tun, dev } = restarted();
+        let probes = 0;
+        tun.failSend = (tpdu) => (isRestart(tpdu) ? "BUS_SEND_FAILED" : !ignorable(tpdu) && parseApdu(tpdu).apci === APCI.DEVICE_DESCRIPTOR_READ && probes++ >= at ? "TUNNEL_CLOSED" : null);
+        dev.acceptUnprovenRestart(true);
+        expect([at, await outcome(dev), dev.restartUnproven]).toEqual([at, "resolved", true]);
       }
     });
 

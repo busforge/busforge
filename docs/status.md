@@ -88,6 +88,9 @@ with return code `00`, which says it took the chunk, not what it stored. The MDT
 such a field (device notes below). A `verified` write whose closing restart the device did not confirm
 carries `restartUnproven` ([load-procedures.md](load-procedures.md#a-negative-confirmation-of-the-restart-frame)):
 the read-back after the restart shows the bytes, not that the device restarted and stored them for good.
+A flash whose restart took a KNXnet/IP tunnel down while the restart was being proven ends the same way:
+it opens the tunnel again and reads back; a KNX-USB interface lost then ends it unverified (shown on a
+scripted link, not on a device).
 Under that rule the MEAN WELL power supply's flashes end that way, shown by a test on its recorded restart, not by a run (device notes below).
 Bus behaviour means the device was observed acting on the bus through an independent witness
 connection, which is the only check that catches a byte-perfect flash of a semantically wrong

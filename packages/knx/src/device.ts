@@ -623,11 +623,12 @@ export class KnxDevice {
   private peerClosedAt: number | null = null;
   // A negatively confirmed A_Restart whose reboot the device did not decide (RESTART_UNPROVEN) is taken
   // as ETS takes it, sent and gone on, only by a caller that reads the device back after the restart and
-  // reports the gap (a flash: runFlashOp). There restart() records it instead of throwing; every other
-  // restart refuses it. `restartUnproven`: such a restart happened since acceptUnprovenRestart(true).
+  // reports the gap (a flash: runFlashOp), and so is a restart whose proof the link to the interface broke
+  // off (linkLostInProof). There restart() records it instead of throwing; every other restart refuses it.
+  // `restartUnproven`: such a restart happened since acceptUnprovenRestart(true).
   private unprovenRestartAccepted = false;
   private unprovenRestartSeen = false;
-  acceptUnprovenRestart(on: boolean): void { this.unprovenRestartAccepted = on; this.unprovenRestartSeen = false; }
+  acceptUnprovenRestart(on: boolean): void { this.unprovenRestartAccepted = on; this.unprovenRestartSeen = false; this.restartLinkLost = null; }
   get restartUnproven(): boolean { return this.unprovenRestartSeen; }
   interfaceMaxApdu(): Promise<number | null> {
     return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
@@ -1115,7 +1116,7 @@ export class KnxDevice {
     } catch (e) {
       // A failure of the link to the interface says nothing about the device: whether the probe
       // reached it is unknown, so it is no proof of the reboot.
-      if (isLinkFailure(e)) throw e;
+      if (isLinkFailure(e)) return this.linkLostInProof(e as Error);
       // T_NAK or T_ACK without an answer: the device is still there on this connection.
       if ((this.nakSeen || this.ackSeen) && requireReboot) {
         throw new KnxError("RESTART_IGNORED", `the device ${this.nakSeen ? "refused" : "acknowledged"} the probe after A_Restart on the same connection (T_${this.nakSeen ? "NAK" : "ACK"}): it is still there and did not reboot`);
@@ -1137,15 +1138,15 @@ export class KnxDevice {
   // T_Disconnect counts only when it arrived within restartProofMs of the device's last frame to us
   // (the acknowledgement of the frame before the restart), or of the restart where there was none.
   // Without the device's decision by then the restart is not proven (RESTART_UNPROVEN), and where a
-  // probe failed on the link to the interface, that failure is thrown: whether the probes reached the
-  // device at all is then unknown.
+  // probe failed on the link to the interface, whether the probes reached the device at all is unknown
+  // (linkLostInProof).
   private async proveUnconfirmedRestart(sentAt: number): Promise<void> {
     const deadline = Math.min(this.lastFromDeviceAt ?? sentAt, sentAt) + this.timeouts.restartProofMs;
     let linkFailure: Error | null = null;
     const unproven = (): void => {
       // A T_Disconnect between two probes, inside the window, is the proof as well.
       if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
-      if (linkFailure !== null) throw linkFailure;
+      if (linkFailure !== null) return this.linkLostInProof(linkFailure);
       if (this.unprovenRestartAccepted) { this.unprovenRestartSeen = true; return; }
       throw new KnxError("RESTART_UNPROVEN",
         `the interface confirmed A_Restart negatively, and within ${this.timeouts.restartProofMs} ms of the device's last frame it neither closed the connection nor answered on it: whether it restarted, and so stored its configuration, is not proven`);
@@ -1180,6 +1181,20 @@ export class KnxDevice {
       }
       await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
     }
+  }
+
+  // The link to the interface failed while the restart was being proven: a device whose restart takes
+  // the interface's tunnels down (a power supply that cuts the bus voltage, a router beside the interface)
+  // ends the proof so. Whether the device rebooted is unknown. A caller that reads the device back after
+  // the restart (acceptUnprovenRestart) takes it as an unproven restart, with the failure in
+  // `restartLinkFailure`, and reconnects so the read-back decides; every other caller gets the error, and
+  // so does an error without a code, which may be no link failure at all.
+  private restartLinkLost: Error | null = null;
+  get restartLinkFailure(): Error | null { return this.restartLinkLost; }
+  private linkLostInProof(e: Error): void {
+    if (!this.unprovenRestartAccepted || typeof (e as { code?: unknown }).code !== "string") throw e;
+    this.unprovenRestartSeen = true;
+    this.restartLinkLost = e;
   }
 
   // Factory-reset the device over the bus (A_Restart with RestartType = MasterReset and an erase

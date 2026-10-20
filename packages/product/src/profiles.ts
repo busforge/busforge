@@ -50,15 +50,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // fixed pause then one connect would throw "device not answering" on the post-restart read and
 // report a SUCCESSFUL flash as a failure. Re-establish the connection and wait for the device to
 // answer a lightweight liveness probe, retrying with backoff. Throws only if the device never
-// answers within the budget. Timing is injectable for tests. Worst case on a truly dead device
-// is bounded (~40 s with the defaults: 3 s + 6 probes, each probe's request retries internally),
-// which is acceptable for a one-off commissioning flash and far better than the false-failure. A
-// failed link to the interface reopens it and is retried for up to `linkDeadlineMs` (see LINK_ERRORS).
+// answers within the budget: `tries` probes it did not answer, and no earlier than `answerWithinMs`
+// after the restart, however fast the probes fail (a negative L_Data.con returns at once). Timing is
+// injectable for tests. A failed link to the interface reopens it and is retried for up to
+// `linkDeadlineMs` (see LINK_ERRORS).
+// RESTART_ANSWER_MS: the slowest return measured after A_Restart is about 14 s (the Auro presence
+// detector's persistence records in the shipped evidence, apps/server/src/evidence-bundle.json: "answering
+// again after 13679 ms"); the budget is twice that.
+export const RESTART_ANSWER_MS = 30_000;
 export async function reconnectAfterRestart(
   dev: Pick<KnxDevice, "connect" | "disconnect" | "deviceDescriptor" | "reopenTransport">,
-  opts: { initialMs?: number; tries?: number; delayMs?: number; linkDeadlineMs?: number; linkDown?: boolean } = {},
+  opts: { initialMs?: number; tries?: number; delayMs?: number; answerWithinMs?: number; linkDeadlineMs?: number; linkDown?: boolean } = {},
 ): Promise<void> {
-  const { initialMs = 3000, tries = 6, delayMs = 2000, linkDeadlineMs = 120_000 } = opts;
+  const { initialMs = 3000, tries = 6, delayMs = 2000, answerWithinMs = RESTART_ANSWER_MS, linkDeadlineMs = 120_000 } = opts;
   const start = Date.now();
   await sleep(initialMs);
   // `tries` counts the device's answers only; failures of the link to the interface are retried,
@@ -88,7 +92,7 @@ export async function reconnectAfterRestart(
         if (Date.now() - start >= linkDeadlineMs) {
           throw new KnxError("FLASH_UNVERIFIED_LINK_DOWN", `the link to the interface did not come back within ${Math.round(linkDeadlineMs / 1000)} s of the restart (${(e as Error).message}), so the write is not verified; it may well have landed: read the device back`);
         }
-      } else if (++deviceTries >= tries) break;
+      } else if (++deviceTries >= tries && Date.now() - start >= answerWithinMs) break;
       await sleep(delayMs);
     }
   }
@@ -436,8 +440,9 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // `confirmedOnly`: the bytes of a verified flash the device does not give back when read, verified by
 // its write confirmation alone (confirmedMatch); absent when the read-back shows every byte.
 // `restartUnproven`: the interface confirmed the closing A_Restart negatively and the device neither
-// closed the connection nor answered on it (KnxDevice.acceptUnprovenRestart), so `verified` shows the
-// device holds the bytes after the restart, not that it restarted and stored them.
+// closed the connection nor answered on it, or the link to the interface failed while the restart was
+// being proven (KnxDevice.acceptUnprovenRestart), so `verified` shows the device holds the bytes after
+// the restart, not that it restarted and stored them.
 // `readsFF` on a dry run: the bytes of `diffBytes` the device reads as FF (differingFF), where a device
 // that does not give a byte back reads; absent where there is none, or the operation does not tell them.
 // `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
@@ -527,7 +532,7 @@ function unitMcbRegions(read: ImageStamp[], obj: number): McbRegion[] | null {
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
 // device's current state and computed the diff. The profile supplies only the
 // model-specific pieces; the safety-critical sequencing lives in runFlashOp.
-interface FlashOp {
+export interface FlashOp {
   imageBytes: number;
   // The full download's image (deviceflash.ts fullDownloadImageDigest), reported by its dry run so a
   // caller can check the plan it compared with the device is the one this server writes.
@@ -589,7 +594,7 @@ async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>
 // Centralized so the invariants (backup BEFORE any write, verify AFTER the restart,
 // a "flashed" result always carrying a real verified flag) hold structurally for every
 // current and future profile instead of by convention in four hand-rolled copies.
-async function runFlashOp(
+export async function runFlashOp(
   dev: KnxDevice, mask: string,
   ctx: { dryRun: boolean; persistBackups: PersistBackups } & WriteGate,
   op: FlashOp,
@@ -614,7 +619,13 @@ async function runFlashOp(
   try {
     const written = await op.write();
     const restartUnproven = dev.restartUnproven;
-    await reconnectAfterRestart(dev);
+    // A lost USB interface is finished for this operation (a stick that comes back is a new transport), so
+    // nothing can read the device back here; a failed KNXnet/IP tunnel is opened again by the reconnect.
+    const lost = dev.restartLinkFailure as (Error & { code?: string }) | null;
+    if (lost?.code === "USB_INTERFACE_LOST") {
+      throw new KnxError("FLASH_UNVERIFIED_LINK_DOWN", `the USB interface was lost while the device's restart was being proven (${lost.message}), so the write is not verified; it may well have landed: read the device back`);
+    }
+    await reconnectAfterRestart(dev, { linkDown: isLinkError(lost) });
     const confirmedOnly: ConfirmedOnlyRange[] = [];
     const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
     return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(restartUnproven ? { restartUnproven: true as const } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };

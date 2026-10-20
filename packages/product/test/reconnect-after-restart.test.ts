@@ -1,5 +1,7 @@
 import { test, expect, describe } from "bun:test";
-import { reconnectAfterRestart } from "../src/profiles.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { reconnectAfterRestart, RESTART_ANSWER_MS } from "../src/profiles.ts";
 
 // An MDT IP interface stops serving its tunnels for 40-64 s whenever the MDT IP router beside it
 // restarts, then drops them: the connection the flash runs over fails with a link error, not the
@@ -97,8 +99,45 @@ describe("reconnecting after a restart that took the interface's tunnels down", 
       async disconnect() {}, async deviceDescriptor() { return "x"; },
       async reopenTransport() { throw new Error("must not reopen"); },
     };
-    const err = await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 1, tries: 3, linkDeadlineMs: 10_000 }).then(() => null, (e: Error & { code?: string }) => e);
+    const err = await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 1, tries: 3, answerWithinMs: 0, linkDeadlineMs: 10_000 }).then(() => null, (e: Error & { code?: string }) => e);
     expect(err?.code).toBe("DEVICE_NOT_ANSWERING");
     expect(tries).toBe(3);
+  });
+});
+
+// A probe can fail within milliseconds (a negative L_Data.con while the device is off the bus), so a
+// count of tries alone would give up long before a slow device is back: the device keeps being probed
+// until `answerWithinMs` has passed since the restart.
+describe("the time a rebooting device has to answer again", () => {
+  const booting = (upAfterMs: number) => {
+    const start = Date.now();
+    let probes = 0;
+    return {
+      get probes() { return probes; },
+      async connect() {}, async disconnect() {},
+      async deviceDescriptor() { probes++; if (Date.now() - start < upAfterMs) throw Object.assign(new Error("not acknowledged"), { code: "BUS_SEND_FAILED" }); return "x"; },
+      async reopenTransport() { throw new Error("must not reopen"); },
+    };
+  };
+
+  test("fast-failing probes go on past the tries until the device answers within the time", async () => {
+    const dev = booting(120);
+    await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 10, tries: 2, answerWithinMs: 1000, linkDeadlineMs: 10_000 });
+    expect(dev.probes).toBeGreaterThan(2);
+  });
+
+  test("a device that stays away fails once both the tries and the time are spent, not before", async () => {
+    const dev = booting(Infinity);
+    const start = Date.now();
+    const err = await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 10, tries: 2, answerWithinMs: 150, linkDeadlineMs: 10_000 }).then(() => null, (e: Error & { code?: string }) => e);
+    expect(err?.code).toBe("BUS_SEND_FAILED");
+    expect(Date.now() - start).toBeGreaterThanOrEqual(150);
+  });
+
+  test("the default time is at least twice the slowest return after A_Restart the shipped evidence records", () => {
+    const bundle = JSON.parse(readFileSync(join(import.meta.dir, "../../../apps/server/src/evidence-bundle.json"), "utf8")) as { records: { results: Record<string, { detail?: string }> }[] };
+    const returns = bundle.records.flatMap((r) => Object.values(r.results).flatMap((a) => [...(a.detail ?? "").matchAll(/answering again after (\d+) ms/g)].map((m) => Number(m[1]))));
+    expect(returns.length).toBeGreaterThan(0);
+    expect(RESTART_ANSWER_MS).toBeGreaterThanOrEqual(2 * Math.max(...returns));
   });
 });
