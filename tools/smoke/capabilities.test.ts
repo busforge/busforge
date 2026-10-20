@@ -11,7 +11,7 @@ const APP_FLAGS: Flags = { read: true, write: true, comm: true, transmit: true, 
 // A device with two objects behind a server that keeps the project's links and flags apart from the
 // device's: a GA flash writes the project's to the device (through `write`, which a test can falsify),
 // a read-back takes the device's into the baseline the view compares with.
-function bench(opts: { editable?: string[]; readsFlags?: boolean; readback?: Partial<DeviceReadbackInfo>; write?: (links: number[]) => number[] } = {}) {
+function bench(opts: { editable?: string[]; readsFlags?: boolean; readback?: Partial<DeviceReadbackInfo>; write?: (links: number[]) => number[]; secured?: boolean } = {}) {
   const refs = ["O-0", "O-1"];
   const project = { links: new Map(refs.map((r) => [r, [] as number[]])), flags: new Map(refs.map((r) => [r, { ...APP_FLAGS }])) };
   const device = { links: new Map(refs.map((r) => [r, [] as number[]])), flags: new Map(refs.map((r) => [r, { ...APP_FLAGS }])) };
@@ -34,6 +34,7 @@ function bench(opts: { editable?: string[]; readsFlags?: boolean; readback?: Par
   const flashed: FlashResult = { kind: "flashed", verified: true } as FlashResult;
   const client = {
     getConfig: async () => view(),
+    securedOn: async () => opts.secured ?? false,
     ensureGa: async (_pid: string, ga: string) => { calls.push(`ensureGa ${ga}`); },
     link: async (_p: string, _d: string, ref: string, ga: string) => { calls.push(`link ${ref} ${ga}`); project.links.set(ref, [gaToNum(ga)]); return view(); },
     setLinks: async (_p: string, _d: string, ref: string, gaRaws: number[]) => { calls.push(`setLinks ${ref} ${gaRaws.join(",")}`); project.links.set(ref, [...gaRaws]); return view(); },
@@ -136,6 +137,27 @@ describe("flashLinks", () => {
     const b = bench({ readback: { flagsRead: false, flagsUnreadable: "COM_OBJECT_TABLE_NOT_LOADED: not loaded" } });
     const e = await capFlashLinks(b.ctx).then(() => null, (x: unknown) => x);
     expect(String(e)).toContain("the read-back could not read the device's com-object table: COM_OBJECT_TABLE_NOT_LOADED");
+  });
+});
+
+describe("flashLinks on a Data Secure device", () => {
+  test("gives a secured first address no second one, still turns the read flag over and back, and says why", async () => {
+    const b = bench({ secured: true });
+    const r = await capFlashLinks(b.ctx);
+    expect(r.state).toBe("pass");
+    expect(r.detail).toBe("linked object 0 → 1/3/1, verified on read-back; its read flag off in one GA flash, taken back in another, each read back; no second address: 1/3/1 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)");
+    expect(b.calls.filter((c) => c.startsWith("setLinks"))).toEqual([]);
+    expect(b.calls.filter((c) => c === "flash-ga")).toHaveLength(3);
+    expect(b.device.links.get("O-0")).toEqual([gaToNum("1/3/1")]);
+    expect(b.device.flags.get("O-0")).toEqual(APP_FLAGS);
+  });
+
+  test("stops after the first link where neither a second address nor a flag edit can run", async () => {
+    const b = bench({ secured: true, editable: [] });
+    const r = await capFlashLinks(b.ctx);
+    expect(r.state).toBe("pass");
+    expect(r.detail).toBe("linked object 0 → 1/3/1, verified on read-back; no second address: 1/3/1 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap); its flags not edited (the downloads do not write the read flag)");
+    expect(b.calls.filter((c) => c === "flash-ga")).toHaveLength(1);
   });
 });
 

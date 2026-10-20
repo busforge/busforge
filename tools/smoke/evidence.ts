@@ -36,7 +36,7 @@ export interface ObservedRun {
 const METHOD: Record<string, string> = {
   fullDownload: "the server reported the download verified (read-back or device CRC, per profile)",
   flashParams: "each change and its revert reported verified by the server, zero drift on read-back",
-  flashLinks: "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+  flashLinks: "the link flash reported verified by the server and the link read back; a second address behind it (not where the first is secured on a Data Secure device) and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back; the result names what ran",
   structuralFlash: "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
   readParams: "parameter memory read and decoded completely; not compared with a built image",
   readLinks: "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
