@@ -22,6 +22,7 @@ columns are listed per operation below.
 | M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | eligible, untested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
 | M-0162 KNX-40E-1280D | `M-0162_A-0004-11-F245` | eligible, untested | eligible, untested | **failed** | eligible, untested | eligible, untested | eligible, untested |
@@ -103,6 +104,19 @@ Product `M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02`, application program `M-
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 6 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
 | Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+
+## M-0083 BE-06001.02
+
+Product `M-0083_H-180-0_P-BE.2D06001.2E02`, application program `M-0083_A-00B4-32-3919`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 0 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
 
 ## M-0083 BE-02001.02
 
