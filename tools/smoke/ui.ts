@@ -24,6 +24,19 @@ export function namesAddress(text: string, gaAddress: string): boolean {
   return new RegExp("(?<![0-9/])" + gaAddress.replace(/[/]/g, "\\/") + "(?![0-9/])").test(text);
 }
 
+// How a display parameter's row (TypeNone: a heading or note, no value) shows the parameter's name:
+// in its text; only as the row's tooltip, as a grid cell carries its label (the page sets that from
+// the name, so it proves the row exists, not that the name is on screen); "blank" for a parameter
+// without a name, whose row shows nothing; null when the row shows another text. Whitespace is
+// compared collapsed, as an author's line breaks and indent spaces render.
+export function displayNameShown(rowText: string, rowTitle: string | null, name: string): "text" | "tooltip" | "blank" | null {
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  const want = norm(name);
+  if (want === "") return "blank";
+  if (norm(rowText).includes(want)) return "text";
+  return norm(rowTitle ?? "") === want ? "tooltip" : null;
+}
+
 export class UiDriver {
   private browser: Browser | null = null;
   private page: Page | null = null;
@@ -311,11 +324,25 @@ export class UiDriver {
   // Assert every parameter and com-object the API exposes has a rendered, visible row. The expected
   // refs/numbers come from the API config (allParams / allComObjects), so this proves the UI renders
   // exactly what the source of truth holds, no hidden husks. Fails on the first row that is missing.
-  async clickThrough(expectParams: string[], expectLinks: number[]): Promise<void> {
+  // A display parameter (`display` = its name) has no value: its value cell stays empty, and its row
+  // must be visible and show the name. Returns how many display rows carry the name only as a
+  // tooltip, and how many have no name to show, for the run's detail.
+  async clickThrough(expectParams: { refId: string; display?: string }[], expectLinks: number[]): Promise<{ tooltipOnly: number; blank: number }> {
     const page = this.req();
-    for (const ref of expectParams) {
+    const shown = { tooltipOnly: 0, blank: 0 };
+    for (const { refId: ref, display } of expectParams) {
       const loc = page.locator(`[data-testid="param-${ref}"]`).first();
       if (!(await loc.count())) throw new Error(`click-through: parameter row not rendered: ${ref}`);
+      if (display !== undefined) {
+        const row = loc.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' border-l-2 ')][1]");
+        if (!(await row.count())) throw new Error(`click-through: display parameter row container not found: ${ref}`);
+        if (!(await row.isVisible())) throw new Error(`click-through: display parameter row present but hidden: ${ref}`);
+        const how = displayNameShown(await row.innerText(), await row.getAttribute("title"), display);
+        if (how === null) throw new Error(`click-through: display parameter row does not show its name: ${ref}`);
+        if (how === "tooltip") shown.tooltipOnly++;
+        if (how === "blank") shown.blank++;
+        continue;
+      }
       if (!(await loc.isVisible())) throw new Error(`click-through: parameter row present but hidden: ${ref}`);
     }
     for (const num of expectLinks) {
@@ -323,6 +350,7 @@ export class UiDriver {
       if (!(await loc.count())) throw new Error(`click-through: link row not rendered for com-object ${num}`);
       if (!(await loc.isVisible())) throw new Error(`click-through: link row present but hidden for com-object ${num}`);
     }
+    return shown;
   }
 
   // Wait until a bus op in the open dialog has SETTLED: no spinner is left running AND at least one

@@ -506,7 +506,11 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     if (ui) {
       process.stdout.write("  → ui-click-through\n");
       const view = await client.getConfig(pid, did);
-      try { await ui.clickThrough(allParams(view).map((p) => p.refId), allComObjects(view).map((c) => c.number)); clickThrough = { state: "pass", detail: `${allParams(view).length} params, ${allComObjects(view).length} objects rendered` }; }
+      try {
+        const shown = await ui.clickThrough(allParams(view).map((p) => ({ refId: p.refId, ...(p.control === "display" ? { display: p.name } : {}) })), allComObjects(view).map((c) => c.number));
+        const notes = [shown.tooltipOnly ? `${shown.tooltipOnly} display parameter(s) named only in a grid cell's tooltip` : "", shown.blank ? `${shown.blank} display parameter(s) without a name to show` : ""].filter(Boolean);
+        clickThrough = { state: "pass", detail: `${allParams(view).length} params, ${allComObjects(view).length} objects rendered${notes.length ? ` (${notes.join(", ")})` : ""}` };
+      }
       catch (e) { clickThrough = { state: "fail", detail: e instanceof Error ? e.message : String(e) }; ok = false; }
     }
 
