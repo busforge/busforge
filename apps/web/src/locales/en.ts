@@ -951,6 +951,7 @@ const en = {
     dlDoneVerified: "Downloaded and verified ({{bytes}} bytes written).",
     dlDoneUnverified: "Downloaded but read-back did not verify. Check the device.",
     confirmedOnly: "{{bytes}} byte(s) at {{ranges}} the device does not give back when read; they rest on its write confirmation alone.",
+    readsFF: "{{bytes}} of them, at {{ranges}}, read as FF: what the device returns for bytes it does not give back. Only the write shows whether they are such bytes.",
     restartUnproven: "The device did not confirm its restart: the read-back after it matches, but whether the device has stored the configuration for good is not proven.",
     download: "Download",
   },

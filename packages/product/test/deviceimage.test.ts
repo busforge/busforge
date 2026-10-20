@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { test, expect, describe } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
@@ -405,6 +405,18 @@ test("a unit that differs only in constant bits is no change, and they still go 
   expect([same.diffBytes, [...same.image]]).toEqual([0, [0x91, 7]]);
   const changed = mergeRelativeTarget(Buffer.from([0x11, 6]), target);
   expect([changed.diffBytes, [...changed.image]]).toEqual([1, [0x91, 7]]);
+});
+
+// A field the device does not give back reads FF (the MDT IP Interface/Router's web interface password):
+// the differing bytes that read FF are named, at device addresses, in runs; a byte that reads FF and is
+// to hold FF, one that differs elsewhere, one outside the owned bits and a constant bit are not.
+test("the differing bytes the device reads as FF are named in runs at their device addresses", () => {
+  const target = relTarget([true, true, true, true, true, false, 0x80, true], [1, 2, 0xff, 4, 5, 6, 0, 8], undefined, [0, 0, 0, 0, 0, 0, 0x80, 0]);
+  const current = Buffer.from([0xff, 0xff, 0xff, 9, 0xff, 0xff, 0xff, 0xff]);
+  const { image, diffBytes } = mergeRelativeTarget(current, target);
+  expect(diffBytes).toBe(5);
+  expect(differingFF(current, image, target, 0x4000)).toEqual([{ address: 0x4000, length: 2 }, { address: 0x4004, length: 1 }, { address: 0x4007, length: 1 }]);
+  expect(differingFF(Buffer.from(target.bytes), mergeRelativeTarget(Buffer.from(target.bytes), target).image, target, 0x4000)).toEqual([]);
 });
 
 test("a byte shared with bits no parameter owns takes only the owned bits; the rest stay as the device holds them", () => {

@@ -314,6 +314,21 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(res.confirmedOnly).toEqual([{ address: BASE + k, length: 1 }]);
     }, 30_000);
 
+    // The same field before a write: the dry run counts the byte the device reads as FF and names it, as
+    // nothing but a write tells a byte it does not give back from one that holds FF.
+    test("a dry run names the differing bytes the device reads as FF", async () => {
+      const k = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.constant[i] === 0 && target.bytes[i] !== 0xff);
+      const dev = seeded();
+      dev.mem.set(BASE, target.bytes[0] === 0 ? 1 : 0); // a difference that reads as data
+      dev.mem.set(BASE + k, 0xff);
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      expect(res).toMatchObject({ kind: "dryRun", diffBytes: 2, readsFF: [{ address: BASE + k, length: 1 }] });
+      dev.mem.set(BASE + k, target.bytes[k]);
+      const plain = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      expect(plain.kind === "dryRun" && plain.diffBytes === 1 && !("readsFF" in plain)).toBe(true);
+      expect(dev.writes).toBe(0);
+    });
+
     test("LSM 4 Loading: the bracket runs and leaves it LOADED", async () => {
       const dev = seeded();
       dev.state.set(4, STATE.LOADING);

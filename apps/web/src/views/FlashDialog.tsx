@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, RefreshCw } from "
 import { useTranslation } from "react-i18next";
 import { api, ApiError, taskActive, type Device, type DeviceConfigView, type FlashResult, type MatrixOperation, type Task } from "../api.ts";
 import { UntestedNotice, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
-import { ConfirmedOnlyNote } from "@/components/ConfirmedOnlyNote.tsx";
+import { ConfirmedOnlyNote, ReadsFFNote } from "@/components/ConfirmedOnlyNote.tsx";
 import { RestartUnprovenNote } from "@/components/RestartUnprovenNote.tsx";
 import { ConstantsDifferNote } from "@/components/ConstantsDifferNote.tsx";
 import { untestedOps } from "../lib/untested.ts";
@@ -199,7 +199,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     if (p.error) return <span className="flex items-center gap-2 text-destructive" data-testid="flash-part-fail"><AlertTriangle className="size-4 shrink-0" /> {errMsg(t, p.error)}</span>;
     if (p.checking) return <span className="flex items-center gap-2 text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("flash.checking")}</span>;
     if (p.dry) return p.dry.kind === "dryRun"
-      ? <span data-testid={p.dry.structural ? "flash-part-structural" : undefined}>{t(p.dry.structural ? "flash.willChangeStructure" : "flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}</span>
+      ? <span data-testid={p.dry.structural ? "flash-part-structural" : undefined}>{t(p.dry.structural ? "flash.willChangeStructure" : "flash.willChange", { diff: p.dry.diffBytes, total: p.dry.imageBytes, mask: p.dry.mask })}<ReadsFFNote result={p.dry} /></span>
       : <span className="text-muted-foreground" data-testid="flash-part-insync">{t("flash.inSync")}<ConstantsDifferNote result={p.dry} /></span>;
     return <span className="text-muted-foreground">…</span>;
   };

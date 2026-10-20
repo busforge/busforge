@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
@@ -438,6 +438,8 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // `restartUnproven`: the interface confirmed the closing A_Restart negatively and the device neither
 // closed the connection nor answered on it (KnxDevice.acceptUnprovenRestart), so `verified` shows the
 // device holds the bytes after the restart, not that it restarted and stored them.
+// `readsFF` on a dry run: the bytes of `diffBytes` the device reads as FF (differingFF), where a device
+// that does not give a byte back reads; absent where there is none, or the operation does not tell them.
 // `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
 // state it does not read (the System 1 download), so this dry run never reports unchanged.
 // `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
@@ -445,7 +447,7 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // download marker is seen; absent where there is none.
 export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string; constantsDiffer?: ConstantDifference[] }
-  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string; alwaysWrite?: true }
+  | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string; alwaysWrite?: true; readsFF?: ConfirmedOnlyRange[] }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; restartUnproven?: true; stamps?: ImageStamp[] }
 ) & { structural?: true };
 
@@ -531,6 +533,8 @@ interface FlashOp {
   // caller can check the plan it compared with the device is the one this server writes.
   imageDigest?: string;
   diffBytes: number;
+  // The bytes of diffBytes the device reads as FF (FlashResult.readsFF).
+  readsFF?: ConfirmedOnlyRange[];
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
   // The model-specific download (device restarts after). Where the device's read decides what goes on the
@@ -599,7 +603,7 @@ async function runFlashOp(
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
   if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup, ...(op.constantsDiffer?.length ? { constantsDiffer: op.constantsDiffer } : {}) };
-  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}), ...(op.alwaysWrite ? { alwaysWrite: true as const } : {}) };
+  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}), ...(op.alwaysWrite ? { alwaysWrite: true as const } : {}), ...(op.readsFF?.length ? { readsFF: op.readsFF } : {}) };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();
@@ -1449,6 +1453,7 @@ export class SystemBProfile extends DeviceProfile {
       extendedMemory: this.requireCfg("parameter flash").loadProcedures.extendedMemoryServices,
       imageBytes: image.length,
       diffBytes,
+      readsFF: differingFF(current, image, target, addr),
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: backupFile,
@@ -1648,6 +1653,7 @@ export class SystemBProfile extends DeviceProfile {
       diffBytes: paramDiff + byteDiff(addr, cur.addr) + byteDiff(assoc, cur.assoc) + byteDiff(comObj, cur.comObj)
         + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
           + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
+      readsFF: differingFF(current, image, target, paramsAt),
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: `${prefix}-params.bin`,

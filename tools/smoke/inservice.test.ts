@@ -53,6 +53,10 @@ interface Script {
   system1?: boolean;                         // a System 1 unit: no GA flash, a download that always writes, a run error byte
   runErrorAfter?: number;                    // the run error byte after the reboot
   gaInProject?: boolean;                     // the project already holds the test address
+  // A field the unit stores and reads as FF (the MDT IP Interface/Router's web interface password): every
+  // parameter dry run differs there, named in readsFF; a parameter write rests there on its confirmation
+  // alone, unless `givenBack` (the unit returns the bytes once written: it held FF, not the project's value).
+  writeOnly?: { at: number; length: number; givenBack?: boolean; moreDiffers?: boolean };
 }
 
 function scripted(sc: Script = {}) {
@@ -89,6 +93,9 @@ function scripted(sc: Script = {}) {
   // System 1's download is written whatever it finds: its dry run says how many bytes differ.
   const sys1Dry = (): FlashResult => result("dryRun", { alwaysWrite: true, diffBytes: sc.adoptDryNotUnchanged || paramsDiffer() ? 3 : 0 });
   const plain: string[] = [];
+  const ffRange = sc.writeOnly ? [{ address: sc.writeOnly.at, length: sc.writeOnly.length }] : undefined;
+  const ffDry = (r: FlashResult): FlashResult => (!ffRange ? r
+    : { ...r, kind: "dryRun", diffBytes: (r.kind === "dryRun" ? r.diffBytes! : 0) + ffRange[0].length + (sc.writeOnly!.moreDiffers ? 1 : 0), readsFF: ffRange });
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
       ...Object.keys(project.params).map((refId): CfgItem => ({ kind: "param", param: { refId, name: refId, control: "number", value: project.params[refId], min: 0, max: 16000, changed: project.params[refId] !== base.params[refId] } })),
@@ -121,12 +128,12 @@ function scripted(sc: Script = {}) {
       hasGa: async (ga) => sc.gaInProject === true && ga === GA,
       setGaPlain: async (ga) => { plain.push(ga); },
       setLinks: async (ref, gas) => { project.links[ref] = [...gas]; },
-      flashDry: async () => (sc.system1 ? sys1Dry() : sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
+      flashDry: async () => ffDry(sc.system1 ? sys1Dry() : sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
       // As the server's flash-ga route: a pending parameter change that alters the com-object table
       // makes it the structural flash.
       flashGaDry: async () => { if (sc.system1) throw Object.assign(new Error("no capture shows a System 1 group-address download"), { code: "SYSTEM1_GROUP_TABLES_UNCAPTURED" }); return structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged"); },
       downloadDry: async () => (sc.system1 ? sys1Dry() : result("dryRun")),
-      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}) }); },
+      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}), ...(ffRange && !sc.writeOnly!.givenBack ? { confirmedOnly: ffRange } : {}) }); },
       flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
@@ -170,6 +177,51 @@ const NO_FULL: InServiceOptions = { fullDownload: false, testGa: GA };
 const WRITES = new Set(["flashParams", "flashLinks", "structuralFlash", "fullDownload", "restart"]);
 const writesOf = (calls: string[]) => calls.filter((c) => WRITES.has(c));
 const planned = (s: DeviceSpec, o: InServiceOptions) => planInService(s, o).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : p.op!));
+
+describe("a unit with a field it does not give back", () => {
+  const FF = { at: 0x1512, length: 20 };
+
+  test("the adoption takes a parameter dry run that differs only where the unit reads FF, names the bytes, and each parameter write shows them on its confirmation alone", async () => {
+    const { io, calls, device, start } = scripted({ writeOnly: FF });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "flashLinks", "restart", "flashLinks"]);
+    expect(r.found?.readsFF).toEqual([{ address: 0x1512, length: 20 }]);
+    expect(r.capabilities.find((c) => c.capability === "flashParams")?.detail).toContain("verified, 0x1512-0x1525 written from the project on the write confirmation alone");
+    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run differs only at the bytes taken as not given back (0x1512-0x1525), which the run's parameter writes set to the project's value: what the unit held there before is not known, GA flash dry run unchanged" });
+    expect(device).toEqual(start);
+  });
+
+  test("a parameter write that reads the bytes back stops the run: the unit held FF there, not the configuration taken over", async () => {
+    const { io, calls } = scripted({ writeOnly: { ...FF, givenBack: true } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.ok).toBe(false);
+    expect(r.stopped?.phase).toBe("flashParams");
+    expect(r.stopped?.detail).toContain("took the bytes at 0x1512-0x1525 as not given back by the unit, but this write read every byte back");
+    expect(r.stopped?.detail).toContain("now holds the project's value there; the value found is in the server's backups");
+    // The undo writes the step's parameter back; its write reads the bytes back as well, and says so.
+    expect(writesOf(calls)).toEqual(["flashParams", "flashParams"]);
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("parameter revert: the adoption took the bytes at 0x1512-0x1525 as not given back");
+  });
+
+  test("a dry run that differs beyond the bytes read as FF stops the adoption", async () => {
+    const { io, calls } = scripted({ writeOnly: { ...FF, moreDiffers: true } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toContain("the parameter flash dry run reports dryRun with 21 differing byte(s) (read as FF at 0x1512-0x1525)");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a spec without a parameter write cannot show the bytes, so the adoption stops", async () => {
+    const noParam: DeviceSpec = { ...spec, inService: { ...spec.inService!, param: undefined } };
+    const { io, calls } = scripted({ writeOnly: FF });
+    const r = await runInService(noParam, io, NO_FULL);
+    expect(r.stopped).toEqual({ phase: "adopt", detail: "the parameter flash dry run differs only where the unit reads FF (0x1512-0x1525), and this spec has no parameter write that would show them as bytes the unit does not give back" });
+    expect(writesOf(calls)).toEqual([]);
+  });
+});
 
 describe("a device in service", () => {
   test("the run makes exactly the writes its plan lists, in that order, and leaves the device as it found it", async () => {

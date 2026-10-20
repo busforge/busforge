@@ -106,6 +106,10 @@ export interface FoundConfiguration {
   backups: string[];
   // Assumed parameters whose value another value of theirs writes the same: taken, not shown.
   unprovenAssumptions?: string[];
+  // The bytes the parameter flash's dry run found differing only where the unit reads FF (FlashResult.readsFF),
+  // device addresses: taken as bytes the unit does not give back, which every parameter write of the run
+  // must then show on its write confirmation alone (confirmedOnly).
+  readsFF?: Ranges;
 }
 
 export interface InServiceResult {
@@ -358,18 +362,48 @@ function apartFromStep(view: ConfigView, found: FoundConfiguration, step: { para
   return out;
 }
 
-// A dry run that finds nothing to write: unchanged, or, for a write that goes out whatever it finds (the
-// System 1 download, which also writes state it does not read), one in which no byte differs.
-const nothingToWrite = (r: FlashResult): boolean => r.kind === "unchanged" || (r.kind === "dryRun" && r.alwaysWrite === true && r.diffBytes === 0);
-const dryKind = (r: FlashResult): string => (r.kind === "dryRun" && r.alwaysWrite ? `dryRun with ${r.diffBytes ?? "?"} differing byte(s)` : r.kind);
+type Ranges = { address: number; length: number }[];
+const hex = (n: number) => `0x${n.toString(16).toUpperCase().padStart(4, "0")}`;
+const rangeText = (rs: Ranges) => rs.map((x) => (x.length === 1 ? hex(x.address) : `${hex(x.address)}-${hex(x.address + x.length - 1)}`)).join(", ");
+const covers = (rs: Ranges, a: number) => rs.some((x) => a >= x.address && a < x.address + x.length);
+// A dry run whose every differing byte the unit reads as FF (FlashResult.readsFF): what a unit returns for
+// a byte it does not give back, which only a write tells from a byte that holds FF.
+const onlyFF = (r: FlashResult): boolean => r.kind === "dryRun" && !r.alwaysWrite && (r.diffBytes ?? 0) > 0
+  && (r.readsFF ?? []).reduce((n, x) => n + x.length, 0) === r.diffBytes;
+// A dry run that finds nothing to write: unchanged; for a write that goes out whatever it finds (the
+// System 1 download, which also writes state it does not read), one in which no byte differs; or one that
+// differs only where the unit reads FF, at exactly the bytes the adoption took as not given back (`ff`).
+const sameRanges = (a: Ranges, b: Ranges) => a.length === b.length && a.every((x, i) => x.address === b[i].address && x.length === b[i].length);
+const nothingToWrite = (r: FlashResult, ff: Ranges | undefined): boolean => r.kind === "unchanged" || (r.kind === "dryRun" && r.alwaysWrite === true && r.diffBytes === 0)
+  || (!!ff?.length && onlyFF(r) && sameRanges(r.readsFF!, ff));
+const dryKind = (r: FlashResult): string => r.kind !== "dryRun" ? r.kind
+  : `${r.alwaysWrite || r.readsFF?.length ? `dryRun with ${r.diffBytes ?? "?"} differing byte(s)` : r.kind}${r.readsFF?.length ? ` (read as FF at ${rangeText(r.readsFF)})` : ""}`;
+
+// A parameter write after an adoption that took bytes as not given back (FoundConfiguration.readsFF): the
+// write puts the project's value there, and must show each of them on its write confirmation alone. One it
+// read back as written was given back: the unit held FF there, not the configuration taken over, and now
+// holds the project's value, which no undo by dry run sees; the value found is in the server's backups.
+function ffProblem(r: FlashResult | undefined, ff: Ranges): string | null {
+  if (!r) return `the write's result is not known, so the bytes at ${rangeText(ff)} taken as not given back are not shown on its write confirmation`;
+  const c = r.confirmedOnly ?? [];
+  const missing = ff.flatMap((x) => Array.from({ length: x.length }, (_, i) => x.address + i)).filter((a) => !covers(c, a));
+  if (!missing.length) return null;
+  return `the adoption took the bytes at ${rangeText(ff)} as not given back by the unit, but this write ${c.length ? `rested on its confirmation alone only at ${rangeText(c)}` : "read every byte back"}: the unit gave back ${missing.length} of them, so it held FF there, not the configuration taken over, and now holds the project's value there; the value found is in the server's backups`;
+}
+function confirmFF(o: FlashOutcome, ff: Ranges | undefined, phase: string): string {
+  if (!ff?.length) return "";
+  const problem = ffProblem(o.result, ff);
+  if (problem) throw new Stop(phase, problem);
+  return `, ${rangeText(ff)} written from the project on the write confirmation alone`;
+}
 
 // The dry run before a write: it must find a change to write, of the expected kind. A coded refusal
 // (e.g. the com-object table would go stale) ends the run here; it is never routed to a download.
-async function dryBeforeWrite(dry: () => Promise<FlashResult>, phase: string, structural: boolean): Promise<void> {
+async function dryBeforeWrite(dry: () => Promise<FlashResult>, phase: string, structural: boolean, ff: Ranges | undefined): Promise<void> {
   let r: FlashResult;
   try { r = await dry(); } catch (e) { throw new Stop(phase, `dry run refused: ${errText(e)}`); }
   if (r.kind !== "dryRun") throw new Stop(phase, `dry run reported ${r.kind}, expected a change to write`);
-  if (nothingToWrite(r)) throw new Stop(phase, "the dry run finds no byte that differs from the device (the write would go out all the same); expected a change to write");
+  if (nothingToWrite(r, ff)) throw new Stop(phase, `the dry run reports ${dryKind(r)}, nothing beyond the configuration found (the write would go out all the same); expected a change to write`);
   if (!!r.structural !== structural) throw new Stop(phase, structural ? "the dry run is not a structural flash; this step is approved as one" : "the dry run would be a structural flash (com-object table and group tables); this step is approved as a surgical flash only");
 }
 
@@ -441,7 +475,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     if (extra.length) throw new Stop(phase, `the project holds more than this step before its write: ${extra.slice(0, 5).join(", ")}`);
     if (!other) return;
     const o = await other();
-    if (!nothingToWrite(o)) throw new Stop(phase, `the other kind of write reports ${dryKind(o)} before this step's write; the write would carry more than the step`);
+    if (!nothingToWrite(o, found!.readsFF)) throw new Stop(phase, `the other kind of write reports ${dryKind(o)} before this step's write; the write would carry more than the step`);
   };
   // A read-back of the channel under test after a step: complete, equal to the project, and the
   // project equal to the configuration found.
@@ -468,17 +502,19 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     if (structural) await onlyTheStep(`${phase} preflight`, {}, gaDry);
     await io.chan.setParam(step.paramRefId, step.value);
     await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] });
-    await dryBeforeWrite(() => io.api.flashDry(), `${phase} preflight`, structural);
+    await dryBeforeWrite(() => io.api.flashDry(), `${phase} preflight`, structural, found!.readsFF);
     if (!structural) await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, gaDry);
     at = phase;
-    const there = checkWritten(await io.chan.flashParams(), phase, structural);
+    const thereOut = await io.chan.flashParams();
+    const there = checkWritten(thereOut, phase, structural) + confirmFF(thereOut, found!.readsFF, phase);
     await io.settle(2000);
     if (structural) await onlyTheStep(phase, { param: [step.paramRefId, step.value] }, gaDry);
     await io.chan.setParam(step.paramRefId, original);
     await onlyTheStep(phase, {});
-    await dryBeforeWrite(() => io.api.flashDry(), phase, structural);
+    await dryBeforeWrite(() => io.api.flashDry(), phase, structural, found!.readsFF);
     if (!structural) await onlyTheStep(phase, {}, gaDry);
-    const back = checkWritten(await io.chan.flashParams(), phase, structural);
+    const backOut = await io.chan.flashParams();
+    const back = checkWritten(backOut, phase, structural) + confirmFF(backOut, found!.readsFF, phase);
     out.params.delete(step.paramRefId);
     await io.settle(2000);
     await settled(phase, `after the ${phase} revert`);
@@ -540,7 +576,13 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         await io.api.revert();
         const dries = await dryRuns();
         if (!dries.length) throw new Stop(phase, "the product offers neither a parameter nor a GA flash, so no dry run can show the device holds the configuration taken over");
-        const busy = dries.filter((d) => !nothingToWrite(d.r));
+        // A parameter dry run that differs only where the unit reads FF: taken as bytes it does not give back,
+        // named, and shown by the run's parameter writes (confirmFF); a run without one cannot show them.
+        const pDry = dries.find((d) => d.name === "parameter flash")?.r;
+        const ff = pDry && onlyFF(pDry) ? pDry.readsFF! : undefined;
+        if (ff && !si.param && !si.structural) throw new Stop(phase, `the parameter flash dry run differs only where the unit reads FF (${rangeText(ff)}), and this spec has no parameter write that would show them as bytes the unit does not give back`);
+        if (ff) io.log(`parameter flash dry run: ${pDry!.diffBytes} byte(s) differ only where the unit reads FF (${rangeText(ff)}); taken as bytes it does not give back, each parameter write must show them on its write confirmation alone`);
+        const busy = dries.filter((d) => !nothingToWrite(d.r, ff));
         if (busy.length) throw new Stop(phase, `with the device's configuration taken over, ${dries.map((d) => `the ${d.name} dry run reports ${dryKind(d.r)}`).join(" and ")}; each must find nothing to write before a write`);
         view = await io.api.getConfig();
         if (allComObjects(view).some((c) => c.gaRaws === undefined)) throw new Stop(phase, "the server's config view carries no gaRaws (an older build); the run could not see the links it must leave alone");
@@ -550,6 +592,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           links: Object.fromEntries(allComObjects(view).filter((c) => c.gaRaws!.length).map((c) => [c.refId, c.gaRaws!])),
           backups,
           ...(unproven.length ? { unprovenAssumptions: unproven } : {}),
+          ...(ff ? { readsFF: ff } : {}),
         };
         if (backups.length < dries.length) throw new Stop(phase, "the dry runs reported no backup of the device's memory; no write without one");
         // What the fingerprint cannot tell: the product (or a setting) shows in the configuration.
@@ -634,7 +677,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           await io.chan.addLink({ refId: obj.refId, number: obj.number }, testGa, own);
         } else await io.chan.link({ refId: obj.refId, number: obj.number }, testGa);
         await onlyTheStep("flashLinks preflight", { link: [obj.refId, placedLinks] }, claims!.flashParams ? () => io.api.flashDry() : undefined);
-        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false);
+        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false, found!.readsFF);
         at = "flashLinks";
         const linked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
         await io.settle(2000);
@@ -677,7 +720,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         if (persistence) persistenceOf = "flashLinks";
         await setLinks(io, obj.refId, own);
         await onlyTheStep("flashLinks", {}, claims!.flashParams ? () => io.api.flashDry() : undefined);
-        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks", false);
+        await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks", false, found!.readsFF);
         const unlinked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
         out.links.delete(obj.refId);
         await io.settle(2000);
@@ -729,8 +772,8 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           cap("readLinks", "pass", "group tables read back and decoded, no gaps, equal to the configuration found");
         }
         const dries = await dryRuns();
-        restore = dries.every((d) => nothingToWrite(d.r))
-          ? { state: "pass", detail: `the device holds the configuration it was found with: ${dries.map((d) => `${d.name} dry run ${d.r.kind === "unchanged" ? "unchanged" : "finds no byte that differs"}`).join(", ")}` }
+        restore = dries.every((d) => nothingToWrite(d.r, found!.readsFF))
+          ? { state: "pass", detail: `the device holds the configuration it was found with: ${dries.map((d) => `${d.name} dry run ${d.r.kind === "unchanged" ? "unchanged" : onlyFF(d.r) ? `differs only at the bytes taken as not given back (${rangeText(d.r.readsFF!)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "finds no byte that differs"}`).join(", ")}` }
           : { state: "fail", detail: `after the run ${dries.map((d) => `the ${d.name} dry run reports ${dryKind(d.r)}`).join(" and ")}` };
       }
     }
@@ -765,15 +808,17 @@ async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration
     if (left.length) return fail(`the project could not be set back to the configuration found (${left.slice(0, 5).join(", ")}); nothing written`);
     const structural = [...out.params.values()].some((p) => p.structural);
     const pDry = claims.flashParams ? await io.api.flashDry() : null;
-    if (pDry && !nothingToWrite(pDry)) {
+    if (pDry && !nothingToWrite(pDry, found.readsFF)) {
       if (!!pDry.structural !== structural) return fail(`the parameter revert would ${pDry.structural ? "" : "not "}be a structural flash, unlike the change; not written`);
       const r = await io.api.flashReal();
       if (r.kind !== "flashed" || r.verified !== true) return fail(`parameter revert ${r.kind}, verified=${String(r.kind === "flashed" ? r.verified : "-")}`);
+      const ffLeft = found.readsFF?.length ? ffProblem(r, found.readsFF) : null;
+      if (ffLeft) return fail(`parameter revert: ${ffLeft}`);
       done.push("parameters written back");
       await io.settle(3000);
     } else if (pDry) done.push(`parameters: dry run ${dryKind(pDry)}, nothing to write back`);
     const gDry = claims.flashLinks ? await io.api.flashGaDry() : null;
-    if (gDry && !nothingToWrite(gDry)) {
+    if (gDry && !nothingToWrite(gDry, found.readsFF)) {
       if (gDry.structural) return fail("the link revert would be a structural flash; not written");
       const r = await io.api.flashGaReal();
       if (r.kind !== "flashed" || r.verified !== true) return fail(`link revert ${r.kind}, verified=${String(r.kind === "flashed" ? r.verified : "-")}`);

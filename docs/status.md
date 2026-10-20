@@ -216,7 +216,7 @@ What each row does not show:
   device name was `verified`, its web interface password field (20 bytes, read back as `FF` after any
   write) accepted on the write confirmation alone and named in the result (`confirmedOnly`); a flash
   that changes nothing but that field ends unverified, as nothing readable shows it landed. The field
-  always counts as a difference in the preview. Over a direct bus connection (a USB interface behind
+  always counts as a difference in the preview, which names its bytes as read as `FF` (`readsFF`). Over a direct bus connection (a USB interface behind
   Busforge's bridge), the name changed and changed back to the project's value were each `verified`,
   the password field named on the write confirmation both times, and a read under a secured session
   afterwards found the unit at the project's configuration. Every restart of the unit makes an MDT IP
@@ -410,7 +410,7 @@ spec states why no behaviour is observable.
 | `theben-jmg4t-in-service` | Theben JMG 4 T blind actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-dali-gateway-in-service` | Theben DALI-Gateway KNX plus, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter, GA and structural flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run |
-| `mdt-ip-router-in-service` | MDT IP Interface/Router, a commissioned unit in Data Secure mode, reached through another interface than the one its restart cuts (parameter and GA flash, each reverted; the product offers no full download) | MV-07B0 | not proven | not proven | not proven | **not met**; its adoption stops before any write while its parameter dry run counts the web interface password ([roadmap](roadmap.md)) |
+| `mdt-ip-router-in-service` | MDT IP Interface/Router, a commissioned unit in Data Secure mode, reached through another interface than the one its restart cuts (parameter and GA flash, each reverted; the product offers no full download) | MV-07B0 | not proven | not proven | not proven | **not met**; not run. Its adoption takes the web interface password as bytes the unit does not give back, for each parameter write to show on its write confirmation ([testing.md](testing.md#devices-in-service)) |
 | `mdt-ip-secure-in-service` | MDT IP Interface Secure, a commissioned unit in Data Secure mode and the KNXnet/IP interface the run goes through (parameter download there and back; full download on request; no group objects) | MV-0012 | not proven | not proven | not proven | **not met** |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed

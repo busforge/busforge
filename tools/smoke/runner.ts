@@ -278,6 +278,16 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
   const { client, ui, pid, did, host, spec, witness, creds, log, settle } = o;
   const port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681);
   const written = (r: FlashResult) => ({ structural: r.structural === true, result: r });
+  // A parameter write through the dialog, with the server's record of it (its task's outcome: verified, and
+  // the bytes it verified on the write confirmation alone), which the dialog shows but does not hand over.
+  const uiParamFlash = async () => {
+    const since = Date.now();
+    const { structural } = await ui!.flash("params");
+    // A preview is a task of the same kind; only a write ends flashed.
+    const task = (await client.tasks(pid)).filter((t) => t.deviceId === did && (t.kind === "flash-params" || t.kind === "flash-structure") && t.outcome?.kind === "flashed" && (t.startedAt ?? t.queuedAt ?? 0) >= since - 2_000)
+      .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
+    return { structural, ...(task?.outcome ? { result: task.outcome } : {}) };
+  };
   // The ui page holds the configuration it loaded; an API edit (the adoption, an unlink) is only
   // seen after a reload, so every ui step starts from a fresh page.
   const page = async () => { await ui!.gotoDevice(pid, did); };
@@ -313,7 +323,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       link: async (obj, ga) => { await client.ensureGa(pid, ga); await page(); await ui.linkGa(obj.number, ga); },
       // The editor adds behind the links the project holds, which the step's preflight pins to `own`.
       addLink: async (obj, ga, own) => { await client.ensureGa(pid, ga); await page(); await ui.addGa(obj.number, ga, own.length); },
-      flashParams: async () => { await page(); return ui.flash("params"); },
+      flashParams: async () => { await page(); return uiParamFlash(); },
       flashLinks: async () => { await page(); return ui.flash("ga"); },
       fullDownload: async () => { await page(); await ui.flashDownload("params"); return { structural: false }; },
       readBack: async () => { await page(); return ui.readBack(); },

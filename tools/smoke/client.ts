@@ -23,6 +23,7 @@ export interface FlashResult {
   confirmedOnly?: { address: number; length: number }[]; // bytes verified on the device's write confirmation alone
   restartUnproven?: boolean; // verified after a restart the device did not confirm
   alwaysWrite?: boolean; // a dry run of a write that goes out even with diffBytes 0 (it also writes state it does not read)
+  readsFF?: { address: number; length: number }[]; // a dry run's differing bytes the device reads as FF
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
@@ -2707,6 +2707,29 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
     expect([...seg].filter(([o, b]) => full.bytes[o] !== b)).toEqual([]);
     expect([...full.bytes].map((b, o) => [o, b]).filter(([o, b]) => !seg.has(o) && b !== 0)).toEqual([]);
     expect(logBracket("mdt-router-ets6log-fulldownload.txt")).toContain("alloc:4:3972:1:0");
+  });
+
+  // The web interface password P-278 (20 bytes at offset 40) reads back FF after any write. ETS's full download writes
+  // it from the project, as every other field; its parameter downloads leave it alone, as its record holds it. A unit
+  // holding the project's configuration reads FF there, so Busforge's parameter flash counts those 20 bytes and its
+  // dry run names them (FlashResult.readsFF), every one of them and nothing else.
+  test("the web interface password: ETS's full download writes it from the project; a unit reading it as FF differs there alone, named", () => {
+    const PW = { offset: 40, size: 20 };
+    const ets = relImage("mdt-router-ets6log-fulldownload.txt").get(4)!;
+    const field = Array.from({ length: PW.size }, (_, i) => PW.offset + i);
+    expect(field.map((o) => ets.get(o))).toEqual(field.map((o) => full.bytes[o]));
+    const at = 0x14ea;
+    const wire = innerWrites("mdt-router-ets6log-fulldownload.txt");
+    expect(field.filter((o) => full.bytes[o] !== 0).map((o) => wire.get(at + o))).toEqual(field.filter((o) => full.bytes[o] !== 0).map((o) => full.bytes[o]));
+    expect(field.some((o) => full.bytes[o] !== 0)).toBe(true);
+    for (const file of ["mdt-router-ets6log-partial-name.txt", "mdt-router-ets6log-partial-name-revert.txt"]) {
+      expect([file, [...relImage(file).get(4)!.keys()].filter((o) => o >= PW.offset && o < PW.offset + PW.size)]).toEqual([file, []]);
+    }
+    const unit = Buffer.from(full.bytes);
+    unit.fill(0xff, PW.offset, PW.offset + PW.size);
+    const { image, diffBytes } = mergeRelativeTarget(unit, full);
+    expect(diffBytes).toBe(PW.size);
+    expect(differingFF(unit, image, full, at)).toEqual([{ address: at + PW.offset, length: PW.size }]);
   });
 
   test("a partial download without a change sends nothing; Busforge's flash of the same configuration changes no byte", () => {

@@ -501,13 +501,28 @@ export function confirmedMatch(
     only.push(at + i);
   }
   if (only.length && !landed) return null;
+  return addressRuns(only);
+}
+
+// Ascending device addresses as runs.
+function addressRuns(addresses: number[]): ConfirmedOnlyRange[] {
   const runs: ConfirmedOnlyRange[] = [];
-  for (const a of only) {
+  for (const a of addresses) {
     const last = runs.at(-1);
     if (last && last.address + last.length === a) last.length++;
     else runs.push({ address: a, length: 1 });
   }
   return runs;
+}
+
+// The bytes mergeRelativeTarget counts as differing where the device reads FF, at device address `at`,
+// in runs: what a device returns for a byte it does not give back (confirmedMatch). A read cannot tell
+// such a byte from one that holds FF, so a dry run names them (FlashResult.readsFF) and a write of them
+// shows which they are: where they read FF again afterwards, they rest on its write confirmation alone.
+export function differingFF(current: Buffer, image: Buffer, target: RelativeSegmentTarget, at: number): ConfirmedOnlyRange[] {
+  const ff: number[] = [];
+  for (let i = 0; i < target.size; i++) if (current[i] === 0xff && ((image[i] ^ current[i]) & ~target.constant[i]) !== 0) ff.push(at + i);
+  return addressRuns(ff);
 }
 
 // Verify a relative flash: owned bytes minus Access="None" markers (the `verify` mask).

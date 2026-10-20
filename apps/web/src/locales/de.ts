@@ -951,6 +951,7 @@ const de: Messages = {
     dlDoneVerified: "Heruntergeladen und verifiziert ({{bytes}} Bytes geschrieben).",
     dlDoneUnverified: "Heruntergeladen, aber das Zurücklesen war nicht erfolgreich. Prüfe das Gerät.",
     confirmedOnly: "{{bytes}} Byte(s) bei {{ranges}} gibt das Gerät beim Lesen nicht zurück; sie beruhen allein auf seiner Schreibquittung.",
+    readsFF: "{{bytes}} davon, bei {{ranges}}, lesen sich als FF: so liefert das Gerät Bytes, die es nicht zurückgibt. Erst das Schreiben zeigt, ob es solche sind.",
     restartUnproven: "Das Gerät hat seinen Neustart nicht bestätigt: das Zurücklesen danach stimmt, ob es die Konfiguration dauerhaft übernommen hat, ist aber nicht belegt.",
     download: "Download",
   },
