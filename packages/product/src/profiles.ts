@@ -8,7 +8,7 @@ import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from 
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
-import { planAbsoluteParFlash, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
+import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -662,11 +662,21 @@ export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: 
 
 // The flags a read takes from a com-object table, or why the table gave none: any failure of reading or
 // decoding the table alone (a table not loaded, one that contradicts itself or the application, a read
-// the device refuses) leaves the flags open; a cancel still ends the read.
-async function readComObjFlags(read: () => Promise<Map<number, ObservedComObjFlags>>, signal?: AbortSignal): Promise<Pick<DeviceReadback, "comObjFlags" | "comObjFlagsUnreadable">> {
-  try { return { comObjFlags: await read() }; } catch (e) {
+// the device refuses) leaves the flags open; a cancel still ends the read. The table is read with the rest
+// of the device's data (readComObjTable) and decoded with it, after the reads (comObjFlagsOf).
+type ComObjTableRead = { bytes: Buffer } | { unreadable: string };
+const unreadable = (e: unknown) => `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}`;
+async function readComObjTable(read: () => Promise<Buffer>, signal?: AbortSignal): Promise<ComObjTableRead> {
+  try { return { bytes: await read() }; } catch (e) {
     if (signal?.aborted) throw e;
-    return { comObjFlagsUnreadable: `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}` };
+    return { unreadable: unreadable(e) };
+  }
+}
+function comObjFlagsOf(table: ComObjTableRead, decode: (bytes: Buffer) => Map<number, ObservedComObjFlags>, signal?: AbortSignal): Pick<DeviceReadback, "comObjFlags" | "comObjFlagsUnreadable"> {
+  if ("unreadable" in table) return { comObjFlagsUnreadable: table.unreadable };
+  try { return { comObjFlags: decode(table.bytes) }; } catch (e) {
+    if (signal?.aborted) throw e;
+    return { comObjFlagsUnreadable: unreadable(e) };
   }
 }
 // A System B device's com-object table: [count u16] then two bytes per object. A count beyond the highest
@@ -853,6 +863,8 @@ export interface FullDownloadInputs {
 // read before the partial form: the bytes, where each segment is, and the memory-control-block regions
 // (PID 27) each reports, null where it reports none.
 export interface RelativeUnitMemory { params: Buffer; paramsAt: number; paramsMcb: McbRegion[] | null; comObj: Buffer; comObjAt: number; comObjMcb: McbRegion[] | null }
+// The images a System B full download writes in either form (SystemBProfile.systemBImages).
+type SystemBImages = { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables };
 // One segment a full download writes. `address` is null where the device assigns it (a System B
 // relative segment, allocated during the download); `fillByte` is set where the allocation pre-fills
 // the segment, so the bytes of `image` equal to it are not transmitted but are still the segment's content.
@@ -889,13 +901,20 @@ function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided:
 // of the configuration the device was last written with (`baseParams`), the baseline's overrides placed on
 // it (`comObjectOverrideBase`), only the bits the entry the write puts there changes in the device's.
 type FlagBaseline = { baseParams: Map<string, string>; moduleInstances?: ModuleInstance[]; comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride> };
+type BaselineObjects = ReturnType<typeof baselineComObjects>;
+// A build from the application run before an operation's first request to the device (DeviceProfile.readDevice
+// says why), handed out where the operation uses it: its refusal is thrown there, after the device checks that
+// come first, and only where the operation gets that far.
+function builtBefore<T>(build: () => T): () => T {
+  try { const v = build(); return () => v; } catch (e) { return () => { throw e; }; }
+}
 function baselineComObjects(cfg: AppConfig, ctx: FlagBaseline) {
   const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
   return buildDeviceConfig(cfg, ctx.baseParams, undefined, instances).imageComObjects;
 }
 // System B: the flags byte of each entry (comObjectEntry); the communication flag compared on the objects
 // the device's own association table links (on the others the device shows none).
-function refuseSystemBUnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: { addr: Buffer; assoc: Buffer; long: boolean; comObj: Buffer }, written: Buffer): void {
+function refuseSystemBUnknownFlags(baseline: () => BaselineObjects, ctx: FlagBaseline, held: { addr: Buffer; assoc: Buffer; long: boolean; comObj: Buffer }, written: Buffer): void {
   const heldCount = held.comObj.length >= 2 ? held.comObj.readUInt16BE(0) : 0;
   const changed = new Map<number, OverridableBit[]>();
   for (let n = 1; n <= written.readUInt16BE(0); n++) {
@@ -906,12 +925,12 @@ function refuseSystemBUnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: { ad
   if (!changed.size) return;
   const linked = new Set(decodeGroupTables(held.addr, held.assoc, held.long).map((l) => l.comObjNum));
   const observed = decodeComObjectTable(held.comObj, linked);
-  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baselineComObjects(cfg, ctx), ctx.comObjectOverrideBase, changed), observed);
+  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baseline(), ctx.comObjectOverrideBase, changed), observed);
 }
 // System 7: the config byte of each entry (buildComObjectTableMv0705); its communication bit compared on
 // the objects the device's own association table (`heldTables`) links, so a linked bit a new link sets is
 // no flag the device holds.
-function refuseSystem7UnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: Buffer, written: Buffer, heldTables: { addr: Buffer; assoc: Buffer }): void {
+function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBaseline, held: Buffer, written: Buffer, heldTables: { addr: Buffer; assoc: Buffer }): void {
   const heldCount = held.length >= 3 ? held[0] : 0;
   const changed = new Map<number, OverridableBit[]>();
   for (let n = 0; n < written[0]; n++) {
@@ -921,7 +940,7 @@ function refuseSystem7UnknownFlags(cfg: AppConfig, ctx: FlagBaseline, held: Buff
   }
   if (!changed.size) return;
   const observed = decodeComObjectTableMv0705(held, new Set(decodeGroupTablesMv0705(heldTables.addr, heldTables.assoc).map((l) => l.comObjNum)));
-  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baselineComObjects(cfg, ctx), ctx.comObjectOverrideBase, changed), observed);
+  refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baseline(), ctx.comObjectOverrideBase, changed), observed);
 }
 
 // A parameter or structural flash writing a colour parameter (refuseColorWrites), each configuration's
@@ -963,7 +982,15 @@ export abstract class DeviceProfile {
   // Whether readState reads the device's com-object table, so a read-back takes each object's flags and
   // priority into the baseline (DeviceReadback.comObjFlags).
   readsComObjFlags(): boolean { return false; }
-  abstract readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback>;
+  // A read-back in two steps: readDevice reads everything the read takes off the device and returns its
+  // decoding, which needs the device no more. A device closes a transport connection that carries no
+  // request for the transport layer's connection timeout (6 s), and decoding a large application's image
+  // with its configurations takes seconds on a slow host, so a caller holding a session decodes after the
+  // session has closed. What readDevice builds from the application it builds before its first request.
+  abstract readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback>;
+  async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
+    return (await this.readDevice(dev, mask, ctx))();
+  }
   abstract flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult>;
   abstract flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult>;
 
@@ -1052,7 +1079,8 @@ export class SystemBProfile extends DeviceProfile {
     return this.planSystemBFull(mask, inputs);
   }
 
-  private planSystemBFull(_mask: string, ctx: FullDownloadInputs): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
+  // `images`: systemBImages of `ctx`, where the caller built them already (builtBefore).
+  private planSystemBFull(_mask: string, ctx: FullDownloadInputs, images?: () => SystemBImages): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
@@ -1067,7 +1095,7 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${mode}; no ETS capture shows which bytes a download writes into a segment allocated so`);
     }
     const fillByte = relParamFillByte(proc);
-    const { target, comObj, addr, assoc, security } = this.systemBImages(cfg, ctx);
+    const { target, comObj, addr, assoc, security } = images ? images() : this.systemBImages(cfg, ctx);
 
     // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
     // device that does not reboot lost the download; other firmware persists at LoadCompleted and
@@ -1094,7 +1122,7 @@ export class SystemBProfile extends DeviceProfile {
   // ETS's partial form of the full download (planRelativePartialFullDownload), against what the unit
   // holds (`ctx.unitMemory`). The application segment's image is the unit's segment with the owned bytes
   // of this configuration laid over it, so what no parameter owns stays as the unit holds it.
-  private planSystemBPartial(ctx: FullDownloadInputs): FullDownloadBuild & { params: Buffer; target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables; changedBytes: number } {
+  private planSystemBPartial(ctx: FullDownloadInputs, images?: () => SystemBImages): FullDownloadBuild & { params: Buffer; target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables; changedBytes: number } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
@@ -1103,7 +1131,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!unit) {
       throw new ProductError("FULL_DOWNLOAD_UNIT_UNKNOWN", "the unit holds this application, so the download takes ETS's partial form, which writes only what the unit does not hold; it cannot be planned without the unit's application segment and com-object table");
     }
-    const { target, comObj, addr, assoc, security } = this.systemBImages(cfg, ctx);
+    const { target, comObj, addr, assoc, security } = images ? images() : this.systemBImages(cfg, ctx);
     const unitSize = unit.paramsMcb ? unit.paramsMcb.reduce((n, r) => n + r.size, 0) : unit.params.length;
     if (unit.params.length !== target.size || unitSize !== target.size) {
       throw new ProductError("FULL_DOWNLOAD_UNIT_LAYOUT", `the unit's application segment is ${unitSize} B where this application's is ${target.size} B; refusing to merge into a segment of another layout`);
@@ -1135,7 +1163,7 @@ export class SystemBProfile extends DeviceProfile {
   // The images a full download writes, in either form: the parameter target, the com-object table
   // authored for this configuration and its links, both group tables and, on a Data Secure device, the
   // security object.
-  private systemBImages(cfg: AppConfig, ctx: FullDownloadInputs): { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
+  private systemBImages(cfg: AppConfig, ctx: FullDownloadInputs): SystemBImages {
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -1184,6 +1212,8 @@ export class SystemBProfile extends DeviceProfile {
     const proc = this.requireCfg("full download").loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
     refuseTunnelingEntries(this.requireCfg("full download"));
+    // For either form.
+    const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
     await runDeclaredChecks(dev, coverage);
     // Which form ETS runs: an application declaring PreferPartialDownloadIfApplicationLoaded on a unit
     // holding it takes the partial form. ETS tells by the application object's load state and program
@@ -1196,12 +1226,12 @@ export class SystemBProfile extends DeviceProfile {
       const cfg = this.requireCfg("full download");
       const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
       if (id.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
-        const size = this.systemBImages(cfg, { ...ctx, proc }).target.size;
+        const size = images().target.size;
         const paramsMcb = await readMcbRegions(dev, LSM, size);
-        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, size, paramsMcb);
+        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb);
       }
     }
-    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc });
+    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc }, images);
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -1313,7 +1343,8 @@ export class SystemBProfile extends DeviceProfile {
   // segment and com-object table are read first, as the base the owned bytes are merged into and the
   // backup, then only what differs is written. The verify checks every byte the way the structural
   // flash does: the owned bits against the new configuration, the rest against what the unit held.
-  private async downloadPartialForm(dev: KnxDevice, mask: string, ctx: FullDownloadCtx, proc: LoadProcedures, size: number, paramsMcb: McbRegion[]): Promise<FlashResult> {
+  private async downloadPartialForm(dev: KnxDevice, mask: string, ctx: FullDownloadCtx, proc: LoadProcedures, images: () => SystemBImages, paramsMcb: McbRegion[]): Promise<FlashResult> {
+    const size = images().target.size;
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(paramsAt, size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
     const cur = await readGroupTables(dev, undefined, false);
@@ -1322,7 +1353,7 @@ export class SystemBProfile extends DeviceProfile {
       params: current, paramsAt, paramsMcb,
       comObj: cur.comObj, comObjAt, comObjMcb: await readMcbRegions(dev, OBJ.COMOBJ_TABLE, cur.comObj.length),
     };
-    const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory });
+    const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory }, images);
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
     const partialStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
@@ -1364,16 +1395,10 @@ export class SystemBProfile extends DeviceProfile {
     });
   }
 
-  async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
+  async readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback> {
     const cfg = this.requireCfg("read-back");
     const { model, instances } = moduleAwareModel(cfg, ctx.liveParams, ctx.moduleInstances ?? []);
     const support = this.capabilities();
-    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
-    let links: ComObjectLink[] = [];
-    let paramsRead = false, linksRead = false;
-    let deviceConfig: Map<string, string> | undefined;
-    let flags: Pick<DeviceReadback, "comObjFlags" | "comObjFlagsUnreadable"> = {};
-
     // Parameters (LSM 4): read the whole segment, decode it, compare against the image the
     // FLASH would write, both normalized via the same codec. The project side is the surgical
     // target (not the legacy full-image build), so read-back compares against exactly the bytes
@@ -1381,33 +1406,42 @@ export class SystemBProfile extends DeviceProfile {
     // last writer of an overlapping region. Same shape as the System 7 path below.
     // A text field the codec refuses is left out of the comparison here (textRefusals), not the whole read.
     const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances, textRefusals: "skip" }) : null;
-    if (target) {
-      // loadedTableAddr, not tableAddr: a device that was never programmed points its parameter
-      // segment at address 0, and reading there would decode whatever bytes happen to live at the
-      // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
-      const img = await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal);
-      const deviceVals = decodeParameterImage(model, LSM, img);
-      dropUnownedText(model, deviceVals, (p) => (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === LSM ? target.owned : undefined));
-      const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-      foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, model, device, target.defaulted);
-      deviceConfig = device?.deviceConfig;
-      paramsRead = true;
-    }
-    // Group-address links: read address + association tables and reverse; then the com-object table, for
-    // each object's flags and priority (the communication flag only where the device links it).
+    // The com-object table's count is bounded by the configuration the device was last written with,
+    // whose module instances it holds.
+    const written = ctx.baseParams ?? ctx.liveParams;
+    const declared = builtBefore(() => support.readLinks ? buildDeviceConfig(cfg, written, undefined, moduleAwareModel(cfg, written, ctx.moduleInstances ?? []).instances).maxComObjectNumber : 0);
+
+    // loadedTableAddr, not tableAddr: a device that was never programmed points its parameter
+    // segment at address 0, and reading there would decode whatever bytes happen to live at the
+    // bottom of its memory into a "programmed baseline". Refuse instead (DEVICE_NOT_PROGRAMMED).
+    const img = target ? await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size, undefined, (d, t) => ctx.onProgress?.("params", d, t), ctx.signal) : null;
+    // Group-address links: the address + association tables; then the com-object table, for each
+    // object's flags and priority (the communication flag only where the device links it).
+    let gt: Awaited<ReturnType<typeof readGroupTables>> | null = null;
+    let comObj: ComObjTableRead | null = null;
     if (support.readLinks) {
       if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
       ctx.onProgress?.("links", 0, 2);
-      const gt = await readGroupTables(dev, (d, total) => ctx.onProgress?.("links", d, total), true);
-      links = decodeGroupTables(gt.addr, gt.assoc, gt.long);
-      linksRead = true;
-      const linked = new Set(links.map((l) => l.comObjNum));
-      // Bounded by the configuration the device was last written with, whose module instances it holds.
-      const written = ctx.baseParams ?? ctx.liveParams;
-      const declared = buildDeviceConfig(cfg, written, undefined, moduleAwareModel(cfg, written, ctx.moduleInstances ?? []).instances).maxComObjectNumber;
-      flags = await readComObjFlags(async () => decodeComObjectTable(await readSystemBComObjTable(dev, declared, ctx.signal), linked), ctx.signal);
+      gt = await readGroupTables(dev, (d, total) => ctx.onProgress?.("links", d, total), true);
+      const bound = declared();
+      comObj = await readComObjTable(() => readSystemBComObjTable(dev, bound, ctx.signal), ctx.signal);
     }
-    return { mask, paramsRead, linksRead, paramBase, links, deviceConfig, ...flags };
+
+    return () => {
+      const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
+      let deviceConfig: Map<string, string> | undefined;
+      if (target && img) {
+        const deviceVals = decodeParameterImage(model, LSM, img);
+        dropUnownedText(model, deviceVals, (p) => (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === LSM ? target.owned : undefined));
+        const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+        foldDeviceValues(paramBase, deviceVals, decodeParameterImage(model, LSM, target.bytes), ctx.liveParams, model, device, target.defaulted);
+        deviceConfig = device?.deviceConfig;
+      }
+      const links = gt ? decodeGroupTables(gt.addr, gt.assoc, gt.long) : [];
+      const linked = new Set(links.map((l) => l.comObjNum));
+      const flags = comObj ? comObjFlagsOf(comObj, (bytes) => decodeComObjectTable(bytes, linked), ctx.signal) : {};
+      return { mask, paramsRead: img !== null, linksRead: gt !== null, paramBase, links, deviceConfig, ...flags };
+    };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -1417,9 +1451,9 @@ export class SystemBProfile extends DeviceProfile {
     // refuses. The declared CompareProp pre-flights run below, before any bus write.
     const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
-    // Build + safety refusals. These run AFTER the session's connect/mask-check (vs before, in
-    // the original), which is harmless: no device byte is written until below, and verifying we
-    // are on the right device first is if anything safer.
+    // Build + safety refusals, all before the first request to the device: they need no device, and a
+    // build of a large application takes long enough on a slow host for a device to close an idle
+    // transport connection (DeviceProfile.readDevice).
     const { model } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     // SAFETY: a stored value the image model cannot place would be silently dropped and its
     // region reset to default. Refuse rather than wipe a configured channel.
@@ -1523,6 +1557,7 @@ export class SystemBProfile extends DeviceProfile {
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
+    const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
     const cur = await readGroupTables(dev, undefined, false);
@@ -1552,7 +1587,7 @@ export class SystemBProfile extends DeviceProfile {
       ? { owned: relativeComObjWriteSet(comObj, cur.comObj, ctx.stampRecord, check), keptAt: await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table") }
       : undefined;
     // A table not LOADED (an interrupted write) holds no flags the device runs.
-    if (tablesLoaded) refuseSystemBUnknownFlags(cfg, ctx, cur, comObj);
+    if (tablesLoaded) refuseSystemBUnknownFlags(flagBaseline, ctx, cur, comObj);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: addr.length + assoc.length + comObj.length,
@@ -1639,6 +1674,7 @@ export class SystemBProfile extends DeviceProfile {
     const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const mcb = declaredMcbWrites(proc, target.size, "par");
+    const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
 
     await runDeclaredChecks(dev, coverage);
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
@@ -1650,7 +1686,7 @@ export class SystemBProfile extends DeviceProfile {
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
     const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
-    if (loaded) refuseSystemBUnknownFlags(cfg, ctx, cur, comObj);
+    if (loaded) refuseSystemBUnknownFlags(flagBaseline, ctx, cur, comObj);
     const plan = planRelativeStructuralFlash(LSM, {
       params: { image, owned: target.owned, keptAt: paramsAt },
       comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
@@ -1787,39 +1823,45 @@ export class System7Profile extends DeviceProfile {
     return this.canAuthor() && !!this.cfg && !declaresTunnelingEntries(this.cfg);
   }
 
-  async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
+  async readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback> {
     const cfg = this.requireCfg("read-back");
-    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     const instances = ctx.moduleInstances?.length ? ctx.moduleInstances : (cfg.hasModules ? resolveModuleInstances(cfg, ctx.liveParams) : []);
     const absModel = toAppModel(cfg, { includeUnions: true, instances });
     const absoluteTargets = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { moduleInstances: ctx.moduleInstances, textRefusals: "skip" });
+    // The com-object table where the application names its segment with a template, as the writes find it.
+    const l3 = system7ComObjSegment(cfg);
 
     // memRead reports progress in BYTES; accumulate across segments for a whole-read bar.
     const totalBytes = absoluteTargets.reduce((n, t) => n + t.size, 0);
     let doneBytes = 0;
-    const deviceVals = new Map<string, string>(), projectVals = new Map<string, string>();
+    const deviceImgs: Buffer[] = [];
     for (const t of absoluteTargets) {
-      const deviceImg = await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("params", doneBytes + d, totalBytes), ctx.signal);
-      for (const [r, v] of decodeAbsoluteImage(absModel, t.id, deviceImg)) deviceVals.set(r, v);
-      for (const [r, v] of decodeAbsoluteImage(absModel, t.id, t.bytes)) projectVals.set(r, v);
+      deviceImgs.push(await dev.memRead(t.address, t.size, undefined, (d) => ctx.onProgress?.("params", doneBytes + d, totalBytes), ctx.signal));
       doneBytes += t.size;
     }
-    for (const t of absoluteTargets) dropUnownedText(absModel, deviceVals, (p) => (p.codeSegment === t.id ? t.owned : undefined));
-    const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, absModel, device);
-
     if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
     ctx.onProgress?.("links", 0, 2);
     const gt = await readGroupTablesMv0705(dev, (d, total) => ctx.onProgress?.("links", d, total));
-    const links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
-    // The com-object table where the application names its segment with a template, as the writes find it.
-    const l3 = system7ComObjSegment(cfg);
-    const linked = new Set(links.map((l) => l.comObjNum));
-    const flags = l3 ? await readComObjFlags(async () => {
+    const comObj = l3 ? await readComObjTable(async () => {
       if (!(await allLoaded(dev, [OBJ.COMOBJ_TABLE], isMemoryMappedLsm(mask)))) throw new ProductError("COM_OBJECT_TABLE_NOT_LOADED", "the device's com-object table is not loaded, so it holds no flags the device runs");
-      return decodeComObjectTableMv0705(await dev.memRead(l3.address, l3.size, undefined, undefined, ctx.signal), linked);
-    }, ctx.signal) : {};
-    return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig, ...flags };
+      return dev.memRead(l3.address, l3.size, undefined, undefined, ctx.signal);
+    }, ctx.signal) : null;
+
+    return () => {
+      const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
+      const deviceVals = new Map<string, string>(), projectVals = new Map<string, string>();
+      absoluteTargets.forEach((t, i) => {
+        for (const [r, v] of decodeAbsoluteImage(absModel, t.id, deviceImgs[i])) deviceVals.set(r, v);
+        for (const [r, v] of decodeAbsoluteImage(absModel, t.id, t.bytes)) projectVals.set(r, v);
+      });
+      for (const t of absoluteTargets) dropUnownedText(absModel, deviceVals, (p) => (p.codeSegment === t.id ? t.owned : undefined));
+      const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+      foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, absModel, device);
+      const links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
+      const linked = new Set(links.map((l) => l.comObjNum));
+      const flags = comObj ? comObjFlagsOf(comObj, (bytes) => decodeComObjectTableMv0705(bytes, linked), ctx.signal) : {};
+      return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig, ...flags };
+    };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -1833,7 +1875,8 @@ export class System7Profile extends DeviceProfile {
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
     refuseColorChange(cfg, ctx);
     const moduleInstances = ctx.moduleInstances;
-    const targets = buildAbsoluteSegmentTargets(cfg, ctx.params, { moduleInstances }).filter((t) => t.size > 0);
+    const built = buildAbsoluteParFlash(cfg, ctx.params, { moduleInstances });
+    const targets = built.targets.filter((t) => t.size > 0);
     const totalBytes = targets.reduce((n, t) => n + t.size, 0);
 
     await runDeclaredChecks(dev, coverage);
@@ -1848,7 +1891,7 @@ export class System7Profile extends DeviceProfile {
       current.set(t.id, onDev);
     }
 
-    const { plan, changedBytes, unplaceable, covered, constantsDiffer } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg) });
+    const { plan, changedBytes, unplaceable, covered, constantsDiffer } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg), built });
     const writeBytes = plan.reduce((n, st) => n + (st.op === "writeMem" ? st.bytes.length : 0), 0);
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
@@ -1913,6 +1956,9 @@ export class System7Profile extends DeviceProfile {
     // procedure (planSystem7GaFlash): both tables unloaded and declared where tablePlacement puts them,
     // the com-object table written in the application's bracket.
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
+    const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
+    const brackets = builtBefore(() => planSystem7TableBrackets(cfg, cfg.loadProcedures, { addr, assoc }));
+    const l3Active = builtBefore(() => buildDeviceConfig(cfg, ctx.params, undefined, moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []).instances).imageComObjects);
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -1946,8 +1992,7 @@ export class System7Profile extends DeviceProfile {
     let authored: Map<number, CfgComObjImage> | undefined;
     let linkedBits = new Set<number>();
     if (scope.l3) {
-      const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
-      const active = buildDeviceConfig(cfg, ctx.params, undefined, instances).imageComObjects;
+      const active = l3Active();
       const changed = new Map([...(ctx.comObjectOverrides ?? [])].filter(([n]) => flagChanges.has(n)));
       refuseUnwritableOverrides(active, changed, MV0705_OVERRIDABLE, "the group-address flash's System 7 com-object table");
       refuseAppCommOffLinks(active, new Set(ctx.links.map((l) => l.comObjNum)));
@@ -1958,7 +2003,7 @@ export class System7Profile extends DeviceProfile {
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
     const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, linkedBits, authored) } : null;
-    const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3);
+    const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3, true, brackets());
     // The change is counted over exactly the runs the plan writes, read where it writes them (the address
     // table's own individual address is neither written nor counted); a table the plan moves whose
     // reference the device does not hold at the new address counts whole, since the device does not read
@@ -1971,7 +2016,7 @@ export class System7Profile extends DeviceProfile {
     for (const r of ga.comObjWrites) diffBytes += byteDiff(r.image, await dev.memRead(r.address, r.image.length));
     const prefix = `${ctx.deviceId}-GA-${Date.now()}`;
     const gaTablesLoaded = await allLoaded(dev, [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, ...(l3 ? [OBJ.COMOBJ_TABLE] : [])], isMemoryMappedLsm(mask));
-    if (gaTablesLoaded && l3 && curL3) refuseSystem7UnknownFlags(cfg, ctx, curL3, l3.bytes, cur);
+    if (gaTablesLoaded && l3 && curL3) refuseSystem7UnknownFlags(flagBaseline, ctx, curL3, l3.bytes, cur);
     return runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("group address flash").loadProcedures.extendedMemoryServices,
       imageBytes: [...ga.writes, ...ga.comObjWrites].reduce((n, w) => n + w.image.length, 0),
@@ -2034,6 +2079,8 @@ export class System7Profile extends DeviceProfile {
     refuseAppCommOffLinks(view.imageComObjects, comObjectTable.linked);
     const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
     const images = absoluteStructuralImages(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), { baseValues: ctx.baseParams, baseInstances, moduleInstances: instances, comObjectTable });
+    const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
+    const structuralBuild = builtBefore(() => absoluteStructuralBuild(cfg, images, proc, instances));
     await runDeclaredChecks(dev, coverage);
     const memMapped = isMemoryMappedLsm(mask);
     const current = new Map<number, Buffer>();
@@ -2044,11 +2091,11 @@ export class System7Profile extends DeviceProfile {
       read += r.image.length;
     }
     // The closing restart is held to what the parameter flash proves on these devices.
-    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances);
+    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances, structuralBuild());
     const loaded = await allLoaded(dev, concerned, memMapped);
     const l3Seg = system7ComObjSegment(cfg);
     const l3Image = l3Seg ? images.find((r) => r.address === l3Seg.address) : undefined;
-    if (loaded && l3Image) refuseSystem7UnknownFlags(cfg, ctx, current.get(l3Image.address)!, l3Image.image, await readGroupTablesMv0705(dev));
+    if (loaded && l3Image) refuseSystem7UnknownFlags(flagBaseline, ctx, current.get(l3Image.address)!, l3Image.image, await readGroupTablesMv0705(dev));
     const stamp = Date.now();
     return structural(runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
@@ -2153,6 +2200,8 @@ export class System7Profile extends DeviceProfile {
     }
     const proc = cfg.loadProcedures;
     refuseTunnelingEntries(cfg);
+    // The plan of each form the reads below may select.
+    const planned = new Map([false, ...(proc.preferPartialIfLoaded ? [true] : [])].map((holds) => [holds, builtBefore(() => this.planSystem7Full(mask, { ...ctx, proc, unitHoldsApplication: holds }))]));
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
     // device already holds this application (re-commission); an all-zero read = a virgin device
@@ -2198,7 +2247,7 @@ export class System7Profile extends DeviceProfile {
       }
     }
 
-    const { plan, segments, imageBytes, tableRefs } = this.planSystem7Full(mask, { ...ctx, proc, unitHoldsApplication });
+    const { plan, segments, imageBytes, tableRefs } = planned.get(unitHoldsApplication)!();
 
     // Back up every declared absolute segment before the unload/rewrite destroys it, sized by the
     // app's own segment declarations. OFF by default (ctx.backupBeforeUnload): the download rebuilds
@@ -2284,22 +2333,24 @@ export class System1Profile extends DeviceProfile {
     return { ...(load ? { flashParams: load, fullDownload: load } : {}), flashLinks: SYSTEM1_GROUP_TABLES_REFUSAL };
   }
 
-  async readState(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<DeviceReadback> {
+  async readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback> {
     const cfg = this.requireCfg("read-back");
     const seg = bcu1Segment(cfg);
     if (!seg) throw new UnsupportedOperation("read-back", this.family, this.mask);
-    const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
     const model = toAppModel(cfg, { includeUnions: true, instances: [] });
     const target = buildAbsoluteSegmentTargets(cfg, ctx.liveParams, { textRefusals: "skip" }).find((t) => t.id === seg.id);
     const eeprom = await dev.memRead(seg.address, seg.size, undefined, (d) => ctx.onProgress?.("params", d, seg.size), ctx.signal);
-    refuse(bcu1ApplicationRefusal(cfg, eeprom));
-    const deviceVals = decodeAbsoluteImage(model, seg.id, eeprom);
-    const projectVals = target ? decodeAbsoluteImage(model, seg.id, target.bytes) : new Map<string, string>();
-    if (target) dropUnownedText(model, deviceVals, (p) => (p.codeSegment === seg.id ? target.owned : undefined));
-    const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
-    foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, model, device);
-    const links = decodeEmptyBcu1Tables(eeprom);
-    return { mask, paramsRead: true, linksRead: links !== null, paramBase, links: links ?? [], deviceConfig: device?.deviceConfig };
+    return () => {
+      refuse(bcu1ApplicationRefusal(cfg, eeprom));
+      const paramBase = new Map(ctx.baseParams ?? ctx.liveParams);
+      const deviceVals = decodeAbsoluteImage(model, seg.id, eeprom);
+      const projectVals = target ? decodeAbsoluteImage(model, seg.id, target.bytes) : new Map<string, string>();
+      if (target) dropUnownedText(model, deviceVals, (p) => (p.codeSegment === seg.id ? target.owned : undefined));
+      const device = deviceRelevantRefs(deviceVals, ctx.liveParams, ctx.configFor);
+      foldDeviceValues(paramBase, deviceVals, projectVals, ctx.liveParams, model, device);
+      const links = decodeEmptyBcu1Tables(eeprom);
+      return { mask, paramsRead: true, linksRead: links !== null, paramBase, links: links ?? [], deviceConfig: device?.deviceConfig };
+    };
   }
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
@@ -2409,7 +2460,7 @@ async function readKnxIpProperty(dev: KnxDevice, pid: number, count: number): Pr
 export class UnsupportedProfile extends DeviceProfile {
   constructor(readonly memoryModel: MemoryModel, readonly family: SystemFamily, mask: string, cfg: AppConfig | null) { super(mask, cfg); }
   capabilities(): DeviceCapabilities { return { readParams: false, readLinks: false, flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false }; }
-  async readState(): Promise<DeviceReadback> { throw new UnsupportedOperation("read-back", this.family, this.mask); }
+  async readDevice(): Promise<() => DeviceReadback> { throw new UnsupportedOperation("read-back", this.family, this.mask); }
   async flashParameters(): Promise<FlashResult> { throw new UnsupportedOperation("parameter flash", this.family, this.mask); }
   async flashGroupTables(): Promise<FlashResult> { throw new UnsupportedOperation("group-address flash", this.family, this.mask); }
 }

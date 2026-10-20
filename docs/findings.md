@@ -1037,3 +1037,23 @@ An Auro presence detector (application FE01) answered the same way: with an addr
 light level object's one own address, a GroupValueRead of the added address was answered within 50 ms
 with the object's value on its own address, and nothing answered on the added one. With one own
 address, below the added one, this does not tell its first association from its lowest.
+
+## 37. A device closes a connection that carries no request for six seconds
+
+A transport-layer connection has a connection timeout of 6 s: a device that has taken no frame on it for
+that long sends `T_Disconnect` (`0x81`) and takes no further numbered frame, so the next request ends as
+`DEVICE_CLOSED_CONNECTION` (§24). The OpenKNX RaumController does exactly this, its `T_Disconnect` 6.0 s
+after the client's last frame. A client that works between two requests (parsing a large application,
+building an image or a configuration from it, decoding what it read) loses the connection once that work
+takes six seconds, and on a host under load it takes a multiple of its idle time. Over UDP the same pause
+costs the tunnel after two (§35).
+
+So Busforge does no such work while a device session is open. A session opens at the operation's first
+request to the device, and the mask check runs then: what an operation builds from the application (its
+images, tables, configurations, coverage, refusals) is built before the tunnel opens; a refusal of a build
+the operation uses only after a device check is raised where it uses it, after that check. A read-back
+reads everything it takes off the device (parameter segments, group tables, com-object table, and where it
+checks whether the device holds the configuration, its application id and load states) and decodes it after
+its session has closed; that check's two dry runs then run in sessions of their own. Between two requests a
+System B or System 7 operation compares bytes. The System 1 download builds its plan after it has read the
+unit's friendly name, which the plan keeps; its application is the size of a BCU 1 EEPROM.

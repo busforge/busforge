@@ -133,9 +133,9 @@ test("a stored flag baseline that sets one object twice, differently, leaves the
   const xml = s.state.db.query("SELECT xml FROM app_programs WHERE id = 'M-TEST_A-1'").get() as { xml: string };
   const cfg = parseAppConfig(xml.xml);
   const profile = real.classify(cfg);
-  const orig = profile.constructor.prototype.readState;
+  const orig = profile.constructor.prototype.readDevice;
   const n = [...(await import("@busforge/product")).buildDeviceConfig(cfg, new Map([["M-TEST_A-1_P-1_R-1", "1"]])).imageComObjects.keys()][0];
-  profile.constructor.prototype.readState = async () => ({ mask: cfg.mask, paramsRead: true, linksRead: true, paramBase: new Map([["M-TEST_A-1_P-1_R-1", "1"]]), links: [], comObjFlags: new Map([[n, { flags: { read: true }, priority: "Low" as const }]]) });
+  profile.constructor.prototype.readDevice = async () => () => ({ mask: cfg.mask, paramsRead: true, linksRead: true, paramBase: new Map([["M-TEST_A-1_P-1_R-1", "1"]]), links: [], comObjFlags: new Map([[n, { flags: { read: true }, priority: "Low" as const }]]) });
   try {
     const read = await readStateOn({} as never, cfg.mask, {
       appXml: xml.xml, deviceId: s.deviceId, ia: "1.1.10", liveParams: new Map(),
@@ -143,5 +143,5 @@ test("a stored flag baseline that sets one object twice, differently, leaves the
     });
     expect(read).toMatchObject({ paramsRead: true, linksRead: true, comObjFlagsUnreadable: expect.stringContaining("COM_OBJECT_OVERRIDE_CONFLICT") });
     expect(read.comObjOverrideBase).toBeUndefined();
-  } finally { profile.constructor.prototype.readState = orig; }
+  } finally { profile.constructor.prototype.readDevice = orig; }
 });

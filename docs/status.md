@@ -563,8 +563,11 @@ report a device family as working on the strength of a passing test suite.
   `DEVICE_CLOSED_CONNECTION` (the device sent `T_Disconnect` mid-request, [findings.md](findings.md)
   §24); the writes after it verified, and the same step passes otherwise. The cause is not known.
 - **A UDP tunnel to Busforge's bridge closes when the server stops acknowledging for two seconds**
-  ([findings.md](findings.md) §35). A write parses the application before it opens the tunnel; what it
-  still computes inside the session (images and tables from the parsed application) stayed inside that
-  window for the Jung 400021SE's secured full download from a server limited to a quarter of a CPU
-  core. That is not shown for every application on every host. A closed tunnel ends the write with
-  `TUNNEL_CLOSED`; over TCP the bridge needs no acknowledgement.
+  ([findings.md](findings.md) §35), **and a device closes a connection without a request for six**
+  (§37). Every read-back and write builds what it needs from the application before its first request
+  to the device and opens the session then; a read-back decodes after its session. Between two requests
+  a System B or System 7 operation compares bytes (the System 1 download builds its small plan after one
+  read): a few milliseconds on the units emulated from their collections and with the largest application
+  in the corpus. A run on hardware from a slow host is not shown. A closed tunnel
+  ends the operation with `TUNNEL_CLOSED`, a closed connection with `DEVICE_CLOSED_CONNECTION`; over TCP
+  the bridge needs no acknowledgement.

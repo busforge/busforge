@@ -55,15 +55,6 @@ entered by hand, or written by Busforge when it activates the device. Details in
 
 ## Known issues
 
-**A programming run over a UDP connection to the Busforge bridge can stop with "the tunnel is closed".**
-Over UDP the bridge closes a tunnel whose client does not acknowledge its messages within two seconds.
-Busforge prepares the device's data while the tunnel is open; on a slow host (a small NAS, a container
-with a low CPU limit) and with a very large application program that preparation can take longer than
-that, and the write then ends with `TUNNEL_CLOSED`, usually before anything was written; where a write
-was already under way, Busforge reports it as interrupted and offers the full download. Workaround: set
-the connection's transport to TCP (or `auto`, which tries TCP first); over TCP the bridge needs no
-acknowledgements and the pause costs nothing.
-
 **A secured full download of a Jung 400021SE can stop with "the device closed the connection".** Rarely,
 the device ends the management connection in the middle of a Data Secure full download, and Busforge
 stops with `DEVICE_CLOSED_CONNECTION`. The cause is not known, and repeated runs do not reproduce

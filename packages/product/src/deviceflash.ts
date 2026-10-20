@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
-import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference, type DeviceSegmentTarget } from "./deviceimage.ts";
 import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
@@ -64,9 +64,9 @@ function runsFromMask(image: Buffer, address: number, write: boolean[]): FlashRu
 export function planAbsoluteSegmentFlash(
   app: AppConfig,
   values: Map<string, string>,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; current?: Map<string, Buffer> } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; current?: Map<string, Buffer>; targets?: DeviceSegmentTarget[] } = {},
 ): FlashPlan {
-  const targets = buildAbsoluteSegmentTargets(app, values, opts);
+  const targets = opts.targets ?? buildAbsoluteSegmentTargets(app, values, opts);
   const segments: SegmentFlashPlan[] = [];
   for (const t of targets) {
     const current = opts.current?.get(t.id);
@@ -376,14 +376,8 @@ export function absoluteStructuralImages(
 // the download, the restart. Of the parameter segments the bytes the parameter flash writes (parWriteSet).
 // `current`: what the device holds at each image's address, at the image's length.
 // `concerned`: every load-state machine the plan loads, for the load-state check.
-export function planAbsoluteStructuralFlash(
-  app: AppConfig,
-  images: AbsStructuralImage[],
-  procedure: LoadProcedures,
-  current: ReadonlyMap<number, Buffer>,
-  requireReboot: boolean,
-  moduleInstances: ModuleInstance[], // the instances the images were built with, for the bytes a parameter covers
-): AbsStructuralFlashPlan {
+// The images of the three tables among a structural flash's images.
+function structuralTableImages(app: AppConfig, images: AbsStructuralImage[]) {
   const g = app.groupTables;
   const at = (id: string | undefined) => app.absoluteSegments.find((x) => x.id === id)?.address;
   const imageAt = (id: string | undefined, which: string) => {
@@ -391,8 +385,36 @@ export function planAbsoluteStructuralFlash(
     if (!w) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the structural flash has no ${which} table image; refusing a partial write`);
     return w;
   };
-  const addrImg = imageAt(g.addressSegment, "address"), assocImg = imageAt(g.associationSegment, "association"), comImg = imageAt(g.comObjectSegment, "com-object");
-  const tables = planSystem7TableBrackets(app, procedure, { addr: addrImg.image, assoc: assocImg.image });
+  return { addrImg: imageAt(g.addressSegment, "address"), assocImg: imageAt(g.associationSegment, "association"), comImg: imageAt(g.comObjectSegment, "com-object") };
+}
+// What planAbsoluteStructuralFlash builds from the application alone: the table brackets and, where ETS
+// writes every byte a parameter's memory covers, each parameter segment's coverage (parameterMemoryBytes).
+export interface AbsStructuralBuild { tables: ReturnType<typeof planSystem7TableBrackets>; coverage?: ReadonlyMap<string, boolean[] | null> }
+export function absoluteStructuralBuild(app: AppConfig, images: AbsStructuralImage[], procedure: LoadProcedures, moduleInstances: ModuleInstance[]): AbsStructuralBuild {
+  const { addrImg, assocImg, comImg } = structuralTableImages(app, images);
+  const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
+  return {
+    tables: planSystem7TableBrackets(app, procedure, { addr: addrImg.image, assoc: assocImg.image }),
+    ...(parWriteSet(app) === "parameterBytes"
+      ? { coverage: new Map(images.filter((w) => !tableIds.has(w.id)).map((w) => [w.id, parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true })])) }
+      : {}),
+  };
+}
+
+export function planAbsoluteStructuralFlash(
+  app: AppConfig,
+  images: AbsStructuralImage[],
+  procedure: LoadProcedures,
+  current: ReadonlyMap<number, Buffer>,
+  requireReboot: boolean,
+  moduleInstances: ModuleInstance[], // the instances the images were built with, for the bytes a parameter covers
+  // What the caller built from the application before reading the device (absoluteStructuralBuild); what
+  // is absent is built here.
+  built: Partial<AbsStructuralBuild> = {},
+): AbsStructuralFlashPlan {
+  const { addrImg, assocImg, comImg } = structuralTableImages(app, images);
+  const tables = built.tables ?? planSystem7TableBrackets(app, procedure, { addr: addrImg.image, assoc: assocImg.image });
+  const coverage = built.coverage;
   const comObjWrites = etsTableRuns(app, comImg.address, builtComObjectTable(comImg.image), false);
   const lsmByAddress = new Map<number, number>();
   for (const st of flattenSteps(procedure, "full")) {
@@ -420,7 +442,7 @@ export function planAbsoluteStructuralFlash(
   for (const { w, image, differing } of params) {
     let write = differing, verify = w.verify;
     if (anyDiffers && parWriteSet(app) === "parameterBytes") {
-      const cov = parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true });
+      const cov = coverage?.has(w.id) ? coverage.get(w.id)! : parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true });
       if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${w.id} has a type of no known width, so the bytes ETS's download writes there cannot be told; refusing to guess`);
       const outside = differing.flatMap((d, i) => (d && !cov[i] ? [i] : []));
       if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${w.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
@@ -463,24 +485,35 @@ export function planAbsoluteStructuralFlash(
 export type ParWriteSet = "differing" | "parameterBytes";
 export const parWriteSet = (app: AppConfig): ParWriteSet => (isMemoryMappedLsm(app.mask) ? "differing" : "parameterBytes");
 
+// What planAbsoluteParFlash builds from the application alone, before the device is read: the segment
+// targets and, where ETS writes every byte a parameter's memory covers, each segment's coverage (null
+// where a parameter there has a type of no known width).
+export interface AbsParFlashBuild { targets: DeviceSegmentTarget[]; coverage?: Map<string, boolean[] | null> }
+export function buildAbsoluteParFlash(app: AppConfig, values: Map<string, string>, opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {}): AbsParFlashBuild {
+  const targets = buildAbsoluteSegmentTargets(app, values, opts);
+  if (parWriteSet(app) !== "parameterBytes") return { targets };
+  const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
+  return { targets, coverage: new Map(targets.map((t) => [t.id, parameterMemoryBytes(app, t.id, t.size, { moduleInstances: instances, colorWidth: true })])) };
+}
+
 export function planAbsoluteParFlash(
   app: AppConfig,
   values: Map<string, string>,
   procedure: LoadProcedures,
   current: Map<string, Buffer>, // AbsoluteSegment Id -> live device bytes
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; built?: AbsParFlashBuild } = {},
 ): AbsParFlashPlan {
-  const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current });
+  const built = opts.built ?? buildAbsoluteParFlash(app, values, opts);
+  const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current, targets: built.targets });
   // What ETS writes of a parameter download (parWriteSet): on a memory-mapped mask it reads its image
   // first and writes the bytes that differ, which are fp's runs; elsewhere every byte a parameter's
   // memory covers, in every parameter segment, once anything changed.
   // `covered` is what the caller verifies besides the owned bytes: the device's own values it rewrote.
   const differing = fp.segments.reduce((n, sg) => n + sg.writtenBytes, 0);
   const covered: AbsParFlashPlan["covered"] = [];
-  if (differing > 0 && parWriteSet(app) === "parameterBytes") {
-    const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
+  if (differing > 0 && built.coverage) {
     for (const sg of fp.segments) {
-      const cov = parameterMemoryBytes(app, sg.id, sg.size, { moduleInstances: instances, colorWidth: true });
+      const cov = built.coverage.get(sg.id) ?? null;
       if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${sg.id} has a type of no known width, so the bytes ETS's parameter download writes there cannot be told; refusing to guess`);
       const outside = sg.runs.flatMap((r) => [...r.bytes.keys()].map((k) => r.address - sg.address + k)).filter((i) => !cov[i]);
       if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${sg.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
@@ -766,9 +799,10 @@ const declarationTransport = (app: AppConfig): { viaProperty?: true } => (isMemo
 // the com-object table to its counted entries in the application's load bracket without unloading or
 // declaring it, the steps that close the download, the restart. `comObjWrites`: what is written of the
 // com-object table, for the read-back.
-export function planSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true): System7Tables & { plan: LoadPlan; comObjWrites: { address: number; image: Buffer }[] } {
+// `brackets`: planSystem7TableBrackets of `tables`, where the caller built it before reading the device.
+export function planSystem7GaFlash(app: AppConfig, procedure: LoadProcedures, tables: { addr: Buffer; assoc: Buffer }, comObj: { address: number; bytes: Buffer } | null, requireReboot = true, brackets?: ReturnType<typeof planSystem7TableBrackets>): System7Tables & { plan: LoadPlan; comObjWrites: { address: number; image: Buffer }[] } {
   if (procedure.style !== "ProductProcedure") throw new ProductError("LOAD_STEP_UNSUPPORTED", `the group-address flash follows the application's own load procedure, and this one declares none (style ${procedure.style})`);
-  const t = planSystem7TableBrackets(app, procedure, tables);
+  const t = brackets ?? planSystem7TableBrackets(app, procedure, tables);
   const comObjWrites = comObj ? etsTableRuns(app, comObj.address, builtComObjectTable(comObj.bytes), false) : [];
   const app3: LoadStep[] = comObj ? [{ op: "load", lsm: APP_LSM }, ...comObjWrites.map((r): LoadStep => ({ op: "writeMem", address: r.address, bytes: r.image })), { op: "loadCompleted", lsm: APP_LSM }] : [];
   const { placement: _p, data: _d, ...tables7 } = t;

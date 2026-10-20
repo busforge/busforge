@@ -243,7 +243,15 @@ bus.
 
 7. **Verify the device before writing.** The device descriptor is read and its mask compared
    against the application's, by canonical equality, never substring. A mismatch aborts with
-   `MASK_MISMATCH`, so the wrong device is never programmed. Teardown always runs.
+   `MASK_MISMATCH`, so the wrong device is never programmed, also where the operation takes the
+   failure of a request as an answer. Teardown always runs.
+   The session opens at the operation's first request to the device, and the mask check runs then:
+   what an operation builds from the application (images, tables, configurations, refusals) runs
+   before the tunnel opens, and between two requests a System B or System 7 operation only compares
+   bytes (the System 1 download builds its small plan after reading the unit's name). A device closes a
+   connection that carries no request for 6 s, and a UDP tunnel closes on a client that does not
+   acknowledge for two ([findings.md](findings.md) §35, §37). A read-back reads everything first and
+   decodes it after its session has closed.
 
 **Inside the operation** (`runFlashOp` in `packages/product/src/profiles.ts`, one sequence for
 every device model):
@@ -347,7 +355,7 @@ value the other way.
   under them, and takes them into the project and the baseline only if the device's configuration
   (its read values and the assumed ones) then shows each assumed parameter and an object for every
   link the device holds, and a parameter and a group-address flash dry run (the device's own links)
-  under the baseline the read sets, in the same session, find nothing to write. Otherwise nothing is
+  under the baseline the read sets, each in a session of its own after the read, find nothing to write. Otherwise nothing is
   stored and the read is refused
   (`READBACK_ASSUMPTION_UNRESOLVED`, the objects in `details.objects`; `READBACK_ASSUMPTION_NOT_SHOWN`;
   `READBACK_ASSUMPTION_IMAGE_DIFFERS`). Several values of a parameter can show the same objects (a
@@ -391,7 +399,8 @@ value the other way.
   documentation or its ETS project.
 - **It can end "never programmed".** A read of a never-programmed device also reads, in the same
   session, the application id (PID 13 of the application object its mask names) and the load states,
-  and runs a parameter and a group-address flash dry run under the baseline it sets (the latter also
+  and, once that session has closed and the read is decoded, runs a parameter and a group-address flash
+  dry run, each in a session of its own, under the baseline it sets (the latter also
   compares the com-object table where the family's GA flash writes it). When the read covered parameters and
   links, left no link unresolved, the id is this application's, the address table, association table
   and application (System B: and com-object table) are LOADED, and both dry runs find nothing to write,

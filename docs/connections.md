@@ -84,9 +84,10 @@ confirmation are tested against a scripted gateway only.
 sends, including the `L_Data.con` of the client's own last frame, needs its TUNNELLING_ACK within
 1 s; Busforge's bridge repeats it once and then closes the channel with a DISCONNECT_REQUEST, as the
 specification asks. A client process that is busy computing for two seconds therefore loses its UDP
-channel, while over TCP the same pause costs nothing. So a write parses the application program before
-it opens the tunnel (a large one takes seconds on a slow host) and takes its load procedures from that
-parse; inside the session it only derives the images and tables from the parsed application. Once the
+channel, while over TCP the same pause costs nothing. So an operation opens the tunnel at its first
+request to the device: the application program is parsed, and the images, tables and configurations
+are built from it (seconds for a large one on a slow host), before that; inside the session it only
+compares bytes, and a read-back decodes what it read after its session ([findings.md](findings.md) §37). Once the
 gateway has closed the channel, every further send fails as `TUNNEL_CLOSED`, a send already waiting for
 its acknowledgement included, and the device layer treats that as a link failure.
 
