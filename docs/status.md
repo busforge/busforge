@@ -353,8 +353,9 @@ What each row does not show:
   and the RMG 8 T.
 - **Gira M-0008 full download** is refused onto a unit that does not hold the application with
   load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): its declared form
-  sends a step after the restart that no capture shows. None of the Auro, Gira, TheLuxa and
-  Meteodata runs is a smoke run, so the compatibility matrix does not count them.
+  sends a step after the restart that no capture shows. The Meteodata's script runs are no smoke runs,
+  so the compatibility matrix does not count them; the Auro, Gira and TheLuxa count through their
+  in-service smoke runs.
 - **Full download of the Steinel M-008E and the second Auro application `M-0081_A-FF31`** is refused
   before any write and not offered (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`): a parameter segment without
   `<Data>`, and a `<Mask>` of a form no capture shows
@@ -414,11 +415,11 @@ spec states why no behaviour is observable.
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter and GA flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run; its records do not ship yet (see the note) |
-| `gira-m0008-in-service` | Gira Tastsensor 3 Komfort (M-0008_A-10D7), a commissioned unit (parameter flash and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and click-through pass in both channels, to the byte only (the spec declares no behaviour); the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
-| `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
+| `gira-m0008-in-service` | Gira Tastsensor 3 Komfort (M-0008_A-10D7), a commissioned unit (parameter flash and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash and full download pass in both channels, the click-through in the ui channel, to the byte only (the spec declares no behaviour); the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
+| `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
-| `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download, behaviour and click-through pass in both channels; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
+| `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-hmg6t-in-service` | Theben HMG 6 T heating actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-jmg4t-in-service` | Theben JMG 4 T blind actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
@@ -480,8 +481,9 @@ report a device family as working on the strength of a passing test suite.
   device hold a flag its project does not. Products other than these rest on the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
-- **A device in service, taken over by read-back, has run on hardware for four products only:** the
-  OpenKNX RaumController, the Theben DALI-Gateway, the Auro M-0081_A-FE01 and the Gira M-0008, both channels (the
+- **A device in service, taken over by read-back, has run on hardware for five products only:** the
+  OpenKNX RaumController, the Theben DALI-Gateway, the Auro M-0081_A-FE01, the Gira M-0008 and the Theben
+  TheLuxa P300, both channels (the
   DALI-Gateway's ECG group assignments taken as assumed, unproven by the device, as its spec names
   them). Every
   device-in-service spec runs against the real server and the real read and write paths on its unit

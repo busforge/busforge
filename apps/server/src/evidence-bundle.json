@@ -38,6 +38,18 @@
    }
   },
   {
+   "productRef": "M-0048_H-1019610-1_P-1019610",
+   "appProgramId": "M-0048_A-107E-12-5B58",
+   "capabilities": {
+    "readParams": true,
+    "readLinks": true,
+    "flashParams": true,
+    "flashLinks": true,
+    "fullDownload": true,
+    "structuralFlash": true
+   }
+  },
+  {
    "productRef": "M-0048_H-9070929-1-O00EF_P-9070929",
    "appProgramId": "M-0048_A-9071-20-F258-O00EF",
    "capabilities": {
@@ -99,6 +111,934 @@
   }
  ],
  "records": [
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashLinks api behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: C1 Block answers on the test link",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x00"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashLinks api transfer+persistence",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 16 to the test address (13 B, verified), read back; unlinked (9 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5190 ms after A_Restart, first in the restart's own connection, answering again after 5318 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashLinks ui behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: C1 Block answers on the test link",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x00"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashLinks ui transfer+persistence",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 16 to the test address (verified), read back; unlinked (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "pass",
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5190 ms after A_Restart, first in the restart's own connection, answering again after 5317 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashParams api transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-2234_R-2234 0→1 (2 B, verified) →0 (2 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 flashParams ui transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-2234_R-2234 0→1 (verified) →0 (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 fullDownload api transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (1090 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 fullDownload ui transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 readLinks api transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 readLinks ui transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 readParams api transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 readParams ui transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-14636_R-14636 0→1 (16 B, verified) →0 (16 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-1019610-1_P-1019610",
+    "appProgramId": "M-0048_A-107E-12-5B58",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "1",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-theluxa-p300-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "1019610 structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-14636_R-14636 0→1 (verified) →0 (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
   {
    "schema": "busforge.evidence/1",
    "recordedAt": null,

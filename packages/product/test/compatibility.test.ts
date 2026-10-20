@@ -153,6 +153,7 @@ describe("the shipped evidence bundle", () => {
       "M-0048_H-9070929-1-O00EF_P-9070929": { fullDownload: "eligible", structuralFlash: "tested" },
       "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02": { fullDownload: "tested", structuralFlash: "eligible" },
       "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000": { fullDownload: "tested", structuralFlash: "eligible" },
+      "M-0048_H-1019610-1_P-1019610": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D": {
         readParams: "eligible", readLinks: "eligible", flashParams: "failed", flashLinks: "eligible", fullDownload: "eligible", structuralFlash: "eligible",
       },

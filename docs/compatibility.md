@@ -19,6 +19,7 @@ columns are listed per operation below.
 | M-0002 GH Q631 0070 R0111 | `M-0002_A-A001-13-63C2` | tested | tested | tested | tested | tested | tested |
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | eligible, untested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
@@ -63,6 +64,19 @@ Product `M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000`, application program `M-
 | Group-address flash | tested | pass / pass | not-assessed / not-assessed | pass / pass | none | 5 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 |
 | Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+
+## M-0048 1019610
+
+Product `M-0048_H-1019610-1_P-1019610`, application program `M-0048_A-107E-12-5B58`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 1 |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
 
 ## M-0048 9070929
 

@@ -13,7 +13,7 @@ depends on is hardware-proven.
   flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
   System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the Auro,
-  Gira, TheLuxa P300, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
+  Gira, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
