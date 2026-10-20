@@ -67,6 +67,9 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
   }
   const asDev = (m: MockDevice) => m as unknown as KnxDevice;
   const ctx = { deviceId: "d", appXml: xml, params, baseParams: params, moduleInstances: [], dryRun: false, persistBackups: () => "backup" };
+  // A byte other than `b` that reads as data: a byte read as FF the project has not changed since the last
+  // programming is left alone (leaveUnreadUnchanged), so a difference meant to be written is never FF.
+  const unlike = (b: number) => (b === 0 ? 1 : 0);
   function seeded(): MockDevice {
     const dev = new MockDevice();
     for (let i = 0; i < target.size; i++) dev.mem.set(BASE + i, target.bytes[i]);
@@ -79,7 +82,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     const run = async (record: { obj: number; element: number; hex: string }[] | undefined) => {
       const dev = seeded();
       const k = target.owned.findIndex((m) => m === 0xff);
-      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      dev.mem.set(BASE + k, unlike(target.bytes[k]));
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: record });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       return { dev, res, k };
@@ -175,7 +178,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     test("parameter flash: the application only", async () => {
       const dev = loadedUnit();
       const k = target.owned.findIndex((m) => m === 0xff);
-      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      dev.mem.set(BASE + k, unlike(target.bytes[k]));
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([4]);
@@ -201,7 +204,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     const changedUnit = () => {
       const dev = seeded();
       const k = target.owned.findIndex((m) => m === 0xff);
-      dev.mem.set(BASE + k, target.bytes[k] ^ 0xff);
+      dev.mem.set(BASE + k, unlike(target.bytes[k]));
       return dev;
     };
     // The writes that rewrite the com-object table find the one the baseline implies on the unit (with no
@@ -246,7 +249,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       dev.restartEnds = "unproven";
       // The unit loses the written byte on its restart.
       const k = target.owned.findIndex((m) => m === 0xff);
-      dev.onRestart = () => { dev.mem.set(BASE + k, target.bytes[k] ^ 0xff); };
+      dev.onRestart = () => { dev.mem.set(BASE + k, unlike(target.bytes[k])); };
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
       expect(res).toMatchObject({ kind: "flashed", verified: false, restartUnproven: true });
     }, 30_000);
@@ -273,7 +276,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     // one lost read is retried after a reconnect, not reported as a failed flash.
     test("a read-back that loses the device once is retried after a reconnect", async () => {
       const dev = seeded();
-      dev.mem.set(BASE, target.bytes[0] ^ 0xff); // a real change, so the flash writes and verifies
+      dev.mem.set(BASE, unlike(target.bytes[0])); // a real change, so the flash writes and verifies
       let failOnce = true;
       const read = dev.memRead.bind(dev);
       dev.memRead = async (addr: number, len: number) => {
@@ -287,13 +290,20 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(res.verified).toBe(true);
     }, 30_000);
 
+    // A field the project changed since the device was last programmed: its baseline holds another value of
+    // P-8, so the byte it takes differs from the baseline's and goes out even where the device reads FF.
+    const changedBase = new Map([["M-0162_A-0004-11-F245_P-8_R-8", "2"]]);
+    const baseTarget = buildRelativeSegmentTarget(cfg, changedBase, 4, { ownIdleUnionDefaults: true })!;
+    const kChanged = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.verify[i] === 0xff && target.constant[i] === 0 && target.bytes[i] !== 0xff && baseTarget.bytes[i] !== target.bytes[i]);
+    const changedCtx = { ...ctx, baseParams: changedBase };
+
     // Written with the confirmed extended write (the log KnxDevice keeps), and one owned byte it stores
     // but always reads as FF: a field it does not give back.
     test("a field the device does not give back verifies on the write confirmation, after a retried read-back", async () => {
-      const k = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.verify[i] === 0xff && target.bytes[i] !== 0xff);
+      const k = kChanged;
       expect(k).toBeGreaterThan(0);
       const dev = seeded();
-      dev.mem.set(BASE, target.bytes[0] ^ 0xff); // a real change that lands
+      dev.mem.set(BASE, unlike(target.bytes[0])); // a real change that lands
       let log: { address: number; bytes: Buffer }[] = [];
       dev.confirmedWrites = () => log as never;
       dev.clearConfirmedWrites = () => { log = []; };
@@ -307,7 +317,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
         if (addr <= BASE + k && BASE + k < addr + len) b[BASE + k - addr] = 0xff;
         return b;
       };
-      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", changedCtx);
       expect(failOnce).toBe(false);
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(res.verified).toBe(true);
@@ -317,17 +327,79 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     // The same field before a write: the dry run counts the byte the device reads as FF and names it, as
     // nothing but a write tells a byte it does not give back from one that holds FF.
     test("a dry run names the differing bytes the device reads as FF", async () => {
-      const k = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.constant[i] === 0 && target.bytes[i] !== 0xff);
+      const k = kChanged;
       const dev = seeded();
-      dev.mem.set(BASE, target.bytes[0] === 0 ? 1 : 0); // a difference that reads as data
+      dev.mem.set(BASE, unlike(target.bytes[0])); // a difference that reads as data
       dev.mem.set(BASE + k, 0xff);
-      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...changedCtx, dryRun: true });
       expect(res).toMatchObject({ kind: "dryRun", diffBytes: 2, readsFF: [{ address: BASE + k, length: 1 }] });
+      expect("leftFF" in res).toBe(false);
       dev.mem.set(BASE + k, target.bytes[k]);
-      const plain = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      const plain = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...changedCtx, dryRun: true });
       expect(plain.kind === "dryRun" && plain.diffBytes === 1 && !("readsFF" in plain)).toBe(true);
       expect(dev.writes).toBe(0);
     });
+
+    // The same byte unchanged since the last programming (the baseline is the project): ETS's parameter
+    // download, comparing with its record, leaves it, and so does the flash, with a stamp record and without
+    // one. Neither dry run nor flash counts it; both name it. A device that really holds FF there keeps it.
+    test("a byte read as FF the project has not changed since the last programming is left alone", async () => {
+      const k = kChanged;
+      const dev = seeded();
+      dev.mem.set(BASE + k, 0xff);
+      const alone = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      expect(alone).toMatchObject({ kind: "unchanged", leftFF: [{ address: BASE + k, length: 1 }] });
+      dev.mem.set(BASE, unlike(target.bytes[0]));
+      const dry = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, dryRun: true });
+      expect(dry).toMatchObject({ kind: "dryRun", diffBytes: 1, leftFF: [{ address: BASE + k, length: 1 }] });
+      expect("readsFF" in dry).toBe(false);
+      for (const record of [undefined, [{ obj: 4, element: 1, hex: STAMP }]]) {
+        dev.written.clear();
+        dev.mem.set(BASE, unlike(target.bytes[0]));
+        const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: record });
+        if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+        expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.written.has(BASE), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, true, 0xff]);
+      }
+    }, 30_000);
+    // Not where the stamps tell another tool has written the unit since the record: the baseline still
+    // decides (the rule holds without a record, and a record the unit no longer matches tells no more).
+    test("a stamp other than the record leaves the byte as well", async () => {
+      const k = kChanged;
+      const dev = seeded();
+      dev.mem.set(BASE + k, 0xff);
+      dev.mem.set(BASE, unlike(target.bytes[0]));
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: [{ obj: 4, element: 1, hex: other("00", "00bb") }] });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, 0xff]);
+    }, 30_000);
+    // An application left not LOADED takes every owned byte, the byte read as FF with the project's value.
+    test("an application not LOADED takes the byte read as FF as well", async () => {
+      const k = kChanged;
+      const dev = seeded();
+      dev.mem.set(BASE + k, 0xff);
+      dev.state.set(4, STATE.LOADING);
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([res.verified, "leftFF" in res, dev.mem.get(BASE + k)]).toEqual([true, false, target.bytes[k]]);
+    }, 30_000);
+    // A segment the allocation moves is written whole: there the byte goes out with the project's value
+    // (the unit's own is not readable to carry over), it is verified as written, and the result does not
+    // name it as left alone.
+    test("a segment the allocation moves gets the byte with the project's value, not named as left", async () => {
+      const k = kChanged;
+      const MOVED = BASE + 0x1000;
+      const dev = seeded();
+      dev.mem.set(BASE + k, 0xff);
+      dev.mem.set(BASE, unlike(target.bytes[0]));
+      let at = BASE;
+      dev.tableAddr = async (obj: number) => (obj === 4 ? at : 0x100 * obj);
+      const propWrite = dev.propWrite.bind(dev);
+      dev.propWrite = async (obj: number, pid: number, data: Buffer) => { if (obj === 4 && pid === 5 && data[0] === LSM.LOAD) at = MOVED; return propWrite(obj, pid, data); };
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([res.verified, "leftFF" in res, dev.mem.get(MOVED + k), dev.mem.get(MOVED)]).toEqual([true, false, target.bytes[k], target.bytes[0]]);
+      expect(dev.written.has(BASE + k)).toBe(false);
+    }, 30_000);
 
     test("LSM 4 Loading: the bracket runs and leaves it LOADED", async () => {
       const dev = seeded();

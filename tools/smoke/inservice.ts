@@ -109,8 +109,8 @@ export interface FoundConfiguration {
   // Assumed parameters whose value another value of theirs writes the same: taken, not shown.
   unprovenAssumptions?: string[];
   // The bytes the parameter flash's dry run found differing only where the unit reads FF (FlashResult.readsFF),
-  // device addresses: taken as bytes the unit does not give back, which every parameter write of the run
-  // must then show on its write confirmation alone (confirmedOnly).
+  // device addresses: taken as bytes the unit does not give back, which every parameter write of the run that
+  // writes them must then show on its write confirmation alone (confirmedOnly).
   readsFF?: Ranges;
 }
 
@@ -415,24 +415,36 @@ const sameRanges = (a: Ranges, b: Ranges) => a.length === b.length && a.every((x
 const nothingToWrite = (r: FlashResult, ff: Ranges | undefined): boolean => r.kind === "unchanged" || (r.kind === "dryRun" && r.alwaysWrite === true && r.diffBytes === 0)
   || (!!ff?.length && onlyFF(r) && sameRanges(r.readsFF!, ff));
 const dryKind = (r: FlashResult): string => r.kind !== "dryRun" ? r.kind
-  : `${r.alwaysWrite || r.readsFF?.length ? `dryRun with ${r.diffBytes ?? "?"} differing byte(s)` : r.kind}${r.readsFF?.length ? ` (read as FF at ${rangeText(r.readsFF)})` : ""}`;
+  : `${r.alwaysWrite || r.readsFF?.length ? `dryRun with ${r.diffBytes ?? "?"} differing byte(s)` : r.kind}${r.readsFF?.length ? ` (read as FF at ${rangeText(r.readsFF)})` : ""}${r.leftFF?.length ? ` (read as FF and left alone at ${rangeText(r.leftFF)})` : ""}`;
 
-// A parameter write after an adoption that took bytes as not given back (FoundConfiguration.readsFF): the
-// write puts the project's value there, and must show each of them on its write confirmation alone. One it
+// A parameter write after an adoption that took bytes as not given back (FoundConfiguration.readsFF): a
+// write that puts the project's value there must show each of them on its write confirmation alone. One it
 // read back as written was given back: the unit held FF there, not the configuration taken over, and now
 // holds the project's value, which no undo by dry run sees; the value found is in the server's backups.
-function ffProblem(r: FlashResult | undefined, ff: Ranges): string | null {
+// A write that leaves them (FlashResult.leftFF: the project's value there is the one last programmed, by
+// the run's earlier write) shows nothing of them, so it passes only after a write of the run has shown them
+// (`shown`, ffShown).
+const ffBytes = (ff: Ranges) => ff.flatMap((x) => Array.from({ length: x.length }, (_, i) => x.address + i));
+const ffShown = new WeakSet<FoundConfiguration>();
+function ffProblem(r: FlashResult | undefined, ff: Ranges, shown: boolean): string | null {
   if (!r) return `the write's result is not known, so the bytes at ${rangeText(ff)} taken as not given back are not shown on its write confirmation`;
   const c = r.confirmedOnly ?? [];
-  const missing = ff.flatMap((x) => Array.from({ length: x.length }, (_, i) => x.address + i)).filter((a) => !covers(c, a));
+  const left = r.leftFF ?? [];
+  if (!shown && ffBytes(ff).some((a) => covers(left, a))) return `the adoption took the bytes at ${rangeText(ff)} as not given back by the unit, but the run's first write that reached them left them alone, so no write confirmation shows them as such`;
+  const missing = ffBytes(ff).filter((a) => !covers(c, a) && !covers(left, a));
   if (!missing.length) return null;
   return `the adoption took the bytes at ${rangeText(ff)} as not given back by the unit, but this write ${c.length ? `rested on its confirmation alone only at ${rangeText(c)}` : "read every byte back"}: the unit gave back ${missing.length} of them, so it held FF there, not the configuration taken over, and now holds the project's value there; the value found is in the server's backups`;
 }
-function confirmFF(o: FlashOutcome, ff: Ranges | undefined, phase: string): string {
+function confirmFF(o: FlashOutcome, found: FoundConfiguration, phase: string): string {
+  const ff = found.readsFF;
   if (!ff?.length) return "";
-  const problem = ffProblem(o.result, ff);
+  const problem = ffProblem(o.result, ff, ffShown.has(found));
   if (problem) throw new Stop(phase, problem);
-  return `, ${rangeText(ff)} written from the project on the write confirmation alone`;
+  const left = o.result?.leftFF ?? [];
+  const leftHere = ffBytes(ff).filter((a) => covers(left, a));
+  if (!leftHere.length) { ffShown.add(found); return `, ${rangeText(ff)} written from the project on the write confirmation alone`; }
+  if (leftHere.length === ffBytes(ff).length) return `, ${rangeText(ff)} left alone, unchanged since the last programming`;
+  return `, ${rangeText(ff)} written from the project on the write confirmation alone where not left alone (${rangeText(leftHere.map((a) => ({ address: a, length: 1 })))}), unchanged since the last programming`;
 }
 
 // The dry run before a write: it must find a change to write, of the expected kind. A coded refusal
@@ -548,7 +560,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     if (!structural) await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, gaDry);
     at = phase;
     const thereOut = await io.chan.flashParams();
-    const there = checkWritten(thereOut, phase, structural) + confirmFF(thereOut, found!.readsFF, phase);
+    const there = checkWritten(thereOut, phase, structural) + confirmFF(thereOut, found!, phase);
     await io.settle(2000);
     if (structural) await onlyTheStep(phase, { param: [step.paramRefId, step.value] }, gaDry);
     await io.chan.setParam(step.paramRefId, original);
@@ -556,7 +568,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     await dryBeforeWrite(() => io.api.flashDry(), phase, structural, found!.readsFF);
     if (!structural) await onlyTheStep(phase, {}, gaDry);
     const backOut = await io.chan.flashParams();
-    const back = checkWritten(backOut, phase, structural) + confirmFF(backOut, found!.readsFF, phase);
+    const back = checkWritten(backOut, phase, structural) + confirmFF(backOut, found!, phase);
     out.params.delete(step.paramRefId);
     await io.settle(2000);
     await settled(phase, `after the ${phase} revert`);
@@ -822,7 +834,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         }
         const dries = await dryRuns();
         restore = dries.every((d) => nothingToWrite(d.r, found!.readsFF))
-          ? { state: "pass", detail: `the device holds the configuration it was found with: ${dries.map((d) => `${d.name} dry run ${d.r.kind === "unchanged" ? "unchanged" : onlyFF(d.r) ? `differs only at the bytes taken as not given back (${rangeText(d.r.readsFF!)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "finds no byte that differs"}`).join(", ")}` }
+          ? { state: "pass", detail: `the device holds the configuration it was found with: ${dries.map((d) => `${d.name} dry run ${d.r.kind === "unchanged" ? (found!.readsFF?.length && d.r.leftFF?.length ? `unchanged, leaving the bytes taken as not given back (${rangeText(found!.readsFF)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "unchanged") : onlyFF(d.r) ? `differs only at the bytes taken as not given back (${rangeText(d.r.readsFF!)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "finds no byte that differs"}`).join(", ")}` }
           : { state: "fail", detail: `after the run ${dries.map((d) => `the ${d.name} dry run reports ${dryKind(d.r)}`).join(" and ")}` };
       }
     }
@@ -848,6 +860,9 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
 // Never a full download.
 async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration, claims: DeviceCapabilities): Promise<NonNullable<InServiceResult["restore"]>> {
   const done: string[] = [];
+  // The bytes the adoption took as not given back, left by the undo's flash: they hold the project's value
+  // the run's parameter write set, and what the unit held there before is not known.
+  const heldFF = (r: FlashResult) => (found.readsFF?.length && r.leftFF?.length ? `, leaving the bytes taken as not given back (${rangeText(found.readsFF)}), which the run's parameter write set to the project's value: what the unit held there before is not known` : "");
   const fail = (d: string) => ({ state: "fail" as const, detail: `${done.length ? `${done.join("; ")}; ` : ""}${d}. Recover by hand from the configuration found and the server's backups` });
   try {
     const view = await io.api.getConfig();
@@ -861,11 +876,11 @@ async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration
       if (!!pDry.structural !== structural) return fail(`the parameter revert would ${pDry.structural ? "" : "not "}be a structural flash, unlike the change; not written`);
       const r = await io.api.flashReal();
       if (r.kind !== "flashed" || r.verified !== true) return fail(`parameter revert ${r.kind}, verified=${String(r.kind === "flashed" ? r.verified : "-")}`);
-      const ffLeft = found.readsFF?.length ? ffProblem(r, found.readsFF) : null;
+      const ffLeft = found.readsFF?.length ? ffProblem(r, found.readsFF, ffShown.has(found)) : null;
       if (ffLeft) return fail(`parameter revert: ${ffLeft}`);
-      done.push("parameters written back");
+      done.push(`parameters written back${heldFF(r)}`);
       await io.settle(3000);
-    } else if (pDry) done.push(`parameters: dry run ${dryKind(pDry)}, nothing to write back`);
+    } else if (pDry) done.push(`parameters: dry run ${dryKind(pDry)}, nothing to write back${heldFF(pDry)}`);
     const gDry = claims.flashLinks ? await io.api.flashGaDry() : null;
     if (gDry && !nothingToWrite(gDry, found.readsFF)) {
       if (gDry.structural) return fail("the link revert would be a structural flash; not written");

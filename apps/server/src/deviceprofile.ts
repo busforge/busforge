@@ -370,7 +370,8 @@ async function readStateIn(inSession: InSession, cfg: AppConfig, opts: ReadState
         const flagsRead = flagBase ? placeComObjOverrides(cfg, buildDeviceConfig(cfg, values, undefined, moduleInstances), flagBase.rows) : undefined;
         if (par.kind === "unchanged") notCancelled();
         const ga = par.kind === "unchanged" ? await inSession((dev, mask) => profile.flashGroupTables(dev, mask, { ...common, ia: opts.ia, links, comObjectOverrides: flagsRead ?? opts.comObjectOverrides, comObjectOverrideBase: flagsRead })) : null;
-        return par.kind === "unchanged" && ga?.kind === "unchanged";
+        // A byte read as FF the dry run left alone (leftFF) is not shown to hold the configuration.
+        return par.kind === "unchanged" && !par.leftFF?.length && ga?.kind === "unchanged";
       })());
       if ("error" in checked) refusedBy(checked.error);
       else imageMatches = checked.value;

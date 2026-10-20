@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { test, expect, describe } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
@@ -417,6 +417,26 @@ test("the differing bytes the device reads as FF are named in runs at their devi
   expect(diffBytes).toBe(5);
   expect(differingFF(current, image, target, 0x4000)).toEqual([{ address: 0x4000, length: 2 }, { address: 0x4004, length: 1 }, { address: 0x4007, length: 1 }]);
   expect(differingFF(Buffer.from(target.bytes), mergeRelativeTarget(Buffer.from(target.bytes), target).image, target, 0x4000)).toEqual([]);
+});
+
+// A byte read as FF is decided against the baseline (what the device was last programmed with), not the read:
+// unchanged since then it is left alone, and the target neither writes, verifies nor counts it; changed, or
+// owned otherwise by the baseline, it goes out. A byte that reads as data is decided by the read as before.
+test("bytes read as FF the project has not changed since the last programming are left alone", () => {
+  const target = relTarget([true, true, true, true, 0x0f], [1, 2, 3, 4, 0x05]);
+  const base = relTarget([true, true, true, 0xf0, 0x0f], [1, 9, 3, 4, 0xa5]);
+  const current = Buffer.from([0xff, 0xff, 7, 0xff, 0xff]);
+  const { target: kept, left } = leaveUnreadUnchanged(current, target, base, 0x4000);
+  // 0: unchanged, left; 1: changed since the baseline; 2: reads as data; 3: the baseline owned other bits;
+  // 4: the owned bits unchanged (the baseline's other bits do not count), left.
+  expect(left).toEqual([{ address: 0x4000, length: 1 }, { address: 0x4004, length: 1 }]);
+  expect([kept.owned, kept.verify, [...kept.bytes]]).toEqual([[0, 0xff, 0xff, 0xff, 0], [0, 0xff, 0xff, 0xff, 0], [0xff, 2, 3, 4, 0xff]]);
+  const { image, diffBytes } = mergeRelativeTarget(current, kept);
+  expect([diffBytes, [...image], differingFF(current, image, kept, 0x4000)]).toEqual([3, [0xff, 2, 3, 4, 0xff], [{ address: 0x4001, length: 1 }, { address: 0x4003, length: 1 }]]);
+  expect(verifyRelativeOwned(Buffer.from([0xff, 2, 3, 4, 0xff]), kept)).toBe(true);
+  expect([...target.owned]).toEqual([0xff, 0xff, 0xff, 0xff, 0x0f]);
+  expect(leaveUnreadUnchanged(current, target, null, 0x4000)).toEqual({ target, left: [] });
+  expect(leaveUnreadUnchanged(current, target, relTarget([true], [1]), 0x4000)).toEqual({ target, left: [] });
 });
 
 test("a byte shared with bits no parameter owns takes only the owned bits; the rest stay as the device holds them", () => {

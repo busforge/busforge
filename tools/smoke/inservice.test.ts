@@ -58,7 +58,10 @@ interface Script {
   // A field the unit stores and reads as FF (the MDT IP Interface/Router's web interface password): every
   // parameter dry run differs there, named in readsFF; a parameter write rests there on its confirmation
   // alone, unless `givenBack` (the unit returns the bytes once written: it held FF, not the project's value).
-  writeOnly?: { at: number; length: number; givenBack?: boolean; moreDiffers?: boolean };
+  // `leftAfterFirst`: after the first parameter write the dry runs and writes leave the bytes
+  // (FlashResult.leftFF), the project's value there being the one the first wrote, as the server does once
+  // the write has set its baseline. `leftAlways`: every write leaves them, the first included.
+  writeOnly?: { at: number; length: number; givenBack?: boolean; moreDiffers?: boolean; leftAfterFirst?: boolean; leftAlways?: boolean };
 }
 
 function scripted(sc: Script = {}) {
@@ -83,6 +86,7 @@ function scripted(sc: Script = {}) {
   const withMemless = (p: Record<string, string>) => (memlessBase === undefined ? p : { ...p, [MEMLESS]: memlessBase });
   let base = { params: withMemless({ ...device.params }), links: structuredClone(device.links) as Record<string, number[]> };
   let paramFlashes = 0;
+  let paramWrites = 0;
   // The step's object on the device after each GA flash.
   const objOnDevice: number[][] = [];
   const caps: DeviceCapabilities = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: false, ...sc.caps };
@@ -97,6 +101,7 @@ function scripted(sc: Script = {}) {
   const plain: string[] = [];
   const ffRange = sc.writeOnly ? [{ address: sc.writeOnly.at, length: sc.writeOnly.length }] : undefined;
   const ffDry = (r: FlashResult): FlashResult => (!ffRange ? r
+    : sc.writeOnly!.leftAfterFirst && paramWrites > 0 ? { ...r, leftFF: ffRange }
     : { ...r, kind: "dryRun", diffBytes: (r.kind === "dryRun" ? r.diffBytes! : 0) + ffRange[0].length + (sc.writeOnly!.moreDiffers ? 1 : 0), readsFF: ffRange });
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
@@ -135,7 +140,7 @@ function scripted(sc: Script = {}) {
       // makes it the structural flash.
       flashGaDry: async () => { if (sc.system1) throw Object.assign(new Error("no capture shows a System 1 group-address download"), { code: "SYSTEM1_GROUP_TABLES_UNCAPTURED" }); return structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged"); },
       downloadDry: async () => (sc.system1 ? sys1Dry() : result("dryRun")),
-      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}), ...(ffRange && !sc.writeOnly!.givenBack ? { confirmedOnly: ffRange } : {}) }); },
+      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}), ...(ffRange && !sc.writeOnly!.givenBack ? (sc.writeOnly!.leftAlways || (sc.writeOnly!.leftAfterFirst && ++paramWrites > 1) ? { leftFF: ffRange } : { confirmedOnly: ffRange }) : {}) }); },
       flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
@@ -195,6 +200,35 @@ describe("a unit with a field it does not give back", () => {
     expect(r.capabilities.find((c) => c.capability === "flashParams")?.detail).toContain("verified, 0x1512-0x1525 written from the project on the write confirmation alone");
     expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run differs only at the bytes taken as not given back (0x1512-0x1525), which the run's parameter writes set to the project's value: what the unit held there before is not known, GA flash dry run unchanged" });
     expect(device).toEqual(start);
+  });
+
+  test("a parameter write that leaves the bytes after the first wrote them passes, and says so", async () => {
+    const { io, calls, device, start } = scripted({ writeOnly: { ...FF, leftAfterFirst: true } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "flashLinks", "restart", "flashLinks"]);
+    const detail = r.capabilities.find((c) => c.capability === "flashParams")?.detail;
+    expect(detail).toContain("0x1512-0x1525 written from the project on the write confirmation alone)");
+    expect(detail).toContain("0x1512-0x1525 left alone, unchanged since the last programming");
+    expect(r.restore?.detail).toContain("parameter flash dry run unchanged, leaving the bytes taken as not given back (0x1512-0x1525), which the run's parameter writes set to the project's value: what the unit held there before is not known");
+    expect(device).toEqual(start);
+  });
+
+  test("an undo after the first parameter write wrote the bytes says they hold the project's value", async () => {
+    const { io } = scripted({ writeOnly: { ...FF, leftAfterFirst: true }, chanThrowsOnSecondParamFlash: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("flashParams");
+    expect(r.restore?.state).toBe("pass");
+    expect(r.restore?.detail).toContain("leaving the bytes taken as not given back (0x1512-0x1525), which the run's parameter write set to the project's value: what the unit held there before is not known");
+  });
+
+  test("a first parameter write that leaves the bytes stops the run: nothing shows them as not given back", async () => {
+    const { io, calls } = scripted({ writeOnly: { ...FF, leftAlways: true } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("flashParams");
+    expect(r.stopped?.detail).toContain("the run's first write that reached them left them alone");
+    expect(writesOf(calls)[0]).toBe("flashParams");
   });
 
   test("a parameter write that reads the bytes back stops the run: the unit held FF there, not the configuration taken over", async () => {

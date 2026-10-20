@@ -525,6 +525,30 @@ export function differingFF(current: Buffer, image: Buffer, target: RelativeSegm
   return addressRuns(ff);
 }
 
+// ETS's parameter download sends the bytes that differ from its record of the unit, the image of its last
+// download; a parameter flash compares with its read of the unit instead, which stands for that record
+// wherever the unit gives its bytes back. A byte it reads as FF says nothing there, so it is decided against
+// the image of the programmed baseline (`base`, the parameters the device was last programmed with): where
+// the target differs from the read at such a byte but not from the baseline (same owned bits, same bits),
+// the project has not changed it since and the flash leaves it alone, as ETS's partial download leaves the
+// MDT IP router's web interface password. `left`: those bytes as device addresses from `at`, in runs; the
+// returned target no longer owns them and holds the unit's byte there, so no write, verify or count sees
+// them. A unit that really holds FF there keeps it. A baseline of another size decides nothing.
+export function leaveUnreadUnchanged(current: Buffer, target: RelativeSegmentTarget, base: RelativeSegmentTarget | null, at: number): { target: RelativeSegmentTarget; left: ConfirmedOnlyRange[] } {
+  if (!base || base.size !== target.size) return { target, left: [] };
+  const left: number[] = [];
+  for (let i = 0; i < target.size; i++) {
+    const m = target.owned[i];
+    if (current[i] !== 0xff || m === 0 || base.owned[i] !== m) continue;
+    if (((mergeOwnedBits(current[i], target.bytes[i], m) ^ current[i]) & ~target.constant[i]) === 0) continue;
+    if (((target.bytes[i] ^ base.bytes[i]) & m) === 0) left.push(i);
+  }
+  if (!left.length) return { target, left: [] };
+  const out = { ...target, bytes: Buffer.from(target.bytes), owned: [...target.owned], verify: [...target.verify] };
+  for (const i of left) { out.bytes[i] = current[i]; out.owned[i] = 0; out.verify[i] = 0; }
+  return { target: out, left: addressRuns(left.map((i) => at + i)) };
+}
+
 // Verify a relative flash: owned bytes minus Access="None" markers (the `verify` mask).
 export function verifyRelativeOwned(back: Buffer, target: RelativeSegmentTarget): boolean {
   return verifyMaskedBytes(back, target.bytes, target.verify);

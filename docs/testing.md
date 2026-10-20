@@ -311,16 +311,20 @@ other kind of write (parameters or group tables), where the product offers it, m
 whatever it finds (the System 1 download, which also writes state it does not read) never reports
 `unchanged`: its dry run finds nothing to write when no byte it compares differs, and a step's dry run
 must find bytes that differ. A unit that stores a field it does not give back (it reads `FF` there
-whatever was written) makes every parameter dry run differ there; the dry run names such bytes
-(`readsFF`, the differing bytes the unit reads as `FF`), since only a write tells them from bytes that
-hold `FF`. The adoption takes a parameter flash dry run whose differing bytes all read `FF`, names them
+whatever was written) differs there from every read. The parameter flash leaves such a byte alone where
+the project's value has not changed since the unit was last programmed, as ETS's parameter download
+does (the result names it, `leftFF`, and nothing counts it), so the run does not write it.
+Where the project's value there differs from the last programming, the dry run counts the byte and
+names it (`readsFF`, the differing bytes the unit reads as `FF`), since only a write tells it from a
+byte that holds `FF`. The adoption takes a parameter flash dry run whose differing bytes all read `FF`, names them
 in the run's log and the configuration found (`readsFF`), and counts the same bytes as nothing to
-write from then on; every parameter write of the run must then show each of them on its write
-confirmation alone (`confirmedOnly`), else the unit gave them back and did not hold the configuration
+write from then on; every parameter write of the run that writes them must then show each of them on
+its write confirmation alone (`confirmedOnly`; a write that leaves them, `leftFF`, shows nothing of
+them), else the unit gave them back and did not hold the configuration
 taken over, and the run stops. A spec without a parameter or structural step cannot show them, so its
-adoption stops. Every parameter write of the run writes those bytes with the project's value, as they
-differ from the unit's read; ETS's full download writes them from the project as well, its parameter
-downloads leave them as its record of the unit holds them. So after the run the unit holds the project's
+adoption stops. The first parameter write of the run writes those bytes with the project's value, as
+ETS's parameter download sends bytes that differ from its record; the writes after it leave them, the
+project's value there being the one last programmed. So after the run the unit holds the project's
 value there, and what it held before is not known (the restore says so). For the structural step the group tables are checked before its
 parameter is set (while a change that alters the com-object table is pending, the server's GA flash is
 the structural flash itself), and the structural flash then writes them from links that still equal the

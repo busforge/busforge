@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
@@ -3209,4 +3209,62 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     expect(ours).toEqual([...memoryImage(parseCapture(captureText("openknx-ets-partial-params.log"), iaToNum(fx.ia)).writes)]);
     expect(ours).toEqual([[0x2366, 0x20]]);
   }, 30_000); // builds the OpenKNX application, as the full-download comparison above (3.4 s alone, 8.4 s in a loaded check)
+});
+
+// The MDT IP Interface/Router's web interface password P-278 (20 bytes at offset 40) reads FF after any write. ETS's
+// parameter downloads compare with its record and leave the field (no byte of it in either partial log); Busforge's
+// flash compares with its read, so a byte read as FF is decided against the baseline instead (leaveUnreadUnchanged):
+// the device name shortened and set back with the password unchanged since the last programming, the flash writes
+// exactly ETS's bytes with the record, and without one every owned byte but the password's.
+corpusDescribe("the MDT IP router's web interface password in a parameter flash", () => {
+  const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const params = new Map((JSON.parse(captureText("mdt-router-unit-config.json")) as { params: [string, string][] }).params);
+  const A = "M-0083_A-0137-20-7EB2";
+  const NAME = `${A}_P-162_R-162`, PW_REF = `${A}_P-278_R-278`;
+  const PW = { offset: 40, size: 20 };
+  const field = (o: number) => o >= PW.offset && o < PW.offset + PW.size;
+  const target = (values: Map<string, string>) => buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
+  // The shorter name: "MDT " and what ETS wrote from the field's fifth byte up to its first zero byte.
+  const short = "MDT " + Buffer.from([...relImage("mdt-router-ets6log-partial-name.txt").get(4)!].sort(([a], [b]) => a - b).map(([, b]) => b)).toString("latin1").split("\0")[0];
+  const nameIn = (file: string) => (file.includes("revert") ? [short, params.get(NAME)!] : [params.get(NAME)!, short]);
+  const flash = (from: string, to: string, values: Map<string, string>, record: ReturnType<typeof stampCheck> | null) => {
+    const base = target(new Map(params).set(NAME, from));
+    const next = target(new Map(values).set(NAME, to));
+    const unit = Buffer.from(base.bytes);
+    unit.fill(0xff, PW.offset, PW.offset + PW.size);
+    const { target: t, left } = leaveUnreadUnchanged(unit, next, base, 0);
+    const { image } = mergeRelativeTarget(unit, t);
+    const mask = relativeParWriteSet(image, unit, t.owned, declaredMcbWrites(proc, t.size, "par"), record);
+    return { left, base, next, written: new Map(ownedRuns(image, mask).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number]))), owned: t.owned };
+  };
+  test("the project's password is a value the field holds", () => {
+    expect(params.has(PW_REF)).toBe(true);
+    expect(target(params).bytes.subarray(PW.offset, PW.offset + PW.size).some((b) => b !== 0)).toBe(true);
+  });
+  for (const [before, file] of [["mdt-router-ets6log-fulldownload.txt", "mdt-router-ets6log-partial-name.txt"], ["mdt-router-ets6log-partial-name.txt", "mdt-router-ets6log-partial-name-revert.txt"]] as const) {
+    test(`${file}: with the record ETS's bytes and no other, without one every owned byte but the password's`, () => {
+      const [from, to] = nameIn(file);
+      const ets = relImage(file).get(4)!;
+      expect([...ets.keys()].filter(field)).toEqual([]);
+      const withRecord = flash(from, to, new Map(params), stampCheck(logStamps(before).closing, file));
+      expect(withRecord.left).toEqual([{ address: PW.offset, length: PW.size }]);
+      expect([...withRecord.written].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
+      const without = flash(from, to, new Map(params), null);
+      expect([...without.written.keys()].filter(field)).toEqual([]);
+      expect(without.written.size).toBe(without.owned.filter((m, o) => m !== 0 && !field(o)).length);
+    });
+  }
+  test("a password changed in the project goes out, as ETS's differential sends what differs from its record", () => {
+    const [from, to] = nameIn("mdt-router-ets6log-partial-name.txt");
+    const changed = flash(from, to, new Map(params).set(PW_REF, "another"), stampCheck(logStamps("mdt-router-ets6log-fulldownload.txt").closing, "mdt-router-ets6log-partial-name.txt"));
+    const bytes = Array.from({ length: PW.size }, (_, i) => PW.offset + i);
+    const differs = bytes.filter((o) => changed.next.bytes[o] !== changed.base.bytes[o]);
+    expect(differs.length).toBeGreaterThan(0);
+    // The field's bytes the new password leaves as they were (its zero tail) stay alone; the others go out with their value.
+    const leftBytes = changed.left.flatMap((r) => Array.from({ length: r.length }, (_, i) => r.address + i));
+    expect(leftBytes).toEqual(bytes.filter((o) => !differs.includes(o)));
+    expect(differs.map((o) => changed.written.get(o))).toEqual(differs.map((o) => changed.next.bytes[o]));
+  });
 });

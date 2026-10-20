@@ -213,15 +213,24 @@ What each row does not show:
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
   parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads
   (`tools/etsdiff.test.ts`); with the stamp record it writes the bytes that differ from its read of the
-  unit, ETS those that differ from its record, which here also differ where the unit reads a field back
-  other than written (the web interface password). On a unit, under a
+  unit, ETS those that differ from its record. The web interface password field (20 bytes) reads back
+  as `FF` after any write, so the read says nothing there: the parameter flash, with a stamp record,
+  without one and with one the unit's stamps no longer match, leaves a byte the unit reads as `FF`
+  alone where the project's value has not changed since the unit was last programmed, as ETS's
+  parameter downloads leave the field, and its result names those bytes without counting them
+  (`leftFF`; the preview shows no difference for them). An application left not `LOADED`, and a
+  segment the allocation moves, take every owned byte, the field's with the project's value. A
+  password changed in the project goes out, the bytes that differ from the last programming; the preview counts them and names them as read as `FF`
+  (`readsFF`). **A unit that really holds `FF` there** (a field never written, or reset) keeps it: no
+  read tells it from the password, and the product's full download is refused, so only a change of the
+  password in the project writes it. Leaving the field is pinned against ETS's captures; no run on a
+  unit shows it, the runs below wrote the field. On a unit, under a
   secured session with the project's tool key, through a logging proxy: a parameter flash changing the
-  device name was `verified`, its web interface password field (20 bytes, read back as `FF` after any
-  write) accepted on the write confirmation alone and named in the result (`confirmedOnly`); a flash
-  that changes nothing but that field ends unverified, as nothing readable shows it landed. The field
-  always counts as a difference in the preview, which names its bytes as read as `FF` (`readsFF`). Over a direct bus connection (a USB interface behind
+  device name was `verified`, and where it wrote the password field the field was accepted on the
+  write confirmation alone and named in the result (`confirmedOnly`); a flash that changes nothing
+  but that field ends unverified, as nothing readable shows it landed. Over a direct bus connection (a USB interface behind
   Busforge's bridge), the name changed and changed back to the project's value were each `verified`,
-  the password field named on the write confirmation both times, and a read under a secured session
+  the password field, written by both, named on the write confirmation both times, and a read under a secured session
   afterwards found the unit at the project's configuration. Every restart of the unit makes an MDT IP
   interface beside it stop serving its tunnels for up to a minute and then drop them; Busforge opens
   its link again, and a secured session refuses a link that comes back under another individual

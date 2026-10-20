@@ -133,10 +133,10 @@ depends on is hardware-proven.
 - **Devices in service with KNX Data Secure.** The device-in-service mode takes a secured unit from
   the installation's project file and runs under its secure session, and it refuses an interface the
   unit's restart cuts ([testing.md](testing.md#devices-in-service)). Its two specs, the MDT IP
-  Interface/Router and the MDT IP Interface Secure, have not run. The router's adoption takes its web
-  interface password, which reads back as `FF` after any write, as bytes the unit does not give back,
-  for its parameter writes to show on their write confirmation; that is tested against a scripted unit
-  only. Neither unit can be emulated from its
+  Interface/Router and the MDT IP Interface Secure, have not run. The router's web interface password
+  reads back as `FF` after any write; the parameter flash leaves it alone while the project has not
+  changed it since the last programming, so the router's adoption finds nothing to write there (the
+  flash's choice pinned against ETS's captures and a scripted unit; no run on the unit). Neither unit can be emulated from its
   collections (the router's reads its association table only as far as its count and no collection
   reads a security object; the IP Interface Secure's none of its KNXnet/IP parameter object), and no
   ETS capture shows a group-address download of the router.
@@ -231,5 +231,7 @@ where they are required; raw acquisition is not a way around access control. Wha
 - **Warn when the gateway is handed an address that is not the interface's own**, where a USB stick
   answers management only on its own address.
 - **Two identical USB interfaces told apart on hardware** (unit-tested only).
+- **The flash preview names the bytes read as `FF` that the parameter flash leaves alone** (`leftFF`):
+  the result carries them, the preview shows no difference there and says nothing of them.
 - **DCA-replacement plugins, phase 2:** writing a device-specific configuration back.
 - Remaining parity gaps in the configuration view are tracked in [ets-coverage.md](ets-coverage.md).

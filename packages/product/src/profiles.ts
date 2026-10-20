@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
@@ -445,6 +445,9 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // the restart, not that it restarted and stored them.
 // `readsFF` on a dry run: the bytes of `diffBytes` the device reads as FF (differingFF), where a device
 // that does not give a byte back reads; absent where there is none, or the operation does not tell them.
+// `leftFF`: the bytes the device reads as FF that the project has not changed since the device was last
+// programmed, which this operation leaves alone and counts nowhere (leaveUnreadUnchanged); absent where
+// there is none.
 // `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
 // state it does not read (the System 1 download), so this dry run never reports unchanged.
 // `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
@@ -454,7 +457,7 @@ export type FlashResult = (
   | { kind: "unchanged"; mask: string; imageBytes: number; backup: string; constantsDiffer?: ConstantDifference[] }
   | { kind: "dryRun"; mask: string; imageBytes: number; diffBytes: number; backup: string; imageDigest?: string; alwaysWrite?: true; readsFF?: ConfirmedOnlyRange[] }
   | { kind: "flashed"; mask: string; imageBytes: number; diffBytes: number; verified: boolean; backup: string; confirmedOnly?: ConfirmedOnlyRange[]; restartUnproven?: true; stamps?: ImageStamp[] }
-) & { structural?: true };
+) & { structural?: true; leftFF?: ConfirmedOnlyRange[] };
 
 // One element of a load-state machine's memory-control block (PID 27: size, CRC control, access, CRC),
 // as the closing reads of a download that wrote the application's parameters returned it: ETS's record of
@@ -540,6 +543,8 @@ export interface FlashOp {
   diffBytes: number;
   // The bytes of diffBytes the device reads as FF (FlashResult.readsFF).
   readsFF?: ConfirmedOnlyRange[];
+  // The bytes read as FF this operation leaves alone (FlashResult.leftFF).
+  leftFF?: ConfirmedOnlyRange[];
   backup: string;                                 // representative path reported in the result
   backups: { file: string; bytes: Buffer }[];     // on-disk copies of the device's CURRENT state
   // The model-specific download (device restarts after). Where the device's read decides what goes on the
@@ -604,11 +609,12 @@ export async function runFlashOp(
   // write; the hook is injected (the server stores files on disk) so this layer stays
   // filesystem-free and the ordering is testable with a plain recording stub.
   const backup = ctx.persistBackups(op.backups, op.backup);
+  const left = op.leftFF?.length ? { leftFF: op.leftFF } : {};
   if (op.loadIncomplete === "refuse") {
     throw new ProductError("DEVICE_LOAD_INCOMPLETE", "a load-state machine this flash concerns is not LOADED (an earlier write was interrupted), and this flash brackets only what differs, so it could leave it that way; a full download completes the load");
   }
-  if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup, ...(op.constantsDiffer?.length ? { constantsDiffer: op.constantsDiffer } : {}) };
-  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}), ...(op.alwaysWrite ? { alwaysWrite: true as const } : {}), ...(op.readsFF?.length ? { readsFF: op.readsFF } : {}) };
+  if (op.diffBytes === 0 && !op.loadIncomplete && !op.alwaysWrite) return { kind: "unchanged", mask, imageBytes: op.imageBytes, backup, ...(op.constantsDiffer?.length ? { constantsDiffer: op.constantsDiffer } : {}), ...left };
+  if (ctx.dryRun) return { kind: "dryRun", mask, imageBytes: op.imageBytes, diffBytes: op.diffBytes, backup, ...(op.imageDigest ? { imageDigest: op.imageDigest } : {}), ...(op.alwaysWrite ? { alwaysWrite: true as const } : {}), ...(op.readsFF?.length ? { readsFF: op.readsFF } : {}), ...left };
   // Everything before this line only read the device; from here on the write runs to its end.
   ctx.beforeWrite?.();
   dev.clearConfirmedWrites();
@@ -628,7 +634,7 @@ export async function runFlashOp(
     await reconnectAfterRestart(dev, { linkDown: isLinkError(lost) });
     const confirmedOnly: ConfirmedOnlyRange[] = [];
     const verified = await verifyAfterRestart(dev, () => { confirmedOnly.length = 0; return op.verify(confirmedOnly); });
-    return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(restartUnproven ? { restartUnproven: true as const } : {}), ...(op.stamps ? { stamps: op.stamps } : {}) };
+    return { kind: "flashed", mask, imageBytes: op.imageBytes, diffBytes: typeof written === "number" ? written : op.diffBytes, verified, backup, ...(verified && confirmedOnly.length ? { confirmedOnly } : {}), ...(restartUnproven ? { restartUnproven: true as const } : {}), ...(op.stamps ? { stamps: op.stamps } : {}), ...(op.leftFF?.length ? { leftFF: op.leftFF } : {}) };
   } finally { dev.acceptUnprovenRestart(false); }
 }
 
@@ -1470,25 +1476,42 @@ export class SystemBProfile extends DeviceProfile {
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
     // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
     // them (GVS AMMA partial-download capture: exactly the owned bytes, those included).
-    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true });
-    if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
-    const mcb = declaredMcbWrites(proc, target.size, "par");
+    const projected = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true });
+    if (!projected || projected.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+    const mcb = declaredMcbWrites(proc, projected.size, "par");
+    const baseProjected = (() => {
+      try { return buildRelativeSegmentTarget(cfg, ctx.baseParams, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true }); }
+      catch (e) {
+        if (!(e instanceof ProductError)) throw e;
+        throw new ProductError(e.code, `the programmed baseline (the parameters the device was last programmed with), which decides the bytes the device reads as FF: ${e.message}`);
+      }
+    })();
 
     await runDeclaredChecks(dev, coverage);
     // A parameter (par) download rewrites an EXISTING segment; on a never-programmed device
     // there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
     // needs a full download, which is a different operation (docs/commissioning.md).
     const addr = await loadedTableAddr(dev, LSM, "parameter segment");
-    const current = await dev.memRead(addr, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const current = await dev.memRead(addr, projected.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const loaded = await allLoaded(dev, [LSM]);
+    // The bytes read as FF the project has not changed since the last programming stay as they are, with
+    // a stamp record, without one and with one the unit's stamps no longer match (ETS's record of a unit it
+    // commissioned holds them as written); not on an application left not LOADED, which takes every owned
+    // byte. The baseline's module instances are not kept apart from the project's; the com-object table
+    // check above has held the structure the two share.
+    const { target, left: leftFF } = loaded ? leaveUnreadUnchanged(current, projected, baseProjected, addr) : { target: projected, left: [] };
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
+    // A segment the allocation moves is written whole (writeSegmentOwned), the bytes left alone with the
+    // project's value: the unit's own there is not readable to carry over. Elsewhere this is `image`.
+    const movedImage = leftFF.length ? mergeRelativeTarget(current, projected).image : image;
+    let moved = false;
     const constantsDiffer = diffBytes === 0 ? differingConstants(cfg, target.constants, current, image) : [];
     // With the unit's stamps equal to the record, ETS's differential: the owned bytes that differ from the
     // unit, region by region (differentialMask; the regions as the application declares them, else as the
     // unit reports them now). Otherwise every owned byte. The record is the stamps of the last download
     // that wrote the parameters, so when they match the unit holds what that download left and the unit's
     // read stands for ETS's record of it.
-    const loaded = await allLoaded(dev, [LSM]);
     // An application not LOADED (an interrupted write) takes every owned byte, as ETS's differential is
     // shown only onto a loaded one.
     const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord)) : target.owned;
@@ -1499,6 +1522,8 @@ export class SystemBProfile extends DeviceProfile {
       imageBytes: image.length,
       diffBytes,
       readsFF: differingFF(current, image, target, addr),
+      // Read again for the flashed result: a moved segment wrote them.
+      get leftFF() { return moved ? undefined : leftFF; },
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: backupFile,
@@ -1506,7 +1531,7 @@ export class SystemBProfile extends DeviceProfile {
       stamps: parStamps.stamps,
       write: () => runLoadPlan(
         dev,
-        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, image, written, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
+        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, movedImage, written, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: parStamps.onRead },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
@@ -1514,8 +1539,10 @@ export class SystemBProfile extends DeviceProfile {
       // the flash, because only the owned bytes were written and the device had to keep the others.
       verify: async (confirmedOnly) => {
         const verifyAddr = await dev.tableAddr(LSM);
-        const mask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
-        const match = confirmedOnlyMatch(dev, verifyAddr, image, mask, verifyAddr === addr ? current : null);
+        moved = verifyAddr !== addr;
+        const [want, held] = moved ? [movedImage, projected] : [image, target];
+        const mask = held.owned.map((m, i) => (~m | held.verify[i]) & 0xff);
+        const match = confirmedOnlyMatch(dev, verifyAddr, want, mask, moved ? null : current);
         const { value, ok } = await verifySettled(
           () => dev.memRead(verifyAddr, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
           (back) => match(back) !== null,
