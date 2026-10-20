@@ -120,7 +120,8 @@ depends on is hardware-proven.
   (`openknx-raumcontroller-in-service`) drives the parameter flash and the GA flash on a commissioned
   unit, each reverted and read back, with a bus check and a restart; it passes on hardware in both
   channels, and its records enter the shipped evidence once the application program is in the
-  catalogue the bundle reads. Still open: the
+  catalogue the bundle reads. Its full download of the configuration found, offered on request, has not
+  run, and neither has the Theben DALI-Gateway's. Still open: the
   comparison with the full download and an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
 - **Devices in service with KNX Data Secure.** The smoke runner's device-in-service mode opens its own

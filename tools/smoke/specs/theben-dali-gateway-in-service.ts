@@ -2,7 +2,8 @@ import type { DeviceSpec } from "../spec.ts";
 
 // The Theben DALI-Gateway KNX plus (MV-07B0, System B, classic memory services only, no modules) as a
 // unit in service: the run takes its configuration by read-back and writes one parameter flash, one GA
-// flash and one structural flash, each reverted (inservice.ts). Refs pinned verbatim as the device
+// flash and one structural flash, each reverted, and a full download of the configuration found only
+// with --full-download (inservice.ts). Refs pinned verbatim as the device
 // configuration of this application lists them, taken offline from its catalogue and the unit's
 // configuration; the run refuses a ref the unit's configuration does not list. The com-object ref is
 // the one the configuration found activates: a unit whose configuration activates another ref of the
@@ -15,15 +16,21 @@ import type { DeviceSpec } from "../spec.ts";
 // ballasts, written only by the manufacturer's ETS app (DCA), the gateway's web server or its buttons.
 // No write of this run addresses it: the application's load procedure writes properties of objects 1
 // to 4 only (object 0 it only compares), and the parameter, GA and structural flash write those
-// objects' segments and load controls. The configuration is not in the fingerprint, which is read once
-// before the run and would bind the spec to one installation's DALI data; only the ECGs' group
-// assignments, which the application's objects follow, are in it (assumeParams).
+// objects' segments and load controls, and so does the full download in either form: on a unit
+// holding this application loaded, with its tables and segment as the plan reads them, ETS's partial
+// form, which leaves the PEI program loaded and unloads only the objects it reloads
+// (docs/load-procedures.md, R1); otherwise the full form, which unloads the PEI program first (R9).
+// Object 6 lies outside every write of both. The configuration is not
+// in the fingerprint, which is read once before the run and would bind the spec to one
+// installation's DALI data; only the ECGs' group assignments, which the application's objects
+// follow, are in it (assumeParams).
 //
 // A unit taken over by read-back carries no stamp record, so its first parameter flash writes every
 // byte the parameters own (ETS's fallback when its stamps do not match, docs/load-procedures.md) and
 // its revert only the changed byte. Each write ends with the gateway's restart; while the application
 // is not loaded its DALI fault object sends a fault, and how switched-on luminaires behave through
-// such a write is not shown. Restarts per channel: twice per step plus the persistence restart.
+// such a write is not shown. Restarts per channel: twice per step plus the persistence restart, one
+// more with a full download.
 export const thebenDaliGatewayInService: DeviceSpec = {
   id: "theben-dali-gateway-in-service",
   device: {
@@ -89,6 +96,7 @@ export const thebenDaliGatewayInService: DeviceSpec = {
     link: { comObjRefId: "M-0048_A-9071-20-F258-O00EF_O-458_R-917" },
     // G16 "Additional SetValue Object incl. Dimming Time": on adds object 455 to the com-object table.
     structural: { paramRefId: "M-0048_A-9071-20-F258-O00EF_P-786_R-837", value: "1" },
+    fullDownload: true,
   },
   configure: [],
   behaviours: [
@@ -96,7 +104,5 @@ export const thebenDaliGatewayInService: DeviceSpec = {
     // run does not set.
     { kind: "output", label: "G16 Status answers on the test link", comObjRefId: "M-0048_A-9071-20-F258-O00EF_O-458_R-917" },
   ],
-  unsafe: [
-    { capability: "fullDownload", reason: "a full download unloads the application first, and restoring the gateway's DALI configuration (interface object 6, the ballasts) after one that breaks off is not shown" },
-  ],
+  unsafe: [],
 };

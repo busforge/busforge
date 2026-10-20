@@ -230,6 +230,18 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     expect(w.r.found?.unprovenAssumptions?.[0]).toBe(spec.inService!.assumeParams![0].paramRefId);
   }, 240_000);
 
+  test("theben-dali-gateway-in-service: with --full-download the run also downloads the configuration found and leaves the unit's memory as it found it", async () => {
+    const spec = IN_SERVICE.find((s) => s.id === "theben-dali-gateway-in-service")!;
+    const full: InServiceOptions = { ...OPTS, fullDownload: true };
+    const { r, log, dev, memory, state, pid, did } = await run(spec, full);
+    expect({ stopped: r.stopped, failed: r.capabilities.filter((c) => c.state === "fail"), fullDownload: r.capabilities.find((c) => c.capability === "fullDownload")?.state, behaviours: r.behaviours.filter((b) => b.state !== "pass"), persistence: r.persistence?.state, restore: r.restore?.state })
+      .toEqual({ stopped: undefined, failed: [], fullDownload: "pass", behaviours: [], persistence: "pass", restore: "pass" });
+    expect(r.ok).toBe(true);
+    expect(log).toEqual(writes(spec, full));
+    const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
+    expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
+  }, 240_000);
+
   for (const spec of IN_SERVICE.filter((s) => !NOT_EMULATED.has(s.id) && !STOPS_BEFORE_A_WRITE.has(s.id))) {
     test(`${spec.id}: the run makes the writes its plan lists, passes, and leaves the unit's memory as it found it`, async () => {
       const { r, log, dev, memory, state, pid, did } = await run(spec);

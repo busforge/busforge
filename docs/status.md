@@ -171,7 +171,8 @@ What each row does not show:
   brackets), the gateway sends its failure object as set, and does not send it cleared after the
   restart: a read returns the cleared value. The DCA-replacement plugin renders committed fixtures and
   proves nothing about the device on a bus. The device-in-service spec passes on a commissioned unit in
-  both channels (parameter, GA and structural flash, each reverted); its ECGs' group assignments have no
+  both channels (parameter, GA and structural flash, each reverted; its full download, offered on
+  request, has not run); its ECGs' group assignments have no
   memory location, so the run takes the unit's ETS project values as assumed, which no read-back
   proves (another value writes the same bytes).
 - **MEAN WELL KNX power supply `M-0162_A-0004-11-F245`** (System B, the line's power supply). ETS 6 was
@@ -398,7 +399,7 @@ spec states why no behaviour is observable.
 | `theben-hmg6t-in-service` | Theben HMG 6 T heating actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-jmg4t-in-service` | Theben JMG 4 T blind actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
-| `theben-dali-gateway-in-service` | Theben DALI-Gateway KNX plus, a commissioned unit (parameter, GA and structural flash, each reverted; full download declared unsafe) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter, GA and structural flash, behaviour and click-through pass in both channels; the full download the product claims is declared unsafe on a unit in service, untested |
+| `theben-dali-gateway-in-service` | Theben DALI-Gateway KNX plus, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter, GA and structural flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
   capability plus the click-through is green in both channels, which clears the bar, but the proof
