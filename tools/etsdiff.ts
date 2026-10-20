@@ -6,14 +6,17 @@
 //   bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=<pw>] [--device=<index> | --ia=<a.l.d>]
 //   bun run tools/etsdiff.ts <ets-capture.log> --app=<app.xml | app.xml.gz | product.knxprod> --ia=<a.l.d>
 //        [--app-id=<M-XXXX_A-...>] [--product=<productRef>] [--param=<ParameterRefId>=<value>]... [--link=<objNum>:<ga>[,<ga>]]...
-//   common: [--base=<n>] [--seg-base=<lsm>:<n>]... [--partial] [--evidence=<out.json>]
+//   common: [--base=<n>] [--seg-base=<lsm>:<n>]... [--partial] [--evidence=<out.json> [--redact-addresses]]
 //
 // --project takes the device's configuration from the project (parameters, module instances, links
 // and the flags it sets on com-objects, exactly as an import stores them). Without a project, --app names the application program
 // and the configuration is stated on the command line: nothing but --param/--link is set, every
 // other parameter is at its application default. --evidence writes the result as an evidence
 // record pointing at the capture by path and hash; the capture must be kept for the record to stay
-// checkable (docs/evidence-contract.md).
+// checkable (docs/evidence-contract.md). The record names the configuration, which for --app lists
+// every group address and for --project the device's individual address. A device in an
+// installation must not have its addresses in a shipped record: --redact-addresses names each
+// link's group addresses by their count and the device as "the device", and keeps everything else.
 //
 // --partial takes an ETS partial download instead: ETS writes only the segments that changed, so
 // the same comparison runs over what it wrote, and the evidence splits into one record per
@@ -286,7 +289,7 @@ function readAppXml(path: string, bytes: Buffer, appId: string | undefined): str
 
 interface Subject { ia: string; name: string; productRef: string | null; appRef: string; appXml: string; params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; comObjectOverrides: Map<number, ComObjInstanceOverride>; configuration: string }
 
-async function loadSubject(opt: (k: string) => string | undefined, many: (k: string) => string[]): Promise<Subject> {
+async function loadSubject(opt: (k: string) => string | undefined, many: (k: string) => string[], redact: boolean): Promise<Subject> {
   const projPath = opt("project"), appPath = opt("app");
   if (!!projPath === !!appPath) throw new Error("name exactly one of --project=<file.knxproj> or --app=<application program>");
   if (projPath) {
@@ -316,7 +319,7 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
     const hidden = stored.size - links.length;
     // The project's flags on its com-objects, placed as the server places them for its download.
     const comObjectOverrides = placeComObjOverrides(cfg, view, proj.deviceComObjOverrides.find((o) => o.deviceId === d.id)?.overrides ?? []);
-    return { ia: d.ia, name: d.name, productRef: d.productRef, appRef: d.appRef, appXml, params, instances, links, comObjectOverrides, configuration: `the project's configuration of ${d.ia} (${params.size} parameter values, ${instances.length} module instances, ${links.length} linked objects${hidden ? `, ${hidden} links on hidden objects not downloaded` : ""})` };
+    return { ia: d.ia, name: d.name, productRef: d.productRef, appRef: d.appRef, appXml, params, instances, links, comObjectOverrides, configuration: `the project's configuration of ${redact ? "the device" : d.ia} (${params.size} parameter values, ${instances.length} module instances, ${links.length} linked objects${hidden ? `, ${hidden} links on hidden objects not downloaded` : ""})` };
   }
   const ia = opt("ia");
   if (!ia) throw new Error("--app needs --ia=<a.l.d>: the address table holds it, and only writes to it are compared");
@@ -333,7 +336,7 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
     return { comObjNum: Number(num), gaRaws: gas.split(",").map(parseGa) };
   });
   const cfg = parseAppConfig(appXml);
-  const configuration = `application defaults${params.size ? ` with ${[...params].map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}, ${links.length ? `links ${links.map((l) => `#${l.comObjNum}->${l.gaRaws.map((g) => hex(g)).join("+")}`).join(", ")}` : "no links"}`;
+  const configuration = `application defaults${params.size ? ` with ${[...params].map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}, ${links.length ? `links ${links.map((l) => `#${l.comObjNum}->${redact ? `${l.gaRaws.length} group address${l.gaRaws.length === 1 ? "" : "es"}` : l.gaRaws.map((g) => hex(g)).join("+")}`).join(", ")}` : "no links"}`;
   return { ia, name: "(no project)", productRef: opt("product") ?? null, appRef: cfg.id, appXml, params, instances: [], links, comObjectOverrides: new Map(), configuration };
 }
 
@@ -343,10 +346,17 @@ async function main(): Promise<number> {
   const many = (k: string) => args.filter((a) => a.startsWith(`--${k}=`)).map((a) => a.slice(k.length + 3));
   const [capturePath, ...extra] = args.filter((a) => !a.startsWith("--"));
   if (!capturePath || extra.length) {
-    console.error("usage: bun run tools/etsdiff.ts <ets-capture.log> (--project=<file.knxproj> [--password=<pw>] [--device=<i>|--ia=<a.l.d>] | --app=<xml|xml.gz|knxprod> --ia=<a.l.d> [--app-id=..] [--product=..] [--param=<ref>=<v>].. [--link=<obj>:<ga>[,<ga>]]..) [--base=<n>] [--seg-base=<lsm>:<n>].. [--partial] [--evidence=<out.json>]");
+    console.error("usage: bun run tools/etsdiff.ts <ets-capture.log> (--project=<file.knxproj> [--password=<pw>] [--device=<i>|--ia=<a.l.d>] | --app=<xml|xml.gz|knxprod> --ia=<a.l.d> [--app-id=..] [--product=..] [--param=<ref>=<v>].. [--link=<obj>:<ga>[,<ga>]]..) [--base=<n>] [--seg-base=<lsm>:<n>].. [--partial] [--evidence=<out.json> [--redact-addresses]]");
     return 2;
   }
-  const subject = await loadSubject(opt, many);
+  // An option the tool does not know is refused, not ignored: a misspelt --redact-addresses would
+  // otherwise write an installation's group addresses into the record.
+  const KNOWN = new Set(["project", "password", "device", "ia", "app", "app-id", "product", "param", "link", "base", "seg-base", "evidence", "partial", "redact-addresses"]);
+  const unknown = args.filter((a) => a.startsWith("--") && !KNOWN.has(a.slice(2).split("=")[0]));
+  if (unknown.length) throw new Error(`unknown option(s): ${unknown.join(" ")}`);
+  const redact = args.includes("--redact-addresses");
+  if (redact && !opt("evidence")) throw new Error("--redact-addresses applies to the evidence record: it needs --evidence=<out.json>");
+  const subject = await loadSubject(opt, many, redact);
   const cfg = parseAppConfig(subject.appXml);
   const profile = classify(cfg);
   const captureBytes = new Uint8Array(await Bun.file(capturePath).arrayBuffer());

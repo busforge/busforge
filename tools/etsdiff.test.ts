@@ -749,9 +749,12 @@ corpusDescribe("etsdiff --partial evidence", () => {
   const cli = async (args: string[]) => {
     const out = join(tmpdir(), `etsdiff-partial-${crypto.randomUUID()}.json`);
     const p = Bun.spawnSync(["bun", "run", join(import.meta.dir, "etsdiff.ts"), ...args, "--partial", `--evidence=${out}`], { stdout: "pipe", stderr: "pipe" });
-    const written = existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) as { scope: { operation: string }; results: { reference: { state: string; detail?: string } } }[] : null;
+    const written = existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) as { scope: { operation: string; configuration: string }; results: { reference: { state: string; detail?: string } } }[] : null;
     rmSync(out, { force: true });
-    return { exitCode: p.exitCode, records: written?.map((r) => [r.scope.operation, r.results.reference.state]) ?? null, details: written?.map((r) => r.results.reference.detail) ?? [], stderr: p.stderr.toString() };
+    return {
+      exitCode: p.exitCode, records: written?.map((r) => [r.scope.operation, r.results.reference.state]) ?? null, details: written?.map((r) => r.results.reference.detail) ?? [],
+      configurations: written?.map((r) => r.scope.configuration) ?? [], stderr: p.stderr.toString(),
+    };
   };
   // The device and the group addresses of a capture, as the command line names them.
   const target = (file: string, app: string, n: number) => ({
@@ -763,6 +766,34 @@ corpusDescribe("etsdiff --partial evidence", () => {
       "--param=M-0085_A-0072-30-69AA_P-20_R-20=1", "--param=M-0085_A-0072-30-69AA_UP-142_R-142=1", `--link=2:${t.gas[0]}`]);
     expect([r.exitCode, r.records]).toEqual([0, [["flashParams", "pass"], ["flashLinks", "pass"]]]);
   });
+  // An installation's addresses must not reach a shipped record: --redact-addresses names each link's
+  // group addresses by their count and leaves everything else of the configuration and the comparison
+  // as it is. Five CLI runs; the timeout leaves room for a loaded check run.
+  test("GVS AMMA: --redact-addresses names the links without their group addresses, and the comparison is unchanged", async () => {
+    const t = target("gvs-amma-ets-partial-links.log", "M-0085_A-0072-30-69AA.xml.gz", 1);
+    const ga = `0x${Number(t.gas[0]).toString(16).padStart(4, "0")}`;
+    const args = [capturePath("gvs-amma-ets-partial-links.log"), `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, t.ia,
+      "--param=M-0085_A-0072-30-69AA_P-20_R-20=1", "--param=M-0085_A-0072-30-69AA_UP-142_R-142=1", `--link=2:${t.gas[0]}`];
+    const listed = await cli(args);
+    const redacted = await cli([...args, "--redact-addresses"]);
+    expect([listed.exitCode, listed.records]).toEqual([0, [["flashParams", "pass"], ["flashLinks", "pass"]]]);
+    expect([redacted.exitCode, redacted.records, redacted.details]).toEqual([listed.exitCode, listed.records, listed.details]);
+    expect(listed.configurations.every((c) => c.includes(`#2->${ga}`))).toBe(true);
+    expect(redacted.configurations).toEqual(listed.configurations.map((c) => c.replace(`#2->${ga}`, "#2->1 group address")));
+    // Without a record to write, the flag has nothing to apply to and is refused.
+    const run = (extra: string[]) => {
+      const p = Bun.spawnSync(["bun", "run", join(import.meta.dir, "etsdiff.ts"), ...args, "--partial", ...extra], { stdout: "pipe", stderr: "pipe" });
+      return [p.exitCode === 0, p.stderr.toString()] as const;
+    };
+    for (const extra of [["--redact-addresses"], ["--redact-addresses", "--evidence="]]) {
+      const [ok, err] = run(extra);
+      expect([extra, ok, err.includes("--redact-addresses applies to the evidence record")]).toEqual([extra, false, true]);
+    }
+    // A misspelt flag is refused, so it cannot leave the addresses in by accident.
+    const out = join(tmpdir(), `etsdiff-misspelt-${crypto.randomUUID()}.json`);
+    const [ok, err] = run(["--redact-address", `--evidence=${out}`]);
+    expect([ok, err.includes("unknown option(s): --redact-address"), existsSync(out)]).toEqual([false, true, false]);
+  }, 30_000);
   test("MDT BE-02001.02: links only, so no parameter record", async () => {
     const t = target("mdt-be02001-ets-partial-links.log", "M-0083_A-00B6-32-9642.xml.gz", 2);
     const r = await cli([capturePath("mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, t.ia, `--link=0:${t.gas[0]}`, `--link=6:${t.gas[1]}`]);

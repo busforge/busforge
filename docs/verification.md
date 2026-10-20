@@ -397,6 +397,8 @@ bun run tools/etsdiff.ts "$BUSFORGE_CORPUS/captures/mdt-be02001-ets-fulldownload
 # operation it touched (flashParams, flashLinks); a segment ETS left alone is not a gap.
 # --evidence records the capture path as given, so name it relative to the corpus root. The kept
 # records live in the corpus too; regenerate the bundle afterwards (tools/evidence-bundle.ts --write).
+# For a device in an installation add --redact-addresses: the record then names each link's group
+# addresses by their count (and, with --project, the device as "the device"); --param values stay as given.
 repo=$PWD; (cd "$BUSFORGE_CORPUS" && bun run "$repo/tools/etsdiff.ts" captures/mdt-be02001-ets-partial-links.log \
   --app=catalogue/M-0083_A-00B6-32-9642.xml.gz --ia=<ia> --link=0:<ga-obj0> --link=6:<ga-obj6> --partial \
   --evidence=evidence/reference/mdt-be02001-partial-links.json)

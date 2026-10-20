@@ -156,6 +156,10 @@ bun run tools/etsdiff.ts <ets-capture.log> --project=<file.knxproj> [--password=
 
 `--evidence` writes the result as a reference [evidence record](evidence-contract.md) that points at
 the capture by path and SHA-256. Keep the capture: a comparison nobody can repeat does not count.
+The record names the configuration as the tool lists it, with every group address (`--app`) or the
+device's individual address (`--project`); for a device in an installation, whose addresses must not
+reach the shipped bundle, `--redact-addresses` names each link's group addresses by their count and
+the device as "the device"; `--param` values stay as given. An option the tool does not know is refused.
 `--partial` takes an ETS partial download instead of a full one and writes one record per Busforge
 flash operation it touched: `flashParams` for the parameter segments, `flashLinks` for the group
 tables. The full invocation reference is in [verification.md](verification.md).
