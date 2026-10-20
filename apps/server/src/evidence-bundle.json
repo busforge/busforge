@@ -1318,7 +1318,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
@@ -1360,7 +1360,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed inputToOutput",
-     "detail": "3 transitions tracked on 1/2/2→1/2/3"
+     "detail": "3 transitions tracked on 1/2/3→1/2/4"
     },
     "persistence": {
      "state": "not-assessed"
@@ -1384,7 +1384,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
@@ -1419,8 +1419,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 2 → 1/2/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 2 → 1/2/1, verified on read-back; 1/2/2 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -1430,8 +1430,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2281 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2276 ms after A_Restart, answering again after 7190 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -1556,7 +1556,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed inputToOutput",
-     "detail": "3 transitions tracked on 1/2/2→1/2/3"
+     "detail": "3 transitions tracked on 1/2/3→1/2/4"
     },
     "persistence": {
      "state": "not-assessed"
@@ -1615,8 +1615,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 2 → 1/2/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 2 → 1/2/1, verified on read-back; 1/2/2 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -1626,8 +1626,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2278 ms after A_Restart, answering again after 7184 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2275 ms after A_Restart, answering again after 7186 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -1648,7 +1648,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
@@ -1842,7 +1842,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
@@ -1888,8 +1888,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2281 ms after A_Restart, answering again after 7188 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2276 ms after A_Restart, answering again after 7190 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2018,8 +2018,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2278 ms after A_Restart, answering again after 7184 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2275 ms after A_Restart, answering again after 7186 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2040,7 +2040,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
@@ -2075,8 +2075,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -2141,8 +2141,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -2172,7 +2172,7 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "unknown"
+    "via": "busforge-bridge"
    },
    "build": {
     "server": null,
