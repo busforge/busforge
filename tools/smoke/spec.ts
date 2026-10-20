@@ -84,10 +84,11 @@ export interface InServiceSpec {
   // and the group keys of its addresses, and the runner opens its own connections under the unit's
   // secure session. The configuration found is still the one the read-back takes off the unit.
   dataSecure?: true;
-  // The unit is a KNXnet/IP interface, or shares its housing with one: `ia` is that interface's
-  // individual address, `restart` what a restart of the unit does to the interface's tunnels, the run's
-  // own included. "drops": the run must reach the unit through another interface and refuses this one;
-  // "keeps": shown on a unit, `shown` says where, so the run may go through it.
+  // The unit is a KNXnet/IP interface, shares its housing with one, or supplies the line one sits on:
+  // `ia` is that interface's individual address, `restart` what a restart of the unit does to the
+  // interface's tunnels, the run's own included. "drops": the run must reach the unit through another
+  // interface and refuses this one; "keeps": shown on a unit, `shown` says where and with which tunnel
+  // (the run's own or a bystander's), so the run may go through it.
   ipInterface?: { ia: string; restart: "drops" | "keeps"; shown: string };
   // Parameter values the device's own configuration must hold once the project has taken it over,
   // checked before the first write: what tells products apart that share application and firmware

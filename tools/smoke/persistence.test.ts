@@ -77,6 +77,41 @@ const view = (over: { paramChanged?: boolean; objChanged?: boolean; flagsChanged
 } as unknown as ConfigView);
 const full = { paramsRead: true, linksRead: true, linkGaps: 0 };
 
+// The MEAN WELL KNX-40E-1280D power supply's restart as its wire logs recorded it (private corpus,
+// collections/meanwell-hc07-2026-10-14/meanwell-busforge-final2-par-*.log, through a KNX-USB interface):
+// the interface confirms A_Restart negatively; frames to the unit are confirmed negatively until
+// +0.68 s, then acknowledged on layer 2 and never answered on a connection opened before the reboot;
+// the unit's start-up telegrams follow at +2.19 s, and a connection opened after them is answered.
+// Replayed through the runner's probe (rebootObserved in runner.ts: a fresh connection and a device
+// descriptor read, three tries of ackMs 1500 plus retryGapMs 200 when nothing answers), on a clock
+// each probe advances by its own duration.
+describe("observeReboot on the MEAN WELL power supply's recorded restart", () => {
+  const replay = (restartConfirmed: boolean) => {
+    let t = 0;
+    const probe = async (): Promise<ProbeOutcome> => {
+      const start = t;
+      if (start === 0) { t += 100; return "answered"; } // before the restart
+      if (start < 680) { t += 50; return "unacknowledged"; } // the T_Connect itself is confirmed negatively
+      if (start < 2190) { t += 3 * 1500 + 2 * 200; return "silent"; } // the connection predates the reboot
+      t += 100; return "answered";
+    };
+    return observeReboot(async () => { t += 100; return restartConfirmed; }, probe, { now: () => t, sleep: async (ms) => { t += ms; }, windowMs: 60_000 });
+  };
+
+  // One probe spans the whole window between the negative confirmations and the reboot, so the check
+  // never sees the two silent probes in a row a negatively confirmed restart needs: it cannot tell
+  // this unit's reboot, and an in-service run reports its persistence step failed although the unit
+  // restarted (tools/smoke/specs/meanwell-knx40e-in-service.ts).
+  test("a negatively confirmed restart: the check does not see the reboot", async () => {
+    expect(await replay(false)).toMatchObject({ rebooted: false, detail: expect.stringContaining("never went silent on two probes in a row") });
+  });
+  // Through an interface that confirmed the restart (whether the house's KNXnet/IP interface does is not
+  // recorded), one silent probe suffices and the reboot is seen.
+  test("a restart the interface confirmed: the reboot is seen", async () => {
+    expect(await replay(true)).toMatchObject({ rebooted: true });
+  });
+});
+
 describe("judgeRestoredConfig", () => {
   test("a complete read-back equal to the project passes", () => {
     expect(judgeRestoredConfig(view({}), full).state).toBe("pass");

@@ -18,7 +18,7 @@ export const CORPUS_ENV = "BUSFORGE_CORPUS";
 export const IN_SERVICE_COLLECTIONS = [
   "auro-m0081-in-service", "gira-m0008-in-service", "mdt-be06001-in-service", "theben-dali-gateway-in-service",
   "theben-hmg6t-in-service", "theben-jmg4t-in-service", "theben-meteodata-140s-in-service", "theben-rmg8t-in-service",
-  "theben-theluxa-p300-in-service",
+  "theben-theluxa-p300-in-service", "meanwell-knx40e-in-service",
 ] as const;
 export const inServiceCollection = (specId: string) => `collections/in-service/${specId}.json`;
 
