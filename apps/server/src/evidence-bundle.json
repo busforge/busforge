@@ -122,7 +122,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "1/6/3 answered 0x00"
+     "detail": "1/6/4 answered 0x00"
     },
     "persistence": {
      "state": "not-assessed"
@@ -181,8 +181,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back; a second address behind it (not where the first is secured on a Data Secure device) and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back; the result names what ran",
-     "detail": "linked object 254 → 1/6/2, verified on read-back; its read flag on in one GA flash, taken back in another, each read back; no second address: 1/6/2 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back; 1/6/3 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -193,7 +193,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5073 ms after A_Restart, answering again after 5985 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5095 ms after A_Restart, answering again after 6042 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -318,7 +318,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "1/6/3 answered 0x00"
+     "detail": "1/6/4 answered 0x00"
     },
     "persistence": {
      "state": "not-assessed"
@@ -377,8 +377,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back; a second address behind it (not where the first is secured on a Data Secure device) and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back; the result names what ran",
-     "detail": "linked object 254 → 1/6/2, verified on read-back; its read flag on in one GA flash, taken back in another, each read back; no second address: 1/6/2 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 254 → 1/6/2, verified on read-back; 1/6/3 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -389,7 +389,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5098 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5103 ms after A_Restart, answering again after 6034 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -717,7 +717,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5073 ms after A_Restart, answering again after 5985 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5095 ms after A_Restart, answering again after 6042 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -913,7 +913,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5098 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5103 ms after A_Restart, answering again after 6034 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
