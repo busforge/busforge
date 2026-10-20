@@ -144,8 +144,9 @@ describe("the shipped evidence bundle", () => {
       for (const o of ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload"] as const) {
         expect(`${row.productRef} ${o} ${row.operations[o].state}`).toBe(`${row.productRef} ${o} tested`);
       }
-      // The structural flash was driven on the Jung and the MDT only; the others never ran it.
-      const structural = row.productRef.startsWith("M-0004_") || row.productRef.startsWith("M-0083_") ? "tested" : "eligible";
+      // The structural flash was driven on the Jung, the MDT and the ABB; the GVS's firmware rule
+      // refuses it, so no run drove it there.
+      const structural = ["M-0004_", "M-0083_", "M-0002_"].some((m) => row.productRef.startsWith(m)) ? "tested" : "eligible";
       expect(`${row.productRef} structuralFlash ${row.operations.structuralFlash.state}`).toBe(`${row.productRef} structuralFlash ${structural}`);
       expect(Object.keys(row.operations)).toEqual([...MATRIX_OPERATIONS]);
     }
