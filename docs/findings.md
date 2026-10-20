@@ -701,6 +701,12 @@ of the GVS only:
   only, start 1, and never touches element 0: the GVS keeps two entries, the second for address-table
   index 2, which the one-entry address table no longer has. ETS leaves such an entry; it refers to
   nothing.
+- *A plain address on an old key.* Linking a plain address ("Erzwungen aus") so that it takes index 2
+  again, the next download still writes PID 53 element 1 only: the deleted address's key stays the
+  entry for index 2, now the plain address's index. ETS never reads PID 53 back. The GVS works such an
+  address plain in both directions: a plain GroupValueRead on it draws a plain answer, its status object
+  sends plain on it, and a plain GroupValueWrite on it switches the output, while the secured address
+  beside it stays secured. The object's flag in PID 61 (`0x00`) decides, not the key table.
 
 **How the project file carries the mode.** ETS 6.4.1 exports with the address set in turn to each
 mode: "Automatisch" writes no `Security` attribute on the `<GroupAddress>`, "Erzwungen an" writes

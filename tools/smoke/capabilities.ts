@@ -111,36 +111,27 @@ export async function capFlashLinks(ctx: CapCtx): Promise<CapabilityResult> {
   const co = findComObject(after, target.refId);
   if (!co || co.gaRaw !== gaToNum(ga) || co.changed) return { ...base, state: "fail", detail: `the device does not carry ${ga} on object ${target.number} (project ${co?.gaRaw ?? "none"}, differs from device: ${co?.changed ?? "?"})` };
 
-  // A secured first address gets no second one: taking it back shrinks the device's group key table below
-  // its address table, and an address added later can then land on the key left behind, which no
-  // capture shows ETS handling (docs/roadmap.md).
-  const secured = await ctx.client.securedOn(ctx.pid, ctx.did, ga);
-  const ga2 = secured ? null : ctx.allocGa();
+  const ga2 = ctx.allocGa();
   const one = [gaToNum(ga)];
-  const two = ga2 ? [...one, gaToNum(ga2)] : one;
+  const two = [...one, gaToNum(ga2)];
   const flag: ComObjFlag = "read";
   const flagStep = (after.comObjFlagsEditable ?? []).includes(flag) && after.readbackSupport?.flags === true;
   const held = co.flags[flag];
-  const noSecond = `no second address: ${ga} is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)`;
-  const flagNote = flagStep ? "" : `its flags not edited (${after.readbackSupport?.flags === true ? `the downloads do not write the ${flag} flag` : "the read-back does not read the com-object table"})`;
-  const first = `linked object ${target.number} → ${ga}, verified on read-back`;
-  if (!ga2 && !flagStep) return { ...base, state: "pass", detail: `${first}; ${noSecond}; ${flagNote}`, evidence: { object: target.number, ga, second: null, flag: null } };
   // A step that fails leaves the object as the first link left it, in the project and on the device, so
   // the capabilities and behaviours after it fail on their own merits, not on this step's leftovers.
   let failed: string | null = null;
   try {
-    const what = [...(ga2 ? [`adding ${ga2} behind ${ga}`] : []), ...(flagStep ? [`setting the ${flag} flag ${!held ? "on" : "off"}`] : [])].join(" and ");
-    if (ga2) await addLinkChan(ctx, target, ga2, one);
+    await addLinkChan(ctx, target, ga2, one);
     if (flagStep) await setFlagChan(ctx, target, flag, !held);
-    await flashGaChan(ctx, ga2 ? "flash-ga second address" : "flash-ga flag");
+    await flashGaChan(ctx, "flash-ga second address");
     const added = holds(await readBackConfig(ctx), target.refId, two, flagStep ? { flag, value: !held } : null);
-    if (added) failed = `after ${what} on object ${target.number}: ${added}`;
+    if (added) failed = `after adding ${ga2} behind ${ga}${flagStep ? ` and setting the ${flag} flag ${!held ? "on" : "off"}` : ""} on object ${target.number}: ${added}`;
     else {
-      if (ga2) await removeLinkChan(ctx, target, ga2, 1, two);
+      await removeLinkChan(ctx, target, ga2, 1, two);
       if (flagStep) await setFlagChan(ctx, target, flag, held);
       await flashGaChan(ctx, "flash-ga take back");
       const back = holds(await readBackConfig(ctx), target.refId, one, flagStep ? { flag, value: held } : null);
-      if (back) failed = `after taking ${[...(ga2 ? [ga2] : []), ...(flagStep ? [`the ${flag} flag`] : [])].join(" and ")} back on object ${target.number}: ${back}`;
+      if (back) failed = `after taking ${ga2}${flagStep ? ` and the ${flag} flag` : ""} back on object ${target.number}: ${back}`;
     }
   } catch (e) {
     failed = e instanceof Error ? e.message : String(e);
@@ -148,13 +139,13 @@ export async function capFlashLinks(ctx: CapCtx): Promise<CapabilityResult> {
   if (failed) {
     // The ui channel's page may still hold the failed step's dialog or picker over it.
     if (ctx.channel === "ui") await ctx.ui!.gotoDevice(ctx.pid, ctx.did).catch((e: unknown) => ctx.log(`reloading the device page after the failure: ${e instanceof Error ? e.message : String(e)}`));
-    const left = await takeBack(ctx, target.refId, one, flagStep ? { flag, value: held } : null).catch((e: unknown) => `; taking the object back failed too: ${e instanceof Error ? e.message : String(e)}`);
+    const left = await takeBack(ctx, target.refId, one, flagStep ? { flag, value: held } : null).catch((e: unknown) => `; taking the second address${flagStep ? " and the flag" : ""} back failed too: ${e instanceof Error ? e.message : String(e)}`);
     return { ...base, state: "fail", detail: `${failed}${left}` };
   }
-  const done = [...(ga2 ? [`${ga2} added behind it`] : []), ...(flagStep ? [`its ${flag} flag ${!held ? "on" : "off"}`] : [])].join(" and ");
+  const flagNote = flagStep ? "" : `; its flags not edited (${after.readbackSupport?.flags === true ? `the downloads do not write the ${flag} flag` : "the read-back does not read the com-object table"})`;
   return {
     ...base, state: "pass",
-    detail: `${first}; ${done} in one GA flash, taken back in another, each read back${ga2 ? "" : `; ${noSecond}`}${flagNote ? `; ${flagNote}` : ""}`,
+    detail: `linked object ${target.number} → ${ga}, verified on read-back; ${ga2} added behind it${flagStep ? ` and its ${flag} flag ${!held ? "on" : "off"}` : ""} in one GA flash, taken back in another, each read back${flagNote}`,
     evidence: { object: target.number, ga, second: ga2, flag: flagStep ? { flag, from: held, to: !held } : null },
   };
 }

@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, OBJECT_TYPE_SECURITY, SECURITY_PID, GROUP_KEY_ENTRY, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -13,7 +13,7 @@ import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
-import { buildSecurityObject, reachableGroupKeys, type OtherDevice } from "./securityobject.ts";
+import { buildSecurityObject, readSecurityObject, type OtherDevice } from "./securityobject.ts";
 import { bcu1Segment, bcu1ApplicationRefusal, decodeEmptyBcu1Tables, system1LoadRefusal, planSystem1Download, system1PreconditionRefusal, BCU1_EEPROM, BCU1_RUN_ERROR, SYSTEM1_GROUP_TABLES_REFUSAL, KNXIP_PID, type KnxIpDevice, type System1Download } from "./system1.ts";
 
 // Progress reporting for long-running device operations: a phase label plus optional
@@ -224,20 +224,6 @@ const byteDiff = (a: Buffer, b: Buffer): number => {
   let d = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) d++; return d;
 };
 
-// What a Data Secure device's security object holds, in the shape buildSecurityObject builds: the
-// group key table by its element count, and the flags of objects 1..`flagCount`. The device reads
-// its group keys back only inside the secured session this runs in.
-// `addressCount`: the entries of the address table the device holds or is given (reachableGroupKeys).
-async function readSecurityObject(dev: KnxDevice, flagCount: number, addressCount: number): Promise<SecurityObjectTables> {
-  const count = async (pid: number) => (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, pid, 0, 1)).readUInt16BE(0);
-  const n = await count(SECURITY_PID.GROUP_KEY_TABLE);
-  const all = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
-  const groupKeys = reachableGroupKeys(all, addressCount);
-  const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, flagCount, 1);
-  const m = await count(SECURITY_PID.SECURITY_IA_TABLE);
-  const senders = m ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_IA_TABLE, 1, m, SENDER_ENTRY) : Buffer.alloc(0);
-  return { groupKeys, goFlags, senders };
-}
 // A sender entry's last sequence is the device's own receive state, advanced by every telegram it
 // accepts from that sender; only the listed addresses are configuration.
 const senderAddresses = (t: Buffer) => { const out: number[] = []; for (let i = 0; i + SENDER_ENTRY <= t.length; i += SENDER_ENTRY) out.push(t.readUInt16BE(i)); return out.join(","); };
@@ -1289,7 +1275,9 @@ export class SystemBProfile extends DeviceProfile {
             const mcb = await readSegmentCrc(dev, LSM);
             const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
             const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
-            const sec = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null;
+            // This form reads no security object before it writes, so a key table the read refuses is
+            // only met here, after the write: it leaves the download unverified rather than unloaded.
+            const sec = security ? await readSecurityObject(dev, security).catch((e: unknown) => { if (e instanceof ProductError && e.code === "SECURE_KEY_TABLE_UNPROVEN") return null; throw e; }) : null;
             return { gt, crcOk, img, sec };
           },
           ({ gt, crcOk, img, sec }) => {
@@ -1318,7 +1306,7 @@ export class SystemBProfile extends DeviceProfile {
       comObj: cur.comObj, comObjAt, comObjMcb: await readMcbRegions(dev, OBJ.COMOBJ_TABLE, cur.comObj.length),
     };
     const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory });
-    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
+    const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-full-partial-${Date.now()}`;
     const partialStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     return runFlashOp(dev, mask, ctx, {
@@ -1348,7 +1336,7 @@ export class SystemBProfile extends DeviceProfile {
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
             back: await dev.memRead(verifyAt, params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
             tables: await readGroupTables(dev),
-            sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
+            sec: security ? await readSecurityObject(dev, security) : null,
           }),
           ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(back) !== null
             && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)
@@ -1522,7 +1510,7 @@ export class SystemBProfile extends DeviceProfile {
     const cur = await readGroupTables(dev, undefined, false);
     // The security object is compared, not backed up: its group keys are secrets, and the project
     // holds them anyway.
-    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
+    const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     // The application program object's load state BEFORE the flash. A GA flash unloads and rewrites the
     // three tables the running application references, and on some System B stacks that invalidates the
     // application itself: hardware-proven on the Jung 400021SE (Insta), where the flash leaves all three
@@ -1592,7 +1580,7 @@ export class SystemBProfile extends DeviceProfile {
             "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
         }
         const { ok } = await verifySettled(
-          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null }),
+          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security) : null }),
           ({ tables: back, sec }) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
@@ -1641,7 +1629,7 @@ export class SystemBProfile extends DeviceProfile {
     const constantsDiffer = paramDiff === 0 ? differingConstants(cfg, target.constants, current, image) : [];
     const cur = await readGroupTables(dev, undefined, false);
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
-    const curSecurity = security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : undefined;
+    const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
     const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     if (loaded) refuseSystemBUnknownFlags(cfg, ctx, cur, comObj);
@@ -1683,7 +1671,7 @@ export class SystemBProfile extends DeviceProfile {
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
             params: await dev.memRead(verifyAt, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
             tables: await readGroupTables(dev),
-            sec: security ? await readSecurityObject(dev, security.goFlags.length, addr.readUInt16BE(0)) : null,
+            sec: security ? await readSecurityObject(dev, security) : null,
           }),
           ({ app, tablesLoaded, params, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(params) !== null
             && tables.addr.equals(addr) && tables.assoc.equals(assoc) && tables.comObj.equals(comObj)

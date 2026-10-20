@@ -333,6 +333,7 @@ const en = {
     SECURE_GA_OFF_WITH_KEY: "A group address of this device is set to never secured, but the project holds a key for it (a restored snapshot brings back the setting, not the key). Save it as never secured again to drop the key.",
     GA_SECURITY_INVALID: "The security mode must be automatic, always secured or never secured.",
     SECURE_SEQUENCE_EXHAUSTED: "This sender's secured sequence has reached its 48-bit end; it cannot send secured telegrams any more.",
+    SECURE_KEY_TABLE_UNPROVEN: "The device keeps an earlier group key in its key table at a position a new load does not overwrite, and it is not beyond the keys the load writes. How the device looks a key up then is not established, so its security object is not loaded.",
     SECURE_SENDERS_UNPROVEN: "A secured group address of this device is also linked to another device. Which senders a receiver must then list in its security table is not established yet, so Busforge does not load the security object instead of guessing.",
     SENDER_INVALID: "That is not an individual address (area.line.device, e.g. 1.2.250).",
     SECURE_LINK_MIXED: "A communication object is linked to both secured and unsecured group addresses. It has one security setting for all of them, so Busforge refuses to program it.",

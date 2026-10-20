@@ -1,5 +1,7 @@
 import { test, expect, describe } from "bun:test";
-import { buildSecurityObject, reachableGroupKeys, GO_SECURED, type OtherDevice } from "../src/securityobject.ts";
+import { buildSecurityObject, writtenGroupKeys, readSecurityObject, GO_SECURED, type OtherDevice } from "../src/securityobject.ts";
+import { ProductError } from "../src/errors.ts";
+import { GROUP_KEY_ENTRY } from "@busforge/knx";
 
 const K1 = Buffer.alloc(16, 0x11), K5 = Buffer.alloc(16, 0x55);
 
@@ -99,16 +101,62 @@ describe("the security individual address table (PID 54) a device's links imply"
   });
 });
 
-describe("the group key entries a device's key table holds for its addresses", () => {
-  test("trailing entries for indices beyond the address table refer to nothing and are left out", () => {
-    const entry = (i: number, b: number) => Buffer.concat([Buffer.from([0, i]), Buffer.alloc(16, b)]);
-    const table = Buffer.concat([entry(1, 0xaa), entry(2, 0xbb)]);
-    expect(reachableGroupKeys(table, 1).equals(entry(1, 0xaa))).toBe(true);
-    expect(reachableGroupKeys(table, 2).equals(table)).toBe(true);
-    expect(reachableGroupKeys(Buffer.alloc(0), 3).length).toBe(0);
-    // One before a reachable entry is not what a load leaves: it stays, so it shows as a difference.
-    const odd = Buffer.concat([entry(1, 0xaa), entry(5, 0xcc), entry(3, 0xdd)]);
-    expect(reachableGroupKeys(odd, 3).equals(odd)).toBe(true);
+describe("the group key entries a load writes, compared with the device's table", () => {
+  const entry = (i: number, b: number) => Buffer.concat([Buffer.from([0, i]), Buffer.alloc(16, b)]);
+  const cat = (...e: Buffer[]) => Buffer.concat(e);
+
+  test("entries past the ones a load writes, at indices above the last of them, are left out", () => {
+    const table = cat(entry(1, 0xaa), entry(2, 0xbb));
+    expect(writtenGroupKeys(table, entry(1, 0xaa)).equals(entry(1, 0xaa))).toBe(true);
+    expect(writtenGroupKeys(table, table).equals(table)).toBe(true);
+    expect(writtenGroupKeys(Buffer.alloc(0), cat(entry(1, 1), entry(2, 2))).length).toBe(0);
+    expect(writtenGroupKeys(table, Buffer.alloc(0)).length).toBe(0);
+  });
+
+  // ETS 6.4.1 on the GVS AMMA: a secured address added and removed again leaves its key at index 2; a plain
+  // address then linked lands at index 2. ETS writes element 1 only, and the device works the plain address
+  // plain. The table the GA flash builds for that state is the device's, past the entry it writes.
+  test("a plain address at the index of a removed secured one: the device's table is what the load writes", () => {
+    const K1 = Buffer.alloc(16, 0xaa);
+    const built = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [3] }], 4, new Map([[1, K1]]));
+    expect(writtenGroupKeys(cat(entry(1, 0xaa), entry(2, 0xbb)), built.groupKeys).equals(built.groupKeys)).toBe(true);
+    expect([...built.goFlags]).toEqual([0, 3, 0, 0]);
+  });
+
+  test("a device holding fewer entries than the load writes, or another key in a written one, differs", () => {
+    expect(writtenGroupKeys(entry(1, 0xaa), cat(entry(1, 0xaa), entry(2, 0xbb))).equals(cat(entry(1, 0xaa), entry(2, 0xbb)))).toBe(false);
+    expect(writtenGroupKeys(cat(entry(1, 0xcc), entry(2, 0xbb)), entry(1, 0xaa)).equals(entry(1, 0xaa))).toBe(false);
+  });
+
+  test("an entry past the written ones that repeats a written entry is refused too: no capture shows it", () => {
+    // Three secured addresses, the middle one plain later: the load writes (1, A), (3, C); (3, C) stays behind them.
+    expect(() => writtenGroupKeys(cat(entry(1, 0xaa), entry(3, 0xcc), entry(3, 0xcc)), cat(entry(1, 0xaa), entry(3, 0xcc)))).toThrow(ProductError);
+  });
+
+  test("an older key at or below the last written index is refused, never compared away", () => {
+    // Three secured addresses, then only the third secured: the load writes (3, C); (2, B) and an old (3, C') stay.
+    expect(() => writtenGroupKeys(cat(entry(3, 0xcc), entry(2, 0xbb), entry(3, 0xdd)), entry(3, 0xcc))).toThrow(ProductError);
+    expect(() => writtenGroupKeys(cat(entry(3, 0xcc), entry(2, 0xbb)), entry(3, 0xcc))).toThrow(/address-table index 2/);
+    expect(() => writtenGroupKeys(cat(entry(1, 0xaa), entry(5, 0xcc), entry(3, 0xdd)), cat(entry(1, 0xaa), entry(4, 0xee)))).toThrow(/index 3/);
+  });
+
+  // The read the GA flash's dry run, pre-check and verify take, against a device that answers PID 53's count
+  // and elements, PID 61 and PID 54 as the GVS did after ETS put a plain address on a removed one's key.
+  test("the security object read from the device holds the written entries only, and refuses an unproven one", async () => {
+    const device = (keys: Buffer) => ({
+      propExtRead: async (_t: number, _i: number, pid: number, start: number) => {
+        expect(start).toBe(0);
+        const n = pid === 53 ? keys.length / GROUP_KEY_ENTRY : pid === 54 ? 1 : 4;
+        return Buffer.from([n >> 8, n & 0xff]);
+      },
+      propExtReadElements: async (_t: number, _i: number, pid: number, start: number, count: number, size: number) =>
+        pid === 53 ? keys.subarray((start - 1) * size, (start - 1 + count) * size) : pid === 61 ? Buffer.from([0, 3, 0, 0]).subarray(start - 1, start - 1 + count) : Buffer.from("1164000000000000", "hex"),
+    });
+    const want = buildSecurityObject([{ comObjNum: 2, gaRaws: [1] }, { comObjNum: 3, gaRaws: [3] }], 4, new Map([[1, Buffer.alloc(16, 0xaa)]]));
+    const got = await readSecurityObject(device(cat(entry(1, 0xaa), entry(2, 0xbb))) as never, want);
+    expect(got.groupKeys.equals(want.groupKeys)).toBe(true);
+    expect([...got.goFlags]).toEqual([...want.goFlags]);
+    const refused = await readSecurityObject(device(cat(entry(1, 0xaa), entry(1, 0xbb))) as never, want).then(() => null, (e: unknown) => e);
+    expect(refused instanceof ProductError && refused.code).toBe("SECURE_KEY_TABLE_UNPROVEN");
   });
 });
-

@@ -327,6 +327,21 @@ flag for all its links. The dry-run diff and the verify both read the object bac
 returns its group keys only inside the session). Other memory models refuse a secure device's GA
 flash and full download (`SECURE_TABLES_UNSUPPORTED`).
 
+PID 53 is written from element 1 and its count (element 0) never, as ETS does, so a device keeps the
+entries past the ones a load writes: the keys of secured addresses it no longer has. Such an entry
+may name the index a plain address takes later; the device works that address plain, since the
+object's PID 61 flag decides ([findings.md](findings.md) §22). The dry run and the verify therefore
+compare only the entries the load writes (`writtenGroupKeys`), and take the rest as ETS leaves it
+where the captures show it: at an index above the last one written. An older key at or below the
+last written index is refused (`SECURE_KEY_TABLE_UNPROVEN`): a device that looks keys up by binary
+search over the ascending table could land on it or miss a written key behind it, and no capture
+shows how a device does. The GA flash, the full download's partial form and the structural flash
+refuse it before anything is written; the full download's full form reads no security object
+before it writes, so there it leaves the download unverified.
+On the GVS AMMA: a GA flash that put a plain address on the index of a removed secured one verified,
+and the device answered it plain. Whether such a device also takes a telegram secured with the old
+key on that address is not shown; ETS leaves the same state.
+
 On the Jung 400021SE the object Busforge builds from the project equals the one ETS loads, and the
 security-object frames of Busforge's secured full download, requests and answers, are byte-identical
 to ETS's decrypted capture ([The ETS reference capture](#the-ets-reference-capture)).

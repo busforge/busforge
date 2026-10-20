@@ -25,7 +25,7 @@ export interface FlashResult {
 }
 export interface CatalogProduct { manufacturer: number; name: string; appRef: string; productRef: string }
 interface GaRange { id: number | string; rangeStart: number; children?: GaRange[]; addresses?: { raw: number }[] }
-interface ProjectView { groupRanges: GaRange[]; devices?: { id: string; secure?: boolean }[] }
+interface ProjectView { groupRanges: GaRange[] }
 export interface Task { id: string; deviceId: string; kind: string; state: string; phase: string; error: string | null; errorCode: string | null; outcome: FlashResult | null; result: unknown; startedAt?: number; queuedAt?: number }
 
 export class Client {
@@ -132,13 +132,6 @@ export class Client {
   }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
   private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }
-  // Whether the address is secured on the device: the device runs in KNX Data Secure and the project
-  // holds a group key for the address. An address the project does not hold is refused (GA_NOT_FOUND).
-  async securedOn(pid: string, did: string, ga: string): Promise<boolean> {
-    const p = await this.projectFull(pid);
-    if (!p.devices?.find((d) => d.id === did)?.secure) return false;
-    return (await this.call<{ secured: boolean }>("GET", `/api/projects/${pid}/group-addresses/${gaToNum(ga)}/devices`)).secured;
-  }
   private createGaRange(pid: string, parentId: number | string | null, num: number, name: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-ranges`, { parentId: parentId === null ? null : Number(parentId), number: num, name }); }
   // The range id round-trips from the project view as a string; the group-address route requires a number.
   private createGaAddress(pid: string, rangeId: number | string, sub: number, name: string, dpt: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-addresses`, { rangeId: Number(rangeId), sub, name, dpt }); }

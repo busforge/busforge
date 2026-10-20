@@ -1,4 +1,4 @@
-import { GROUP_KEY_ENTRY, SENDER_ENTRY, type SecurityObjectTables } from "@busforge/knx";
+import { GROUP_KEY_ENTRY, SENDER_ENTRY, OBJECT_TYPE_SECURITY, SECURITY_PID, type KnxDevice, type SecurityObjectTables } from "@busforge/knx";
 import type { ComObjectLink } from "./grouptables.ts";
 import { ProductError } from "./errors.ts";
 
@@ -89,13 +89,39 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
   return { groupKeys: groupKeyTable, goFlags, senders: senderTable };
 }
 
-// The group key table without its trailing entries for address-table indices beyond `addressCount`.
-// A load writes the key table from element 1 without shrinking it, as ETS's does, so a device whose
-// address table lost entries keeps keys at the end for indices nothing refers to (GVS AMMA, ETS
-// partial download); those are left out of every comparison. Such an entry before a
-// reachable one is not what a load leaves, and stays in, so it shows as a difference.
-export function reachableGroupKeys(table: Buffer, addressCount: number): Buffer {
-  let end = table.length - (table.length % GROUP_KEY_ENTRY);
-  while (end >= GROUP_KEY_ENTRY && table.readUInt16BE(end - GROUP_KEY_ENTRY) > addressCount) end -= GROUP_KEY_ENTRY;
-  return table.subarray(0, end);
+// The entries of the device's group key table a load of `want` writes: the first as many as `want`
+// has. A load writes the table from element 1 and never its count (element 0), as ETS's does, so the
+// device keeps every entry past the ones written, with the keys of addresses that are gone. ETS leaves
+// them and never reads the table back. An address placed later at such an entry's index still works
+// plain, since the object's flag in PID 61 decides whether it is secured, not the table (GVS AMMA, ETS
+// partial downloads, read back and driven on the bus). So the entries past the written ones are not
+// compared where the captures show them: at an index above every one written. One at or below the
+// last written index is refused: a device that looks a key up by binary search over the ascending
+// table may land on it, or miss a written key behind it, and no capture shows one.
+export function writtenGroupKeys(table: Buffer, want: Buffer): Buffer {
+  const whole = table.length - (table.length % GROUP_KEY_ENTRY);
+  const written = Math.min(whole, want.length);
+  const last = want.length ? want.readUInt16BE(want.length - GROUP_KEY_ENTRY) : 0;
+  for (let at = written; at < whole; at += GROUP_KEY_ENTRY) {
+    const index = table.readUInt16BE(at);
+    if (index <= last) {
+      throw new ProductError("SECURE_KEY_TABLE_UNPROVEN", `the device's group key table keeps an earlier key for address-table index ${index}, past the entries a load writes and not above the last of them (${last}); how the device looks a key up then is not established, so its security object is not loaded`);
+    }
+  }
+  return table.subarray(0, written);
+}
+
+// What a Data Secure device's security object holds, in the shape buildSecurityObject builds for
+// `want`: the entries of the group key table a load of `want` writes (writtenGroupKeys), and the
+// flags of its objects. The device reads its group keys back only inside the secured session this
+// runs in.
+export async function readSecurityObject(dev: Pick<KnxDevice, "propExtRead" | "propExtReadElements">, want: SecurityObjectTables): Promise<SecurityObjectTables> {
+  const count = async (pid: number) => (await dev.propExtRead(OBJECT_TYPE_SECURITY, 1, pid, 0, 1)).readUInt16BE(0);
+  const n = await count(SECURITY_PID.GROUP_KEY_TABLE);
+  const all = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
+  const groupKeys = writtenGroupKeys(all, want.groupKeys);
+  const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, want.goFlags.length, 1);
+  const m = await count(SECURITY_PID.SECURITY_IA_TABLE);
+  const senders = m ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_IA_TABLE, 1, m, SENDER_ENTRY) : Buffer.alloc(0);
+  return { groupKeys, goFlags, senders };
 }

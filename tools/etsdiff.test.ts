@@ -3,8 +3,8 @@ import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { iaToNum, numToIa, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { iaToNum, numToIa, gaToNum, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, buildDeviceConfig, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
@@ -236,6 +236,114 @@ corpusDescribe("GVS AMMA: each download closes as ETS's does", () => {
     const ga = withClosing(planSystemBGaFlash({ addr: Buffer.alloc(4), assoc: Buffer.alloc(4), comObj: Buffer.alloc(4) }, false), cfg.loadProcedures, "grp");
     expect(planClosing(par)).toEqual(ets);
     expect(planClosing(ga)).toEqual(ets);
+  });
+});
+
+// ETS 6.4.1 partial downloads of the GVS AMMA in Data Secure, one per step: a second address (secured by ETS)
+// added to an object, removed again, a plain address linked so that it takes the removed one's index in the
+// address table, the two objects' addresses swapped, and ETS's configuration restored
+// (gvs-amma-ets6log-keytable-<step>.txt, ETS's own log: it masks PID 53's keys). The unit was read back through a
+// secured session before the first and after each, and the plain address driven on the bus
+// (gvs-amma-unit-keytable.json; a key only as the first 8 hex digits of its SHA-256).
+corpusDescribe("GVS AMMA: the group key table when a secured address goes and a plain one takes its index, against ETS", () => {
+  type State = { name: string; addressTable: string[]; assoc: [number, number][]; keyCount: number; keys: [number, string, string][]; senders: string[]; secured: number[] };
+  const unit = JSON.parse(captureText("gvs-amma-unit-keytable.json")) as { states: State[]; behaviour: { state: string; sent: string; seen: string }[] };
+  const OBJECTS = 532; // PID 61's elements, one per object of the application
+  // The security object's elements ETS wrote, per PID: element -> data as hex (null where ETS masks it).
+  const etsWrites = (step: string) => {
+    const out = new Map<number, Map<number, string | null>>();
+    for (const l of captureText(`gvs-amma-ets6log-keytable-${step}.txt`).split(/\r?\n/)) {
+      const m = l.match(/Sending Sec_req .*InnerTelegram=PropertyExtValue_WriteCon_req .*ObjectType=17 Instance=1 PID=(\d+) NumberOfElements=(\d+) StartIndex=(\d+) Data=([0-9A-F* ]+?) succeeded/);
+      if (!m) continue;
+      const [pid, n, start] = [Number(m[1]), Number(m[2]), Number(m[3])];
+      const data = m[4].replace(/ /g, "");
+      const size = data.length / 2 / n;
+      const els = out.get(pid) ?? new Map<number, string | null>();
+      for (let k = 0; k < n; k++) els.set(start + k, data.includes("*") ? null : data.slice(2 * size * k, 2 * size * (k + 1)).toLowerCase());
+      out.set(pid, els);
+    }
+    return out;
+  };
+  // What Busforge loads for a state's links: the secured addresses are the ones the project keys, the senders
+  // ETS listed (the tunnel and the Jung, at the sequence ETS gave it).
+  const built = (s: State, jungSequence: bigint) => {
+    const gaOf = (index: number) => gaToNum(s.addressTable[index - 1]);
+    const links = [...new Set(s.assoc.map(([o]) => o))].map((o) => ({ comObjNum: o, gaRaws: s.assoc.filter(([x]) => x === o).map(([, i]) => gaOf(i)) }));
+    const keyed = new Map(s.keys.map(([, , ga]) => [gaToNum(ga), Buffer.alloc(16, gaToNum(ga) & 0xff)]));
+    const securedGas = new Set(s.assoc.filter(([o]) => s.secured.includes(o)).map(([, i]) => gaOf(i)));
+    const keys = new Map([...keyed].filter(([g]) => securedGas.has(g)));
+    const first = [...securedGas][0];
+    const senders = { byGa: new Map([[first, [iaToNum(s.senders[0])]]]), ownIa: iaToNum("1.1.203"), otherDevices: new Map([[first, [{ ia: iaToNum(s.senders[1]), transmits: true, sequence: jungSequence }]]]) };
+    return buildSecurityObject(links, OBJECTS, keys, senders);
+  };
+  const busforgeWrites = (t: ReturnType<typeof built>) => {
+    const out = new Map<number, Map<number, string | null>>();
+    for (const st of planSecurityObjectLoad(t)) {
+      if (st.op !== "writeSecurityProp") continue;
+      const els = out.get(st.pid) ?? new Map<number, string | null>();
+      for (let k = 0; k * st.elementSize < st.data.length; k++) els.set(st.start + k, st.data.subarray(k * st.elementSize, (k + 1) * st.elementSize).toString("hex"));
+      out.set(st.pid, els);
+    }
+    return out;
+  };
+  const steps = unit.states.slice(1);
+
+  test("each download writes ETS's elements of PIDs 54, 53 and 61, and PID 53 never from element 0", () => {
+    expect(steps.map((s) => s.name)).toEqual(["add", "remove", "plain", "swap", "restore"]);
+    for (const s of steps) {
+      const ets = etsWrites(s.name);
+      // The Jung's sequence is the one ETS wrote (its project's), so PID 54 compares the senders and their order.
+      const jung = BigInt(`0x${ets.get(54)!.get(2)!.slice(4)}`);
+      const ours = busforgeWrites(built(s, jung));
+      expect([s.name, [...ours.get(54)!]]).toEqual([s.name, [...ets.get(54)!]]);
+      expect([s.name, [...ours.get(61)!]]).toEqual([s.name, [...ets.get(61)!]]);
+      // ETS masks the keys; the elements it writes, and the address-table index each of ours names, are compared.
+      expect([s.name, [...ours.get(53)!.keys()]]).toEqual([s.name, [...ets.get(53)!.keys()]]);
+      expect([s.name, [...ours.get(53)!.values()].map((v) => parseInt(v!.slice(0, 4), 16))]).toEqual([s.name, s.keys.slice(0, ours.get(53)!.size).map(([i]) => i)]);
+      expect(ets.get(53)!.has(0)).toBe(false);
+    }
+  });
+
+  test("the unit keeps every key-table element a download does not write, its count never shrinks", () => {
+    unit.states.slice(1).forEach((s, i) => {
+      const before = unit.states[i];
+      const written = new Set(etsWrites(s.name).get(53)!.keys());
+      expect([s.name, s.keyCount]).toEqual([s.name, Math.max(before.keyCount, ...written)]);
+      for (const [element, entry] of before.keys.entries()) if (!written.has(element + 1)) expect([s.name, element + 1, s.keys[element]]).toEqual([s.name, element + 1, entry]);
+    });
+  });
+
+  // Busforge compares the entries a load writes (writtenGroupKeys): the rest is the residue ETS leaves, here the
+  // removed address's key at the index the plain address took, which the unit works plain.
+  test("Busforge's comparison is the unit's table after each download, where a plain address sits on an old key", () => {
+    const residue: string[] = [];
+    for (const s of steps) {
+      const ets = etsWrites(s.name);
+      const t = built(s, BigInt(`0x${ets.get(54)!.get(2)!.slice(4)}`));
+      const entries = t.groupKeys.length / GROUP_KEY_ENTRY;
+      // The unit's table as its tags show it, the built one as its keys show it: same index and same address's key.
+      const unitTable = s.keys.map(([i, , ga]) => Buffer.concat([Buffer.from([i >> 8, i & 0xff]), Buffer.alloc(16, gaToNum(ga) & 0xff)]));
+      expect([s.name, writtenGroupKeys(Buffer.concat(unitTable), t.groupKeys).equals(t.groupKeys)]).toEqual([s.name, true]);
+      expect([s.name, [...t.goFlags].flatMap((f, i) => (f ? [i + 1] : []))]).toEqual([s.name, s.secured]);
+      for (const [i, , ga] of s.keys.slice(entries)) if (i <= s.addressTable.length && s.addressTable[i - 1] !== ga) residue.push(`${s.name}:${i}`);
+    }
+    expect(residue).toEqual(["plain:2", "swap:2"]);
+  });
+
+  // In both states with a plain address on the old key: the plain address carries plain telegrams both ways, the
+  // secured one stays secured.
+  test("the unit works the plain address on the old key plain, in both directions", () => {
+    const plain = (s: string) => unit.states.find((x) => x.name === s)!.addressTable[1];
+    const secured = unit.states[0].addressTable[0];
+    expect(unit.behaviour.map((b) => [b.state, b.sent, b.seen])).toEqual([
+      ["plain", `plain GroupValueRead ${plain("plain")}`, `1.1.203 -> ${plain("plain")} plain GroupValueResponse 00`],
+      ["plain", `secured GroupValueWrite ${secured} = 1`, `1.1.203 -> ${plain("plain")} plain GroupValueWrite 01`],
+      ["plain", `plain GroupValueRead ${plain("plain")}`, `1.1.203 -> ${plain("plain")} plain GroupValueResponse 01`],
+      ["plain", `secured GroupValueWrite ${secured} = 0`, `1.1.203 -> ${plain("plain")} plain GroupValueWrite 00`],
+      ["plain", `plain GroupValueRead ${plain("plain")}`, `1.1.203 -> ${plain("plain")} plain GroupValueResponse 00`],
+      ["swap", `plain GroupValueWrite ${plain("swap")} = 1`, `1.1.203 -> ${secured} secured GroupValueWrite 01 (decrypted with the key of ${secured})`],
+      ["swap", `plain GroupValueWrite ${plain("swap")} = 0`, `1.1.203 -> ${secured} secured GroupValueWrite 00 (decrypted with the key of ${secured})`],
+    ]);
   });
 });
 

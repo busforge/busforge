@@ -211,9 +211,6 @@ project's without judging them, as it does for links; the write steps and the pe
 (the first stays the sending address) and, where the product's downloads write it, turns the object's
 read flag over, both in one GA flash, then takes both back in a second; each write is read back. In
 the `ui` channel this goes through the device page's address and flag editors and the flash dialog.
-Where the first address is secured on a Data Secure device, the second address is left out and the
-result says so: taking it back would shrink the device's group key table below its address table, a
-case no capture shows ([roadmap](roadmap.md)).
 
 A **behaviour** check is the correctness proof. The framework configures the function, links its
 com-object to a random group address, flashes, then observes the bus through an independent

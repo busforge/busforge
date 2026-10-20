@@ -174,9 +174,9 @@ where they are required; raw acquisition is not a way around access control. Wha
 - **Sending:** read the interface's L_Data.con over UDP, extended frames for values longer than
   6 bits, and coordination with another tool sharing the sender address.
 - **Peers that only answer reads on a secured address, or transmit with it as a further address**
-  (`SECURE_SENDERS_UNPROVEN`), and **a group key table that shrinks below the address table** need
-  an ETS capture each. In the latter case an old key can stay at an index that still exists, the
-  verify then fails after the write, and nothing in Busforge clears it.
+  (`SECURE_SENDERS_UNPROVEN`), and **an older group key at or below the last index a load writes**
+  (`SECURE_KEY_TABLE_UNPROVEN`: a secured address made plain below a secured one that stays, or several removed with plain addresses between) need
+  an ETS capture each, the latter also how the device looks a key up.
 - **Monitor replay history across reconnects**, and refreshing a device's stored sequence number from
   the secured telegrams the monitor decrypts.
 - **Unresolved `Links` tokens at import** can shift the sending address; the PID 54 sender rule

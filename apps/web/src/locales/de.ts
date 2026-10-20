@@ -333,6 +333,7 @@ const de: Messages = {
     SECURE_GA_OFF_WITH_KEY: "Eine Gruppenadresse dieses Geräts ist auf nie gesichert gestellt, aber das Projekt hat einen Schlüssel dafür (ein wiederhergestellter Snapshot bringt die Einstellung zurück, nicht den Schlüssel). Speichere sie erneut als nie gesichert, um den Schlüssel zu entfernen.",
     GA_SECURITY_INVALID: "Der Sicherheitsmodus muss automatisch, immer gesichert oder nie gesichert sein.",
     SECURE_SEQUENCE_EXHAUSTED: "Die gesicherte Sequenz dieses Absenders ist am 48-Bit-Ende; er kann keine gesicherten Telegramme mehr senden.",
+    SECURE_KEY_TABLE_UNPROVEN: "Das Gerät behält in seiner Schlüsseltabelle einen früheren Gruppenschlüssel an einer Stelle, die ein neuer Ladevorgang nicht überschreibt, und er liegt nicht hinter den geschriebenen Schlüsseln. Wie das Gerät dann einen Schlüssel sucht, ist nicht belegt, daher wird sein Sicherheitsobjekt nicht geladen.",
     SECURE_SENDERS_UNPROVEN: "Eine gesicherte Gruppenadresse dieses Geräts ist auch mit einem anderen Gerät verknüpft. Welche Absender ein Empfänger dann in seine Sicherheitstabelle eintragen muss, ist noch nicht geklärt, deshalb lädt Busforge das Sicherheitsobjekt nicht, statt zu raten.",
     SENDER_INVALID: "Das ist keine physikalische Adresse (Bereich.Linie.Gerät, z. B. 1.2.250).",
     SECURE_LINK_MIXED: "Ein Kommunikationsobjekt ist mit gesicherten und ungesicherten Gruppenadressen verknüpft. Es hat nur eine Sicherheitseinstellung für alle, deshalb lehnt Busforge das Programmieren ab.",
