@@ -150,6 +150,13 @@ The bundle holds only the records that decide a matrix cell, each as a public co
 - `source.artifact` and `sha256` stay only for a reference pass, which needs them: the ETS capture
   is named by its path in the private corpus and identified by its hash.
 - No text in it names a date, an individual address or a host path.
+- No text in it names a group address an installation could use, in the forms the records write one:
+  three-level (`1/2/3`), or raw values in a link (`#2->0x1b06`, several joined by `+`) or after "group
+  address", "GA" or "project". Only bench addresses are allowed: a smoke run of a bench spec may name the
+  addresses that spec names and every address of its fuzz range's main/middle group, and an ETS reference
+  comparison the group the bench captures link on, 3/3/x. Any other record (a unit in service, another
+  source) names none. A two-level address is not looked for, since the byte counts of a reference
+  comparison (`0/229`) have its form.
 
 Run times order the records of a cell, and the public copies carry none, so the generator refuses
 the bundle unless every cell and axis decides exactly as it does on the kept records, in the order

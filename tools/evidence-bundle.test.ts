@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { corpusTest } from "./corpus-test.ts";
 import { parseEvidenceBundle, parseEvidenceRecord, type EvidenceRecord, type MatrixProduct } from "../packages/product/src/index.ts";
-import { generateBundle, renderPage, bundleText, unescapeKnxId, publicRecords, checkPublicRecord, BUNDLE_PATH, PAGE_PATH } from "./evidence-bundle.ts";
+import { generateBundle, renderPage, bundleText, unescapeKnxId, publicRecords, checkPublicRecord, groupAddresses, BUNDLE_PATH, PAGE_PATH } from "./evidence-bundle.ts";
 
 corpusTest("the shipped evidence bundle and docs/compatibility.md match the kept records (else: bun run tools/evidence-bundle.ts --write)", () => {
   const bundle = generateBundle();
@@ -86,6 +86,53 @@ describe("the shipped records", () => {
     expect(() => publicRecords([at("run of 2000-01-01")], [PRODUCT])).toThrow("a date");
     expect(() => publicRecords([at("report in /home/someone/x.json")], [PRODUCT])).toThrow("a host path");
     expect(publicRecords([at("spec baseline (2 configure steps)")], [PRODUCT])).toHaveLength(1);
+  });
+
+  // A group address an installation uses must not ship in any form the records write one in. Only a run
+  // of a bench smoke spec may name that spec's addresses, and an etsdiff comparison the bench captures' 3/3/x.
+  describe("group addresses", () => {
+    const run = (spec: string | null, configuration: string, detail = "ok", kind = "smoke-report") => record("run-1", "2000-01-01T00:00:00.000Z", { transfer: { state: "pass", method: "read-back", detail } }, {
+      build: { server: null, runner: { name: "tools/smoke", revision: null }, spec: spec === null ? null : { name: spec, revision: null } },
+      scope: { operation: "fullDownload", channel: "api", configuration, configurationFingerprint: null },
+      source: { kind, artifact: null, sha256: null },
+    });
+    const ships = (r: EvidenceRecord) => { checkPublicRecord({ ...r, recordedAt: null, build: { ...r.build, server: null } }); return true; };
+
+    test("found three-level, and as a raw value where the text says it is one", () => {
+      expect(groupAddresses("linked object 3 → 1/1/1; 31/7/255 and 0/0/1")).toEqual([0x0901, 0xffff, 0x0001]);
+      expect(groupAddresses("links #2->0x1b06, #6->0x0a01")).toEqual([0x1b06, 0x0a01]);
+      expect(groupAddresses("GA 0x0a01, group address 2561, (project 6913, differs)")).toEqual([0x0a01, 2561, 6913]);
+      expect(groupAddresses("links #2->0x1b01+0x0a01, #3->0x0a02; group addresses 0x0a03, 0x0a04")).toEqual([0x1b01, 0x0a01, 0x0a02, 0x0a03, 0x0a04]);
+      expect(groupAddresses("no response on 1/2/3. Then 1/2/4-1/2/5")).toEqual([0x0a03, 0x0a04, 0x0a05]);
+    });
+    test("not found in what only looks like one", () => {
+      for (const t of [
+        "229 bytes compared (L4 parameter segment 0/229, L3 com-object table 0/2656)", "AMMA-04/06.S fullDownload",
+        "links #11->1 group address, #13->1 group address", "the test address answered 0x0258", "32/0/1 and 1/8/1 and 1/1/256",
+        "GA flash, 3 B", "did not resolve to a group address",
+      ]) expect([t, groupAddresses(t)]).toEqual([t, []]);
+    });
+    test("a record of a unit in service, or of any other source, ships none", () => {
+      expect(() => ships(run("auro-m0081-in-service", "spec baseline", "1/6/4 answered 0x00"))).toThrow("names group address 1/6/4");
+      expect(() => ships(run(null, "links #2->0x0a01", "ok", "readback-tool"))).toThrow("names group address 1/2/1");
+      expect(() => ships(run("test-spec", "spec baseline", "the device does not carry it (project 6913, differs from device: true)"))).toThrow("names group address 3/3/1");
+    });
+    test("an etsdiff comparison names only the bench captures' 3/3/x", () => {
+      expect(ships(run(null, "application defaults, links #0->0x1b01, #6->0x1b05", "ok", "etsdiff"))).toBe(true);
+      expect(() => ships(run(null, "application defaults, links #2->0x0a01", "ok", "etsdiff"))).toThrow("names group address 1/2/1");
+    });
+    test("a bench spec's run names the addresses that spec names or its fuzz range generates, no others", () => {
+      expect(ships(run("gvs-amma", "spec baseline", "3 transitions tracked on 1/2/3→1/2/9"))).toBe(true);
+      expect(ships(run("jung-400021se-secure", "behaviour securedOutput: K1 answers a secured read on 0/0/1", "0/0/1 answered 0x00"))).toBe(true);
+      expect(() => ships(run("gvs-amma", "spec baseline", "linked object 2 → 1/6/2"))).toThrow("names group address 1/6/2");
+      expect(() => ships(run("jung-400021se", "spec baseline", "0/0/1 answered 0x00"))).toThrow("names group address 0/0/1");
+      expect(() => ships(run("gvs-amma", "spec baseline", "the device does not carry it (project 3329, differs from device: true)"))).toThrow("names group address 1/5/1");
+      expect(() => ships(run("gvs-amma", "spec baseline", "links #2->0x0a01+0x0d01"))).toThrow("names group address 1/5/1");
+      expect(ships(run("gvs-amma", "spec baseline", "the device does not carry it (project 2561, differs from device: true)"))).toBe(true);
+    });
+    test("a record of another source that names a bench spec gets none of its addresses", () => {
+      expect(() => ships(run("gvs-amma", "spec baseline", "1/2/1 answered 0x00", "readback-tool"))).toThrow("names group address 1/2/1");
+    });
   });
 
   test("the firmware's source and the spec's name are checked as well", () => {

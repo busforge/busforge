@@ -16,6 +16,7 @@ import {
   type MatrixRow, type MatrixCell, type OperationState, type MatrixOperation,
 } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, corpusPath } from "./corpus.ts";
+import { SPECS } from "./smoke/specs/index.ts";
 
 const ROOT = join(import.meta.dir, "..");
 export const BUNDLE_PATH = join(ROOT, "apps", "server", "src", "evidence-bundle.json");
@@ -56,15 +57,53 @@ const orderOf = (productRef: string) => unescapeKnxId(productRef.split("_P-")[1]
 
 const cellKey = (r: EvidenceRecord) => [r.subject.productRef, r.subject.appProgramId, r.scope.operation, r.scope.channel].join("|");
 
-// Text a shipped record may not carry: a date, an individual address, a host path. Group addresses
-// in a result's detail stay: they are bench addresses, from the smoke specs and the links the smoke
-// driver generates on the bench. Run times, revisions and source files are refused field by field
-// below. A firmware value is a version, not checked as text (1.1.4 is no individual address).
+// Text a shipped record may not carry: a date, an individual address, a host path. Run times,
+// revisions and source files are refused field by field below. A firmware value is a version, not
+// checked as text (1.1.4 is no individual address). Group addresses: see groupAddresses.
 const PRIVATE_TEXT: [RegExp, string][] = [
   [/\b20\d\d-[01]\d-[0-3]\d/, "a date"],
   [/(?:^|[^\w.])\d{1,2}\.\d{1,2}\.\d{1,3}(?![\w.])/, "an individual address"],
   [/\/(?:Users|home)\/|^[A-Za-z]:\\/, "a host path"],
 ];
+
+// The group addresses a text names, as 16-bit values, in the forms the records write them: three-level
+// main/middle/sub (the smoke driver's details), and raw values where the text says they are some: after
+// "->" in a link (etsdiff's `#2->0x1b06`, several joined by "+"), after "group address" or "GA" (a list
+// joined by "," or "+"), and after "project" (the smoke driver's GA flash failure). A number followed by
+// "group address" is a count (etsdiff's redacted `#11->1 group address`). A two-level main/sub is not
+// looked for: etsdiff's byte counts ("segment 0/229") have that form.
+const RAW = String.raw`(?:0x[0-9a-f]{1,4}|\d{1,5})\b`;
+const GA_FORMS: [RegExp, (m: RegExpExecArray) => number[]][] = [
+  [/(?<![\w./])(\d{1,2})\/(\d{1,2})\/(\d{1,3})(?![\w/]|\.\w)/g, (m) => {
+    const [main, mid, sub] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    return main <= 31 && mid <= 7 && sub <= 255 ? [(main << 11) | (mid << 8) | sub] : [];
+  }],
+  [new RegExp(String.raw`(?:->|\bgroup address(?:es)?|\bGA|\bproject)\s*(${RAW}(?:\s*(?:\+|,)\s*${RAW})*)(?!\s*group address)`, "gi"), (m) =>
+    m[1].split(/\s*[+,]\s*/).map((v) => (/^0x/i.test(v) ? parseInt(v, 16) : Number(v))).filter((n) => n <= 0xffff)],
+];
+export function groupAddresses(text: string): number[] {
+  return GA_FORMS.flatMap(([re, values]) => [...text.matchAll(re)].flatMap((m) => values(m)));
+}
+const gaText = (n: number) => `${n >> 11}/${(n >> 8) & 7}/${n & 0xff}`;
+
+// The bench ETS captures link their objects on 3/3/x (etsdiff's reference records name them as hex).
+export const BENCH_CAPTURE_GA_GROUP = { main: 3, mid: 3 };
+
+// The group addresses a shipped record may name, by what it is a record of: a smoke run of a bench spec
+// (as the spec reads today) the addresses that spec names and every address of its fuzz range's
+// main/middle group; an etsdiff comparison the bench captures' group; every other record (a unit in
+// service, an installation's capture, another source naming a spec) none, since its addresses are an
+// installation's.
+function allowedGroupAddresses(r: EvidenceRecord): (n: number) => boolean {
+  const inGroup = (g: { main: number; mid: number }) => (n: number) => n >> 11 === g.main && ((n >> 8) & 7) === g.mid;
+  if (r.build.spec === null) return r.source.kind === "etsdiff" ? inGroup(BENCH_CAPTURE_GA_GROUP) : () => false;
+  if (r.source.kind !== "smoke-report") return () => false;
+  const spec = SPECS.find((s) => s.id === r.build.spec!.name);
+  if (!spec || spec.inService) return () => false;
+  const named = new Set(groupAddresses(JSON.stringify(spec)));
+  const range = spec.fuzz?.gaRange;
+  return (n) => named.has(n) || (range !== undefined && inGroup(range)(n));
+}
 
 // Refuses a shipped record that identifies its run or its installation (see publicRecords).
 export function checkPublicRecord(r: EvidenceRecord): void {
@@ -79,6 +118,8 @@ export function checkPublicRecord(r: EvidenceRecord): void {
     ...AXES.flatMap((a) => [r.results[a].method ?? "", r.results[a].detail ?? ""]),
   ];
   for (const t of texts) for (const [re, what] of PRIVATE_TEXT) if (re.test(t)) fail(`contains ${what}: ${JSON.stringify(t)}`);
+  const allowed = allowedGroupAddresses(r);
+  for (const t of texts) for (const n of groupAddresses(t)) if (!allowed(n)) fail(`names group address ${gaText(n)}, which is no bench address of this record: ${JSON.stringify(t)}`);
 }
 
 // The records the bundle ships: for every cell of a matrix operation, the records cellState decides
