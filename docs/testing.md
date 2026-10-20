@@ -196,6 +196,11 @@ and neither is a device that byte-verifies without ever acting on the bus, unles
 why no behaviour is observable (write-only outputs). [status.md](status.md) applies this bar per
 spec.
 
+A device in service meets it **as a unit in service**: every capability its product claims, the full
+download and the UI click-through included, passes in both channels with every declared behaviour on
+a unit in use, taken over by read-back instead of provisioned. Provisioning from the factory state is
+not shown by such a run.
+
 ### What each check proves
 
 A **capability** check is a write-path proof. Its oracle is always the same: the device's own
