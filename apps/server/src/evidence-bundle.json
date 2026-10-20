@@ -72,6 +72,18 @@
     "fullDownload": true,
     "structuralFlash": false
    }
+  },
+  {
+   "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+   "appProgramId": "M-0162_A-0004-11-F245",
+   "capabilities": {
+    "readParams": true,
+    "readLinks": true,
+    "flashParams": true,
+    "flashLinks": true,
+    "fullDownload": true,
+    "structuralFlash": true
+   }
   }
  ],
  "records": [
@@ -5919,6 +5931,370 @@
     "persistence": {
      "state": "not-assessed"
     }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D flashLinks api transfer+behaviour",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": null,
+    "runner": null,
+    "spec": null
+   },
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project, then object 2 (power supply on) linked to a test address and unlinked",
+    "configurationFingerprint": null
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash and its revert reported verified by the server (read-back)",
+     "detail": "linked (47 B, verified), unlinked (47 B, verified)"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection: a passive detector on its own tunnel through another interface",
+     "detail": "after the link the unit answered a read of the test address with 1 and sent it among its start-up telegrams; after the unlink the same read went unanswered"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, and after them the unit sent the test address and answered a read of it; the contract takes no start-up telegrams as a restart proof"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "manual",
+    "artifact": null,
+    "sha256": null
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D flashLinks tool reference",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "unknown",
+   "transport": {
+    "kind": "unknown",
+    "via": "unknown"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/etsdiff.ts",
+     "revision": null
+    },
+    "spec": null
+   },
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "tool",
+    "configurationFingerprint": null,
+    "configuration": "application defaults with M-0162_A-0004-11-F245_P-30_R-30=1, M-0162_A-0004-11-F245_P-31_R-31=1, M-0162_A-0004-11-F245_P-15_R-15=1, M-0162_A-0004-11-F245_P-17_R-17=600, M-0162_A-0004-11-F245_P-93_R-93=1, M-0162_A-0004-11-F245_P-47_R-47=1, M-0162_A-0004-11-F245_P-89_R-89=900, M-0162_A-0004-11-F245_P-56_R-56=1, M-0162_A-0004-11-F245_P-10_R-10=600, M-0162_A-0004-11-F245_P-20_R-20=600, links #11->1 group address, #13->1 group address, #15->1 group address, #16->1 group address, #19->1 group address, #20->1 group address; ETS partial download against Busforge's configuration image (not the flash operation's write set), the group tables"
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "ets-capture",
+    "priorBusforgeWrites": "none"
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed",
+     "detail": "offline comparison; no device involved"
+    },
+    "reference": {
+     "state": "pass",
+     "method": "every memory byte the ETS partial download wrote to the group tables byte-equal to Busforge's image for the same configuration at the device address",
+     "detail": "114 bytes compared (L3 com-object table 0/74, L2 association table 0/26, L1 address table 0/14)"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "etsdiff",
+    "artifact": "captures/meanwell-ets-revert.log",
+    "sha256": "4223e3742e97c532b513f420183e45cfdd6691b5121a4e0de9f0437c10e01d4d"
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D flashParams api transfer",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": null,
+    "runner": null,
+    "spec": null
+   },
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project, then P-29 (maximum tracking period) 1800 to 1810 and back",
+    "configurationFingerprint": null
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "results": {
+    "transfer": {
+     "state": "fail",
+     "detail": "RESTART_UNPROVEN both ways: the interface confirmed the closing A_Restart negatively and the unit gave no T_Disconnect within 4 s, so this build stopped before its read-back. Every frame before the restart was confirmed on layer 2, and a separate read of the unit with the collect tool after both equals its read before them"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, each time; neither run read anything after it"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "manual",
+    "artifact": null,
+    "sha256": null
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D flashParams tool reference",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "unknown",
+   "transport": {
+    "kind": "unknown",
+    "via": "unknown"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/etsdiff.ts",
+     "revision": null
+    },
+    "spec": null
+   },
+   "scope": {
+    "operation": "flashParams",
+    "channel": "tool",
+    "configurationFingerprint": null,
+    "configuration": "application defaults with M-0162_A-0004-11-F245_P-30_R-30=1, M-0162_A-0004-11-F245_P-31_R-31=1, M-0162_A-0004-11-F245_P-15_R-15=1, M-0162_A-0004-11-F245_P-17_R-17=600, M-0162_A-0004-11-F245_P-93_R-93=1, M-0162_A-0004-11-F245_P-47_R-47=1, M-0162_A-0004-11-F245_P-89_R-89=900, M-0162_A-0004-11-F245_P-56_R-56=1, M-0162_A-0004-11-F245_P-10_R-10=600, M-0162_A-0004-11-F245_P-20_R-20=600, links #11->1 group address, #13->1 group address, #15->1 group address, #16->1 group address, #19->1 group address, #20->1 group address; ETS partial download against Busforge's configuration image (not the flash operation's write set), the parameter segments"
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "ets-capture",
+    "priorBusforgeWrites": "none"
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed",
+     "detail": "offline comparison; no device involved"
+    },
+    "reference": {
+     "state": "pass",
+     "method": "every memory byte the ETS partial download wrote to the parameter segments byte-equal to Busforge's image for the same configuration at the device address",
+     "detail": "1 bytes compared (L4 parameter segment 0/1); 211 bytes Busforge writes that ETS does not are not covered"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "etsdiff",
+    "artifact": "captures/meanwell-ets-revert.log",
+    "sha256": "4223e3742e97c532b513f420183e45cfdd6691b5121a4e0de9f0437c10e01d4d"
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D fullDownload api transfer",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": null,
+    "runner": null,
+    "spec": null
+   },
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project; full download",
+    "configurationFingerprint": null
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back)",
+     "detail": "326 B image, verified"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, and the read-back after them equals the image; the contract takes no start-up telegrams as a restart proof, and the unit held the same bytes before the download, so a read afterwards cannot tell whether what Busforge wrote survived"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "manual",
+    "artifact": null,
+    "sha256": null
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "id": "KNX-40E-1280D fullDownload tool reference",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "unknown",
+   "transport": {
+    "kind": "unknown",
+    "via": "unknown"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/etsdiff.ts",
+     "revision": null
+    },
+    "spec": null
+   },
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "tool",
+    "configurationFingerprint": null,
+    "configuration": "application defaults with M-0162_A-0004-11-F245_P-30_R-30=1, M-0162_A-0004-11-F245_P-31_R-31=1, M-0162_A-0004-11-F245_P-15_R-15=1, M-0162_A-0004-11-F245_P-17_R-17=600, M-0162_A-0004-11-F245_P-93_R-93=1, M-0162_A-0004-11-F245_P-47_R-47=1, M-0162_A-0004-11-F245_P-89_R-89=900, M-0162_A-0004-11-F245_P-56_R-56=1, M-0162_A-0004-11-F245_P-10_R-10=600, M-0162_A-0004-11-F245_P-20_R-20=600, links #11->1 group address, #13->1 group address, #15->1 group address, #16->1 group address, #19->1 group address, #20->1 group address; full-download image, every segment"
+   },
+   "origin": {
+    "configuredBy": "ets",
+    "reference": "ets-capture",
+    "priorBusforgeWrites": "none"
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed",
+     "detail": "offline comparison; no device involved"
+    },
+    "reference": {
+     "state": "pass",
+     "method": "every memory byte of the ETS full download byte-equal to Busforge's full-download image at the device address",
+     "detail": "326 bytes compared (L4 parameter segment 0/212, L3 com-object table 0/74, L2 association table 0/26, L1 address table 0/14)"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "etsdiff",
+    "artifact": "captures/meanwell-ets-fulldownload.log",
+    "sha256": "a255581619a67e45bc4e2030318c172d772e816acb9628ee933114fb7d33bfa0"
    }
   }
  ]

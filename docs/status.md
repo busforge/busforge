@@ -100,7 +100,7 @@ value.
 | GVS K-BUS AMMA-04/06.S multifunction actuator | MV-07B0 | relative | hardware | hardware | hardware | hardware, from virgin, survives a bus power cycle | hardware: the switch object drives the status object |
 | Jung 400021SE Tasterschnittstelle 2fach Secure | MV-07B0 | relative, module device, parameter segment above 64 KB | hardware | hardware | hardware | hardware, from factory, survives a restart | hardware: a surgically flashed link answers a read |
 | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | relative | hardware | hardware, ETS's bracket, one parameter changed and reverted (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, from factory **and onto a device running its application**, application runs and survives a bus power cycle; ETS's bracket (see below) | hardware: in service in a real installation, driving light, fan and temperature |
-| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware, ETS's bracket; with the record of a Busforge download only the changed byte (see below) | hardware, add and remove, ETS's bracket and table lengths (see below) | hardware, onto a unit running its application, ETS's bracket and image, bus voltage kept through every unload and restart; the unit does not confirm its restart, so under the current rule its flashes end `verified` with `restartUnproven`, shown on the recorded sequence by a test, not by a run (see below) | hardware: the cyclic-send interval change took effect on the bus; a flashed link answers a read |
+| MEAN WELL KNX power supply (M-0162) | MV-07B0 | relative | hardware | hardware, ETS's bracket; with the record of a Busforge download only the changed byte; the matrix shows it failed (see below) | hardware, add and remove, ETS's bracket and table lengths (see below) | hardware, onto a unit running its application, ETS's bracket and image, bus voltage kept through every unload and restart; the unit does not confirm its restart, so under the current rule its flashes end `verified` with `restartUnproven`, shown on the recorded sequence by a test, not by a run (see below) | hardware: a flashed link answers a read, seen on an independent connection, and goes unanswered once removed |
 | Theben HMG 6 T heating actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben JMG 4 T blind actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
 | Theben RMG 8 T switch actuator (M-0048, MIX 2 application) | MV-07B0 | relative, module device | hardware | hardware, ETS's bracket and exactly the bytes of ETS's parameter download (see below) | hardware, add and remove, exactly the bytes of ETS's group-address download, ETS's bracket (see below) | hardware, ETS's bracket, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers |
@@ -193,9 +193,19 @@ What each row does not show:
   acknowledges the probes on layer 2 and drops them without a transport answer, so its restart is
   unproven. A flash then goes on as ETS does after the same confirmation: it reconnects, reads back and
   ends `verified` with `restartUnproven`. That outcome is shown on the unit's recorded restart sequence
-  by a test, not by a run of a flash on the unit; the runs on the unit stopped at the unproven restart,
+  by a test, not by a run of a flash on the unit; the last parameter flashes on the unit, under the rule before it, stopped at the unproven restart,
   their bytes written as planned and a later read equal to the earlier final read. That the unit
-  restarted and stored the bytes is not shown by a flash.
+  restarted and stored the bytes is not shown by a flash: after every `A_Restart` the unit sent its
+  start-up telegrams about 2.2 s later, and the earlier flashes' read-backs after them equal their
+  images, but start-up telegrams are no restart proof under the [evidence contract](evidence-contract.md).
+  ETS's full, group-address, parameter and revert downloads are each byte-equal to Busforge's image
+  (`tools/etsdiff.test.ts`, and a reference record each; the matrix shows one per operation). Its
+  evidence records in [compatibility.md](compatibility.md) are those references and the runs on the unit in the API channel, from
+  development builds before the current restart rule: the full download, the parameter flash there and
+  back and the GA flash there and back verified, the link answering a read, seen on an independent
+  connection; the parameter flash's newest record is the stricter rule's stop at the unproven restart,
+  so the matrix shows that operation failed. No run was in the UI channel, on a release build or under
+  the current restart rule.
 - **MDT IP Interface/Router `M-0083_A-0137-20-7EB2`** (System B, KNX Data Secure). Its parameter image
   equals ETS's image of its full download byte for byte, text fields and the defaults of inactive
   parameters included, and its parameter flash changes the same bytes as ETS's parameter downloads
@@ -486,9 +496,11 @@ report a device family as working on the strength of a passing test suite.
   of the same values, which leaves the unit the same.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
-  download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA and the Jung 400021SE, every segment
-  byte for byte. Parameter flash: one ETS partial download of the Jung. Group-address flash: one ETS
-  partial download each of the MDT, the ABB, the GVS and the Jung, every byte ETS wrote equal to Busforge's image. Plus the Auro
+  download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA, the Jung 400021SE and the MEAN WELL
+  power supply, every segment byte for byte. Parameter flash: one ETS partial download of the Jung, and
+  of the MEAN WELL power supply a change and its revert. Group-address flash: one ETS partial download
+  each of the MDT, the ABB, the GVS and the Jung, and of the MEAN WELL power supply a link and its
+  revert, every byte ETS wrote equal to Busforge's image. Plus the Auro
   M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S, the three
   Theben MIX 2 products (device notes above), the MDT BE-06001.02 (full, parameter, group-address
   download), and the ABB's full download onto a unit holding the

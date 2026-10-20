@@ -22,6 +22,7 @@ columns are listed per operation below.
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
+| M-0162 KNX-40E-1280D | `M-0162_A-0004-11-F245` | eligible, untested | eligible, untested | **failed** | eligible, untested | eligible, untested | eligible, untested |
 
 ## M-0002 GH Q631 0070 R0111
 
@@ -100,3 +101,16 @@ Product `M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES`, application program `M-0085_A
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 |
 | Structural flash | refused | none / none | none / none | none / none | none | none |
+
+## M-0162 KNX-40E-1280D
+
+Product `M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D`, application program `M-0162_A-0004-11-F245`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | eligible, untested | none / none | none / none | none / none | none | none |
+| Read links | eligible, untested | none / none | none / none | none / none | none | none |
+| Parameter flash | **failed** | fail / none | not-assessed / none | not-assessed / none | pass | unknown |
+| Group-address flash | eligible, untested | pass / none | pass / none | not-assessed / none | pass | unknown |
+| Full download | eligible, untested | pass / none | not-assessed / none | not-assessed / none | pass | unknown |
+| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
