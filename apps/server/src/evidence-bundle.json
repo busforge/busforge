@@ -169,8 +169,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 254 → 1/6/2, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it (not where the first is secured on a Data Secure device) and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back; the result names what ran",
+     "detail": "linked object 254 → 1/6/2, verified on read-back; its read flag on in one GA flash, taken back in another, each read back; no second address: 1/6/2 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)"
     },
     "reference": {
      "state": "not-assessed"
@@ -180,8 +180,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5100 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5073 ms after A_Restart, answering again after 5985 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -365,8 +365,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 254 → 1/6/2, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it (not where the first is secured on a Data Secure device) and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back; the result names what ran",
+     "detail": "linked object 254 → 1/6/2, verified on read-back; its read flag on in one GA flash, taken back in another, each read back; no second address: 1/6/2 is secured on this Data Secure device, and a group key table that shrinks below the address table is unproven (roadmap)"
     },
     "reference": {
      "state": "not-assessed"
@@ -376,8 +376,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5100 ms after A_Restart, answering again after 6024 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5098 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -704,8 +704,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5100 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5073 ms after A_Restart, answering again after 5985 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -900,8 +900,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5100 ms after A_Restart, answering again after 6024 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5098 ms after A_Restart, answering again after 5982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -957,8 +957,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -1023,8 +1023,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -2346,7 +2346,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "1/3/2 answered 0x01"
+     "detail": "1/3/3 answered 0x01"
     },
     "persistence": {
      "state": "not-assessed"
@@ -2405,8 +2405,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 0 → 1/3/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 0 → 1/3/1, verified on read-back; 1/3/2 added behind it and its read flag off in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -2416,8 +2416,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2309 ms after A_Restart, answering again after 2898 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2317 ms after A_Restart, answering again after 2907 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2542,7 +2542,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "1/3/2 answered 0x01"
+     "detail": "1/3/3 answered 0x01"
     },
     "persistence": {
      "state": "not-assessed"
@@ -2601,8 +2601,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 0 → 1/3/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 0 → 1/3/1, verified on read-back; 1/3/2 added behind it and its read flag off in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -2612,8 +2612,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2306 ms after A_Restart, answering again after 2895 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2314 ms after A_Restart, answering again after 2903 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2802,7 +2802,7 @@
     "transfer": {
      "state": "pass",
      "method": "the server reported the download verified (read-back or device CRC, per profile)",
-     "detail": "downloaded verified, 276B, mask MV-0705"
+     "detail": "downloaded verified, 274B, mask MV-0705"
     },
     "reference": {
      "state": "not-assessed"
@@ -2812,8 +2812,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2309 ms after A_Restart, answering again after 2898 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2317 ms after A_Restart, answering again after 2907 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2942,8 +2942,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 2306 ms after A_Restart, answering again after 2895 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 2314 ms after A_Restart, answering again after 2903 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2999,8 +2999,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -3065,8 +3065,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -3395,8 +3395,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 3 → 1/1/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 3 → 1/1/1, verified on read-back; 1/1/2 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -3406,8 +3406,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5703 ms after A_Restart, answering again after 6289 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5734 ms after A_Restart, answering again after 6331 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3525,8 +3525,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the link flash reported verified by the server and the link read back",
-     "detail": "linked object 3 → 1/1/1, verified on read-back"
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 3 → 1/1/1, verified on read-back; 1/1/2 added behind it and its read flag on in one GA flash, taken back in another, each read back"
     },
     "reference": {
      "state": "not-assessed"
@@ -3536,8 +3536,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5701 ms after A_Restart, answering again after 6290 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5718 ms after A_Restart, answering again after 6305 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3788,7 +3788,7 @@
     "transfer": {
      "state": "pass",
      "method": "the server reported the download verified (read-back or device CRC, per profile)",
-     "detail": "downloaded verified, 8171B, mask MV-0701"
+     "detail": "downloaded verified, 229B, mask MV-0701"
     },
     "reference": {
      "state": "not-assessed"
@@ -3798,8 +3798,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5703 ms after A_Restart, answering again after 6289 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5734 ms after A_Restart, answering again after 6331 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3928,8 +3928,8 @@
     },
     "persistence": {
      "state": "pass",
-     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project; the com-object table is not read back",
-     "detail": "silent 5701 ms after A_Restart, answering again after 6290 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links read back equal to the project after the reboot"
+     "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
+     "detail": "silent 5718 ms after A_Restart, answering again after 6305 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3985,8 +3985,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -4051,8 +4051,8 @@
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "group tables read and decoded, every association resolved; not compared with a built image",
-     "detail": "group tables read back and decoded, no gaps"
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps; every object's flags read from the com-object table, equal to the project"
     },
     "reference": {
      "state": "not-assessed"
@@ -4185,6 +4185,138 @@
      "state": "pass",
      "method": "parameter memory read and decoded completely; not compared with a built image",
      "detail": "parameter image read back and decoded"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "GH Q631 0070 R0111 structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "spec baseline (1 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-437 0→1→0 (2→3→2 objects), each a verified structural flash, zero drift"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0002",
+    "productRef": "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
+    "appProgramId": "M-0002_A-A001-13-63C2",
+    "mask": "MV-0701",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "busforge-bridge"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "abb-usu-4.2",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "busforge",
+    "reference": "self-written",
+    "priorBusforgeWrites": "some"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "GH Q631 0070 R0111 structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "spec baseline (1 configure steps), then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "R-437 0→1→0 (2→3→2 objects), each a verified structural flash, zero drift"
     },
     "reference": {
      "state": "not-assessed"
