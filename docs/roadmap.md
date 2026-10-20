@@ -105,9 +105,10 @@ depends on is hardware-proven.
   the byte read-back as fallback. The read-back stays the evidence behind `verified`.
 - **Traffic capture in the gateway process.** The tap points and decoders exist; the `--capture`
   flag that writes a decoded transaction log does not.
-- **A com-object flag read back off a device on the bus.** The read-back takes flags from the table and
-  the writes that rewrite it refuse flags they do not know, offline against ETS captures and emulated
-  units; the first read on hardware (the Theben HMG 6 T, whose project sets read flags) closes it.
+- **A com-object flag a device holds otherwise than its project, read back off the bus.** The bench
+  smoke runs read every flag on the bus and found the imported project's; units in service take theirs
+  as the project's. A flag set by another tool is shown on emulated units only. The Theben HMG 6 T, whose project sets read flags, is the next unit
+  to show a project-set flag read off hardware.
 - **The unread-attribute audit.** [ets-coverage.md](ets-coverage.md) names a script that lists every
   product-XML attribute the parser never reads; it does not exist, the table is maintained by hand.
 
@@ -117,7 +118,9 @@ depends on is hardware-proven.
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
   (`openknx-raumcontroller-in-service`) drives the parameter flash and the GA flash on a commissioned
-  unit, each reverted and read back, with a bus check and a restart; it has not run. Still open: the
+  unit, each reverted and read back, with a bus check and a restart; it passes on hardware in both
+  channels, and its records enter the shipped evidence once the application program is in the
+  catalogue the bundle reads. Still open: the
   comparison with the full download and an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
 - **Devices in service with KNX Data Secure.** The smoke runner's device-in-service mode opens its own
