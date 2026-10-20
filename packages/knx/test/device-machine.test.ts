@@ -424,6 +424,28 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
     expect((failure as { code?: string } | null)?.code).toBe("RESTART_IGNORED");
     expect(String(failure)).toMatch(/confirmed A_Restart negatively/);
   });
+  test("takeTransportReply tells a device that took a request but left it unanswered from one that is gone, and clears", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+    let acks = true;
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci === APCI.DEVICE_DESCRIPTOR_READ && acks) tun.reply([0xc2 | (p.seq << 2)]);
+    };
+    await dev.connect();
+    expect(dev.takeTransportReply()).toBe(false);
+    expect((await dev.deviceDescriptor().then(() => null, (e: unknown) => e) as { code?: string } | null)?.code).toBe("DEVICE_NOT_ANSWERING");
+    expect(dev.takeTransportReply()).toBe(true);
+    expect(dev.takeTransportReply()).toBe(false);
+    acks = false;
+    expect((await dev.deviceDescriptor().then(() => null, (e: unknown) => e) as { code?: string } | null)?.code).toBe("DEVICE_NOT_ANSWERING");
+    expect(dev.takeTransportReply()).toBe(false);
+    // A late T_ACK for an earlier sequence number (a restart's, behind which a read went out) is not the read's.
+    tun.reply([0xc2 | (15 << 2)]);
+    expect(dev.takeTransportReply()).toBe(false);
+  });
+
   // A transport-correct device: it answers the sequence number it expects, acknowledges and drops a
   // repetition of the last one, refuses any other with T_NAK, and starts counting at 0 on T_Connect.
   const keepsRunning = (tun: FakeTransport, lostRestart: boolean) => {

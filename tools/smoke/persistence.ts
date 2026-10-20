@@ -19,28 +19,51 @@ import { flagsNotRead, type ConfigView } from "./client.ts";
 export interface RebootObservation { rebooted: boolean; unproven?: true; detail: string }
 
 // The connection-oriented part of a device that `restartInConnection` uses (KnxDevice).
-export interface RestartConnection { connect(): Promise<void>; deviceDescriptor(): Promise<unknown>; sendRestart(): Promise<boolean>; disconnect(): Promise<void> }
+export interface RestartConnection { connect(): Promise<void>; deviceDescriptor(): Promise<unknown>; sendRestart(): Promise<boolean>; takeTransportReply(): boolean; disconnect(): Promise<void> }
 
-// The restart observeReboot sends: a fresh connection in which the device answers a descriptor read
-// (any answer: one with another service also shows it is up and holds the connection), and A_Restart
-// behind it in the same connection, which is then closed (the server's flash probes on in it). A Gira
-// Tastsensor 3 Komfort left an A_Restart sent right behind the T_Disconnect and T_Connect without a
-// transport acknowledgement and did not reboot. A device silent there, as the probes count silence (no
-// answer, the connection closed, no acknowledgement on the bus, a secure Sync unanswered: the probe just
-// before answered with the same key), gets no restart (RestartNotSent); a failure of the link to the
-// interface is thrown as it is. Returns sendRestart's confirmation.
+// What a restart sent by restartInConnection showed: the interface's confirmation (sendRestart) and how
+// the device took the descriptor read sent behind A_Restart in the same connection, as a probe outcome.
+export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome }
+
+// The restart observeReboot sends, in the order of the server's plain restart (KnxDevice.restart): a
+// fresh connection in which the device answers a descriptor read (any answer: one with another service
+// also shows it is up and holds the connection), A_Restart, and a descriptor read in the same connection
+// before it is closed. A Gira Tastsensor 3 Komfort ignored an A_Restart behind which the connection was
+// closed at once, and executed every one the server sent this way. KnxDevice.restart itself is not
+// called: it judges the reboot by that one read alone, which the product asks only where the device's
+// firmware allows it (a GVS AMMA answers once more and drops out seconds later, so the product does
+// not require the reboot there), and after a negatively confirmed A_Restart it keeps the connection for
+// seconds, past a short reboot. Here the read is one more probe for observeReboot to judge; one the
+// device took on the transport layer (T_ACK or T_NAK) and left unanswered found it still on the
+// connection and counts as answered, as restart() counts it.
+// A device silent before the restart, as the probes count silence (no answer, the connection closed, no
+// acknowledgement on the bus, a secure Sync unanswered: the probe just before answered with the same
+// key), gets none (RestartNotSent). A failure of the link to the interface is thrown as it is.
 export class RestartNotSent extends Error {}
 const DEVICE_SILENT = new Set(["DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "BUS_SEND_FAILED", "SECURE_SYNC_NO_RESPONSE"]);
-export async function restartInConnection(dev: RestartConnection): Promise<boolean> {
+const codeOf = (e: unknown): unknown => (e as { code?: unknown }).code;
+export async function restartInConnection(dev: RestartConnection): Promise<RestartSent> {
   try {
     try { await dev.connect(); await dev.deviceDescriptor(); }
     catch (e) {
-      const code = (e as { code?: unknown }).code;
+      const code = codeOf(e);
       if (code === "ANSWER_SERVICE_MISMATCH") { /* it answered: it is up and holds the connection */ }
       else if (typeof code === "string" && DEVICE_SILENT.has(code)) throw new RestartNotSent(`the device did not answer in the restart's connection (${code}), so A_Restart was not sent`);
       else throw e;
     }
-    return await dev.sendRestart();
+    const confirmed = await dev.sendRestart();
+    dev.takeTransportReply();
+    let inConnection: ProbeOutcome;
+    try { await dev.deviceDescriptor(); inConnection = "answered"; }
+    catch (e) {
+      const code = codeOf(e);
+      if (code === "ANSWER_SERVICE_MISMATCH") inConnection = "answered";
+      else if (code === "BUS_SEND_FAILED") inConnection = "unacknowledged";
+      else if (code === "DEVICE_NOT_ANSWERING") inConnection = dev.takeTransportReply() ? "answered" : "silent";
+      else if (code === "DEVICE_CLOSED_CONNECTION" || code === "SECURE_SYNC_NO_RESPONSE") inConnection = "silent";
+      else throw e;
+    }
+    return { confirmed, inConnection };
   } finally { await dev.disconnect(); }
 }
 
@@ -49,15 +72,16 @@ export async function restartInConnection(dev: RestartConnection): Promise<boole
 // other failure is thrown by the probe.
 export type ProbeOutcome = "answered" | "silent" | "unacknowledged";
 
-// `restart` sends A_Restart and nothing else, throws when the interface did not take the frame, and
-// returns whether the interface confirmed it (KnxDevice.sendRestart): a device that reboots at once
-// sends no L2 acknowledgement, so the confirmation can be negative although the frame arrived. After a
-// confirmed restart an unacknowledged probe counts as silence. After an unconfirmed one it does not: a
-// device that stops acknowledging for a while without rebooting would show the same on the restart and
-// on the probes, so only probes the device left unanswered count, two in a row.
+// `restart` sends A_Restart, throws when the interface did not take the frame (or RestartNotSent, a
+// result of this check), and returns whether the interface confirmed it, or that with the outcome of a
+// read in the restart's own connection (RestartSent), which counts as the first probe: a device that
+// reboots at once sends no L2 acknowledgement, so the confirmation can be negative although the frame
+// arrived. After a confirmed restart an unacknowledged probe counts as silence. After an unconfirmed one
+// it does not: a device that stops acknowledging for a while without rebooting would show the same on
+// the restart and on the probes, so only probes the device left unanswered count, two in a row.
 // `probe` opens a fresh connection and asks for the device descriptor.
 export async function observeReboot(
-  restart: () => Promise<boolean>,
+  restart: () => Promise<boolean | RestartSent>,
   probe: () => Promise<ProbeOutcome>,
   opts: { windowMs?: number; intervalMs?: number; now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<RebootObservation> {
@@ -68,25 +92,34 @@ export async function observeReboot(
   // A device that is already silent would turn its own absence into a "reboot".
   if ((await probe()) !== "answered") return { rebooted: false, detail: "the device did not answer before the restart" };
   const start = now();
-  let confirmed: boolean;
+  let sent: boolean | RestartSent;
   // The device's own silence before the restart is a result of this check, not a broken harness.
-  try { confirmed = await restart(); }
+  try { sent = await restart(); }
   catch (e) { if (e instanceof RestartNotSent) return { rebooted: false, detail: e.message }; throw e; }
+  const confirmed = typeof sent === "boolean" ? sent : sent.confirmed;
   const silentNeeded = confirmed ? 1 : 2;
   const note = confirmed ? "" : " (A_Restart confirmed negatively)";
   let silentAt: number | null = null;
   let silentRun = 0;
   let gap = false;
   let answeredAfterGap = false;
-  while (now() - start < windowMs) {
-    const outcome = await probe();
+  // One probe outcome; true once the reboot is seen (a silence, then an answer).
+  const see = (outcome: ProbeOutcome): boolean => {
     if (outcome !== "answered") gap = true;
     else if (gap) answeredAfterGap = true;
     if (outcome === "silent" || (confirmed && outcome === "unacknowledged")) {
       silentRun++;
       if (silentRun >= silentNeeded && silentAt === null) silentAt = now() - start;
     } else silentRun = 0;
-    if (outcome === "answered" && silentAt !== null) return { rebooted: true, detail: `silent ${silentAt} ms after A_Restart, answering again after ${now() - start} ms${note}` };
+    return outcome === "answered" && silentAt !== null;
+  };
+  // The record says where a silence was seen first: in the restart's own connection, or by the probes.
+  const inConnection = typeof sent === "boolean" ? null : sent.inConnection;
+  const where = inConnection === "silent" || (confirmed && inConnection === "unacknowledged") ? ", first in the restart's own connection" : "";
+  const rebooted = (): RebootObservation => ({ rebooted: true, detail: `silent ${silentAt} ms after A_Restart${where}, answering again after ${now() - start} ms${note}` });
+  if (inConnection !== null && see(inConnection)) return rebooted();
+  while (now() - start < windowMs) {
+    if (see(await probe())) return rebooted();
     await sleep(intervalMs);
   }
   if (silentAt === null && !confirmed && answeredAfterGap) {

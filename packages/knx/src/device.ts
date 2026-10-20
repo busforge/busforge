@@ -618,6 +618,10 @@ export class KnxDevice {
   // number) or T_ACK (there, took it). Either shows it still holds the connection.
   private nakSeen = false;
   private ackSeen = false;
+  // Whether the device took a frame of ours on this connection with T_ACK or T_NAK since the last call,
+  // which clears it: a request it then leaves unanswered still found it on the connection, as restart()
+  // reads it for its own probe. For a caller that sends its own probe behind A_Restart.
+  takeTransportReply(): boolean { const seen = this.ackSeen || this.nakSeen; this.ackSeen = false; this.nakSeen = false; return seen; }
   // When the device last sent us a frame, and when it closed our connection (T_Disconnect to us).
   private lastFromDeviceAt: number | null = null;
   private peerClosedAt: number | null = null;

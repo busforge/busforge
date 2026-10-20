@@ -292,10 +292,14 @@ New runs record them: the smoke runner writes `<report>.evidence.json`, `tools/r
 Smoke records claim transfer and behaviour, and persistence from a dedicated step. A write path's
 own restart proves nothing here: whether it restarts the device at all depends on its load procedure
 and firmware. So after the capabilities, and before any behaviour relinks the device, the runner
-sends A_Restart itself and requires a reboot it can see: fresh-connection probes must show the
-device answering before the restart, then not answering, then answering again. The restart goes out
-after a descriptor read the device answered in the same connection; a device that leaves that read
-unanswered, or closes the connection, fails the check with the restart unsent. Only the device's
+sends A_Restart itself and requires a reboot it can see: probes must show the device answering before
+the restart, then not answering, then answering again. The restart goes out after a descriptor read
+the device answered in a fresh connection, and a further descriptor read in that connection follows it
+before the connection is closed, as the server's plain restart sends them after a confirmed A_Restart;
+that read counts as the first probe after the restart (one the device acknowledges and leaves
+unanswered counts as answered: it still holds the connection), every later probe opens a fresh
+connection. A device that leaves the first read unanswered, or closes the
+connection before the restart, fails the check with the restart unsent. Only the device's
 own silence counts; an interface or tunnel error ends the check as a failure. Firmware differs in
 timing (the GVS actuator answers once more and drops out about 6 s later; the same device polled
 without a restart shows no gap), which is why the probes run for up to a minute rather than once.

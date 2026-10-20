@@ -183,31 +183,52 @@ describe("judgeRunError (System 1)", () => {
 
 describe("restartInConnection", () => {
   const coded = (code: string) => Object.assign(new Error(`${code}: test`), { code });
-  const fake = (o: { descriptorError?: Error; connectError?: Error; confirmed?: boolean } = {}) => {
+  // `after`: how the device takes the descriptor read behind A_Restart (an error code, or answered).
+  // `acked`: the device takes the read behind A_Restart with T_ACK (and leaves it unanswered).
+  const fake = (o: { descriptorError?: Error; connectError?: Error; confirmed?: boolean; after?: string; acked?: boolean } = {}) => {
     const calls: string[] = [];
+    let restarted = false;
+    let reply = false;
     return {
       calls,
       dev: {
         connect: async () => { calls.push("connect"); if (o.connectError) throw o.connectError; },
-        deviceDescriptor: async () => { calls.push("descriptor"); if (o.descriptorError) throw o.descriptorError; return 0x0705; },
-        sendRestart: async () => { calls.push("restart"); return o.confirmed ?? true; },
+        deviceDescriptor: async () => {
+          calls.push(restarted ? "descriptor after restart" : "descriptor");
+          if (!restarted && o.descriptorError) throw o.descriptorError;
+          if (restarted && o.acked) reply = true;
+          if (restarted && o.after) throw coded(o.after);
+          return 0x0705;
+        },
+        sendRestart: async () => { calls.push("restart"); restarted = true; reply = true; return o.confirmed ?? true; },
+        takeTransportReply: () => { const r = reply; reply = false; return r; },
         disconnect: async () => { calls.push("disconnect"); },
       },
     };
   };
   const failure = (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e);
 
-  test("A_Restart goes out only after the device has answered a request in the same connection", async () => {
-    const { dev, calls } = fake();
-    expect(await restartInConnection(dev)).toBe(true);
-    expect(calls).toEqual(["connect", "descriptor", "restart", "disconnect"]);
+  test("A_Restart goes out after an answered request, and a read in the same connection follows it before the close", async () => {
+    const { dev, calls } = fake({ after: "DEVICE_NOT_ANSWERING" });
+    expect(await restartInConnection(dev)).toEqual({ confirmed: true, inConnection: "silent" });
+    expect(calls).toEqual(["connect", "descriptor", "restart", "descriptor after restart", "disconnect"]);
   });
 
-  test("the interface's negative confirmation of the restart is passed on", async () => {
-    expect(await restartInConnection(fake({ confirmed: false }).dev)).toBe(false);
+  test("the read behind the restart is taken as a probe outcome; a link failure is thrown", async () => {
+    for (const [after, outcome] of [["DEVICE_CLOSED_CONNECTION", "silent"], ["BUS_SEND_FAILED", "unacknowledged"], ["ANSWER_SERVICE_MISMATCH", "answered"]] as const) {
+      expect(await restartInConnection(fake({ after }).dev)).toEqual({ confirmed: true, inConnection: outcome });
+    }
+    expect(await restartInConnection(fake({ confirmed: false }).dev)).toEqual({ confirmed: false, inConnection: "answered" });
+    expect(String(await failure(restartInConnection(fake({ after: "TUNNEL_CON_TIMEOUT" }).dev)))).toContain("TUNNEL_CON_TIMEOUT");
   });
 
-  test("a device silent in the connection gets no restart, as the device's own result", async () => {
+  test("a read behind the restart the device acknowledged and left unanswered counts as answered: it is still on the connection", async () => {
+    expect(await restartInConnection(fake({ after: "DEVICE_NOT_ANSWERING", acked: true }).dev)).toEqual({ confirmed: true, inConnection: "answered" });
+    // The restart's own T_ACK, taken before the read, does not count for the read.
+    expect(await restartInConnection(fake({ after: "DEVICE_NOT_ANSWERING" }).dev)).toEqual({ confirmed: true, inConnection: "silent" });
+  });
+
+  test("a device silent in the connection before the restart gets none, as the device's own result", async () => {
     for (const code of ["DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "BUS_SEND_FAILED"]) {
       const { dev, calls } = fake({ descriptorError: coded(code) });
       const e = await failure(restartInConnection(dev));
@@ -215,33 +236,64 @@ describe("restartInConnection", () => {
       expect(String(e)).toContain(code);
       expect(calls).toEqual(["connect", "descriptor", "disconnect"]);
     }
-  });
-
-  test("a secure device leaving the restart connection's Sync unanswered gets no restart, as the device's own result", async () => {
-    const { dev, calls } = fake({ connectError: coded("SECURE_SYNC_NO_RESPONSE") });
-    expect(await failure(restartInConnection(dev))).toBeInstanceOf(RestartNotSent);
-    expect(calls).toEqual(["connect", "disconnect"]);
+    const sync = fake({ connectError: coded("SECURE_SYNC_NO_RESPONSE") });
+    expect(await failure(restartInConnection(sync.dev))).toBeInstanceOf(RestartNotSent);
+    expect(sync.calls).toEqual(["connect", "disconnect"]);
   });
 
   test("a device answering with another service is up and gets the restart", async () => {
     const { dev, calls } = fake({ descriptorError: coded("ANSWER_SERVICE_MISMATCH") });
-    expect(await restartInConnection(dev)).toBe(true);
-    expect(calls).toEqual(["connect", "descriptor", "restart", "disconnect"]);
+    expect((await restartInConnection(dev)).confirmed).toBe(true);
+    expect(calls).toContain("restart");
   });
 
-  test("a failure of the link to the interface is thrown as it is, no restart sent", async () => {
+  test("through restartInConnection: a device gone in the restart's connection and back is rebooted, one still on it and never silent is not", async () => {
+    const gira = await observeReboot(() => restartInConnection(fake({ after: "DEVICE_NOT_ANSWERING" }).dev), scripted(["answered", "answered"]), clock());
+    expect(gira).toMatchObject({ rebooted: true, detail: expect.stringContaining("first in the restart's own connection") });
+    const held = await observeReboot(() => restartInConnection(fake({ after: "DEVICE_NOT_ANSWERING", acked: true }).dev), scripted(["answered"]), clock());
+    expect(held).toMatchObject({ rebooted: false, detail: expect.stringContaining("never went silent") });
+    const unsent = await observeReboot(() => restartInConnection(fake({ descriptorError: coded("DEVICE_NOT_ANSWERING") }).dev), scripted(["answered"]), clock());
+    expect(unsent).toEqual({ rebooted: false, detail: "the device did not answer in the restart's connection (DEVICE_NOT_ANSWERING), so A_Restart was not sent" });
+    const mw = await observeReboot(() => restartInConnection(fake({ confirmed: false, after: "DEVICE_CLOSED_CONNECTION" }).dev), scripted(["answered", "answered"]), clock());
+    expect(mw).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("(A_Restart confirmed negatively)") });
+  });
+
+  test("a failure of the link to the interface before the restart is thrown as it is, no restart sent", async () => {
     const { dev, calls } = fake({ descriptorError: coded("TUNNEL_CON_TIMEOUT") });
     const e = await failure(restartInConnection(dev));
     expect(e).not.toBeInstanceOf(RestartNotSent);
-    expect(String(e)).toContain("TUNNEL_CON_TIMEOUT");
     expect(calls).not.toContain("restart");
   });
+});
 
-  test("observeReboot reports a restart left unsent by a silent device as no reboot, and passes any other failure on", async () => {
+describe("observeReboot with the read in the restart's connection", () => {
+  test("a device that left the restart's connection needs only to answer a probe again (the Gira)", async () => {
+    const r = await observeReboot(async () => ({ confirmed: true, inConnection: "silent" }), scripted(["answered", "answered"]), clock());
+    expect(r.rebooted).toBe(true);
+  });
+
+  test("a device that answers once more in the connection and drops out later is still seen rebooting by the probes (the GVS)", async () => {
+    const r = await observeReboot(async () => ({ confirmed: true, inConnection: "answered" }), scripted(["answered", "answered", "silent", "answered"]), clock());
+    expect(r.rebooted).toBe(true);
+    const never = await observeReboot(async () => ({ confirmed: true, inConnection: "answered" }), scripted(["answered"]), clock());
+    expect(never).toMatchObject({ rebooted: false, detail: expect.stringContaining("never went silent") });
+  });
+
+  test("after a negatively confirmed restart the read in the connection is one unanswered probe of the two needed (the MEAN WELL)", async () => {
+    const short = await observeReboot(async () => ({ confirmed: false, inConnection: "silent" }), scripted(["answered", "answered"]), clock());
+    expect(short).toMatchObject({ rebooted: false, unproven: true });
+    const two = await observeReboot(async () => ({ confirmed: false, inConnection: "silent" }), scripted(["answered", "silent", "answered"]), clock());
+    expect(two).toMatchObject({ rebooted: true, detail: expect.stringContaining("(A_Restart confirmed negatively)") });
+    // An unacknowledged read after an unconfirmed restart is no silence.
+    const unack = await observeReboot(async () => ({ confirmed: false, inConnection: "unacknowledged" }), scripted(["answered", "answered"]), clock());
+    expect(unack).toMatchObject({ rebooted: false, unproven: true });
+  });
+
+  test("a restart left unsent by a silent device is no reboot; any other failure is passed on", async () => {
     const answering = async (): Promise<ProbeOutcome> => "answered";
-    const r = await observeReboot(() => restartInConnection(fake({ descriptorError: coded("DEVICE_NOT_ANSWERING") }).dev), answering, clock());
-    expect(r).toEqual({ rebooted: false, detail: "the device did not answer in the restart's connection (DEVICE_NOT_ANSWERING), so A_Restart was not sent" });
-    const e = await failure(observeReboot(() => restartInConnection(fake({ descriptorError: coded("TUNNEL_CON_TIMEOUT") }).dev), answering, clock()));
+    expect(await observeReboot(async () => { throw new RestartNotSent("the device did not answer in the restart's connection (DEVICE_NOT_ANSWERING), so A_Restart was not sent"); }, answering, clock()))
+      .toEqual({ rebooted: false, detail: "the device did not answer in the restart's connection (DEVICE_NOT_ANSWERING), so A_Restart was not sent" });
+    const e = await observeReboot(async () => { throw Object.assign(new Error("TUNNEL_CON_TIMEOUT: x"), { code: "TUNNEL_CON_TIMEOUT" }); }, answering, clock()).then(() => null, (x: unknown) => x);
     expect(String(e)).toContain("TUNNEL_CON_TIMEOUT");
   });
 });
