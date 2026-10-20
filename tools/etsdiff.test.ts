@@ -251,7 +251,7 @@ corpusDescribe("Jung 400021SE full download against ETS", () => {
     const refs = reportedTableReferences(cap);
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.divergences.map((d) => d.offset)])).toEqual([[4, []], [3, []], [2, []], [1, []]]);
-  });
+  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 });
 
 // The group addresses ETS wrote into the address table in a partial download with links, ascending: System B's table
@@ -291,7 +291,7 @@ corpusDescribe("the bench captures go to the bench devices, on the bench project
       expect([file, partialLinkGas(`${file}-ets-partial-links.log`, parseAppConfig(catalogueXml(app)), gas.length)]).toEqual([file, gas.map(parseGa)]);
     }
     expect(partialLinkGas("jung-400021se-ets-partial-structure.log", parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz")), 1)).toEqual([parseGa("0/0/1")]);
-  });
+  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36; it builds the bench applications too
 });
 
 // ETS 6 partial downloads after linking objects to group addresses (and, on ABB and GVS, enabling
@@ -320,7 +320,7 @@ corpusDescribe("partial downloads with links against ETS", () => {
       const compared = r.segments.reduce((n, s) => n + s.compared, 0);
       expect(compared).toBeGreaterThan(0);
       expect(r.segments.flatMap((s) => s.divergences.map((d) => `${s.id}+${d.offset}`))).toEqual([]);
-    });
+    }, 30_000); // the case parses its application: the Jung, under 1 s alone at load 24, 5.9 s in a full check at load 14-36
   }
 });
 
@@ -403,7 +403,7 @@ corpusDescribe("System B parameter flash against ETS's partial download", () => 
       const ets = new Map([...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + target.size).map(([a, b]) => [a - base, b]));
       expect([...ours.keys()].sort((a, b) => a - b)).toEqual([...ets.keys()].sort((a, b) => a - b));
       expect([...ours].filter(([o, b]) => ets.get(o) !== b)).toEqual([]);
-    });
+    }, 30_000); // the case parses its application: the Jung, under 1 s alone at load 24, 10.2 s in a full check at load 14-36
   }
 });
 
@@ -426,7 +426,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     }
     expect(classify(parseAppConfig(catalogueXml("M-0085_A-0072-30-69AA.xml.gz"))).capabilities().structuralFlash).toBe(false);
     expect(classify(parseAppConfig(gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"))).capabilities().structuralFlash).toBe(false);
-  }, 30_000); // builds the OpenKNX application (3.4 s alone, 8.4 s in a loaded check)
+  }, 60_000); // builds the OpenKNX application and ten others: 2.7 s alone at load 24, 33.4 s in a full check at load 14-36
 
   test("MDT BE-02001.02: ETS's bracket set, and Busforge writes exactly the bytes ETS changed, with ETS's values", () => {
     const xml = real("M-0083_A-00B6-32-9642.xml.gz");
@@ -473,7 +473,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 25, 0], [3, 7, 0], [2, 6, 0], [1, 4, 0]]);
     expect(r.unattributed).toEqual([]);
-  });
+  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 
   test("Jung 400021SE: the bracket is ETS's, every object reallocated without fill and the application completed first", () => {
     const xml = real("M-0004_A-7072-21-99A7-O000A.xml.gz");
@@ -491,7 +491,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
       "assertLoaded:3", "assertLoaded:2", "assertLoaded:1", "restart",
     ]);
     expect(plan.filter((st) => st.op === "alloc").every((st) => st.op === "alloc" && !st.fill)).toBe(true);
-  });
+  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 });
 
 // A System B download's steps from ETS's log, named as planShape names Busforge's. Its CompareProp
@@ -2815,7 +2815,7 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
     { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>(), timeout: 30_000 },
     mix2("hmg6t"), mix2("jmg4t"), mix2("rmg8t"),
     { name: "Theben DALI-Gateway", xml: catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), log: "dali-ets-fulldownload-real.log", fx: dali, overrides: () => new Map(dali.overrides) },
-    { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: numToIa(deviceOf("jung-400021se-ets-fulldownload.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
+    { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: numToIa(deviceOf("jung-400021se-ets-fulldownload.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() , timeout: 30_000 }, // parses the 26.9 MB Jung: under 1 s alone, 5-10 s in a full check at load 14-36
     { name: "GVS AMMA", xml: catalogueXml("M-0085_A-0072-30-69AA.xml.gz"), log: "gvs-amma-ets-fulldownload-defaults.log", fx: { ia: numToIa(deviceOf("gvs-amma-ets-fulldownload-defaults.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
   ];
   for (const c of cases) {

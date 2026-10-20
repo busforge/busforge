@@ -101,7 +101,7 @@ corpusDescribe("applications without tunnelling entries are unaffected", () => {
     const xml = xmlOf(f);
     const n = declared(xml);
     expect(declaresTunnelingEntries(parseAppConfig(xml))).toBe(n !== undefined && !(/^\d+$/.test(n) && Number(n) === 0));
-  });
+  }, 30_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
 
   // The products whose full download is proven, plus the System B reference app the
   // orchestration tests run on: each still offers it.
@@ -113,5 +113,5 @@ corpusDescribe("applications without tunnelling entries are unaffected", () => {
     "M-0162_A-0004-11-F245.xml.gz",       // MEAN WELL power supply
   ])("%s keeps its full download", (f) => {
     expect(classify(parseAppConfig(xmlOf(f))).capabilities().fullDownload).toBe(true);
-  });
+  }, 30_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
 });
