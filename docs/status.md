@@ -414,6 +414,7 @@ spec states why no behaviour is observable.
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
 | `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter and GA flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run; its records do not ship yet (see the note) |
+| `gira-m0008-in-service` | Gira Tastsensor 3 Komfort (M-0008_A-10D7), a commissioned unit (parameter flash and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and click-through pass in both channels, to the byte only (the spec declares no behaviour); the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | not proven | not proven | not proven | **not met** |
@@ -479,8 +480,8 @@ report a device family as working on the strength of a passing test suite.
   device hold a flag its project does not. Products other than these rest on the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
-- **A device in service, taken over by read-back, has run on hardware for three products only:** the
-  OpenKNX RaumController, the Theben DALI-Gateway and the Auro M-0081_A-FE01, both channels (the
+- **A device in service, taken over by read-back, has run on hardware for four products only:** the
+  OpenKNX RaumController, the Theben DALI-Gateway, the Auro M-0081_A-FE01 and the Gira M-0008, both channels (the
   DALI-Gateway's ECG group assignments taken as assumed, unproven by the device, as its spec names
   them). Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
