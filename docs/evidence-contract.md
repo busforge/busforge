@@ -293,7 +293,9 @@ Smoke records claim transfer and behaviour, and persistence from a dedicated ste
 own restart proves nothing here: whether it restarts the device at all depends on its load procedure
 and firmware. So after the capabilities, and before any behaviour relinks the device, the runner
 sends A_Restart itself and requires a reboot it can see: fresh-connection probes must show the
-device answering before the restart, then not answering, then answering again. Only the device's
+device answering before the restart, then not answering, then answering again. The restart goes out
+after a descriptor read the device answered in the same connection; a device that leaves that read
+unanswered, or closes the connection, fails the check with the restart unsent. Only the device's
 own silence counts; an interface or tunnel error ends the check as a failure. Firmware differs in
 timing (the GVS actuator answers once more and drops out about 6 s later; the same device polled
 without a restart shows no gap), which is why the probes run for up to a minute rather than once.

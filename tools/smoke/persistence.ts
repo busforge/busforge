@@ -18,6 +18,32 @@ import { flagsNotRead, type ConfigView } from "./client.ts";
 // (restartUnproven). A device that answers every probe after the restart did not reboot: no unproven.
 export interface RebootObservation { rebooted: boolean; unproven?: true; detail: string }
 
+// The connection-oriented part of a device that `restartInConnection` uses (KnxDevice).
+export interface RestartConnection { connect(): Promise<void>; deviceDescriptor(): Promise<unknown>; sendRestart(): Promise<boolean>; disconnect(): Promise<void> }
+
+// The restart observeReboot sends: a fresh connection in which the device answers a descriptor read
+// (any answer: one with another service also shows it is up and holds the connection), and A_Restart
+// behind it in the same connection, which is then closed (the server's flash probes on in it). A Gira
+// Tastsensor 3 Komfort left an A_Restart sent right behind the T_Disconnect and T_Connect without a
+// transport acknowledgement and did not reboot. A device silent there, as the probes count silence (no
+// answer, the connection closed, no acknowledgement on the bus, a secure Sync unanswered: the probe just
+// before answered with the same key), gets no restart (RestartNotSent); a failure of the link to the
+// interface is thrown as it is. Returns sendRestart's confirmation.
+export class RestartNotSent extends Error {}
+const DEVICE_SILENT = new Set(["DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "BUS_SEND_FAILED", "SECURE_SYNC_NO_RESPONSE"]);
+export async function restartInConnection(dev: RestartConnection): Promise<boolean> {
+  try {
+    try { await dev.connect(); await dev.deviceDescriptor(); }
+    catch (e) {
+      const code = (e as { code?: unknown }).code;
+      if (code === "ANSWER_SERVICE_MISMATCH") { /* it answered: it is up and holds the connection */ }
+      else if (typeof code === "string" && DEVICE_SILENT.has(code)) throw new RestartNotSent(`the device did not answer in the restart's connection (${code}), so A_Restart was not sent`);
+      else throw e;
+    }
+    return await dev.sendRestart();
+  } finally { await dev.disconnect(); }
+}
+
 // "answered": the device replied. "silent": the device did not reply (DEVICE_NOT_ANSWERING).
 // "unacknowledged": the interface reported that no device acknowledged the probe (BUS_SEND_FAILED). Any
 // other failure is thrown by the probe.
@@ -42,7 +68,10 @@ export async function observeReboot(
   // A device that is already silent would turn its own absence into a "reboot".
   if ((await probe()) !== "answered") return { rebooted: false, detail: "the device did not answer before the restart" };
   const start = now();
-  const confirmed = await restart();
+  let confirmed: boolean;
+  // The device's own silence before the restart is a result of this check, not a broken harness.
+  try { confirmed = await restart(); }
+  catch (e) { if (e instanceof RestartNotSent) return { rebooted: false, detail: e.message }; throw e; }
   const silentNeeded = confirmed ? 1 : 2;
   const note = confirmed ? "" : " (A_Restart confirmed negatively)";
   let silentAt: number | null = null;

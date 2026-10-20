@@ -23,7 +23,7 @@ import { linkChan, type ChanCtx } from "./channel.ts";
 import type { Channel, DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
 import { runEvidence, reportText } from "./evidence.ts";
-import { observeReboot, judgeRestoredConfig, judgeLoadStates, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
+import { observeReboot, restartInConnection, judgeRestoredConfig, judgeLoadStates, type RebootObservation, type ProbeOutcome } from "./persistence.ts";
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
 import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, numToIa, gaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
 import { loadKnxproj } from "../../packages/project/src/index.ts";
@@ -119,7 +119,7 @@ async function rebootObserved<S>(host: string, ia: string, creds: Creds, states:
   await tun.connect();
   try {
     const before = await states(tun);
-    const restart = async () => { const dev = deviceOn(tun, ia, creds); await dev.connect(); const confirmed = await dev.sendRestart(); await dev.disconnect(); return confirmed; };
+    const restart = () => restartInConnection(deviceOn(tun, ia, creds));
     // Only the device's own silence is "silent"; an interface or tunnel error is thrown. On a secure
     // device a rebooting device leaves the Sync unanswered, which is the same silence. An interface
     // that confirms every frame (the bench's KNX-USB stick behind the bridge) reports a device that
