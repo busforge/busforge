@@ -270,6 +270,17 @@ const drift = (view: ConfigView): string[] => [
   ...allComObjects(view).filter((c) => c.changed).map((c) => `object ${c.number}`),
 ];
 
+// What the read-back says can resolve its unresolved links, by its split of them: only an assumed
+// value of a parameter no read sees places an object the device's own configuration does not take;
+// one the configuration places is hidden by the project's values; for the rest the read could not tell.
+export function whatResolves(rb: Pick<DeviceReadbackInfo, "unplacedObjects" | "hiddenObjects" | "unknownObjects">, assumed: boolean): string {
+  const out: string[] = [];
+  if (rb.unplacedObjects?.length) out.push(`Object(s) ${rb.unplacedObjects.join(", ")}: no object of the device's own configuration takes them, only a value of a parameter without a memory location can place them: ${assumed ? "the assumed values do not; another such parameter's value may" : "give its value in assumeParams"}`);
+  if (rb.hiddenObjects?.length) out.push(`Object(s) ${rb.hiddenObjects.join(", ")}: the device's configuration places them, the project's own values hide them`);
+  if (rb.unknownObjects?.length) out.push(`Object(s) ${rb.unknownObjects.join(", ")}: the read could not tell what places them`);
+  return out.length ? out.join(". ") : "The read-back did not say what can resolve them";
+}
+
 // A read-back that must have covered parameters and links completely and found nothing that differs
 // from the project.
 async function noDrift(io: InServiceIo, coverage: DeviceReadbackInfo | null, what: string): Promise<string | null> {
@@ -441,7 +452,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         await io.api.revert();
         const second = await io.api.readBack();
         if (!second?.paramsRead || !second.linksRead) throw new Stop(phase, "the second read-back did not cover both parameters and links");
-        if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration${second.unresolvedObjects?.length ? ` (object(s) ${second.unresolvedObjects.join(", ")})` : ""}; a GA flash would drop them${assume.length ? "" : ". A parameter without a memory location may hide their objects: give its value in assumeParams"}`);
+        if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration${second.unresolvedObjects?.length ? ` (object(s) ${second.unresolvedObjects.join(", ")})` : ""}; a GA flash would drop them. ${whatResolves(second, assume.length > 0)}`);
         // The project knows the flags a GA or structural flash rewrites only where the read took them.
         if (second.flagsUnreadable || second.flagsUndecoded?.length) throw new Stop(phase, `the read-back could not take the flags of the device's com-object table (${second.flagsUnreadable ?? `object(s) ${second.flagsUndecoded!.join(", ")}`}); a write that rewrites it would not know them`);
         await io.settle(3000);

@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { gaToNum } from "../../packages/knx/src/index.ts";
 import type { CfgItem, DeviceCapabilities, DeviceConfigView } from "../../packages/product/src/index.ts";
 import type { FlashResult } from "./client.ts";
-import { runInService, planInService, inServiceProblems, inServicePhases, type InServiceIo, type InServiceOptions } from "./inservice.ts";
+import { runInService, planInService, inServiceProblems, inServicePhases, whatResolves, type InServiceIo, type InServiceOptions } from "./inservice.ts";
 import { runEvidence, type RunConditions } from "./evidence.ts";
 import { openknxRaumControllerInService as spec } from "./specs/openknx-raumcontroller-in-service.ts";
 import { SPECS } from "./specs/index.ts";
@@ -39,6 +39,7 @@ interface Script {
   busUsesTestGa?: boolean;                   // another device answers on the test address
   placedWithDefaults?: boolean;              // the fresh project shows the catalogue defaults, which hide a linked object
   hiddenEvenUnderOwnConfig?: boolean;        // a link no configuration of the unit places
+  unknownLinks?: boolean;                    // a link the read cannot tell what places
   noReadFlag?: boolean;                      // the link step's object has no read flag
   memoryless?: string;                       // the value of MEMLESS the unit runs (its links resolve only under it)
   flagsNotTaken?: { flagsUnreadable?: string; flagsUndecoded?: number[] }; // the read-back could not take the com-object table's flags
@@ -50,7 +51,16 @@ function scripted(sc: Script = {}) {
   const project: { params: Record<string, string>; links: Record<string, number[]> } = { params: { ...device.params, ...(sc.placedWithDefaults ? { [STRUCT]: "0" } : {}), ...(sc.memoryless ? { [MEMLESS]: "1" } : {}) }, links: structuredClone(device.links) };
   // The server counts a device link on an object the project's parameters hide as unresolved.
   const memlessWrong = (v = project.params[MEMLESS]) => sc.memoryless !== undefined && v !== sc.memoryless;
-  const gaps = () => (sc.hiddenEvenUnderOwnConfig ? 1 : 0) + (project.params[STRUCT] !== device.params[STRUCT] ? 1 : 0) + (memlessWrong() ? 1 : 0);
+  // The server's split of the unresolved links: object 1 unplaced while MEMLESS is wrong, 2 hidden by the
+  // project's STRUCT, 3 unplaced under any configuration, 4 unknown.
+  const split = () => {
+    const unplaced = [...(memlessWrong() ? [1] : []), ...(sc.hiddenEvenUnderOwnConfig ? [3] : [])];
+    const hidden = project.params[STRUCT] !== device.params[STRUCT] ? [2] : [];
+    // Where the read cannot tell, every unresolved link is unknown and none is split further.
+    if (sc.unknownLinks) return { unplaced: [], hidden: [], unknown: [4], all: [4] };
+    return { unplaced, hidden, unknown: [] as number[], all: [...unplaced, ...hidden].sort((a, b) => a - b) };
+  };
+  const gaps = () => split().all.length;
   // A read-back leaves the baseline of MEMLESS as it was; only an accepted assumption sets it.
   let memlessBase = sc.memoryless ? "1" : undefined;
   const withMemless = (p: Record<string, string>) => (memlessBase === undefined ? p : { ...p, [MEMLESS]: memlessBase });
@@ -83,7 +93,12 @@ function scripted(sc: Script = {}) {
         for (const a of assume ?? []) { project.params[MEMLESS] = a.value; memlessBase = a.value; }
         base = { params: withMemless({ ...device.params }), links: structuredClone(device.links) };
         const n = gaps();
-        return { paramsRead: true, linksRead: true, linkGaps: n, ...(n ? { unresolvedObjects: [1] } : {}), flagsRead: !sc.flagsNotTaken?.flagsUnreadable, ...sc.flagsNotTaken };
+        const sp = split();
+        return {
+          paramsRead: true, linksRead: true, linkGaps: n,
+          ...(n ? { unresolvedObjects: sp.all, ...(sp.unplaced.length ? { unplacedObjects: sp.unplaced } : {}), ...(sp.hidden.length ? { hiddenObjects: sp.hidden } : {}), ...(sp.unknown.length ? { unknownObjects: sp.unknown } : {}) } : {}),
+          flagsRead: !sc.flagsNotTaken?.flagsUnreadable, ...sc.flagsNotTaken,
+        };
       },
       revert: async () => { project.params = { ...base.params }; project.links = structuredClone(base.links); },
       getConfig: async () => view(),
@@ -326,6 +341,13 @@ describe("a device in service, when something goes wrong", () => {
     const r = await runInService(spec, io, NO_FULL);
     expect(r.stopped?.phase).toBe("adopt");
     expect(r.stopped?.detail).toContain("under its own configuration");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("a link the read cannot place is named as such, without proposing an assumption", async () => {
+    const { io, calls } = scripted({ unknownLinks: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.detail).toBe("1 association(s) of the device did not resolve under its own configuration (object(s) 4); a GA flash would drop them. Object(s) 4: the read could not tell what places them");
     expect(writesOf(calls)).toEqual([]);
   });
 
@@ -596,7 +618,7 @@ describe("a device in service: parameters without a memory location", () => {
     const { io, calls } = scripted({ memoryless: "2" });
     const r = await runInService(spec, io, NO_FULL);
     expect(r.stopped?.phase).toBe("adopt");
-    expect(r.stopped?.detail).toBe("1 association(s) of the device did not resolve under its own configuration (object(s) 1); a GA flash would drop them. A parameter without a memory location may hide their objects: give its value in assumeParams");
+    expect(r.stopped?.detail).toBe("1 association(s) of the device did not resolve under its own configuration (object(s) 1); a GA flash would drop them. Object(s) 1: no object of the device's own configuration takes them, only a value of a parameter without a memory location can place them: give its value in assumeParams");
     expect(writesOf(calls)).toEqual([]);
   });
 
@@ -635,5 +657,19 @@ describe("a device in service: parameters without a memory location", () => {
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, value: "" }] } })).toEqual(["assumeParams: an entry needs a name, a paramRefId and a value (f)"]);
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [a], expectParams: [a] } })).toEqual([`${MEMLESS} is both assumed and expected; an assumed value is the one the run takes over`]);
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, paramRefId: PARAM }] } })).toEqual([`${PARAM} is assumed and a step's parameter; a step writes a parameter with a memory location`]);
+  });
+});
+
+describe("what can resolve the links a read-back left unresolved", () => {
+  test("proposes an assumption only for objects the device's own configuration does not place", () => {
+    expect(whatResolves({ unplacedObjects: [5], hiddenObjects: [64], unknownObjects: [254] }, false)).toBe(
+      "Object(s) 5: no object of the device's own configuration takes them, only a value of a parameter without a memory location can place them: give its value in assumeParams. "
+      + "Object(s) 64: the device's configuration places them, the project's own values hide them. Object(s) 254: the read could not tell what places them");
+  });
+  test("says the assumed values did not place them where the run assumed values", () => {
+    expect(whatResolves({ unplacedObjects: [5] }, true)).toBe("Object(s) 5: no object of the device's own configuration takes them, only a value of a parameter without a memory location can place them: the assumed values do not; another such parameter's value may");
+  });
+  test("proposes nothing where the read-back does not split them", () => {
+    expect(whatResolves({}, false)).toBe("The read-back did not say what can resolve them");
   });
 });
