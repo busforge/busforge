@@ -318,6 +318,7 @@ const de: Messages = {
     READBACK_ASSUMPTION_UNPROVEN: "Das Rücklesen hat nicht Parameter und Verknüpfungen zugleich erfasst und kann daher nicht zeigen, dass die angenommenen Werte stimmen. Es wurde nichts gespeichert.",
     READBACK_ASSUMPTION_NOT_SHOWN: "Die Konfiguration des Geräts zeigt einen angenommenen Parameter nicht, sein Wert entscheidet also nichts. Es wurde nichts gespeichert.",
     READBACK_ASSUMPTION_UNRESOLVED: "Auch mit den angenommenen Werten zeigt die Konfiguration des Geräts für einige seiner Verknüpfungen kein Objekt. Es wurde nichts gespeichert.",
+    READBACK_VIEW_UNAVAILABLE: "Das Rücklesen ist beendet und gespeichert, aber die Geräteseite ließ sich nicht neu laden. Lade die Seite neu.",
     READBACK_ASSUMPTION_IMAGE_DIFFERS: "Mit den angenommenen Werten würde ein Parameter-Download Bytes schreiben, die das Gerät nicht hält; das Gerät läuft also nicht mit diesen Werten. Es wurde nichts gespeichert.",
     READBACK_IMAGE_NO_FLASH: "Das Produkt hat keinen Parameter- oder Gruppenadress-Download, mit dem Busforge das Abbild des Geräts vergleichen könnte.",
     SECURE_SYNC_FAILED: "Es konnte keine sichere Sitzung mit dem Gerät aufgebaut werden (Authentifizierung fehlgeschlagen). Prüfe, ob der richtige Tool-Key im Projekt liegt.",

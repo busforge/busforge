@@ -6,6 +6,7 @@ import { buildAbsoluteSegmentTargets, parseAppConfig } from "@busforge/product";
 import { CollectedUnit, asDevice, type Collection } from "../../../packages/product/test/collected-unit.ts";
 import { catalogueXml, corpusPath, inServiceCollection } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { readBackAs } from "./task-client.ts";
 
 // The read-back route's two rules beyond the plain read: values it is asked to assume for parameters
 // without a memory location, taken into project and baseline only when every link then resolves, and
@@ -50,8 +51,8 @@ async function placed(appXml?: string): Promise<{ state: AppState; pid: string; 
 }
 type Body = { readback?: Record<string, unknown>; linkBaseGaps?: number; error?: { code: string; message: string; details?: Record<string, unknown> } };
 const readBack = async (state: AppState, path: string, assume?: { paramRefId: string; value: string }[]) => {
-  const res = (await handleApi(req(`${path}/read-back`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang: "de", ...(assume ? { assume } : {}) }) }), state))!;
-  return { status: res.status, body: (await res.json()) as Body };
+  const r = await readBackAs(handleApi, state, path, assume ? { assume } : {});
+  return { ...r, body: r.body as Body };
 };
 const neverProgrammed = (state: AppState, pid: string, did: string) =>
   (state.db.query("SELECT never_programmed AS n FROM devices WHERE project_id = ? AND instance_id = ?").get(pid, did) as { n: number }).n === 1;
@@ -68,7 +69,7 @@ describe("a read-back and never programmed", () => {
   test("a complete read without unresolved links, of a device reporting this application's id, loaded, its image as the project's, clears it", async () => {
     const { state, pid, did, path } = await placed();
     readImpl = read({});
-    try { expect((await readBack(state, path)).status).toBe(200); } finally { readImpl = realRead; }
+    try { expect((await readBack(state, path)).state).toBe("done"); } finally { readImpl = realRead; }
     expect(neverProgrammed(state, pid, did)).toBe(false);
   });
 
@@ -77,7 +78,7 @@ describe("a read-back and never programmed", () => {
     const constantsDiffer = [{ paramRefId: "M-TEST_A-1_P-9_R-9", label: "Download marker" }];
     readImpl = read({ constantsDiffer });
     let body: Body = {};
-    try { const r = await readBack(state, path); expect(r.status).toBe(200); body = r.body; } finally { readImpl = realRead; }
+    try { const r = await readBack(state, path); expect(r.state).toBe("done"); body = r.body; } finally { readImpl = realRead; }
     expect(body.readback?.constantsDiffer).toEqual(constantsDiffer);
     expect(neverProgrammed(state, pid, did)).toBe(false);
   });
@@ -104,7 +105,7 @@ describe("a read-back and never programmed", () => {
     for (const over of [{ links: [{ comObjNum: 9999, gaRaws: [123] }] }, { programIdMatches: false }, { programIdMatches: null }, { loaded: false }, { imageMatches: false }, { imageMatches: null }, { paramsRead: false }, { linksRead: false }]) {
       const { state, pid, did, path } = await placed();
       readImpl = read(over);
-      try { expect((await readBack(state, path)).status).toBe(200); } finally { readImpl = realRead; }
+      try { expect((await readBack(state, path)).state).toBe("done"); } finally { readImpl = realRead; }
       expect([over, neverProgrammed(state, pid, did)]).toEqual([over, true]);
     }
   });
@@ -183,7 +184,7 @@ describe("a value assumed, not proven, stays marked on its parameter", () => {
     readImpl = holdingAll;
     let r: Awaited<ReturnType<typeof readBack>>;
     try { r = await readBack(state, path, [{ paramRefId: NOTE, value: "1" }, { paramRefId: MODE, value: "0" }]); } finally { readImpl = realRead; }
-    expect(r.status).toBe(200);
+    expect(r.state).toBe("done");
     expect(r.body.readback?.unprovenAssumptions).toEqual([NOTE]);
     expect(marks(state, pid, did)).toEqual([{ r: NOTE, v: "1" }]);
     const rows = paramsOf(r.body as Parameters<typeof paramsOf>[0]);
@@ -219,7 +220,7 @@ describe("a value assumed, not proven, stays marked on its parameter", () => {
       expect((await config(state, path)).get(NOTE)).toMatchObject({ value: "0", assumed: true });
       // a mark an earlier read left on "Mode", which this read proves
       state.db.run("INSERT INTO device_param_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, NULL)", [pid, did, MODE]);
-      expect((await readBack(state, path, [{ paramRefId: MODE, value: "1" }])).status).toBe(200);
+      expect((await readBack(state, path, [{ paramRefId: MODE, value: "1" }])).state).toBe("done");
     } finally { readImpl = realRead; }
     expect(marks(state, pid, did)).toEqual([{ r: NOTE, v: null }]);
   });
@@ -288,7 +289,7 @@ describe("a value assumed, not proven, stays marked on its parameter", () => {
     readImpl = holdingAll;
     try {
       const r = await readBack(state, path, [{ paramRefId: UNIT, value: "1" }]);
-      expect([r.status, r.body.readback?.unprovenAssumptions]).toEqual([200, undefined]);
+      expect([r.state, r.body.readback?.unprovenAssumptions]).toEqual(["done", undefined]);
     } finally { readImpl = realRead; }
     expect(marks(state, pid, did)).toEqual([]);
   });
@@ -342,7 +343,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
   test("with them, project and baseline take them, and once the project takes the device's values every link resolves and the device no longer counts as never programmed", async () => {
     const { state, pid, did, path } = await placed(xml);
     const r = await onUnit(() => readBack(state, path, [...ROCKERS, ...LEDS]));
-    expect(r.status).toBe(200);
+    expect(r.state).toBe("done");
     // Object 64 is shown by a parameter with a memory location, which the project takes on revert.
     expect(r.body.readback).toEqual({ paramsRead: true, linksRead: true, flagsRead: true, linkGaps: 1, unresolvedObjects: [64], hiddenObjects: [64], neverProgrammedKept: [{ reason: "linksUnresolved" }] });
     const s = stored(state, pid, did);
@@ -392,7 +393,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     const { state, pid, did, path } = await placed(xml);
     const before = stored(state, pid, did);
     const r = await onUnit(() => readBack(state, path, [...ROCKERS.map((a) => ({ ...a, value: "3" })), ...LEDS]));
-    expect([r.status, r.body.error?.code]).toEqual([400, "READBACK_ASSUMPTION_IMAGE_DIFFERS"]);
+    expect([r.state, r.body.error?.code]).toEqual(["error", "READBACK_ASSUMPTION_IMAGE_DIFFERS"]);
     expect(stored(state, pid, did)).toEqual(before);
   });
 
@@ -414,7 +415,7 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     const { state, pid, did, path } = await placed(xml);
     const before = stored(state, pid, did);
     const r = await onUnit(() => readBack(state, path, [ROCKERS[0]]));
-    expect(r.status).toBe(400);
+    expect(r.state).toBe("error");
     expect(r.body.error?.code).toBe("READBACK_ASSUMPTION_UNRESOLVED");
     expect(r.body.error?.details).toEqual({ objects: [20] });
     expect(stored(state, pid, did)).toEqual(before);

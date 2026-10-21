@@ -330,6 +330,16 @@ describe("SqliteTaskStore", () => {
     expect(s.get(task.id)).toMatchObject({ state: "done", result: { diffBytes: 3 }, outcome: { kind: "flashed", verified: true }, finishedAt: 5 });
   });
 
+  test("a read keeps its result, and a coded refusal its details, for a client that asks by id later", async () => {
+    const { store: s } = store();
+    const q = new TaskQueue(() => 5, undefined, s);
+    const read = q.submit(meta("d1"), async () => ({ paramsRead: true, linksRead: true, linkGaps: 0 }));
+    const refused = q.submit(meta("d2"), async () => { throw new ApiError("READBACK_ASSUMPTION_UNRESOLVED", "still unresolved", 400, { objects: [3, 7] }); });
+    await q.wait(read.id); await q.wait(refused.id);
+    expect(s.get(read.id)).toMatchObject({ state: "done", result: { paramsRead: true, linksRead: true, linkGaps: 0 }, errorDetails: null });
+    expect(s.get(refused.id)).toMatchObject({ state: "error", errorCode: "READBACK_ASSUMPTION_UNRESOLVED", errorDetails: { objects: [3, 7] }, result: null });
+  });
+
   test("a stored write keeps the bytes that rest on the write confirmation alone", async () => {
     const { store: s } = store();
     const q = new TaskQueue(() => 5, undefined, s);
@@ -352,7 +362,7 @@ describe("SqliteTaskStore", () => {
 
   test("closes unfinished tasks at startup with what is known about each", () => {
     const { db, store: s } = store();
-    const base = { projectId: "p1", deviceName: "x", ia: "1.1.1", snapshotId: null, phase: null, done: 0, total: 0, error: null, errorCode: null, outcome: null, result: null, queuedAt: 1, startedAt: 1, finishedAt: null, cancellable: false };
+    const base = { projectId: "p1", deviceName: "x", ia: "1.1.1", snapshotId: null, phase: null, done: 0, total: 0, error: null, errorCode: null, errorDetails: null, outcome: null, result: null, queuedAt: 1, startedAt: 1, finishedAt: null, cancellable: false };
     s.save({ ...base, id: "queued", deviceId: "a", kind: "download", writes: true, state: "queued", baselineCommitted: false });
     s.save({ ...base, id: "writing", deviceId: "b", kind: "download", writes: true, state: "running", baselineCommitted: false });
     s.save({ ...base, id: "committed", deviceId: "c", kind: "flash-params", writes: true, state: "running", baselineCommitted: true, result: { kind: "flashed", verified: true } });

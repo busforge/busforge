@@ -1,9 +1,9 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import { awaitTask, ApiError, type Task } from "./api.ts";
+import { api, awaitTask, ApiError, type Task } from "./api.ts";
 
 const base: Task = {
   id: "t1", projectId: "p", deviceId: "d", deviceName: "Dev", ia: "1.1.1", kind: "download", writes: true, snapshotId: null,
-  state: "queued", phase: null, done: 0, total: 0, error: null, errorCode: null, result: null, baselineCommitted: false,
+  state: "queued", phase: null, done: 0, total: 0, error: null, errorCode: null, errorDetails: null, result: null, baselineCommitted: false,
   queuedAt: 0, startedAt: null, finishedAt: null, cancellable: true,
 };
 const realFetch = globalThis.fetch;
@@ -43,6 +43,12 @@ describe("awaitTask", () => {
     expect((e as ApiError).code).toBe("TASK_WRITE_INTERRUPTED");
   });
 
+  test("throws a refusal with its code and the facts behind it", async () => {
+    serve([{ state: "error", errorCode: "READBACK_ASSUMPTION_UNRESOLVED", error: "still unresolved", errorDetails: { objects: [20] } }]);
+    const e = await awaitTask<unknown>("p", Promise.resolve(base), undefined, 1).catch((x) => x);
+    expect([(e as ApiError).code, (e as ApiError).details]).toEqual(["READBACK_ASSUMPTION_UNRESOLVED", { objects: [20] }]);
+  });
+
   test("a cancelled task without a code still fails with one", async () => {
     serve([{ state: "cancelled" }]);
     const e = await awaitTask<unknown>("p", Promise.resolve(base), undefined, 1).catch((x) => x);
@@ -55,5 +61,30 @@ describe("awaitTask", () => {
     serve(Array.from({ length: 60 }, () => new TypeError("fetch failed")));
     const e = await awaitTask<unknown>("p", Promise.resolve(base), undefined, 1).catch((x) => x);
     expect((e as ApiError).code).toBe("TASK_CONTACT_LOST");
+  });
+});
+
+describe("readBackDevice", () => {
+  test("submits the read, waits for its task, and hands back the refreshed view with what the read covered", async () => {
+    const seen: string[] = [];
+    const readback = { paramsRead: true, linksRead: true, linkGaps: 0 };
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.endsWith("/read-back")) return new Response(JSON.stringify({ ...base, kind: "read", writes: false }), { status: 202 });
+      if (url.includes("/tasks/")) return new Response(JSON.stringify({ ...base, kind: "read", writes: false, state: "done", result: readback }), { status: 200 });
+      return new Response(JSON.stringify({ blocks: [] }), { status: 200 });
+    }) as typeof fetch;
+    expect(await api.readBackDevice("p", "d", "de", undefined, 1)).toEqual({ blocks: [], readback } as never);
+    expect(seen).toEqual(["POST /api/projects/p/devices/d/read-back", "GET /api/projects/p/tasks/t1", "GET /api/projects/p/devices/d/config?lang=de"]);
+  });
+
+  test("a read that ended but whose view cannot be fetched is not reported as a failed read", async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (url.endsWith("/read-back")) return new Response(JSON.stringify({ ...base, kind: "read", writes: false }), { status: 202 });
+      if (url.includes("/tasks/")) return new Response(JSON.stringify({ ...base, kind: "read", writes: false, state: "done", result: { paramsRead: true, linksRead: true, linkGaps: 0 } }), { status: 200 });
+      throw new TypeError("fetch failed");
+    }) as typeof fetch;
+    const e = await api.readBackDevice("p", "d", "de", undefined, 1).catch((x) => x);
+    expect((e as ApiError).code).toBe("READBACK_VIEW_UNAVAILABLE");
   });
 });

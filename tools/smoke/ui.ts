@@ -308,11 +308,15 @@ export class UiDriver {
   // Trigger a read-back through the config page's own button (the read-back UI surface) and wait for
   // it to finish (the button spins while the read runs). The decode/drift assertion is the caller's,
   // read from the API; this only drives the button and waits out the bus read.
-  // Returns what the read covered, taken from the response the page itself received (null if none).
+  // Returns what the read covered: the result of the read task the page submitted. A refusal of the
+  // submission, a task that did not end done, or a read whose task cannot be seen throws, with its code
+  // where there is one, as the api channel's read-back does.
   async readBack(): Promise<DeviceReadbackInfo | null> {
     const page = this.req();
-    const response = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/read-back"), { timeout: 600_000 });
-    response.catch(() => undefined);
+    // The submission's answer is read when it arrives, not once the read has ended minutes later.
+    const submission = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith("/read-back"), { timeout: 600_000 })
+      .then(async (r) => ({ status: r.status(), body: await r.json().catch(() => null) as { id?: string; projectId?: string; error?: { code?: string; message?: string } } | null }));
+    submission.catch(() => undefined);
     await page.click('[data-testid="read-back"]');
     // Wait for the read to START (the button's spinner mounts) so the finish-check below cannot see
     // the pre-spinner frame and resolve immediately; if the read is instant the appear-wait simply
@@ -324,11 +328,18 @@ export class UiDriver {
       const b = document.querySelector('[data-testid="read-back"]');
       return !!b && !b.querySelector(".animate-spin");
     }, undefined, { timeout: 600_000, polling: 500 });
-    // The spinner clears when the response arrived; if it cleared without one, do not wait out the
-    // full read budget for a response that is not coming.
+    // The spinner clears when the read task ended; its submission answered long before. If none came,
+    // do not wait out the full read budget for it.
     const late = new Promise<null>((r) => setTimeout(() => r(null), 15_000));
-    const body = await Promise.race([response.then((r) => (r.ok() ? r.json() : null)).catch(() => null), late]) as { readback?: DeviceReadbackInfo } | null;
-    return body?.readback ?? null;
+    const submitted = await Promise.race([submission.catch(() => null), late]);
+    if (!submitted) throw new Error("the page sent no read-back, or its answer did not arrive");
+    const { status, body } = submitted;
+    if (status !== 202) throw new Error(`the read-back was refused (${body?.error?.code ?? `HTTP ${status}`}): ${body?.error?.message ?? ""}`);
+    if (!body?.id || !body.projectId) throw new Error("the read-back's answer names no task");
+    const task = await page.request.get(`${this.base}/api/projects/${body.projectId}/tasks/${body.id}`).then((r) => (r.ok() ? r.json() : null)).catch(() => null) as { state?: string; result?: DeviceReadbackInfo; errorCode?: string | null; error?: string | null } | null;
+    if (!task) throw new Error(`the read-back's task ${body.id} could not be read`);
+    if (task.state !== "done") throw new Error(`the read-back's task is ${task.state} after the page stopped waiting (${task.errorCode ?? `TASK_${String(task.state).toUpperCase()}`}): ${task.error ?? ""}`);
+    return task.result ?? null;
   }
 
   // Assert every parameter and com-object the API exposes has a rendered, visible row. The expected

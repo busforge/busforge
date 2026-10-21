@@ -2,6 +2,7 @@ import { test, expect, mock, afterAll } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readBackAs } from "./task-client.ts";
 
 // The read-back route and the com-object flags a read of the device's table gives: they become the flag
 // baseline (what the device holds), the project keeps its own, the difference shows as a change, and a
@@ -48,10 +49,7 @@ async function setup(): Promise<{ state: AppState; id: string; deviceId: string;
 }
 const answer = (over: Partial<DeviceStateRead>) => async (): Promise<DeviceStateRead> =>
   ({ mask: "MV-07B0", paramsRead: true, linksRead: true, paramBase: new Map(), links: [], ...over });
-const readBack = async (s: { state: AppState; base: string }) => {
-  const res = (await handleApi(jreq(`${s.base}/read-back`, "POST", { lang: "en" }), s.state))!;
-  return { status: res.status, body: await j(res) };
-};
+const readBack = (s: { state: AppState; base: string }) => readBackAs(handleApi, s.state, s.base);
 const flagChanges = async (s: { state: AppState; id: string }) => (await j(await handleApi(req(`/api/projects/${s.id}`), s.state))).devices[0].changes.flags as number;
 
 test("the flags the device holds become the baseline, show as a change against the project, and a revert takes them", async () => {
@@ -61,7 +59,7 @@ test("the flags the device holds become the baseline, show as a change against t
   readImpl = async (o) => { asked = o; return answer({ comObjOverrideBase: rows, comObjFlagsUndecoded: [] })(); };
   let r;
   try { r = await readBack(s); } finally { readImpl = realRead; }
-  expect(r.status).toBe(200);
+  expect(r.state).toBe("done");
   expect(asked?.comObjectOverrideBaseRows).toEqual([]); // the stored baseline, which the read starts from
   expect(r.body.readback).toMatchObject({ flagsRead: true });
   expect(r.body.readback.flagsUndecoded).toBeUndefined();
@@ -82,7 +80,7 @@ test("a read that could not take the flags leaves the baseline as it was, and sa
   readImpl = async (o) => { asked = o; return answer({ comObjFlagsUnreadable: "DEVICE_NOT_PROGRAMMED: no com-object table" })(); };
   let r;
   try { r = await readBack(s); } finally { readImpl = realRead; }
-  expect(r.status).toBe(200);
+  expect(r.state).toBe("done");
   expect(asked?.comObjectOverrideBaseRows).toEqual(held);
   expect(r.body.readback).toMatchObject({ flagsRead: false, flagsUnreadable: expect.stringContaining("DEVICE_NOT_PROGRAMMED") });
   expect(getDeviceComObjOverrideBase(s.state.db, s.id, s.deviceId)).toEqual(held);

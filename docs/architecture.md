@@ -93,7 +93,7 @@ rather than generating a fresh key that cannot open them.
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
 | Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |
-| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../collect` (a read-only diagnostic package, [raw-acquisition.md](raw-acquisition.md#diagnostic-package)), `PUT .../tool-key` (stored only after the device answered a secure Sync under it), `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful). A real `assign-ia`, `flash`, `flash-ga` or `download` answers `202` with its task, and so does `collect`, whose package is `GET /api/projects/:id/diagnostics/:taskId`; the dry runs, reads and identify answer with their result |
+| Devices (on the bus) | `GET /api/projects/:id/prog-mode`, `POST .../assign-ia`, `.../read-back`, `.../secure-identify`, `.../secure-activate`, `.../collect` (a read-only diagnostic package, [raw-acquisition.md](raw-acquisition.md#diagnostic-package)), `PUT .../tool-key` (stored only after the device answered a secure Sync under it), `.../flash`, `.../flash-ga`, `.../download` (each accepts `?dry=1` where a dry run is meaningful). A real `assign-ia`, `flash`, `flash-ga` or `download` answers `202` with its task, and so do `secure-activate`, the dry runs of `flash`, `flash-ga` and `download`, `read-back` (what the read covered is the task's `result`, the refreshed view `GET .../config`) and `collect`, whose package is `GET /api/projects/:id/diagnostics/:taskId`; `prog-mode`, `secure-identify` and `tool-key` answer with their result |
 | Bus and tasks | `GET/POST /api/projects/:id/bus/{status,connect,disconnect}`, `GET /api/projects/:id/tasks`, `GET .../tasks/:taskId`, `POST .../tasks/:taskId/cancel`, `WS /api/projects/:id/bus/monitor` |
 
 Three more groups are documented where the feature they belong to is: restore points and the
@@ -138,11 +138,19 @@ concurrent request, the server queues it (`apps/server/src/taskqueue.ts`):
 
 ### Programming jobs outlive the request
 
-A download runs for minutes, longer than an HTTP request can be trusted to stay open. So a real
-write (`assign-ia`, `flash`, `flash-ga`, `download`) is a **job**: the route answers `202` with the
-task as soon as it is queued, and the client polls `GET .../tasks/:taskId` until the task is
-finished. The task carries the operation's full `result`, the `snapshotId` of the restore point
-taken of the submitted configuration, and `baselineCommitted`.
+A download runs for minutes, and so does a read of a large application: a read-back, or the dry
+run of a write, which reads the whole device first. That is longer than an HTTP request can be
+trusted to stay open; Bun's `fetch`, for one, gives up on a request that has not answered after
+300 s ("The operation timed out."), whatever its own abort signal allows. So a real write
+(`assign-ia`, `flash`, `flash-ga`, `download`), its dry run and a `read-back` are **jobs**: the
+route answers `202` with the task as soon as it is queued, and the client polls
+`GET .../tasks/:taskId` until the task is finished. The task carries the operation's full `result`
+(a write's or dry run's `FlashResult`, what a read-back covered: parameters, links, the unresolved
+objects by cause, assumptions taken unproven, why a never-programmed device stays so, the
+com-object flags), a coded refusal's `errorCode` and `errorDetails` (e.g. the objects assumed values
+left unresolved), the `snapshotId` of the restore point taken of the submitted configuration, and
+`baselineCommitted`. A refusal the route can tell before queueing (an unsupported device, an invalid
+assumption, a guard) is the POST's own answer and queues nothing.
 
 ```mermaid
 stateDiagram-v2
@@ -174,8 +182,10 @@ stateDiagram-v2
   nothing written. A running write whose baseline was already committed was verified, so it is
   closed as `done`.
 
-Dry runs, read-back and identify stay plain requests: they write nothing, so losing the response
-loses nothing.
+`prog-mode`, `secure-identify` and the tool key's Sync stay plain requests: each is a handful of
+frames on the bus, but it queues behind every job ahead of it, so the request lasts as long as that
+queue. A client that gives up on it first has not stopped it: a tool-key deposit can have been
+stored all the same, and `secure-identify` shows whether the device answers under the key on file.
 
 - **A normal shutdown drains the running write.** On `SIGTERM`/`SIGINT`/`SIGHUP` the queue refuses
   new work (`SERVER_SHUTTING_DOWN`, HTTP 503), cancels queued tasks as `TASK_NOT_STARTED`, aborts a

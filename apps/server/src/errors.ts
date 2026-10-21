@@ -18,3 +18,8 @@ export function errorCode(e: unknown): string | undefined {
   const c = (e as { code?: unknown } | null | undefined)?.code;
   return typeof c === "string" ? c : undefined;
 }
+
+// The structured facts of a refusal (ApiError.details), or null.
+export function errorDetails(e: unknown): Record<string, unknown> | null {
+  return e instanceof ApiError && e.details ? e.details : null;
+}

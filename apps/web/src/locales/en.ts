@@ -318,6 +318,7 @@ const en = {
     READBACK_ASSUMPTION_UNPROVEN: "The read-back did not cover both parameters and links, so it cannot show the assumed values hold. Nothing was stored.",
     READBACK_ASSUMPTION_NOT_SHOWN: "The device's configuration does not show an assumed parameter, so its value decides nothing. Nothing was stored.",
     READBACK_ASSUMPTION_UNRESOLVED: "Under the assumed values the device's configuration still shows no object for some of its links. Nothing was stored.",
+    READBACK_VIEW_UNAVAILABLE: "The read-back ended and was stored, but the device page could not be loaded again. Reload the page.",
     READBACK_ASSUMPTION_IMAGE_DIFFERS: "Under the assumed values a parameter download would write bytes the device does not hold, so the device does not run these values. Nothing was stored.",
     READBACK_IMAGE_NO_FLASH: "The product has no parameter or group-address download to compare the image on the device with.",
     SECURE_SYNC_FAILED: "Could not establish a secure session with the device (authentication failed). Check that the correct tool key is in the project.",

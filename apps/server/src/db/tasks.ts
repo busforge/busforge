@@ -4,7 +4,7 @@ import { NOT_STARTED_REASON, outcomeOf, type Task, type TaskKind, type TaskState
 interface TaskRow {
   id: string; project_id: string; device_id: string; device_name: string; ia: string; kind: string;
   writes: number; snapshot_id: string | null; state: string; phase: string | null; done: number; total: number;
-  error: string | null; error_code: string | null; result: string | null; baseline_committed: number;
+  error: string | null; error_code: string | null; error_details: string | null; result: string | null; baseline_committed: number;
   queued_at: number; started_at: number | null; finished_at: number | null;
 }
 
@@ -14,6 +14,7 @@ const fromRow = (r: TaskRow): Task => {
     id: r.id, projectId: r.project_id, deviceId: r.device_id, deviceName: r.device_name, ia: r.ia,
     kind: r.kind as TaskKind, writes: r.writes === 1, snapshotId: r.snapshot_id, state: r.state as TaskState,
     phase: r.phase, done: r.done, total: r.total, error: r.error, errorCode: r.error_code,
+    errorDetails: r.error_details === null ? null : JSON.parse(r.error_details) as Record<string, unknown>,
     outcome: outcomeOf(result), result, baselineCommitted: r.baseline_committed === 1,
     queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at,
     // A stored row is a task of an earlier process, or one this process no longer runs.
@@ -26,13 +27,13 @@ export class SqliteTaskStore implements TaskStore {
 
   save(t: Task): void {
     this.db.prepare(`INSERT INTO tasks (id, project_id, device_id, device_name, ia, kind, writes, snapshot_id, state, phase, done, total,
-        error, error_code, result, baseline_committed, queued_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        error, error_code, error_details, result, baseline_committed, queued_at, started_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state = excluded.state, phase = excluded.phase, done = excluded.done, total = excluded.total,
-        error = excluded.error, error_code = excluded.error_code, result = excluded.result,
+        error = excluded.error, error_code = excluded.error_code, error_details = excluded.error_details, result = excluded.result,
         baseline_committed = excluded.baseline_committed, started_at = excluded.started_at, finished_at = excluded.finished_at`)
       .run(t.id, t.projectId, t.deviceId, t.deviceName, t.ia, t.kind, t.writes ? 1 : 0, t.snapshotId, t.state, t.phase, t.done, t.total,
-        t.error, t.errorCode, t.result === null || t.result === undefined ? null : JSON.stringify(t.result), t.baselineCommitted ? 1 : 0,
+        t.error, t.errorCode, t.errorDetails === null ? null : JSON.stringify(t.errorDetails), t.result === null || t.result === undefined ? null : JSON.stringify(t.result), t.baselineCommitted ? 1 : 0,
         t.queuedAt, t.startedAt, t.finishedAt);
   }
 

@@ -99,8 +99,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     return { state, pid, did };
   }
 
-  // The run's view of the server, as runner.ts builds it for the api channel, over handleApi; a write
-  // answers 202 with its task, whose end is polled.
+  // The run's view of the server, as runner.ts builds it for the api channel, over handleApi; a write,
+  // a dry run and a read-back answer 202 with their task, whose end is polled.
   // A weather station's guard, read from addresses no emulated unit uses, answered calm (wind 2 m/s,
   // every bit 0) by the emulated witness: the guard's reads go through the run, the weather is not emulated.
   const CALM_GUARD = "wind:31/7/240:9,rain:31/7/241,wind alarm:31/7/242";
@@ -108,16 +108,18 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 
   function io(state: AppState, pid: string, did: string, dev: CollectedUnit, cfg: AppConfig, log: string[], answer: string): InServiceIo {
     const d = `/api/projects/${pid}/devices/${encodeURIComponent(did)}`;
-    const wait = async (path: string): Promise<FlashResult> => {
-      const task = await call<{ id: string }>(state, "POST", path);
+    // `writes`: the operation is a write the run's log lists.
+    const settle = async <T>(path: string, writes: boolean, body?: unknown): Promise<T> => {
+      const task = await call<{ id: string }>(state, "POST", path, body);
       for (;;) {
         await new Promise((r) => setTimeout(r, 20));
-        const t = await call<{ state: string; result: FlashResult; error: string | null; errorCode: string | null }>(state, "GET", `/api/projects/${pid}/tasks/${task.id}`);
-        if (t.state === "done" || (t.errorCode === "FLASH_UNVERIFIED" && t.result)) { log.push(path.split("/").pop()!); return t.result; }
+        const t = await call<{ state: string; result: T; error: string | null; errorCode: string | null }>(state, "GET", `/api/projects/${pid}/tasks/${task.id}`);
+        if (t.state === "done" || (t.errorCode === "FLASH_UNVERIFIED" && t.result)) { if (writes) log.push(path.split("/").pop()!); return t.result; }
         if (t.state !== "queued" && t.state !== "running") throw Object.assign(new Error(t.error ?? t.state), { code: t.errorCode });
       }
     };
-    const readBack = async (assume?: { paramRefId: string; value: string }[]) => (await call<{ readback?: DeviceReadbackInfo }>(state, "POST", `${d}/read-back`, { lang: "de", ...(assume ? { assume } : {}) })).readback ?? null;
+    const wait = (path: string) => settle<FlashResult>(path, true);
+    const readBack = (assume?: { paramRefId: string; value: string }[]) => settle<DeviceReadbackInfo | null>(`${d}/read-back`, false, assume ? { assume } : {});
     // The runner's own client, its requests answered by this server.
     const ensureGa = (ga: string) => withServer(state, () => new Client("http://x").ensureGa(pid, ga));
     const gaRaw = (ga: string) => { const [M, m, s] = ga.split("/").map(Number); return (M << 11) | (m << 8) | s; };
@@ -132,9 +134,9 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         hasGa: (ga) => withServer(state, () => new Client("http://x").hasGa(pid, ga)),
         setGaPlain: async (ga) => { await call(state, "PATCH", `/api/projects/${pid}/group-addresses/${gaRaw(ga)}`, { security: "off" }); },
         setLinks: (comObjRefId, gaRaws) => call(state, "PUT", `${d}/links`, { comObjRefId, gaRaws, lang: "de" }),
-        flashDry: () => call<FlashResult>(state, "POST", `${d}/flash?dry=1`),
-        flashGaDry: () => call<FlashResult>(state, "POST", `${d}/flash-ga?dry=1`),
-        downloadDry: () => call<FlashResult>(state, "POST", `${d}/download?dry=1`),
+        flashDry: () => settle<FlashResult>(`${d}/flash?dry=1`, false),
+        flashGaDry: () => settle<FlashResult>(`${d}/flash-ga?dry=1`, false),
+        downloadDry: () => settle<FlashResult>(`${d}/download?dry=1`, false),
         flashReal: () => wait(`${d}/flash`),
         flashGaReal: () => wait(`${d}/flash-ga`),
       },

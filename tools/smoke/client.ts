@@ -92,46 +92,13 @@ export class Client {
   link(pid: string, did: string, comObjRefId: string, ga: string) { return this.call<DeviceConfigView>("PUT", `/api/projects/${pid}/devices/${did}/links`, { comObjRefId, gaRaws: [gaToNum(ga)], lang: "de" }); }
   progMode(pid: string) { return this.call<{ devices: string[] }>("GET", `/api/projects/${pid}/prog-mode`, undefined, 40_000); }
   assignIa(pid: string, did: string) { return this.submitAndWait<{ previous: string; assigned: string; verified: boolean; progModeCleared: boolean }>(pid, `/api/projects/${pid}/devices/${did}/assign-ia`, "assign-ia"); }
-  // The read-back triggers a server-side device read enqueued as a "read" task. On a large device
-  // that read outlasts any single HTTP socket on the single-channel bench: the OpenKNX RaumController
-  // reads back in ~4 min, past the old 180 s client timeout, so the POST aborted while the server read
-  // ran on to completion (and every retry fired ANOTHER doomed 4 min read). So the POST is fired and
-  // the TASK is polled to completion, exactly like downloadReal. What the read covered (parameters,
-  // links, unresolved associations) exists only in the POST's response, not in the task or in GET
-  // /config; it is returned when that response arrives, and null when the socket died, so a caller
-  // that needs the coverage fails instead of assuming it. A coded refusal (e.g. DEVICE_NOT_ANSWERING)
-  // still propagates as an ApiError, the same honesty contract as the flash.
-  async readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo | null> {
-    const firedAt = Date.now();
-    const fetchP = this.call<{ readback?: DeviceReadbackInfo }>("POST", `/api/projects/${pid}/devices/${did}/read-back`, { lang: "de", ...(assume ? { assume } : {}) }, 600_000).catch((e) => {
-      if (e instanceof ApiError) throw e; // a coded refusal is a real outcome
-      process.stderr.write(`    …read: POST socket died (${e instanceof Error ? e.message : String(e)}); deferring to the task poll\n`);
-      return new Promise<{ readback?: DeviceReadbackInfo }>(() => {}); // never settles; the poll is the source of truth
-    });
-    let lastPhase = "";
-    const pollP = (async (): Promise<void> => {
-      for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s
-        await new Promise((r) => setTimeout(r, 5_000));
-        const tasks = await this.tasks(pid).catch(() => [] as Task[]);
-        const t = tasks
-          .filter((x) => x.deviceId === did && x.kind === "read" && (x.startedAt ?? x.queuedAt ?? 0) >= firedAt - 2_000)
-          .sort((a, b) => (b.startedAt ?? b.queuedAt ?? 0) - (a.startedAt ?? a.queuedAt ?? 0))[0];
-        if (t) {
-          if (t.phase && t.phase !== lastPhase) { lastPhase = t.phase; onPhase?.(t.phase); }
-          if (t.state === "done") return;
-          if (t.state !== "queued" && t.state !== "running") throw new ApiError(0, t.errorCode ?? `TASK_${t.state.toUpperCase()}`, t.error ?? `read ${t.state}`);
-        }
-      }
-      throw new ApiError(0, "OP_TIMED_OUT", "read-back did not complete within the poll window");
-    })();
-    try {
-      const first = await Promise.race([fetchP, pollP.then(() => null)]);
-      if (first) return first.readback ?? null;
-      // The poll saw the task done first; the response follows within moments unless its socket died.
-      const late = await Promise.race([fetchP, new Promise<null>((r) => setTimeout(() => r(null), 15_000))]);
-      return late?.readback ?? null;
-    }
-    finally { fetchP.catch(() => undefined); } // a late fetch rejection (after the poll won) must not go unhandled
+  // The read-back runs as a "read" task: the POST answers 202 with it at once, and the task is polled by
+  // id to its end, like a write. What the read covered (parameters, links, unresolved associations) is
+  // the task's result; a large application reads for minutes, past what one request can be held open
+  // for (Bun's fetch gives up after 300 s). A coded refusal before queueing (DEVICE_READBACK_UNSUPPORTED)
+  // and a coded end of the task (DEVICE_NOT_ANSWERING, READBACK_ASSUMPTION_*) throw as an ApiError.
+  readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo> {
+    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/read-back`, "read-back", onPhase, assume ? { assume } : {});
   }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
   private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }
@@ -178,11 +145,10 @@ export class Client {
     if (!mid.addresses?.some((a) => a.raw === raw)) await this.createGaAddress(pid, mid.id, s, `smoke ${ga}`, "1.001");
   }
 
-  // Dry-run: computes the diff by READING the whole device (an absolute-segment System 7 read
-  // measured ~82 s on the bench), so it needs a read-back-sized budget, not a "short call" one.
-  downloadDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/download?dry=1`, undefined, 180_000); }
-  flashDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash?dry=1`, undefined, 180_000); }
-  flashGaDry(pid: string, did: string) { return this.call<FlashResult>("POST", `/api/projects/${pid}/devices/${did}/flash-ga?dry=1`, undefined, 180_000); }
+  // Dry-run: computes the diff by READING the whole device, so it runs as a task like the write.
+  downloadDry(pid: string, did: string) { return this.submitAndWait<FlashResult>(pid, `/api/projects/${pid}/devices/${did}/download?dry=1`, "download dry run"); }
+  flashDry(pid: string, did: string) { return this.submitAndWait<FlashResult>(pid, `/api/projects/${pid}/devices/${did}/flash?dry=1`, "flash dry run"); }
+  flashGaDry(pid: string, did: string) { return this.submitAndWait<FlashResult>(pid, `/api/projects/${pid}/devices/${did}/flash-ga?dry=1`, "flash-ga dry run"); }
   // A real write answers 202 with its queued task; the outcome is polled from that task.
   flashGaReal(pid: string, did: string, onPhase?: (p: string) => void): Promise<FlashResult> {
     return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/flash-ga`, "flash-ga", onPhase);
@@ -198,11 +164,11 @@ export class Client {
   // DEVICE_WRITE_ACTIVE) throws from the POST. The device's own "not verified" verdict is returned
   // as the result it is, so the caller asserts on it; any other unsuccessful end throws its code.
   // A failed poll is retried: it says nothing about the job, which runs on in the server.
-  private async submitAndWait<T>(pid: string, path: string, label: string, onPhase?: (p: string) => void): Promise<T> {
-    const submitted = await this.call<Task>("POST", path, undefined, 60_000);
+  private async submitAndWait<T>(pid: string, path: string, label: string, onPhase?: (p: string) => void, body?: unknown): Promise<T> {
+    const submitted = await this.call<Task>("POST", path, body, 60_000);
     let lastPhase = "";
-    for (let i = 0; i < 240; i++) { // up to ~20 min at 5 s
-      await new Promise((r) => setTimeout(r, 5_000));
+    for (let i = 0; i < 250; i++) { // up to ~20 min; the first 10 s at 1 s, as a dry run often ends in seconds
+      await new Promise((r) => setTimeout(r, i < 10 ? 1_000 : 5_000));
       const t = await this.call<Task>("GET", `/api/projects/${pid}/tasks/${submitted.id}`).catch((e) => {
         if (e instanceof ApiError && e.code === "TASK_NOT_FOUND") throw e;
         return null;

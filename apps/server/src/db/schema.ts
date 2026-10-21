@@ -498,6 +498,10 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id, param_ref_id)
   );
   `,
+  // The structured facts behind a task's coded refusal (Task.errorDetails), JSON; NULL when it has none.
+  `
+  ALTER TABLE tasks ADD COLUMN error_details TEXT;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -6,7 +6,7 @@
 // is exactly what keeps this contract from drifting away from the server's.
 import type {
   CfgParamView, CfgComObjView, CfgCell, CfgGridLine, CfgButtonView, CfgItem, CfgBlock,
-  DcaInfo, DcaModuleInfo, DeviceConfigView, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
+  DcaInfo, DcaModuleInfo, DeviceConfigView, DeviceReadbackInfo, FlashResult, ManufacturerInfo, OperationVerdict, OperationState, MatrixOperation,
   DiagnosticPackage, DiagnosticRecord, ComObjOverrideEdit as ComObjFlagEdit,
 } from "@busforge/product";
 export type {
@@ -89,7 +89,8 @@ export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;
   // writes: the task changes the device (a real flash, download or address assignment).
   kind: TaskKind; writes: boolean; snapshotId: string | null; state: TaskState; phase: string | null; done: number; total: number;
-  error: string | null; errorCode: string | null; result: unknown; baselineCommitted: boolean;
+  // errorDetails: the structured facts behind a coded refusal (e.g. `objects`), null when it has none.
+  error: string | null; errorCode: string | null; errorDetails: Record<string, unknown> | null; result: unknown; baselineCommitted: boolean;
   queuedAt: number; startedAt: number | null; finishedAt: number | null;
   // Whether the server accepts a cancel now: queued, writing nothing, or a write still only reading.
   cancellable: boolean;
@@ -122,10 +123,11 @@ export class ApiError extends Error {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// A real write is answered with its queued task (202), not its result: the job runs on in the
-// server whether or not this page is still open. Poll the task until it finishes and hand back the
+// A bus operation that can run for minutes (a write, its dry run, a read-back) is answered with its
+// queued task (202), not its result: the job runs on in the server whether or not this page is still
+// open, and no request has to stay open for it. Poll the task until it finishes and hand back the
 // operation's result. An unverified write is a result too (the caller shows it as the failure it
-// is); every other unsuccessful end is thrown with its code.
+// is); every other unsuccessful end is thrown with its code and details.
 export async function awaitTask<T>(projectId: string, submitted: Promise<Task>, onTask?: (t: Task) => void, pollMs = 1000): Promise<T> {
   let task = await submitted;
   onTask?.(task);
@@ -143,7 +145,7 @@ export async function awaitTask<T>(projectId: string, submitted: Promise<Task>, 
     }
   }
   if (task.state === "done" || (task.errorCode === "FLASH_UNVERIFIED" && task.result)) return task.result as T;
-  throw new ApiError(task.error ?? `task ${task.state}`, task.errorCode ?? `TASK_${task.state.toUpperCase()}`);
+  throw new ApiError(task.error ?? `task ${task.state}`, task.errorCode ?? `TASK_${task.state.toUpperCase()}`, task.errorDetails ?? undefined);
 }
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -175,11 +177,11 @@ async function downloadResponse(res: Response, fallbackName: string): Promise<vo
   URL.revokeObjectURL(url);
 }
 
-// A dry run answers with its preview directly; a real write answers with its task, awaited here.
-// `onTask` learns the submitted write's task, so a caller can tell its own job from someone else's.
+// A write and its dry run answer with their task, awaited here for the result (the preview of a dry run).
+// `onTask` learns the submitted task, so a caller can tell its own job from someone else's.
 function programDevice(id: string, deviceId: string, route: "flash" | "flash-ga" | "download", dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> {
   const res = fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/${route}${dry ? "?dry=1" : ""}`, { method: "POST" });
-  return dry ? res.then((r) => jsonOrThrow<FlashResult>(r)) : awaitTask<FlashResult>(id, res.then((r) => jsonOrThrow<Task>(r)), onTask);
+  return awaitTask<FlashResult>(id, res.then((r) => jsonOrThrow<Task>(r)), onTask);
 }
 
 export const api = {
@@ -395,13 +397,27 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/revert-link`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comObjRefId, lang }),
     }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
-  // Read the device's current configuration off the bus and adopt it as the
-  // baseline; returns the refreshed config view (drifted rows now flagged). `assume`: values for
-  // parameters the device does not hold, taken only if the read then shows they hold.
-  readBackDevice: (id: string, deviceId: string, lang?: string, assume?: AssumedValue[]): Promise<DeviceConfigView> =>
-    fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/read-back`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lang, ...(assume?.length ? { assume } : {}) }),
-    }).then((r) => jsonOrThrow<DeviceConfigView>(r)),
+  // Read the device's current configuration off the bus and adopt it as the baseline; returns the
+  // refreshed config view (drifted rows now flagged, as the project stands once the read ended) with
+  // what the read covered (`readback`, the read task's result). `assume`: values for parameters the
+  // device does not hold, taken only if the read then shows they hold. A view that cannot be fetched
+  // after a read that ended is READBACK_VIEW_UNAVAILABLE, never the read's own failure: it was stored.
+  readBackDevice: async (id: string, deviceId: string, lang?: string, assume?: AssumedValue[], pollMs = 1000): Promise<DeviceConfigView> => {
+    const readback = await awaitTask<DeviceReadbackInfo>(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/read-back`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(assume?.length ? { assume } : {}),
+    }).then((r) => jsonOrThrow<Task>(r)), undefined, pollMs);
+    let last: unknown;
+    for (let i = 0; i < 5; i++) {
+      if (i) await sleep(pollMs);
+      try { return { ...(await api.deviceConfig(id, deviceId, lang)), readback }; }
+      catch (e) {
+        // The device or project gone meanwhile says itself what happened; anything else is a missed fetch.
+        if (e instanceof ApiError && e.code?.endsWith("_NOT_FOUND")) throw e;
+        last = e;
+      }
+    }
+    throw new ApiError(`the read-back ended and was stored, but the device page could not be loaded again (${last instanceof Error ? last.message : String(last)}); reload the page`, "READBACK_VIEW_UNAVAILABLE");
+  },
 
   snapshots: (id: string): Promise<SnapshotMeta[]> => fetch(`/api/projects/${id}/snapshots`).then((r) => jsonOrThrow<SnapshotMeta[]>(r)),
   createSnapshot: (id: string, label: string): Promise<SnapshotMeta | null> =>

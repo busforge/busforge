@@ -13,6 +13,7 @@ import { getDeviceCertificate } from "../src/db/deviceCertificates.ts";
 import { encodeCertificate } from "@busforge/knx";
 import { classify, parseAppConfig } from "@busforge/product";
 import type { FlashResult } from "../src/deviceprofile.ts";
+import { settle } from "./task-client.ts";
 
 // Route-level fake-green lock for the flash endpoints: the baseline (device_param_base /
 // device_link_base) may ONLY be adopted after a flash the profile layer POSITIVELY
@@ -170,9 +171,9 @@ corpusDescribe("POST /flash: baseline adoption is gated on verified", () => {
     // The dry flag must actually cross the route boundary: a route regression that drops
     // ?dry=1 would flash real hardware while this test's stub kept everything green.
     paramFlashImpl = async (opts) => { expect(opts.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" }; };
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as any).kind).toBe("dryRun");
+    const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+    expect(res.state).toBe("done");
+    expect((res.result as any).kind).toBe("dryRun");
 
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(PARAM_REF)).toBe(true);
   });
@@ -395,8 +396,8 @@ corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural
     let reached = false;
     structureImpl = async () => { reached = true; return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x", structural: true }; };
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
-      expect(res.status).toBe(200);
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+      expect(res.state).toBe("done");
       expect(reached).toBe(true);
     } finally { structureImpl = realStructure; paramFlashImpl = realParamFlash; }
   });
@@ -408,9 +409,9 @@ corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural
     gaFlashImpl = async () => { throw new Error("the surgical GA flash must not be reached"); };
     structureImpl = async () => ({ kind: "dryRun", mask: "MV-07B0", imageBytes: 9, diffBytes: 3, backup: "x", structural: true });
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`))!;
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({ kind: "dryRun", structural: true });
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`);
+      expect(res.state).toBe("done");
+      expect(res.result).toMatchObject({ kind: "dryRun", structural: true });
     } finally { structureImpl = realStructure; }
   });
 
@@ -545,8 +546,8 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     paramFlashImpl = async (o) => { reached.push("params"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x" }; };
     gaFlashImpl = async (o) => { reached.push("links"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x" }; };
     for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
-      expect(res.status).toBe(200);
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}`);
+      expect(res.state).toBe("done");
     }
     expect(reached).toEqual(["params", "links"]);
   });
@@ -619,8 +620,8 @@ corpusDescribe("an application whose full download Busforge cannot build", () =>
     gaFlashImpl = async () => { reached.push("flash-ga"); return dry; };
     try {
       for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
-        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
-        expect(res.status).toBe(200);
+        const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}`);
+        expect(res.state).toBe("done");
       }
       expect(reached).toEqual(["flash", "flash-ga"]);
     } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
@@ -635,8 +636,8 @@ corpusDescribe("an application whose full download Busforge cannot build", () =>
     const reached: string[] = [];
     downloadImpl = async (o) => { reached.push("download"); expect(o.dryRun).toBe(true); return { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" }; };
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download?dry=1`))!;
-      expect(res.status).toBe(200);
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/download?dry=1`);
+      expect(res.state).toBe("done");
       expect(reached).toEqual(["download"]);
     } finally { downloadImpl = realDownload; }
   });
@@ -683,9 +684,9 @@ corpusDescribe("a memory-less module parameter that shapes the com-object table"
     paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
     structureImpl = async () => ({ kind: "dryRun", mask: "MV-07B0", imageBytes: 9, diffBytes: 3, backup: "x", structural: true });
     try {
-      const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({ structural: true });
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+      expect(res.state).toBe("done");
+      expect(res.result).toMatchObject({ structural: true });
     } finally { structureImpl = realStructure; }
   });
 });
@@ -747,8 +748,8 @@ for (const route of programmingRoutes) {
         return flashed(outcome === "dry");
       });
       if (outcome === "dry") {
-        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`))!;
-        expect(res.status).toBe(200);
+        const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`);
+        expect(res.state).toBe("done");
       } else {
         const task = await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`));
         expect(task).toMatchObject({ state: "error", baselineCommitted: false });
@@ -893,9 +894,9 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
     const state = freshState();
     const { projectId, deviceId } = await m0081Project(state);
     paramFlashImpl = async (opts) => (opts.dryRun ? { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" } : flashed(true));
-    const dry = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`))!;
-    expect(dry.status).toBe(200);
-    expect(((await dry.json()) as any).kind).toBe("dryRun");
+    const dry = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+    expect(dry.state).toBe("done");
+    expect((dry.result as any).kind).toBe("dryRun");
     expect(state.queue.list(projectId)[0]).toMatchObject({ writes: false, snapshotId: null });
     expect((await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`))).state).toBe("done");
   });
@@ -955,7 +956,7 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
     const { projectId, deviceId } = await m0081Project(state);
     let seen: { signal?: AbortSignal; beforeWrite?: () => void } = {};
     paramFlashImpl = async (opts) => { seen = opts; return { kind: "dryRun", mask: "MV-0705", imageBytes: 1, diffBytes: 1, backup: "x" }; };
-    await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
+    await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash?dry=1`);
     expect(seen.signal).toBeInstanceOf(AbortSignal);
     expect(seen.beforeWrite).toBeUndefined();
   });
@@ -1007,7 +1008,7 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
       gaFlashImpl = async (o) => { seen = o; return flashed(true); };
       downloadImpl = async (o) => { seen = o; return flashed(true); };
       try {
-        await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`);
+        await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}?dry=1`);
       } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
       expect(seen.secure).toEqual({ toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2), onPeerSequence: expect.any(Function) });
       expect(seen.security?.groupKeys).toEqual(new Map([[1, groupKey]]));
@@ -1023,7 +1024,7 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     state.db.prepare("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, 'gone', 'O-1_R-1', 0, 1)").run(projectId);
     let seen: { security?: { senders?: ReadonlyMap<number, readonly number[]>; otherDevices?: ReadonlyMap<number, readonly unknown[]> } } = {};
     gaFlashImpl = async (o) => { seen = o; return flashed(true); };
-    try { await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
+    try { await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
     finally { gaFlashImpl = realGaFlash; }
     expect(seen.security?.senders).toEqual(new Map([[1, [0x12fa]]]));
     expect(seen.security?.otherDevices).toEqual(new Map());
@@ -1039,8 +1040,8 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     downloadImpl = async () => { reached = true; return flashed(true); };
     try {
       for (const route of ["flash-ga?dry=1", "download?dry=1"]) {
-        const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
-        expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_WITHOUT_DEVICE_KEY" } });
+        const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}`);
+        expect(res).toMatchObject({ state: "error", error: { code: "SECURE_GA_WITHOUT_DEVICE_KEY" } });
       }
     } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
     expect(reached).toBe(false);
@@ -1057,8 +1058,8 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     downloadImpl = async () => { reached = true; return flashed(true); };
     try {
       for (const route of ["flash-ga?dry=1", "download?dry=1"]) {
-        const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/${route}`, { method: "POST" }), state);
-        expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_FORCED_WITHOUT_KEY" } });
+        const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/${route}`);
+        expect(res).toMatchObject({ state: "error", error: { code: "SECURE_GA_FORCED_WITHOUT_KEY" } });
       }
     } finally { gaFlashImpl = realGaFlash; downloadImpl = realDownload; }
     expect(reached).toBe(false);
@@ -1072,8 +1073,8 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     let reached = false;
     gaFlashImpl = async () => { reached = true; return flashed(true); };
     try {
-      const res = await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`, { method: "POST" }), state);
-      expect(await res!.json()).toMatchObject({ error: { code: "SECURE_GA_OFF_WITH_KEY" } });
+      const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`);
+      expect(res).toMatchObject({ state: "error", error: { code: "SECURE_GA_OFF_WITH_KEY" } });
     } finally { gaFlashImpl = realGaFlash; }
     expect(reached).toBe(false);
   });
@@ -1083,7 +1084,7 @@ corpusDescribe("a Data Secure device: its table writes carry the security object
     const { projectId, deviceId } = await projectWithApp(state, m0162);
     let seen: Record<string, unknown> = {};
     gaFlashImpl = async (o) => { seen = o; return flashed(true); };
-    try { await post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
+    try { await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`); }
     finally { gaFlashImpl = realGaFlash; }
     expect(seen.secure).toBeUndefined();
     expect(seen.security).toBeUndefined();
@@ -1205,7 +1206,7 @@ corpusDescribe("a Data Secure device: a security object that no longer matches i
     const p = await setup(state);
     gaFlashImpl = async () => ({ kind: "unchanged", mask: "MV-0701", imageBytes: 1, backup: "x" });
     try {
-      await post(state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga?dry=1`);
+      await settle(handleApi, state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga?dry=1`);
       expect(await security(state, p.projectId, p.deviceId)).toBe("unknown");
       await programmed(state, post(state, `/api/projects/${p.projectId}/devices/${p.deviceId}/flash-ga`));
     } finally { gaFlashImpl = realGaFlash; }

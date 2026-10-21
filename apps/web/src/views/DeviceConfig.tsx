@@ -244,6 +244,13 @@ export function DeviceConfig() {
         else if (took?.flagsUndecoded?.length) toast.warning(t("device.readFlagsUndecoded", { objects: took.flagsUndecoded.join(", ") }));
       },
       onError: (e) => {
+        // The read ended and was stored; only its view did not come back. Nothing was refused.
+        if (e instanceof ApiError && e.code === "READBACK_VIEW_UNAVAILABLE") {
+          // What the earlier read left open no longer describes the device; the reloaded view does.
+          dispatchAssume({ type: "written", deviceId: forDevice });
+          if (shownDevice.current === forDevice) toast.warning(errMsg(t, e));
+          return;
+        }
         dispatchAssume({ type: "readFailed", deviceId: forDevice, assumed, error: e });
         if (!assumed && shownDevice.current === forDevice) toast.error(t("device.readError"), { description: errMsg(t, e) });
       },

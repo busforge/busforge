@@ -16,6 +16,7 @@ import type { KnxDevice } from "@busforge/knx";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
+import { settle } from "./task-client.ts";
 
 const realAppXml = catalogueXml;
 const realApp = (n: string) => parseAppConfig(realAppXml(n));
@@ -1009,8 +1010,8 @@ describe("device configuration", () => {
       expect(state.queue.list(projectId)).toHaveLength(0); // no task
       expect(snapshots().n).toBe(0); // and no restore point
       // A preview only reads and needs no acknowledgement: it gets as far as the (injected) bus failure.
-      const preview = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`, { method: "POST" }), state))!;
-      expect(((await preview.json()) as any).error.code).toBe("TEST_TRANSPORT_FAILURE");
+      const preview = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`);
+      expect([preview.status, preview.error?.code]).toEqual([202, "TEST_TRANSPORT_FAILURE"]);
       expect((await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/untested-ack`, { method: "PUT" }), state))!.status).toBe(200);
       expect((await view()).untestedAcknowledged).toBe(true);
       expect((await write("flash-ga"))!.status).toBe(202);

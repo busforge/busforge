@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { settle } from "./task-client.ts";
 
 // Read-back route honesty guards:
 // 1) an unsupported device class is REFUSED (400) with no baseline fabricated,
@@ -102,11 +103,10 @@ corpusDescribe("POST /read-back", () => {
       links: [{ comObjNum: 9999, gaRaws: [123] }],
       deviceConfig: new Map<string, string>(),
     });
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
+    const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/read-back`);
+    expect([res.status, res.state]).toEqual([202, "done"]);
     // No configuration places an object 9999: only another one could, never a revert.
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], unplacedObjects: [9999], flagsRead: false });
+    expect(res.result).toEqual({ paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], unplacedObjects: [9999], flagsRead: false });
 
     // The bogus association never entered device_link_base.
     const rows = state.db.query("SELECT ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { ga_raw: number }[];
@@ -124,10 +124,9 @@ corpusDescribe("POST /read-back", () => {
       paramBase: new Map<string, string>(),
       links: [{ comObjNum: 0, gaRaws: [0x040b] }],
     });
-    const res = (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!;
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.readback).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, flagsRead: false });
+    const res = await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/read-back`);
+    expect([res.status, res.state]).toEqual([202, "done"]);
+    expect(res.result).toEqual({ paramsRead: true, linksRead: true, linkGaps: 0, flagsRead: false });
 
     // Positive proof the mapped link WAS folded into the baseline (and thus shows as
     // drift against the project, which has no such link).
@@ -135,12 +134,46 @@ corpusDescribe("POST /read-back", () => {
     expect(rows).toEqual([{ com_obj_ref_id: "O-0_R-63", ga_raw: 0x040b }]);
   });
 
+  // A large application reads for minutes, past what a client holds a request open for (Bun's fetch gives
+  // up after 300 s with "The operation timed out."). Here the limit is 150 ms and the device takes 600 ms:
+  // the request answers at once with the task, and what the read covered is there by id after it ended.
+  test("a read slower than the client's request limit answers with its task, and its coverage is retrievable after the request ended", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, realXml("M-0081_A-FE01-11-75D9.xml.gz"));
+    readImpl = async (opts) => {
+      for (let i = 1; i <= 3; i++) { await Bun.sleep(200); opts.onProgress?.("read params", i, 3); }
+      return { mask: "MV-0705", paramsRead: true, linksRead: true, paramBase: new Map<string, string>(), links: [{ comObjNum: 9999, gaRaws: [123] }], deviceConfig: new Map<string, string>() };
+    };
+    const server = Bun.serve({ port: 0, fetch: async (r) => (await handleApi(r, state)) ?? new Response("not found", { status: 404 }) });
+    try {
+      const base = `http://localhost:${server.port}/api/projects/${projectId}`;
+      const t0 = Date.now();
+      const res = await fetch(`${base}/devices/${deviceId}/read-back`, { method: "POST", signal: AbortSignal.timeout(150) });
+      expect(res.status).toBe(202);
+      const submitted = (await res.json()) as any;
+      expect(submitted).toMatchObject({ kind: "read", writes: false, result: null });
+      let task: any;
+      const phases = new Set<string>();
+      for (let i = 0; i < 100; i++) {
+        task = await (await fetch(`${base}/tasks/${submitted.id}`, { signal: AbortSignal.timeout(150) })).json();
+        if (task.phase) phases.add(task.phase);
+        if (task.state !== "queued" && task.state !== "running") break;
+        await Bun.sleep(50);
+      }
+      expect(phases.has("read params")).toBe(true);
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(600);
+      expect(task).toMatchObject({ state: "done", result: { paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], unplacedObjects: [9999], flagsRead: false } });
+      // Still there for a client that comes back later.
+      expect(await (await fetch(`${base}/tasks/${submitted.id}`)).json()).toMatchObject({ state: "done", result: { linkGaps: 1 } });
+    } finally { await server.stop(true); readImpl = realRead; }
+  });
+
   const rows = (state: AppState, projectId: string, deviceId: string) =>
     state.db.query("SELECT com_obj_ref_id AS k, ga_raw AS g FROM device_link_base WHERE project_id = ? AND device_id = ? ORDER BY k").all(projectId, deviceId);
   const link = (state: AppState, projectId: string, deviceId: string, key: string, ga: number) =>
     state.db.run("INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw) VALUES (?, ?, ?, 0, ?)", [projectId, deviceId, key, ga]);
   const readBack = async (state: AppState, projectId: string, deviceId: string) =>
-    ((await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/read-back`, { method: "POST" }), state))!.json()) as any).readback;
+    (await settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/read-back`)).result as any;
   const changedObjects = async (state: AppState, projectId: string, deviceId: string) => {
     const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
     return view.blocks.flatMap((b: any) => b.items).filter((it: any) => it.kind === "comObject" && it.comObject.changed).map((it: any) => it.comObject.number).sort();
@@ -175,6 +208,10 @@ corpusDescribe("POST /read-back", () => {
     expect(rows(state, projectId, deviceId)).toEqual([{ k: "MD-3_M-49_MI-1_O-2-14_R-1", g: 0x77c9 }]);
   });
 
+  // The Jung 400021SE application takes ~1.5 s to import and resolve on an idle host and was measured at
+  // 6.8 s on a loaded one, past the 5 s default.
+  const JUNG_MS = 30_000;
+
   // Jung 400021SE: a module template object has a bare number of its own (#5 names
   // MD-4_O-8-5_R-311 before any instance shift); no configuration places it at 5.
   test("module device: a number no configuration places is a gap, never a module template object", async () => {
@@ -184,7 +221,7 @@ corpusDescribe("POST /read-back", () => {
     readImpl = reading("MV-07B0", [{ comObjNum: 5, gaRaws: [0x77c9] }], new Map());
     expect(await readBack(state, projectId, deviceId)).toMatchObject({ linkGaps: 1, unresolvedObjects: [5], unplacedObjects: [5] });
     expect(rows(state, projectId, deviceId)).toEqual([]);
-  });
+   }, JUNG_MS);
 
   test("module device read without its parameters keeps the cautious mapping and counts the rest as gaps", async () => {
     const state = freshState();
@@ -193,7 +230,7 @@ corpusDescribe("POST /read-back", () => {
     readImpl = reading("MV-07B0", [{ comObjNum: 254, gaRaws: [0x77c9] }]);
     // Without the device's configuration the read cannot tell what would resolve it.
     expect(await readBack(state, projectId, deviceId)).toMatchObject({ linkGaps: 1, unresolvedObjects: [254], unknownObjects: [254] });
-  });
+   }, JUNG_MS);
 
   // M-0081: P-4 swaps the ComObjectRef of object 0 (O-0_R-63 by default, O-0_R-167 when set).
   const M81 = "M-0081_A-FE01-11-75D9";
@@ -226,19 +263,18 @@ corpusDescribe("POST /read-back", () => {
     const { projectId, deviceId } = await projectWithApp(state, realXml(`${M81}.xml.gz`));
     let flashed = 0;
     gaFlashImpl = async () => { flashed++; return { kind: "unchanged", mask: "MV-0705", imageBytes: 0 } as any; };
-    const flashGa = async () => (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`, { method: "POST" }), state))!;
+    const flashGa = () => settle(handleApi, state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga?dry=1`);
     readImpl = reading("MV-0705", [{ comObjNum: 9999, gaRaws: [123] }], new Map());
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(1);
     const refused = await flashGa();
-    expect(refused.status).toBe(409);
-    expect(((await refused.json()) as any).error.code).toBe("LINK_BASELINE_INCOMPLETE");
+    expect([refused.status, refused.error?.code]).toEqual([409, "LINK_BASELINE_INCOMPLETE"]);
     expect(flashed).toBe(0);
     const view = (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
     expect(view.linkBaseGaps).toBe(1);
 
     readImpl = reading("MV-0705", [{ comObjNum: 0, gaRaws: [0x040b] }], new Map());
     expect((await readBack(state, projectId, deviceId)).linkGaps).toBe(0);
-    expect((await flashGa()).status).toBe(200);
+    expect(await flashGa()).toMatchObject({ status: 202, state: "done" });
     expect(flashed).toBe(1);
     gaFlashImpl = realGaFlash;
   });

@@ -3,7 +3,7 @@
 // the components with explicit invalidation.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit, type AssumedValue } from "./api.ts";
+import { api, ApiError, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit, type AssumedValue } from "./api.ts";
 
 export const qk = {
   projects: ["projects"] as const,
@@ -246,9 +246,11 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
   });
   // Read the device's state off the bus and adopt it as the baseline; the
   // refreshed view flags any rows that drift from the project config.
+  // A read that was stored but whose view could not be fetched leaves the cached view stale.
   const readBack = useMutation({
     mutationFn: (assume?: AssumedValue[]) => api.readBackDevice(projectId, deviceId, lang, assume),
     onSuccess,
+    onError: (e) => { if (e instanceof ApiError && e.code === "READBACK_VIEW_UNAVAILABLE") after(); },
   });
   // Swap the device's product for a catalog product, migrating its GA links
   // through the given mapping. Returns the fresh config view of the NEW app.

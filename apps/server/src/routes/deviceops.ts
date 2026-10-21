@@ -12,7 +12,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { buildDeviceView, untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -146,10 +146,10 @@ async function programSubmission(
   return result;
 }
 
-// A real write answers 202 with its task as soon as it is queued: a download runs for minutes,
-// longer than an HTTP request can be trusted to stay open, and its outcome must not depend on the
-// client still listening. The client polls GET .../tasks/:taskId for the result. A dry run is a
-// read-only preview the dialog waits for, so it stays a plain request.
+// A write and its dry run answer 202 with their task as soon as it is queued: a download runs for
+// minutes, and a dry run reads the whole device first, which on a large application takes minutes as
+// well, longer than an HTTP request can be trusted to stay open; the outcome must not depend on the
+// client still listening. The client polls GET .../tasks/:taskId for the result (Task.result).
 // The matrix operation each write runs.
 const WRITE_OPERATION: Partial<Record<TaskMeta["kind"], MatrixOperation>> = {
   "flash-params": "flashParams", "flash-ga": "flashLinks", "flash-structure": "structuralFlash", "download": "fullDownload",
@@ -171,7 +171,7 @@ async function programOrPreview(
   state: AppState, meta: Omit<TaskMeta, "writes">, dry: boolean, reason: "before-flash" | "before-flash-ga" | "before-download",
   run: (progress: ProgressFn, commit: CommitFn, gate: WriteGate) => Promise<FlashResult>,
 ): Promise<Response> {
-  if (dry) return json(await state.queue.enqueue({ ...meta, writes: false }, (progress, signal, commit) => run(progress, commit, { signal })));
+  if (dry) return json(state.queue.submit({ ...meta, writes: false }, (progress, signal, commit) => run(progress, commit, { signal })), 202);
   refuseUnacknowledgedUntested(state, meta);
   state.queue.refuseAdmission();
   state.queue.refuseConcurrentWrite(meta.projectId, meta.deviceId);
@@ -308,7 +308,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   // /api/projects/:id/devices/:deviceId/read-back  -> read the device's current
-  // state off the bus and store it as the baseline, so drift shows as a change.
+  // state off the bus and store it as the baseline, so drift shows as a change. Answers 202 with the
+  // queued task, like a write: a large application reads for minutes. What the read covered
+  // (DeviceReadbackInfo) is the task's result, GET .../tasks/:taskId, and the refreshed view GET .../config.
   //
   // `assume` gives values for parameters the device does not hold, which no read-back can see: the
   // read runs under them, and they are taken into the project and the baseline only if the device's
@@ -318,7 +320,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "read-back" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
-    const body = (await req.json().catch(() => ({}))) as { lang?: string; assume?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { assume?: unknown };
     const assumed = assumedValues(parseAppConfig(appXml), body.assume);
     // Refuse up front for device classes whose state we cannot read at all: reading anyway
     // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
@@ -336,9 +338,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const configFor = (values: Map<string, string>) => deviceConfigRefs(state, id, deviceId, values, modules);
     // The baselines are persisted inside the queued job, so a write queued behind this read sees
     // them (and its gap count) when it starts, not whatever was there when it was submitted.
-    const rb = await state.queue.enqueue(
+    const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "read", writes: false },
-      async (progress, signal) => {
+      async (progress, signal): Promise<DeviceReadbackInfo> => {
         const live = getDeviceParams(db, id, deviceId), base = getDeviceParamBase(db, id, deviceId);
         const withAssumed = (m: Map<string, string>) => {
           const out = new Map(m);
@@ -415,10 +417,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept.length ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}) };
       },
     );
-    // `readback` tells the client what this read actually covered: `linkGaps` counts
-    // device associations the baseline could not show (see readbackLinkBase), surfaced
-    // instead of letting the read-back pass as a complete links baseline.
-    return json(buildDeviceView(state, id, deviceId, body.lang, { readback: rb }));
+    return json(task, 202);
   }
 
   // /api/projects/:id/devices/:deviceId/collect  -> a diagnostic package (docs/raw-acquisition.md): read

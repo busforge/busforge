@@ -179,8 +179,8 @@ export interface DeviceConfigView {
   // as every write that authors the com-object table refuses): the objects' flags are then the
   // application's and must not be shown as the device's. Attached by the server.
   comObjFlagsRefused?: string;
-  // Present only on a read-back response: what the read actually covered. Attached by the
-  // server (the read-back route), never by buildDeviceConfig.
+  // What the last read-back actually covered: its task's result (the read-back route's Task.result),
+  // which a client sets on the view it fetches after the read. Never set by the server.
   readback?: DeviceReadbackInfo;
 }
 

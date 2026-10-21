@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type DeviceReadbackInfo, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -306,8 +306,7 @@ export function resolveParamForEdit(state: AppState, projectId: string, deviceId
 // Build a device's configuration view and overlay each com-object's stored GA link. The result is
 // the serializable wire view (DeviceConfigView, imported from @busforge/product), the SAME type
 // the web client reads, so a field renamed on either side is a compile error rather than a client
-// silently reading undefined. `extra` (a read-back summary) is merged in on the read-back route;
-// ReadbackSummary.readback and DeviceConfigView.readback share DeviceReadbackInfo for that reason.
+// silently reading undefined.
 // A device's matrix state for one operation and whether the user acknowledged its Product as
 // untested in this project. Null when the device or its application program is unknown.
 export function untestedStatus(state: AppState, projectId: string, deviceId: string, op: MatrixOperation):
@@ -335,8 +334,7 @@ export function deviceComObjFlags(state: AppState, projectId: string, deviceId: 
   }
 }
 
-export interface ReadbackSummary { readback: DeviceReadbackInfo }
-export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string, extra?: ReadbackSummary): DeviceConfigView {
+export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string): DeviceConfigView {
   const { db } = state;
   if (!getDeviceForFlash(db, projectId, deviceId)) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
@@ -403,7 +401,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   const comObjFlagsEditable = view.capabilities.fullDownload && !flags.refused ? [...classify(app).comObjOverridableBits()] : [];
   const assumedHidden = [...assumed].filter((ref) => !shownParams.has(ref)).length;
   const wire: DeviceConfigView = { ...(assumedHidden ? { assumedHidden } : {}), blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
-  return extra ? { ...wire, ...extra } : wire;
+  return wire;
 }
 
 // Parameter refs a flash can never write, among the device's STORED overrides (the rows
