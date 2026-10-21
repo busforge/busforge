@@ -126,9 +126,12 @@ depends on is hardware-proven.
   comparison with an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
 - **Devices in service with KNX Data Secure.** The device-in-service mode takes a secured unit from
-  the installation's project file and runs under its secure session, and it refuses an interface the
-  unit's restart cuts ([testing.md](testing.md#devices-in-service)). Its two specs, the MDT IP
-  Interface/Router and the MDT IP Interface Secure, have not run. The router's web interface password
+  the installation's project file and runs under its secure session, also through an interface whose
+  tunnels the unit's restart drops, connecting again after each restart ([testing.md](testing.md#devices-in-service)).
+  Its two specs, the MDT IP Interface/Router and the MDT IP Interface Secure, pass in both channels on
+  units in service ([status.md](status.md)). Still open: the router's reboot was not seen; in both
+  channels' runs the interface dropped the run's tunnel while the secured A_Restart went out (its
+  persistence step not assessed; load states and configuration read back unchanged). The router's web interface password
   reads back as `FF` after any write; the parameter flash leaves it alone while the project has not
   changed it since the last programming, so the router's adoption finds nothing to write there (the
   flash's choice pinned against ETS's captures and a scripted unit; no run on the unit). Neither unit's run can be emulated from its

@@ -122,6 +122,18 @@
    }
   },
   {
+   "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+   "appProgramId": "M-0083_A-0137-20-7EB2",
+   "capabilities": {
+    "readParams": true,
+    "readLinks": true,
+    "flashParams": true,
+    "flashLinks": true,
+    "fullDownload": false,
+    "structuralFlash": false
+   }
+  },
+  {
    "productRef": "M-0083_H-180-0_P-BE.2D06001.2E02",
    "appProgramId": "M-0083_A-00B4-32-3919",
    "capabilities": {
@@ -12394,13 +12406,11 @@
    "recordedAt": null,
    "subject": {
     "manufacturer": "M-0083",
-    "productRef": "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03",
-    "appProgramId": "M-0083_A-0138-21-F18E-O0072",
-    "mask": "MV-0012",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
     "firmware": {
-     "state": "observed",
-     "value": "0",
-     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+     "state": "unknown"
     }
    },
    "medium": "TP",
@@ -12415,7 +12425,265 @@
      "revision": null
     },
     "spec": {
-     "name": "mdt-ip-secure-in-service",
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 flashLinks api behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "behaviour output: Operation answers on the test link",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x01"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 flashLinks api transfer",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 1 to the test address (21 B, verified), read back; unlinked (21 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the run's tunnel failed while A_Restart was sent, so it is unconfirmed, and on the new tunnel the device answered without the probes finding the silence the proof needs: the tunnel loss is no proof of the reboot, so the reboot cannot be seen; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 flashLinks ui behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: Operation answers on the test link",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x01"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 flashLinks ui transfer",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 1 to the test address (verified), read back; unlinked (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the run's tunnel failed while A_Restart was sent, so it is unconfirmed, and on the new tunnel the device answered without the probes finding the silence the proof needs: the tunnel loss is no proof of the reboot, so the reboot cannot be seen; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
      "revision": null
     }
    },
@@ -12442,7 +12710,7 @@
     "transfer": {
      "state": "pass",
      "method": "each change and its revert reported verified by the server, zero drift on read-back",
-     "detail": "P-10_R-10 8080→80 (2 B, verified) →8080 (2 B, verified), zero drift on read-back"
+     "detail": "P-162_R-162 MDT IP Interface mit IPRouting→Busforge in service (30 B, verified) →MDT IP Interface mit IPRouting (30 B, verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
@@ -12497,7 +12765,137 @@
     "artifact": null,
     "sha256": null
    },
+   "id": "SCN-IP000.03 flashParams api transfer #2",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-10_R-10 8080→80 (2 B, verified) →8080 (2 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
    "id": "SCN-IP000.03 flashParams ui transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-162_R-162 MDT IP Interface mit IPRouting→Busforge in service (verified) →MDT IP Interface mit IPRouting (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0138-21-F18E-O0072",
+    "mask": "MV-0012",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-secure-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 flashParams ui transfer #2",
    "scope": {
     "operation": "flashParams",
     "channel": "ui",
@@ -12662,13 +13060,11 @@
    "recordedAt": null,
    "subject": {
     "manufacturer": "M-0083",
-    "productRef": "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03",
-    "appProgramId": "M-0083_A-0138-21-F18E-O0072",
-    "mask": "MV-0012",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
     "firmware": {
-     "state": "observed",
-     "value": "0",
-     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+     "state": "unknown"
     }
    },
    "medium": "TP",
@@ -12683,7 +13079,7 @@
      "revision": null
     },
     "spec": {
-     "name": "mdt-ip-secure-in-service",
+     "name": "mdt-ip-router-in-service",
      "revision": null
     }
    },
@@ -12765,6 +13161,70 @@
     "artifact": null,
     "sha256": null
    },
+   "id": "SCN-IP000.03 readLinks api transfer #2",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
    "id": "SCN-IP000.03 readLinks ui transfer",
    "scope": {
     "operation": "readLinks",
@@ -12816,6 +13276,70 @@
     },
     "spec": {
      "name": "mdt-ip-secure-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 readLinks ui transfer #2",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
      "revision": null
     }
    },
@@ -12897,7 +13421,137 @@
     "artifact": null,
     "sha256": null
    },
+   "id": "SCN-IP000.03 readParams api transfer #2",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0137-20-7EB2",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-router-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
    "id": "SCN-IP000.03 readParams ui transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0083",
+    "productRef": "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03",
+    "appProgramId": "M-0083_A-0138-21-F18E-O0072",
+    "mask": "MV-0012",
+    "firmware": {
+     "state": "observed",
+     "value": "0",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "mdt-ip-secure-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "SCN-IP000.03 readParams ui transfer #2",
    "scope": {
     "operation": "readParams",
     "channel": "ui",

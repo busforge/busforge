@@ -143,7 +143,8 @@ describe("the shipped evidence bundle", () => {
     // refuses it); units in service the full download where their runs requested it, the structural
     // flash where their spec has the step (the Gira's, the HMG 6 T's and the RMG 8 T's
     // declare it unsafe, the OpenKNX's firmware rule refuses it); the MDT IP Interface Secure has no
-    // group objects, so no GA flash. The MEAN WELL power supply has no smoke run: its records are API
+    // group objects, so no GA flash; the MDT IP Interface/Router's product refuses the full download (tunnelling
+    // entries) and the structural flash, so its runs drive neither. The MEAN WELL power supply has no smoke run: its records are API
     // runs driven by hand, in one channel, whose newest parameter flash ended in an error, and no read.
     type Driven = Partial<Record<"readParams" | "readLinks" | "flashParams" | "flashLinks", "tested" | "eligible" | "failed">> & { fullDownload: "tested" | "eligible"; structuralFlash: "tested" | "eligible" };
     const expected: Record<string, Driven> = {
@@ -160,6 +161,7 @@ describe("the shipped evidence bundle", () => {
       "M-0048_H-4930250-2_P-4930250": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0048_H-4930200-2_P-4930200": { fullDownload: "tested", structuralFlash: "eligible" },
       "M-00FA_H-0xA012-1_P-OpenKnxRaumController": { fullDownload: "tested", structuralFlash: "eligible" },
+      "M-0083_H-135-3_P-SCN.2DIP000.2E03": { fullDownload: "eligible", structuralFlash: "eligible" },
       "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03": { flashLinks: "eligible", fullDownload: "tested", structuralFlash: "eligible" },
       "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D": {
         readParams: "eligible", readLinks: "eligible", flashParams: "failed", flashLinks: "eligible", fullDownload: "eligible", structuralFlash: "eligible",

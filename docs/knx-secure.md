@@ -149,8 +149,10 @@ and syncs again under it before any further request; a request wrapped before th
 way the device keeps it, and the Sync adopts the device's value where that is higher. A device that
 still holds the connection of the old address closes the new one at its Sync; as for a plain
 connection ([findings.md](findings.md#37-a-device-closes-a-connection-that-carries-no-request-for-six-seconds)), Busforge waits for the device to end the old one (12 s) and opens the
-connection again once, and a second refusal is `DEVICE_CLOSED_CONNECTION`. This is tested against a
-scripted unit only.
+connection again once, and a second refusal is `DEVICE_CLOSED_CONNECTION`. The move and the Sync
+under the new address ran on a unit (an MDT IP Interface/Router, whose restart drops the tunnels of the
+interface beside it); a device closing the new connection at its Sync is tested against a scripted
+unit only.
 
 ## The key store
 

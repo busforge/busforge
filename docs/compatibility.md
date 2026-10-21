@@ -26,6 +26,7 @@ columns are listed per operation below.
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | tested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | tested |
 | M-0083 SCN-IP000.03 | `M-0083_A-0138-21-F18E-O0072` | tested | tested | tested | refused | tested | refused |
+| M-0083 SCN-IP000.03 | `M-0083_A-0137-20-7EB2` | tested | tested | tested | tested | refused | refused |
 | M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
@@ -160,6 +161,19 @@ Product `M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03`, application program `M-0083_A
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
 | Group-address flash | refused | none / none | none / none | none / none | none | none |
 | Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | none | 0 |
+| Structural flash | refused | none / none | none / none | none / none | none | none |
+
+## M-0083 SCN-IP000.03
+
+Product `M-0083_H-135-3_P-SCN.2DIP000.2E03`, application program `M-0083_A-0137-20-7EB2`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Group-address flash | tested | pass / pass | pass / pass | not-assessed / not-assessed | none | unknown |
+| Full download | refused | none / none | none / none | none / none | none | none |
 | Structural flash | refused | none / none | none / none | none / none | none | none |
 
 ## M-0083 BE-06001.02
