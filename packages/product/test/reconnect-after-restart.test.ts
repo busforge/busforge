@@ -55,18 +55,6 @@ describe("reconnecting after a restart that took the interface's tunnels down", 
     expect(probes).toBe(3);
   });
 
-  test("a link that comes back under another address ends the reconnect at once", async () => {
-    let reopens = 0;
-    const dev = {
-      async connect() { throw Object.assign(new Error("down"), { code: "TUNNEL_CLOSED" }); },
-      async disconnect() {}, async deviceDescriptor() { return "x"; },
-      async reopenTransport() { reopens++; throw Object.assign(new Error("other address"), { code: "TUNNEL_ADDRESS_CHANGED" }); },
-    };
-    const err = await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 1, tries: 6, linkDeadlineMs: 10_000 }).then(() => null, (e: Error & { code?: string }) => e);
-    expect(err?.code).toBe("TUNNEL_ADDRESS_CHANGED");
-    expect(reopens).toBe(1);
-  });
-
   test("a verify that finds the link down starts in that state and reopens inside the retry budget", async () => {
     const dev = device({ failFor: 0, reopenFails: 3 });
     await reconnectAfterRestart(dev, { initialMs: 0, delayMs: 1, linkDown: true, linkDeadlineMs: 10_000 });

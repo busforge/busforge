@@ -34,12 +34,17 @@ describe("reopening the link to the interface", () => {
     expect(link.connects).toBe(2);
   });
 
-  test("a secured session whose link comes back under another address is refused", async () => {
+  test("a secured session whose link comes back under another address moves to it and refuses to send before a Sync there", async () => {
     const link = new Link([0x12fa, 0x12fb]);
     await link.connect();
-    const dev = new KnxDevice(link, "1.2.7", new SecureSession({ toolKey: Buffer.alloc(16, 1), src: 0x12fa, dst: 0x1207 }));
-    const err = await dev.reopenTransport().then(() => null, (e: Error & { code?: string }) => e);
-    expect(err?.code).toBe("TUNNEL_ADDRESS_CHANGED");
-    expect(err?.message).toMatch(/1\.2\.251/);
+    const session = new SecureSession({ toolKey: Buffer.alloc(16, 1), src: 0x12fa, dst: 0x1207 });
+    const dev = new KnxDevice(link, "1.2.7", session);
+    const before = session.sequence;
+    await dev.reopenTransport();
+    expect(session.src).toBe(0x12fb);
+    expect(session.sequence).toBe(before);
+    let err: (Error & { code?: string }) | null = null;
+    try { session.wrapManagement(Buffer.from([0x03, 0x00]), 1); } catch (e) { err = e as Error & { code?: string }; }
+    expect(err?.code).toBe("SECURE_NOT_SYNCED");
   });
 });

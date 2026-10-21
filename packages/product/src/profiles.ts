@@ -74,9 +74,9 @@ export async function reconnectAfterRestart(
     try {
       if (linkDown) {
         // Any failure to open the link again (no answer, no free channel yet, the interface without
-        // its bus) is still the link, not the device; only another address is final.
+        // its bus) is still the link, not the device.
         try { await dev.reopenTransport(); }
-        catch (e) { throw (e as { code?: string }).code === "TUNNEL_ADDRESS_CHANGED" ? e : Object.assign(e as Error, { linkFailure: true }); }
+        catch (e) { throw Object.assign(e as Error, { linkFailure: true }); }
       }
       linkDown = false;
       await dev.connect();
@@ -84,8 +84,6 @@ export async function reconnectAfterRestart(
       return;
     } catch (e) {
       lastErr = e;
-      // A link that came back under another address cannot carry the secured session: final.
-      if ((e as { code?: string }).code === "TUNNEL_ADDRESS_CHANGED") throw e;
       try { await dev.disconnect(); } catch { /* connection may already be gone */ }
       if (isLinkError(e) || (e as { linkFailure?: boolean }).linkFailure) {
         linkDown = true;

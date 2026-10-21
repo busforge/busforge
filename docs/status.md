@@ -235,10 +235,10 @@ What each row does not show:
   the password field, written by both, named on the write confirmation both times, and a read under a secured session
   afterwards found the unit at the project's configuration. Every restart of the unit makes an MDT IP
   interface beside it stop serving its tunnels for up to a minute and then drop them; Busforge opens
-  its link again, and a secured session refuses a link that comes back under another individual
-  address (`TUNNEL_ADDRESS_CHANGED`), so a flash through that interface is written and restarted but
-  not verified by Busforge: shown once, the unit read back under a secured session afterwards held the
-  planned image. Its GA flash equals ETS's group-address downloads of a plain address linked to an
+  its link again, and where the link comes back under another individual address a secured session
+  syncs again under it and verifies. That is tested against a scripted unit only: on the unit, no flash
+  whose tunnel came back under another address is verified by Busforge yet (read back under a secured
+  session afterwards, the unit held the planned image). Its GA flash equals ETS's group-address downloads of a plain address linked to an
   unlinked object and of its removal, captured on a unit: the com-object table whole (where no record of
   a download that wrote it says otherwise, as after Busforge's parameter flashes), the association
   table in the short form the unit describes (one byte each for group index and object number), the

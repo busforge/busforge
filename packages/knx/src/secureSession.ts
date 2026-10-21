@@ -42,7 +42,9 @@ export function toolSequenceNow(now = Date.now()): bigint { return BigInt(now - 
 
 export class SecureSession {
   private toolKey: Buffer;
-  readonly src: number;
+  // Our individual address, the source the MAC of every frame binds. The tunnel's address, which a
+  // reopened tunnel may change (rebind).
+  private source: number;
   readonly dst: number;
   // The target device's 6-byte serial, needed for the Sync request. Optional: only
   // the Sync flow uses it; pure wrap/unwrap and explicit buildSyncRequest do not.
@@ -56,10 +58,13 @@ export class SecureSession {
   // Seeded from the Sync response (the device's declared next sequence); before the
   // first Sync it is 0, so the very first received frame is always accepted.
   private recvSeq = 0n;
+  // Set by rebind until a Sync under the new address is answered: no tool-access frame goes out
+  // under an address the device has not synced with this session.
+  private unsynced = false;
 
   constructor(opts: { toolKey: Buffer; src: number; dst: number; serial?: Buffer; seq?: bigint }) {
     this.toolKey = opts.toolKey;
-    this.src = opts.src;
+    this.source = opts.src;
     this.dst = opts.dst;
     this.serial = opts.serial ?? Buffer.alloc(6);
     this.seq = opts.seq ?? toolSequenceNow();
@@ -70,6 +75,18 @@ export class SecureSession {
   rekey(toolKey: Buffer): void {
     if (toolKey.length !== 16) throw new KnxError("SECURE_KEY_BAD", `a tool key is 16 bytes, got ${toolKey.length}`);
     this.toolKey = toolKey;
+  }
+
+  get src(): number { return this.source; }
+
+  // Carry the session on under another source address (a reopened tunnel that came back under
+  // another one). The MAC binds the source, and a device keeps its tool-access replay state either
+  // for all tools at once (thelsing/OpenKNX) or per source (Calimero), so the session syncs again
+  // under the new address before anything else; the counter goes on from where it was, never back.
+  rebind(src: number): void {
+    if (src === this.source) return;
+    this.source = src;
+    this.unsynced = true;
   }
 
   get sequence(): bigint { return this.seq; }
@@ -88,6 +105,7 @@ export class SecureSession {
   // Frame a plain management service APDU (APCI + data, inner TPCI bits 0) as a
   // numbered T_Data_Connected secure TPDU, tSeq = the T_Data_Connected sequence.
   wrapManagement(service: Buffer, tSeq: number): Buffer {
+    if (this.unsynced) throw new KnxError("SECURE_NOT_SYNCED", "the secured session moved to another source address and has not synced under it");
     const outerTpci = 0x40 | ((tSeq & 0x0f) << 2) | 0x03; // numbered + SecureService APCI-hi
     const body = secureEncode({
       key: this.toolKey, src: this.src, dst: this.dst, dstIsGroup: false,
@@ -162,6 +180,7 @@ export class SecureSession {
     // Sync response is itself replay-proof (its MAC binds our fresh random challenge),
     // so adopting the window directly here is the intended resync point.
     this.recvSeq = deviceSeq;
+    this.unsynced = false;
     return { deviceSeq, ourSeq };
   }
 }

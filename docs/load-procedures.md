@@ -1074,8 +1074,9 @@ the captures of the Jung 400021SE, the GVS AMMA and the Theben DALI-Gateway show
 - **An interface that drops its tunnels after a restart.** Whenever an MDT IP Interface/Router restarts,
   an MDT IP interface beside it stops serving its tunnels for 40 to 64 seconds and then drops them,
   the tunnel the download itself runs over included. Busforge's read-back after the restart opens its
-  tunnel again until the interface answers (up to two minutes); a secured session refuses a tunnel
-  that comes back under another individual address (`TUNNEL_ADDRESS_CHANGED`).
+  tunnel again until the interface answers (up to two minutes); a secured session syncs again under
+  another individual address where the tunnel comes back under one
+  ([knx-secure.md](knx-secure.md#sequence-numbers-and-sync)).
 
 What Busforge does besides: it reads the load states back after its load-state writes; the full
 download writes the parameter bytes ETS writes ([the rules](#the-rules-by-level)); after a restart the

@@ -402,7 +402,9 @@ export class KnxDevice {
       return;
     }
     if (dst === this.me) { this.lastFromDeviceAt = Date.now(); this.takenSinceConnect = true; }
-    if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
+    // During a Sync only frames to our address count: a late one to the address the link had before
+    // it was opened again is no answer to this Sync.
+    if (this.rawInbox) { if (dst === this.me) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); } return; }
     const outer = parseApdu(tpdu);
     if (outer.control) {
       if (outer.seq === this.seq) { const nak = (tpdu[0] & 0x03) === 0x03; if (nak) this.nakSeen = true; else this.ackSeen = true; this.ackResolve?.(nak); }
@@ -416,7 +418,7 @@ export class KnxDevice {
     let p = outer;
     if (this.secure) {
       const inner = this.secure.unwrap(tpdu);
-      if (inner.status === "invalid") { this.unauthentic++; return; }
+      if (inner.status === "invalid") { if (dst === this.me) this.unauthentic++; return; }
       if (inner.status === "replay") {
         if (dst === this.me) this.peerRepeated?.();
         this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
@@ -470,17 +472,16 @@ export class KnxDevice {
   }
 
   // Open the KNXnet/IP link again after it went down, e.g. an interface that stopped serving and
-  // dropped its tunnels (a USB link is not reopened: its errors carry no TUNNEL_* code). A secured session is bound to the tunnel's individual address;
-  // a link that comes back under another one is refused, not carried on under the old address.
+  // dropped its tunnels (a USB link is not reopened: its errors carry no TUNNEL_* code). A link that
+  // comes back under another individual address carries a secured session on under it: the session
+  // syncs again under the new address at the next connect, its sequence going on, never back.
   async reopenTransport(): Promise<void> {
     try { await this.tun.disconnect(); } catch { /* the link is already gone */ }
     await this.tun.connect();
-    if (this.secure && this.tun.assignedIa !== this.secure.src) {
-      throw new KnxError("TUNNEL_ADDRESS_CHANGED", `the link came back as ${this.tun.assignedIa >> 12}.${(this.tun.assignedIa >> 8) & 15}.${this.tun.assignedIa & 255}, not the address the secured session is bound to`);
-    }
+    this.secure?.rebind(this.tun.assignedIa);
   }
 
-  async connect() {
+  async connect(retryRefusal = true) {
     this.seq = 0;
     this.lastRxSeq = null;
     this.lastDropped = null;
@@ -488,7 +489,8 @@ export class KnxDevice {
     this.maxApdu = undefined;
     // A connection the device may still hold from a failed link under this tunnel address is closed
     // first; a T_Connect alone would join it under its old numbering. Under another address the device
-    // refuses the new connection while it holds the old one: see request().
+    // refuses the new connection while it holds the old one: see request(), and for a secured session,
+    // whose Sync is the first frame of its connection, below.
     const old = unclosed.get(this.dst);
     if (old && (old.ia === this.me || old.until <= Date.now())) unclosed.delete(this.dst);
     if (old && old.ia === this.me && old.until > Date.now()) await this.sendCemi(cemiLData(this.me, this.dst, tpDisconnect()));
@@ -499,7 +501,20 @@ export class KnxDevice {
     this.restartSentSinceConnect = false;
     this.connectedAt = Date.now();
     await this.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
-    if (this.secure) await this.runSync(this.secure);
+    if (!this.secure) return;
+    // A device that closes the connection at the Sync holds another one (one whose link failed, under
+    // the tunnel address the link had before it was opened again, or another tool's). It ends that one
+    // by itself within staleConnectionMs; then the connection is opened again and synced once more.
+    try { await this.runSync(this.secure); }
+    catch (e) {
+      if ((e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION" || !retryRefusal) throw e;
+      await sleep(this.timeouts.staleConnectionMs);
+      try { await this.connect(false); }
+      catch (again) {
+        if ((again as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw again;
+        throw new KnxError("DEVICE_CLOSED_CONNECTION", `the device refused the secured connection twice, ${Math.round(this.timeouts.staleConnectionMs / 1000)} s apart: it holds a connection with another partner`);
+      }
+    }
   }
   // Teardown. A T_Disconnect the device never sees is the same as one it did: the connection is
   // over either way, and there is nothing a caller could do about the failure.
@@ -510,24 +525,30 @@ export class KnxDevice {
     const challenge = randomBytes(6);
     this.rawInbox = [];
     try {
-      await waitForSyncGap(this.dst);
-      await this.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
+      if (!this.closedSinceConnect) {
+        await waitForSyncGap(this.dst);
+        await this.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
+      }
       const rsp = await this.rawNext();
       await this.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res
       if (!sec.applySyncResponse(rsp, challenge)) throw new KnxError("SECURE_SYNC_FAILED", "secure Sync failed (MAC mismatch)");
       this.seq = (this.seq + 1) & 0x0f; // the Sync request consumed this T-sequence
-    } finally { this.rawInbox = null; this.rawNotify = null; }
+    } finally { this.rawInbox = null; this.rawNotify = null; this.peerClosed = null; }
   }
 
-  // Next non-control (data) frame during Sync; skips the device's T_ACK.
+  // Next non-control (data) frame to our address during Sync; skips the device's T_ACK. A T_Disconnect
+  // to us since the T_Connect, before or during the Sync, is the device refusing the connection.
   private rawNext(): Promise<Buffer> {
     return new Promise((res, rej) => {
-      const t = setTimeout(() => { this.rawNotify = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, this.timeouts.syncResponseMs);
+      const closed = () => new KnxError("DEVICE_CLOSED_CONNECTION", "the device closed the connection at the secure Sync request: it holds a connection with another partner");
+      if (this.closedSinceConnect) { rej(closed()); return; }
+      const t = setTimeout(() => { this.rawNotify = null; this.peerClosed = null; rej(new KnxError("SECURE_SYNC_NO_RESPONSE", "the device did not answer the secure Sync request; a wrong tool key, or a device that is not in secure mode, looks like this")); }, this.timeouts.syncResponseMs);
+      this.peerClosed = () => { clearTimeout(t); this.rawNotify = null; this.peerClosed = null; rej(closed()); };
       const pump = () => {
         while (this.rawInbox?.length) {
           const f = this.rawInbox.shift()!;
           if ((f[0] & 0xc0) === 0xc0) continue; // skip T_ACK control frames
-          clearTimeout(t); this.rawNotify = null; res(f); return;
+          clearTimeout(t); this.rawNotify = null; this.peerClosed = null; res(f); return;
         }
       };
       this.rawNotify = pump; pump();

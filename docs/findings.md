@@ -1189,7 +1189,8 @@ Busforge therefore:
   under the same tunnel address, within 12 s, closes it first with a `T_Disconnect`;
 - takes a `T_Disconnect` to the first frame of a new connection, before the device acknowledged or sent
   anything on it, for a refusal: it waits 12 s, connects again and asks once more, and a second refusal
-  is reported as the device holding a connection with another partner. A secured session is not
-  reopened this way.
+  is reported as the device holding a connection with another partner. A secured session, whose
+  first frame is its Sync, takes a `T_Disconnect` before or at the Sync for the same refusal and is
+  opened and synced again the same way.
 
 The ETS captures show no failed link.

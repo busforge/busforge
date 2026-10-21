@@ -210,6 +210,12 @@ Every tunnel needs its **own** individual address. A device's answers are addres
 that asked, so two tunnels sharing one would both receive them and both connection-oriented state
 machines would be corrupted.
 
+A tunnel opened again after the interface dropped it may come back under another address than it had
+(an MDT IP interface hands out the next free channel while the old one is not yet released). Busforge
+goes on under the new address: a plain session opens its transport connection from it, and a secured
+session syncs again under it before its next request
+([knx-secure.md](knx-secure.md#sequence-numbers-and-sync)).
+
 The default pool is therefore exactly one address: the interface's own, read from its Device Object
 at connect. **One address means one tunnel**, and a second client is refused with
 `E_NO_MORE_CONNECTIONS` rather than quietly corrupted. To get the multiplexing, hand the bridge more

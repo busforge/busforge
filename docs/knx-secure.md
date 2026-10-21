@@ -139,6 +139,19 @@ obtained live:
 This repairs a stale or unknown counter in one round trip, and it is the first thing a secure session
 does. A failed Sync is a coded refusal (`SECURE_SYNC_FAILED`), never a blind retry.
 
+**A session goes on under another source address.** The MAC binds the sender's individual address
+(it is in B0 and Ctr0), and the reference stacks differ on whether a device keeps its last tool-access
+sequence once for every tool or per source address: thelsing/knx and OpenKNX keep one
+(`SecureApplicationLayer::lastValidSequenceNumber`), Calimero one per source (`SecureApplicationLayer`,
+`lastValidSequenceToolAccess`). A tunnel that is opened again may come back under another address, so the session moves to it
+and syncs again under it before any further request; a request wrapped before that Sync is refused
+(`SECURE_NOT_SYNCED`). The counter goes on from where it was, so no sequence is used twice whichever
+way the device keeps it, and the Sync adopts the device's value where that is higher. A device that
+still holds the connection of the old address closes the new one at its Sync; as for a plain
+connection ([findings.md](findings.md#37-a-device-closes-a-connection-that-carries-no-request-for-six-seconds)), Busforge waits for the device to end the old one (12 s) and opens the
+connection again once, and a second refusal is `DEVICE_CLOSED_CONNECTION`. This is tested against a
+scripted unit only.
+
 ## The key store
 
 Tool keys live in a first-class Busforge store, not in an ETS keyring (one can be exported, see [Keyring export](#keyring-export)).
@@ -445,8 +458,8 @@ device need more than that:
 - **A device that is itself the bus gateway** can be flashed over its own connection: the MDT IP
   Interface Secure's confirmed restart has been shown to keep its tunnels, and Busforge's verify read
   went over the same tunnel afterwards. Another gateway's restart may drop the connection carrying the
-  flash; Busforge then reopens it to verify, and refuses the verify when the interface hands the tunnel
-  another address (`TUNNEL_ADDRESS_CHANGED`).
+  flash; Busforge then reopens it to verify, syncing again under another address where the interface
+  hands the tunnel one ([Sequence numbers and Sync](#sequence-numbers-and-sync)).
 
 The secured full download, parameter flash and GA flash are supported on System B; the products
 they are shown on, among them the Jung 400021SE (`M-0004_A-7072-21`, `IsSecureEnabled="true"`), are
