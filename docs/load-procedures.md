@@ -457,6 +457,18 @@ written whole and its stamp does not count (the DALI-Gateway's com-object table,
 the group-address download between). `checkedStamps` and `relativeParWriteSet` decide so;
 `tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes.
 
+**A stamp's CRC is the unit's own.** No tool writes the CRC of a PID 27 element (the region's size
+and control byte may come from the application's load procedure); the unit computes it. On the MDT IP
+Interface/Router it is CRC-16-CCITT in the augmented convention (`crc16Ccitt`) over each object's memory
+as the unit holds it when the download completes. Its web interface password lies in the parameter
+segment while a full download completes and reads `FF` afterwards, so where the project sets a password
+the stamp of a full download covers it, and that of every later parameter download, ETS's own as
+Busforge's, covers `FF`. After a Busforge parameter flash the unit's stamp therefore differs from ETS's
+record of its full download, as after any download that leaves other bytes than ETS's last one, and by
+the rule above ETS's next parameter download falls back to every owned byte (no capture shows that
+fallback on this product). `packages/product/test/router-stamp.test.ts` pins the stamps against ETS's captures and a read
+of the unit.
+
 ETS's group-address download takes the same decision on the same stamps, and so does Busforge's
 group-address flash for the com-object table (`relativeComObjWriteSet`). ETS's differential compares with
 its image of the download its record comes from, so it leaves out com-object bytes only where that

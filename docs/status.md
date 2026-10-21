@@ -225,7 +225,11 @@ What each row does not show:
   password changed in the project goes out, the bytes that differ from the last programming; the preview counts them and names them as read as `FF`
   (`readsFF`). **A unit that really holds `FF` there** (a field never written, or reset) keeps it: no
   read tells it from the password, and the product's full download is refused, so only a change of the
-  password in the project writes it. Leaving the field is pinned against ETS's captures; no run on a
+  password in the project writes it. The unit's download stamp is a CRC the unit computes over the
+  segment: with the project's password set it covers the password after a full download and `FF` after
+  every parameter download, ETS's own included, so after Busforge's parameter flash it differs from ETS's
+  record of a full download, and by ETS's rule its next parameter download falls back to every owned
+  byte (not captured on this product; [load-procedures.md](load-procedures.md)). Leaving the field is pinned against ETS's captures; no run on a
   unit shows it, the runs below wrote the field. On a unit, under a
   secured session with the project's tool key, through a logging proxy: a parameter flash changing the
   device name was `verified`, and where it wrote the password field the field was accepted on the
