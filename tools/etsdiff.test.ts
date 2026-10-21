@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
@@ -1590,6 +1590,59 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
       ]);
       expect([...l.image]).toEqual([...memoryImage(parseCapture(captureText(capture), ia).writes)].sort(([a], [b]) => a - b));
     }
+  });
+
+  // Two partial downloads after the relink of object 9: "heat alarm" (P-42, AS-4200 offset 41) switched from
+  // "disable" to "enable", which activates object 21 ("heat alarm", transmit, unlinked) and the alarm's two
+  // parameters at their defaults, and back. Object 21 is in the com-object table at its manufacturer config
+  // either way (unlinked, 0x43), so the table bytes do not change; the parameter byte at offset 41 is the one
+  // byte of ETS's image that differs. ETS runs both as the revert's one bracket set.
+  const HEAT_ON = "auro-m0081-ets-partial-heatalarm-on.log", HEAT_OFF = "auro-m0081-ets-partial-heatalarm-off.log";
+  const heatAlarm = [...baseline.params.keys()].find((k) => k.startsWith("M-0081_A-FE01-11-75D9_P-42_"))!;
+  const heatOn = new Map(baseline.params).set(heatAlarm, "1");
+  // What the unit held before the heat alarm went on: every earlier download in order, the relink last.
+  const beforeHeat = () => unitMemory(cfg, ia, written, ...[PARTIAL, LINKS, REVERT, UNLINK, RELINK].map((f) => memoryImage(parseCapture(captureText(f), ia).writes)));
+
+  test("heat alarm on and off: object 21 added and removed, so the change takes the structural flash", () => {
+    expect(baseline.params.get(heatAlarm)).toBe("0");
+    expect(comObjectTableChanges(cfg, baseline.params, heatOn).map((c) => [c.number, c.fields])).toEqual([[21, ["added"]]]);
+    expect(comObjectTableChanges(cfg, heatOn, baseline.params).map((c) => [c.number, c.fields])).toEqual([[21, ["removed"]]]);
+    expect(classify(cfg).capabilities().structuralFlash).toBe(true);
+  });
+
+  test("ETS's logs of the heat alarm on and off: the revert's bracket set, the image of the wire, offset 41 the one byte apart", () => {
+    const on = etsLog("auro-m0081-ets6log-partial-heatalarm-on.txt"), off = etsLog("auro-m0081-ets6log-partial-heatalarm-off.txt");
+    for (const [l, capture] of [[on, HEAT_ON], [off, HEAT_OFF]] as const) {
+      expect(l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual(etsLog("auro-m0081-ets6log-partial-revert.txt").steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`));
+      expect([...l.image]).toEqual([...memoryImage(parseCapture(captureText(capture), ia).writes)].sort(([a], [b]) => a - b));
+    }
+    expect([...on.image].filter(([a, b]) => off.image.get(a) !== b)).toEqual([[0x4229, 0x01]]);
+    expect([...off.image.keys()]).toEqual([...on.image.keys()]);
+    expect([configByte(on.image, 21), configByte(off.image, 21)]).toEqual([0x43, 0x43]);
+    // The heat-alarm-off image is the revert's: the unit was configured as after the revert before the change.
+    expect([...off.image]).toEqual([...etsLog("auro-m0081-ets6log-partial-revert.txt").image]);
+  });
+
+  test("structural flash of the heat alarm on: ETS's steps, and exactly the bytes ETS writes, with ETS's values", () => {
+    const device = beforeHeat();
+    expect(device.get(0x4229)).toBe(0x00);
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: heatOn, baseParams: baseline.params, links: baseline.links });
+    expectRevertForm(plan, HEAT_ON, ia, device);
+    expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
+    // The tables, the com-object table to its counted entries, every parameter-owned byte (offsets 3 and 36 own none).
+    expect(span(bytesOf(plan))).toEqual(["4000-4000", "4003-4006", "402f-4033", "405c-40b6", "4200-4202", "4204-4223", "4225-4231"]);
+    expect([...memoryImage(parseCapture(captureText(HEAT_ON), ia).writes)].filter(([a, b]) => device.get(a) !== b)).toEqual([[0x4229, 0x01]]);
+  });
+
+  test("structural flash of the heat alarm off: ETS's steps, and exactly the bytes ETS writes, with ETS's values", () => {
+    const device = unitMemory(cfg, ia, beforeHeat(), memoryImage(parseCapture(captureText(HEAT_ON), ia).writes));
+    expect(device.get(0x4229)).toBe(0x01);
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: heatOn, links: baseline.links });
+    expectRevertForm(plan, HEAT_OFF, ia, device);
+    expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
+    // The tables, the com-object table to its counted entries, every parameter-owned byte (offsets 3 and 36 own none).
+    expect(span(bytesOf(plan))).toEqual(["4000-4000", "4003-4006", "402f-4033", "405c-40b6", "4200-4202", "4204-4223", "4225-4231"]);
+    expect([...memoryImage(parseCapture(captureText(HEAT_OFF), ia).writes)].filter(([a, b]) => device.get(a) !== b)).toEqual([[0x4229, 0x00]]);
   });
 });
 

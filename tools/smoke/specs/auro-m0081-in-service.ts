@@ -37,6 +37,12 @@ export const auroM0081InService: DeviceSpec = {
     // added behind the object's own address while the run observes it, then removed again. The unit's
     // configuration shows two objects (9 and 10), both linked, so no unlinked object is left to link.
     link: { comObjRefId: "M-0081_A-FE01-11-75D9_O-10_R-11", addToLinked: true },
+    // "Heat alarm" of the temperature sensor: disable to enable shows object 21 (heat alarm, transmit)
+    // in the configuration, which takes the structural flash; the object's table entry is the same
+    // either way (unlinked, no group address), so on the unit only the parameter's byte changes and
+    // it sends nothing new. ETS's partial downloads of this change and its revert are captured
+    // (tools/etsdiff.test.ts).
+    structural: { paramRefId: "M-0081_A-FE01-11-75D9_P-42_R-42", value: "1" },
     fullDownload: true,
   },
   configure: [],
@@ -45,7 +51,5 @@ export const auroM0081InService: DeviceSpec = {
     // does not set, on the object's own first address (findings.md §36), where the witness takes it.
     { kind: "output", label: "light level answers a read of the added test address", comObjRefId: "M-0081_A-FE01-11-75D9_O-10_R-11" },
   ],
-  unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },
-  ],
+  unsafe: [],
 };
